@@ -108,9 +108,16 @@ interface ModelPickerProps {
 
 export function ModelPicker({ models, model, effort, onModel, onEffort }: ModelPickerProps) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
   const list = distinctModels(models);
+  const matched = search.trim() ? list.filter((m) => (m.resolvedModel ?? m.value).toLowerCase().includes(search.trim().toLowerCase())) : list;
+  const pickModel = (value: string) => {
+    onModel(value);
+    setOpen(false);
+    setSearch("");
+  };
   const current = list.find((m) => model && plainModel(m.resolvedModel ?? m.value) === plainModel(model));
   const efforts = current?.supportedEffortLevels ?? (current?.supportsEffort === false ? [] : ["low", "medium", "high", "xhigh", "max"]);
   if (!model) return null;
@@ -135,8 +142,21 @@ export function ModelPicker({ models, model, effort, onModel, onEffort }: ModelP
             </>
           )}
           <div className="model-pop-title">模型</div>
+          <input
+            className="model-pop-search"
+            autoFocus
+            value={search}
+            placeholder="搜索模型"
+            spellCheck={false}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
+              // Enter 选中第一个匹配的模型（同 codex-app-server 的模型菜单）
+              if (e.key === "Enter" && matched[0]) pickModel(matched[0].value);
+            }}
+          />
           <div className="model-pop-list">
-            {list.map((m) => {
+            {matched.map((m) => {
               const name = plainModel(m.resolvedModel ?? m.value);
               const selected = m === current;
               return (
@@ -144,10 +164,7 @@ export function ModelPicker({ models, model, effort, onModel, onEffort }: ModelP
                   key={m.value}
                   className={`model-pop-item${selected ? " selected" : ""}`}
                   title={m.description}
-                  onClick={() => {
-                    onModel(m.value);
-                    setOpen(false);
-                  }}
+                  onClick={() => pickModel(m.value)}
                 >
                   <span>{name}</span>
                   {selected && <span className="pick-check">✓</span>}
@@ -155,6 +172,7 @@ export function ModelPicker({ models, model, effort, onModel, onEffort }: ModelP
               );
             })}
             {list.length === 0 && <div className="model-pop-empty">读取模型列表中…</div>}
+            {list.length > 0 && matched.length === 0 && <div className="model-pop-empty">没有匹配的模型</div>}
           </div>
         </div>
       )}

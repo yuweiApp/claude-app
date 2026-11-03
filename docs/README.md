@@ -100,7 +100,7 @@ SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类
 
 ## 4. 权限
 
-- `permissionMode` 默认 `default`，可选 `acceptEdits`、`plan`、`bypassPermissions`（需要 `allowDangerouslySkipPermissions`）。运行中通过 `query.setPermissionMode()` 切换。
+- `permissionMode` 默认 `bypassPermissions`（完全访问，`DEFAULT_PERMISSION_MODE` 可改），可选 `acceptEdits`、`plan`、`bypassPermissions`（需要 `allowDangerouslySkipPermissions`）。运行中通过 `query.setPermissionMode()` 切换。
 - 需要确认时 SDK 调 `canUseTool(toolName, input, { signal, suggestions, title, description, decisionReason })`。gateway 生成 `requestId`，发 `permission_request` 事件，返回一个 Promise 挂起，等 `POST /sessions/:id/permissions/:requestId` 回复：
   - 允许：`{ behavior: 'allow', updatedInput: input }`；勾"以后都允许"时带上 `updatedPermissions: suggestions`
   - 拒绝：`{ behavior: 'deny', message }`
@@ -135,13 +135,12 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 1. **newapi 的 Claude 格式接口**：`ANTHROPIC_BASE_URL=https://<newapi 域名>`，`ANTHROPIC_AUTH_TOKEN=<newapi 令牌>`。newapi 把 Claude 格式请求转成上游渠道的格式，渠道配 DeepSeek。
 2. **DeepSeek 官方的 Anthropic 兼容接口**：`ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic`。
 
-需要配置的模型名（Claude Code 在不同场景用不同档位的模型，全部映射到 DeepSeek，否则会去请求不存在的 claude-* 模型）：
+模型：
 
-| 变量 | 用途 |
-| --- | --- |
-| `ANTHROPIC_MODEL` | 主模型 |
-| `ANTHROPIC_DEFAULT_OPUS_MODEL` / `ANTHROPIC_DEFAULT_SONNET_MODEL` | 子代理、`/model opus` 等别名 |
-| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | 后台小任务：标题生成、WebFetch 总结等 |
+- `ANTHROPIC_MODEL`：默认模型（如 `gpt-6-luna`），新会话用它。
+- 模型菜单读接口的 `GET /v1/models`（`GET /models` 缓存 5 分钟），按 codex-app-server 的规则去掉图片、视频、语音、向量、3D 等不是对话的模型，`MODELS_FILTER` 正则可以再筛；默认模型排第一。切换用 `Query.setModel(<模型 id>)`。
+- Claude Code 的 opus / sonnet / haiku 档位（后台生成标题、WebFetch 总结、Explore 子代理用 haiku）默认会请求 `claude-*` 模型，第三方接口里没有。网关启动 claude 子进程时把 `ANTHROPIC_DEFAULT_OPUS_MODEL` / `SONNET` / `HAIKU` 都设成默认模型，配置文件里不用写。
+- 没配 `ANTHROPIC_BASE_URL`（直连 Anthropic）时，模型菜单用 Claude Code 自己的列表（`Query.supportedModels()`）。
 
 另外：
 
@@ -155,7 +154,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | --- | --- | --- |
 | GET | `/health` | 网关状态 |
 | GET | `/config` | 工作目录、默认模型、默认权限模式、默认推理强度（`DEFAULT_EFFORT`，默认 high）、上传大小上限 |
-| GET | `/models` | Claude Code 的模型列表（`Query.supportedModels()` 的 `ModelInfo`：default / opus / sonnet / haiku 等别名、解析出的实际模型、支持的推理强度）；起一个不发消息的临时 query 读一次后缓存 |
+| GET | `/models` | 可选的模型（SDK 的 `ModelInfo` 格式）：接 newapi 时是它 `/v1/models` 里的对话模型，直连 Anthropic 时是 `Query.supportedModels()`；缓存 5 分钟 |
 | GET | `/sessions` | 所有文件夹的会话，SDK 的 `SDKSessionInfo` 加活跃会话的 `state` |
 | POST | `/sessions` | 新建会话并发送第一条消息 `{ text, attachments?, cwd?, model?, effort?, permissionMode? }` → `{ sessionId }`；`cwd` 是会话的文件夹，`model` 是模型列表里的 value |
 | GET | `/sessions/:id/messages` | 历史消息 |

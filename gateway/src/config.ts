@@ -19,6 +19,16 @@ function int(name: string, fallback: number): number {
   return n;
 }
 
+function regex(name: string): RegExp | undefined {
+  const raw = env[name]?.trim();
+  if (!raw) return undefined;
+  try {
+    return new RegExp(raw, "i");
+  } catch (err) {
+    throw new Error(`环境变量 ${name} 不是有效的正则表达式："${raw}"（${(err as Error).message}）`);
+  }
+}
+
 function list(name: string, fallback: string[] = []): string[] {
   const raw = env[name];
   if (raw === undefined) return fallback;
@@ -56,9 +66,14 @@ export const config = {
   /** Claude Code 的配置目录（会话记录、settings、skills、memory），和本机自己用的 ~/.claude 分开 */
   claudeConfigDir: path.resolve(env.CLAUDE_CONFIG_DIR || path.join(gatewayRoot, ".data", "claude-home")),
 
-  /** 主模型，不填时用 Claude Code 自己的默认（接第三方模型时必须填） */
+  /** 模型接口（newapi 等），不填是直连 Anthropic */
+  baseUrl: env.ANTHROPIC_BASE_URL?.trim() || undefined,
+  /** 默认模型（新会话用它，模型菜单里排第一），不填时用 Claude Code 自己的默认（接第三方模型时必须填） */
   model: env.ANTHROPIC_MODEL?.trim() || undefined,
-  defaultPermissionMode: permissionMode("DEFAULT_PERMISSION_MODE", "default"),
+  /** 模型菜单只保留 id 匹配这个正则的（不区分大小写），例如 ^(gpt|deepseek|kimi)；不填时只按通用规则去掉非对话模型 */
+  modelsFilter: regex("MODELS_FILTER"),
+  /** 新会话的权限模式，默认完全访问（bypassPermissions，所有操作不询问） */
+  defaultPermissionMode: permissionMode("DEFAULT_PERMISSION_MODE", "bypassPermissions"),
   /** 新会话和续接会话的推理强度，同 Claude 桌面版启动参数里的 --effort=high */
   defaultEffort: effortLevel("DEFAULT_EFFORT", "high"),
   /** 禁用的内置工具。WebSearch 是 Anthropic 服务端工具，第三方模型用不了 */
@@ -83,12 +98,21 @@ export const config = {
 process.env.CLAUDE_CONFIG_DIR = config.claudeConfigDir;
 
 /**
- * 传给 claude 子进程的环境变量：继承网关的环境（ANTHROPIC_BASE_URL、ANTHROPIC_AUTH_TOKEN、
- * ANTHROPIC_DEFAULT_*_MODEL 等原样透传），再固定配置目录、关掉非必要的外发流量
+ * 传给 claude 子进程的环境变量：继承网关的环境（ANTHROPIC_BASE_URL、ANTHROPIC_AUTH_TOKEN 等原样透传），
+ * 再固定配置目录、关掉非必要的外发流量。
+ * 接第三方接口时，Claude Code 的 opus / sonnet / haiku 档位（后台小任务如生成标题、WebFetch 总结用 haiku）
+ * 默认会请求 claude-* 模型，接口里没有，所以都指向默认模型（环境里自己设了的不覆盖）
  */
 export function agentEnv(): Record<string, string | undefined> {
+  const tiers =
+    config.baseUrl && config.model
+      ? Object.fromEntries(
+          ["ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"].map((k) => [k, env[k] || config.model]),
+        )
+      : {};
   return {
     ...process.env,
+    ...tiers,
     CLAUDE_CONFIG_DIR: config.claudeConfigDir,
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ?? "1",
     CLAUDE_AGENT_SDK_CLIENT_APP: "claude-app-gateway/0.1.0",
