@@ -1,0 +1,39 @@
+{
+  "version": "0.2.0",
+  "compounds": [
+    {
+      "name": "启动应用",
+      "configurations": ["启动网关", "启动前端"],
+      "stopAll": true
+    }
+  ],
+  "configurations": [
+    {
+      "name": "启动网关",
+      "presentation": { "hidden": true },
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/gateway",
+      "program": "${workspaceFolder}/gateway/node_modules/tsx/dist/cli.mjs",
+      "args": ["watch", "src/index.ts"],
+      "autoAttachChildProcesses": true,
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "启动前端",
+      "presentation": { "hidden": true },
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/client",
+      "program": "${workspaceFolder}/client/node_modules/vite/bin/vite.js",
+      "console": "internalConsole",
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://\\S+)",
+        "uriFormat": "%s",
+        "action": "debugWithChrome"
+      },
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}
