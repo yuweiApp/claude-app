@@ -20,7 +20,7 @@ npm run dev                                               # http://127.0.0.1:878
 ```
 
 ```bash
-cd client && npm install && npm run dev                   # http://localhost:5174
+cd client && npm install && npm run dev                   # http://localhost:5180
 ```
 
 会话记录、settings、skills 等都在 `gateway/.data/claude-home`（`CLAUDE_CONFIG_DIR`），默认工作目录是 `gateway/.data/workspace`（`WORKSPACE_DIR`），都不会碰本机的 `~/.claude`。

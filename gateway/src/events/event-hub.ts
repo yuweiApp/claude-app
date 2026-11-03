@@ -25,12 +25,18 @@ class Channel {
   }
 
   /**
-   * 回放 afterId 之后的事件。afterId 之后的第一条已经被挤出缓冲时返回 null，调用方应发 reset
+   * 回放 afterId 之后的事件。续不上时返回 null，调用方应发 reset 再回放整个缓冲：
+   * afterId 之后的第一条已经被挤出缓冲；或者 afterId 比发出过的都大（网关重启过，id 从 1 重新数）
    */
   since(afterId: number): StoredEvent[] | null {
     const first = this.buffer[0];
+    if (afterId >= this.nextId) return null;
     if (first && afterId > 0 && afterId < first.id - 1) return null;
     return this.buffer.filter((e) => e.id > afterId);
+  }
+
+  all(): StoredEvent[] {
+    return [...this.buffer];
   }
 
   subscribe(listener: Listener): () => void {

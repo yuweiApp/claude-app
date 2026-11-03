@@ -26,8 +26,10 @@ export function streamSession(req: FastifyRequest, reply: FastifyReply, hub: Eve
 
   const channel = hub.channel(sessionId);
   const backlog = channel.since(afterId);
-  if (backlog === null) res.write(`data: {"type":"reset"}\n\n`);
-  else backlog.forEach(write);
+  if (backlog === null) {
+    res.write(`data: {"type":"reset"}\n\n`);
+    channel.all().forEach(write);
+  } else backlog.forEach(write);
 
   const unsubscribe = channel.subscribe(write);
   const heartbeat = setInterval(() => res.write(": ping\n\n"), HEARTBEAT_MS);

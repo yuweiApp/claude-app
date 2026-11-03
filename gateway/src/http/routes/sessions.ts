@@ -1,4 +1,5 @@
-import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import { listModels } from "../../agent/models.js";
 import type { FastifyInstance } from "fastify";
 import { AttachmentError } from "../../agent/attachments.js";
 import { NotFoundError, type SessionManager } from "../../agent/session-manager.js";
@@ -6,6 +7,7 @@ import type { EventHub } from "../../events/event-hub.js";
 import { streamSession } from "../sse.js";
 
 const permissionModes = ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"];
+const effortLevels = ["low", "medium", "high", "xhigh", "max"];
 
 const attachmentsSchema = { type: "array", items: { type: "string" }, maxItems: 20 };
 
@@ -21,7 +23,12 @@ function requireContent(body: { text: string; attachments?: string[] }): void {
 export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hub: EventHub): void {
   app.get("/sessions", async () => ({ sessions: await sessions.list() }));
 
-  app.post<{ Body: { text: string; model?: string; permissionMode?: PermissionMode; attachments?: string[] } }>(
+  /** Claude Code 的模型列表（SDK 的 ModelInfo） */
+  app.get("/models", async () => ({ models: await listModels() }));
+
+  app.post<{
+    Body: { text: string; cwd?: string; model?: string; effort?: EffortLevel; permissionMode?: PermissionMode; attachments?: string[] };
+  }>(
     "/sessions",
     {
       schema: {
@@ -30,7 +37,9 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
           required: ["text"],
           properties: {
             text: { type: "string" },
+            cwd: { type: "string" },
             model: { type: "string" },
+            effort: { type: "string", enum: effortLevels },
             permissionMode: { type: "string", enum: permissionModes },
             attachments: attachmentsSchema,
           },
@@ -51,6 +60,7 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
       active: Boolean(session),
       state: session?.state ?? "closed",
       model: session?.model,
+      effort: session?.effort,
       permissionMode: session?.permissionMode,
     };
   });
@@ -102,15 +112,31 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
       },
     },
     async (req) => {
-      await activeOr404(sessions, req.params.id).setPermissionMode(req.body.mode);
+      // 子进程回收了的会话先 resume 再切
+      await (await sessions.activate(req.params.id)).setPermissionMode(req.body.mode);
       return { ok: true };
     },
   );
 
-  app.post<{ Params: IdParams; Body: { model?: string } }>("/sessions/:id/model", async (req) => {
-    await activeOr404(sessions, req.params.id).setModel(req.body.model || undefined);
-    return { ok: true };
-  });
+  /** 切换模型（Query.setModel）和推理强度（Query.applyFlagSettings），只传要改的；effort 为 null 回到模型默认 */
+  app.post<{ Params: IdParams; Body: { model?: string; effort?: EffortLevel | null } }>(
+    "/sessions/:id/model",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: { model: { type: "string" }, effort: { type: ["string", "null"], enum: [...effortLevels, null] } },
+        },
+      },
+    },
+    async (req) => {
+      // 子进程回收了的会话先 resume 再切，不用等下一条消息
+      const session = await sessions.activate(req.params.id);
+      if (req.body.model !== undefined) await session.setModel(req.body.model || undefined);
+      if (req.body.effort !== undefined) await session.setEffort(req.body.effort);
+      return { ok: true };
+    },
+  );
 
   app.post<{
     Params: IdParams & { requestId: string };

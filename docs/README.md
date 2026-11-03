@@ -48,15 +48,22 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
 
 ### 2.2 历史会话
 
-不另建数据库，直接用 SDK 读 Claude Code 落盘的 jsonl：
+不另建数据库，直接用 SDK 读 Claude Code 落盘的 jsonl，返回给网页的也是 SDK 的数据格式：
 
-- 列表：`listSessions({ dir: WORKSPACE_DIR })`
-- 消息：`getSessionMessages(id, { dir })`
+- 列表：`listSessions()`（不传 dir，所有工作目录），`GET /sessions` 原样返回 `SDKSessionInfo`，只加上活跃会话的 `state`
+- 消息：`getSessionMessages(id)`（`SessionMessage`）
 - 改名：`renameSession(id, title)`
 
-多项目支持（每个会话有自己的 cwd）放到后续，见 §9。
+### 2.3 项目（文件夹）
 
-### 2.3 配置隔离
+和 Claude 桌面版 Code 标签页一致：**项目就是会话的文件夹（工作目录）**，没有单独的项目列表。Claude Code 按工作目录存会话（`$CLAUDE_CONFIG_DIR/projects/<编码后的目录>/`），`SDKSessionInfo.cwd` 就是会话所在的文件夹；桌面版自己的会话记录（`claude-code-sessions/…/local_<id>.json`）里也只记 `cwd`。
+
+- 侧边栏「会话」按文件夹分组（桌面版的 Group by › Project），组名取目录最后一级，悬停有「在 {文件夹} 中新建会话」。没选文件夹的会话跑在默认工作目录 `WORKSPACE_DIR`，分组叫「无文件夹」（桌面版的 No folder）。
+- 新会话在输入框上面一栏「选择文件夹」（桌面版的 Choose a folder，样式同 codex-app-server 新聊天页）：最近用过的文件夹，或「选择文件夹…」打开对话框浏览网关这台机器上的文件夹（`GET /folders`）。
+- `POST /sessions` 带 `cwd`（必须是已存在的目录，支持 `~`），子进程在这个目录里跑；续接会话时用 `getSessionInfo(id).cwd` 找回原来的目录。
+- 附件存在默认工作目录下，其他文件夹里的会话启动时用 `additionalDirectories` 把附件目录加进来，读附件不用确认。
+
+### 2.4 配置隔离
 
 Claude Code 默认读写 `~/.claude`。gateway 通过 `env.CLAUDE_CONFIG_DIR` 指到 `gateway/.data/claude-home`，和本机自己用的 Claude Code / 桌面版完全分开：会话记录、settings、skills、memory 都在这个目录里。多人部署时每个用户容器各一个目录。
 
@@ -75,7 +82,7 @@ Claude Code 默认读写 `~/.claude`。gateway 通过 `env.CLAUDE_CONFIG_DIR` �
 | type | 数据 | 说明 |
 | --- | --- | --- |
 | `sdk` | `SDKMessage` 原样 | assistant / user（工具结果）/ stream_event（增量）/ result / system 等，客户端自己归并 |
-| `user_message` | `{ uuid, text, attachments? }` | 用户发的消息（gateway 推进队列时发出，SDK 默认不回显用户输入） |
+| `user_message` | `{ uuid, content }` | 用户发的消息（gateway 推进队列时发出，SDK 默认不回显用户输入） |
 | `state` | `{ state, model?, permissionMode? }` | 会话状态变化 |
 | `permission_request` | `{ requestId, toolName, input, title?, description?, decisionReason? }` | `canUseTool` 挂起的权限请求 |
 | `permission_resolved` | `{ requestId, behavior }` | 已回复或超时、取消 |
@@ -103,21 +110,21 @@ SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类
 ## 5. 附件
 
 1. 网页选文件、拖入或粘贴后立刻 `POST /uploads`（multipart，可多个），网关存到 `<工作目录>/.attachments/<id>/<文件名>`，返回 `{ id, name, path, size }`。单个文件上限 `MAX_UPLOAD_MB`（默认 20）。
-2. 发消息时只传附件 id（`attachments: string[]`），网关按 id 找回文件，拼成用户消息：
+2. 发消息时只传附件 id（`attachments: string[]`），网关按 id 找回文件，拼成用户消息。结构同 Claude 桌面版（它的会话 jsonl 里用户发的图片就是这样存的）：
 
    ```
-   [text] 用户输入的文字（可以为空）
-   [text] <attachments>
-          用户上传了以下文件，已保存在这些路径，需要时用 Read 工具读取：
-          - /…/.attachments/<id>/report.pdf
-          </attachments>
-   [image] 仅 IMAGE_INPUT=true 时，png / jpeg / gif / webp 且不超过 5 MB 的图片
+   [image] png / jpeg / gif / webp 且不超过 5 MB 的图片，base64，放在最前面
+   [text]  用户输入的文字（可以为空）
+   [text]  <attachments>
+           用户上传了以下文件，已保存在这些路径，需要时用 Read 工具读取：
+           - /…/.attachments/<id>/report.pdf
+           </attachments>          （只有非图片文件时才有）
    ```
 
-3. 模型按需用 Read 读取。附件在工作目录里，Read 不需要用户确认；Read 本身支持文本、图片、PDF、notebook。
-4. 历史消息里没有单独的附件字段，网页按 `<attachments>` 段还原出附件，显示在用户消息里。
+3. 图片模型直接看到；其他文件模型按需用 Read 读取（在工作目录里，不用确认）。
+4. `user_message` 事件带的就是这份 `content`，和 `getSessionMessages()` 读回的历史格式一样：网页从 image 块直接显示缩略图，从 `<attachments>` 段还原文件附件。
 
-图片默认**不**作为 image 块发送：DeepSeek 的文本模型不看图，带上 image 块可能直接报错。换成能看图的模型后再设 `IMAGE_INPUT=true`。
+模型要能看图；接纯文本模型（如 DeepSeek 文本模型）时不要发图片。
 
 附件目录不自动清理，跟着工作目录走。
 
@@ -147,14 +154,17 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/health` | 网关状态 |
-| GET | `/config` | 工作目录、默认模型、默认权限模式、上传大小上限、是否发送图片 |
-| GET | `/sessions` | 历史会话列表（含活跃状态） |
-| POST | `/sessions` | 新建会话并发送第一条消息 `{ text, attachments?, model?, permissionMode? }` → `{ sessionId }` |
+| GET | `/config` | 工作目录、默认模型、默认权限模式、默认推理强度（`DEFAULT_EFFORT`，默认 high）、上传大小上限 |
+| GET | `/models` | Claude Code 的模型列表（`Query.supportedModels()` 的 `ModelInfo`：default / opus / sonnet / haiku 等别名、解析出的实际模型、支持的推理强度）；起一个不发消息的临时 query 读一次后缓存 |
+| GET | `/sessions` | 所有文件夹的会话，SDK 的 `SDKSessionInfo` 加活跃会话的 `state` |
+| POST | `/sessions` | 新建会话并发送第一条消息 `{ text, attachments?, cwd?, model?, effort?, permissionMode? }` → `{ sessionId }`；`cwd` 是会话的文件夹，`model` 是模型列表里的 value |
 | GET | `/sessions/:id/messages` | 历史消息 |
 | POST | `/sessions/:id/messages` | 发送消息 `{ text, attachments? }`（文字和附件至少有一样）；会话不活跃时自动 resume |
 | POST | `/uploads` | 上传附件（multipart，可多个）→ `{ attachments: [{ id, name, path, size }] }` |
+| GET | `/folders?path=` | 网关机器上一个文件夹里的子文件夹 `{ path, parent, home, entries }`，不传 path 是主目录，支持 `~` |
 | POST | `/sessions/:id/interrupt` | 打断当前一轮 |
 | POST | `/sessions/:id/permission-mode` | `{ mode }` |
+| POST | `/sessions/:id/model` | `{ model?, effort? }` 切换模型（`Query.setModel`）和推理强度（`Query.applyFlagSettings({ effortLevel })`）；子进程回收了的会话先 resume |
 | POST | `/sessions/:id/permissions/:requestId` | `{ behavior: 'allow' \| 'deny', message?, always? }` |
 | GET | `/sessions/:id/events` | SSE |
 | DELETE | `/sessions/:id/process` | 关闭活跃进程（不删记录） |
@@ -190,10 +200,9 @@ client/
 
 1. **骨架（已完成）**：单工作目录、流式对话、工具调用展示、权限确认、打断、历史会话、附件。
 2. **对话体验**：Markdown 和代码高亮、diff 展示（Edit / Write 的入参）、思考块、AskUserQuestion 选择题、斜杠命令（`supportedCommands()`）、模型切换（`setModel()`）、上下文用量（`getContextUsage()`）。
-3. **多项目**：会话带 cwd，`listSessions()` 不传 dir 读全部，按项目分组。
-4. **自定义工具**（`createSdkMcpServer()` 进程内 MCP）：内置浏览器（复用 codex-app-server 的 CDP 方案，或直接挂 `@playwright/mcp`；DeepSeek 不看图时用无障碍树快照，不用截图 + 坐标）、终端读取、会话管理。
-5. **多人部署**：沿用 codex-app-server 的 hub + 每用户一个容器，每个容器一个 `CLAUDE_CONFIG_DIR`。
-6. **桌面版**：Electron 外壳。
+3. **自定义工具**（`createSdkMcpServer()` 进程内 MCP）：内置浏览器（复用 codex-app-server 的 CDP 方案，或直接挂 `@playwright/mcp`；DeepSeek 不看图时用无障碍树快照，不用截图 + 坐标）、终端读取、会话管理。
+4. **多人部署**：沿用 codex-app-server 的 hub + 每用户一个容器，每个容器一个 `CLAUDE_CONFIG_DIR`。
+5. **桌面版**：Electron 外壳。
 
 ## 10. 风险
 

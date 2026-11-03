@@ -1,10 +1,11 @@
 import multipart from "@fastify/multipart";
 import Fastify, { type FastifyInstance } from "fastify";
 import { AttachmentError } from "./agent/attachments.js";
-import { BusyError, NotFoundError, SessionManager } from "./agent/session-manager.js";
+import { BadRequestError, BusyError, NotFoundError, SessionManager } from "./agent/session-manager.js";
 import { config } from "./config.js";
 import { EventHub } from "./events/event-hub.js";
 import { sessionRoutes } from "./http/routes/sessions.js";
+import { folderRoutes } from "./http/routes/folders.js";
 import { uploadRoutes } from "./http/routes/uploads.js";
 
 export interface App {
@@ -34,7 +35,7 @@ export function buildApp(): App {
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
     if (err instanceof BusyError) return reply.code(429).send({ error: err.message });
-    if (err instanceof AttachmentError) return reply.code(400).send({ error: err.message });
+    if (err instanceof AttachmentError || err instanceof BadRequestError) return reply.code(400).send({ error: err.message });
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) app.log.error(err);
     return reply.code(status).send({ error: err instanceof Error ? err.message : String(err) });
@@ -46,8 +47,8 @@ export function buildApp(): App {
     workspaceDir: config.workspaceDir,
     model: config.model ?? null,
     permissionMode: config.defaultPermissionMode,
+    effort: config.defaultEffort,
     maxUploadMb: config.maxUploadMb,
-    imageInput: config.imageInput,
   }));
 
   // 超过大小的文件流会被截断（file.truncated），由 saveUpload 删掉并报错
@@ -55,5 +56,6 @@ export function buildApp(): App {
 
   sessionRoutes(app, sessions, hub);
   uploadRoutes(app);
+  folderRoutes(app);
   return { app, sessions };
 }

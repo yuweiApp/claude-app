@@ -1,3 +1,4 @@
+import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
 import type { GatewayEvent, HistoryMessage } from "../api";
 
 /** 消息里显示的附件（历史消息里只有路径，没有大小） */
@@ -14,13 +15,20 @@ export type Block =
   | { type: "tool_use"; id: string; name: string; input: unknown };
 
 export type Item =
-  | { kind: "user"; uuid: string; text: string; attachments: AttachmentChip[] }
-  | { kind: "assistant"; uuid: string; blocks: Block[] }
-  | { kind: "result"; uuid: string; isError: boolean; text: string; durationMs: number; costUsd: number }
-  | { kind: "error"; uuid: string; text: string };
+  /** images：用户消息里的 image 块（Claude 的结构，base64），转成 data: 地址直接显示 */
+  | { kind: "user"; uuid: string; text: string; images: string[]; attachments: AttachmentChip[] }
+  /** messageId：模型 API 那一次响应的 id。一次响应里的多个内容块会拆成多条消息，id 相同；同一个 id 下的多个工具调用是并行的 */
+  | { kind: "assistant"; uuid: string; messageId?: string; blocks: Block[] }
+  /** userMessageUuid：SDKResultMessage.user_message_uuid，这一轮开头那条用户消息 */
+  | { kind: "result"; uuid: string; userMessageUuid?: string; isError: boolean; text: string; durationMs: number; costUsd: number }
+  | { kind: "error"; uuid: string; text: string }
+  /** 本地命令的输出（setModel 等会发一条 <local-command-stdout> 的 user 消息），显示成一行灰字，不算用户消息 */
+  | { kind: "notice"; uuid: string; text: string };
 
 export interface ToolResult {
   text: string;
+  /** 工具返回的图片（Read 读图片时在 tool_result 里），data: 地址 */
+  images: string[];
   isError: boolean;
 }
 
@@ -46,6 +54,7 @@ export interface SessionView {
   permissions: PermissionRequest[];
   state: string;
   model?: string;
+  effort?: EffortLevel;
   permissionMode?: string;
   seen: Set<string>;
   /** 续传点已丢失，需要重新拉历史 */
@@ -70,7 +79,7 @@ export type Action = { type: "event"; event: GatewayEvent } | { type: "history";
 export function reduce(view: SessionView, action: Action): SessionView {
   if (action.type === "history") {
     // 历史放在前面，已经从事件流收到的（按 uuid）不重复
-    const next = { ...emptyView(), state: view.state, model: view.model, permissionMode: view.permissionMode };
+    const next = { ...emptyView(), state: view.state, model: view.model, effort: view.effort, permissionMode: view.permissionMode };
     for (const m of action.messages) ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id);
     for (const item of view.items) pushItem(next, null, item);
     for (const [parent, items] of Object.entries(view.children)) items.forEach((item) => pushItem(next, parent, item));
@@ -84,11 +93,13 @@ export function reduce(view: SessionView, action: Action): SessionView {
   const next: SessionView = { ...view, items: [...view.items], children: { ...view.children } };
   switch (event.type) {
     case "user_message":
-      pushItem(next, null, { kind: "user", uuid: event.uuid, text: event.text, attachments: event.attachments ?? [] });
+      // content 和会话历史里的格式一样，按同一套规则归并
+      ingestMessage(next, "user", event.uuid, { content: event.content }, null);
       break;
     case "state":
       next.state = event.state;
       next.model = event.model;
+      next.effort = event.effort;
       next.permissionMode = event.permissionMode;
       if (event.state !== "running") next.streaming = { text: "", thinking: "" };
       break;
@@ -137,6 +148,7 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       pushItem(view, null, {
         kind: "result",
         uuid: message.uuid,
+        userMessageUuid: message.user_message_uuid,
         isError: message.is_error,
         text: message.subtype === "success" ? "" : message.errors.join("\n") || message.subtype,
         durationMs: message.duration_ms,
@@ -161,30 +173,47 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
         blocks.push({ type: "tool_use", id: String(b.id), name: String(b.name), input: b.input });
       }
     }
-    if (blocks.length) pushItem(view, parent, { kind: "assistant", uuid, blocks });
+    const messageId = (raw as { id?: unknown }).id;
+    if (blocks.length) {
+      pushItem(view, parent, { kind: "assistant", uuid, messageId: typeof messageId === "string" ? messageId : undefined, blocks });
+    }
     else view.seen = new Set(view.seen).add(uuid);
     return;
   }
 
   if (type === "user") {
+    const local = typeof content === "string" ? localCommandText(content) : null;
+    if (local !== null) {
+      if (local) pushItem(view, parent, { kind: "notice", uuid, text: local });
+      else view.seen = new Set(view.seen).add(uuid);
+      return;
+    }
     if (typeof content === "string") {
-      pushItem(view, parent, { kind: "user", uuid, text: content, attachments: [] });
+      pushItem(view, parent, { kind: "user", uuid, text: content, images: [], attachments: [] });
       return;
     }
     if (!Array.isArray(content)) return;
     const texts: string[] = [];
+    const images: string[] = [];
     const attachments: AttachmentChip[] = [];
     for (const b of content as Array<Record<string, unknown>>) {
       if (b.type === "tool_result") {
-        view.toolResults = { ...view.toolResults, [String(b.tool_use_id)]: { text: resultText(b.content), isError: b.is_error === true } };
+        const inner = Array.isArray(b.content) ? (b.content as unknown[]) : [];
+        view.toolResults = {
+          ...view.toolResults,
+          [String(b.tool_use_id)]: { text: resultText(b.content), images: inner.flatMap((c) => imageSrc(c) ?? []), isError: b.is_error === true },
+        };
+      } else if (b.type === "image") {
+        const src = imageSrc(b);
+        if (src) images.push(src);
       } else if (b.type === "text" && typeof b.text === "string") {
         const parsed = parseAttachments(b.text);
         if (parsed) attachments.push(...parsed);
         else texts.push(b.text);
       }
     }
-    if (texts.length || attachments.length) {
-      pushItem(view, parent, { kind: "user", uuid, text: texts.join("\n"), attachments });
+    if (texts.length || images.length || attachments.length) {
+      pushItem(view, parent, { kind: "user", uuid, text: texts.join("\n"), images, attachments });
     } else {
       view.seen = new Set(view.seen).add(uuid);
     }
@@ -204,10 +233,31 @@ function parseAttachments(text: string): AttachmentChip[] | null {
     });
 }
 
+/**
+ * Claude Code 本地命令留下的 user 消息：<local-command-stdout>…</local-command-stdout> 返回里面的文字，
+ * <command-name> 这类命令本身的记录返回空串（不显示）；不是本地命令返回 null
+ */
+function localCommandText(text: string): string | null {
+  const out = /^<local-command-(?:stdout|stderr)>([\s\S]*)<\/local-command-(?:stdout|stderr)>$/.exec(text.trim());
+  if (out) return out[1]!.replace(/`/g, "").trim();
+  if (/^<(command-name|command-message|local-command-caveat)>/.test(text.trim())) return "";
+  return null;
+}
+
+/** Anthropic 的 image 块转成能直接放进 <img> 的地址：base64 → data:，url 原样 */
+function imageSrc(block: unknown): string | null {
+  const b = block as { type?: string; source?: { type?: string; media_type?: string; data?: string; url?: string } } | null;
+  if (b?.type !== "image" || !b.source) return null;
+  if (b.source.type === "base64" && b.source.data) return `data:${b.source.media_type ?? "image/png"};base64,${b.source.data}`;
+  if (b.source.type === "url" && b.source.url) return b.source.url;
+  return null;
+}
+
 function resultText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
+    .filter((c: Record<string, unknown>) => c.type !== "image")
     .map((c: Record<string, unknown>) => (c.type === "text" ? String(c.text) : `[${String(c.type)}]`))
     .join("\n");
 }

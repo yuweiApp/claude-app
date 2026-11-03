@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   query,
   type CanUseTool,
+  type EffortLevel,
   type PermissionMode,
   type PermissionResult,
   type PermissionUpdate,
@@ -13,6 +14,7 @@ import type { EventHub } from "../events/event-hub.js";
 import type { Attachment, GatewayEvent, SessionState } from "../shared/types.js";
 import { buildUserContent } from "./attachments.js";
 import { InputQueue } from "./input-queue.js";
+import { listModels } from "./models.js";
 import { buildOptions } from "./options.js";
 
 interface PendingPermission {
@@ -33,6 +35,8 @@ export interface PermissionReply {
 export class AgentSession {
   state: SessionState = "starting";
   model: string | undefined;
+  effort: EffortLevel | undefined;
+  readonly cwd: string;
   permissionMode: PermissionMode;
   lastActiveAt = Date.now();
 
@@ -45,19 +49,23 @@ export class AgentSession {
 
   constructor(
     readonly id: string,
-    opts: { resume: boolean; model?: string; permissionMode: PermissionMode },
+    opts: { resume: boolean; cwd: string; model?: string; effort?: EffortLevel; permissionMode: PermissionMode },
     private readonly hub: EventHub,
     private readonly log: FastifyBaseLogger,
     private readonly onClosed: (session: AgentSession) => void,
   ) {
     this.model = opts.model ?? config.model;
+    this.effort = opts.effort;
+    this.cwd = opts.cwd;
     this.permissionMode = opts.permissionMode;
     this.query = query({
       prompt: this.input,
       options: buildOptions({
         sessionId: id,
+        cwd: opts.cwd,
         resume: opts.resume,
         model: opts.model,
+        effort: opts.effort,
         permissionMode: opts.permissionMode,
         canUseTool: this.canUseTool,
         abortController: this.abortController,
@@ -76,7 +84,7 @@ export class AgentSession {
       message: { role: "user", content },
       parent_tool_use_id: null,
     });
-    this.publish({ type: "user_message", uuid, text, ...(attachments.length ? { attachments } : {}) });
+    this.publish({ type: "user_message", uuid, content });
     this.setState("running");
     return uuid;
   }
@@ -91,9 +99,18 @@ export class AgentSession {
     this.publishState();
   }
 
+  /** model 是模型列表里的 value（default / opus 等别名），记下的是它解析出的实际模型名，和 init 消息里的一致 */
   async setModel(model: string | undefined): Promise<void> {
     await this.query.setModel(model);
-    this.model = model ?? config.model;
+    const info = model ? (await listModels().catch(() => [])).find((m) => m.value === model) : undefined;
+    this.model = info?.resolvedModel?.replace(/\[1m\]$/i, "") ?? model ?? config.model;
+    this.publishState();
+  }
+
+  /** 推理强度：Query.applyFlagSettings({ effortLevel })，null 回到模型默认 */
+  async setEffort(effort: EffortLevel | null): Promise<void> {
+    await this.query.applyFlagSettings({ effortLevel: effort });
+    this.effort = effort ?? undefined;
     this.publishState();
   }
 
@@ -197,7 +214,7 @@ export class AgentSession {
   }
 
   private publishState(): void {
-    this.publish({ type: "state", state: this.state, model: this.model, permissionMode: this.permissionMode });
+    this.publish({ type: "state", state: this.state, model: this.model, effort: this.effort, permissionMode: this.permissionMode });
   }
 
   private publish(event: GatewayEvent): void {

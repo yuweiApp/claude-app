@@ -65,23 +65,32 @@ export async function loadAttachments(ids: string[]): Promise<Attachment[]> {
   );
 }
 
+/** 能直接作为 image 块发给模型的图片：常见格式、不超过 5 MB */
+function imageType(a: Attachment) {
+  const mediaType = IMAGE_TYPES[path.extname(a.name).toLowerCase()];
+  return mediaType && a.size <= MAX_IMAGE_BYTES ? mediaType : null;
+}
+
 /**
- * 拼用户消息的内容：用户的文字 + 一段 <attachments> 列出附件路径（网页按这个格式还原附件），
- * 开了 IMAGE_INPUT 时图片再附上 image 块
+ * 拼用户消息的内容，结构同 Claude 桌面版（会话 jsonl 里用户发的图片就是这样存的）：
+ * 图片作为 Anthropic 的 image 块（base64）放在最前面，然后是用户的文字；
+ * 其他文件用一段 <attachments> 列出路径（网页按这个格式还原附件），模型需要时用 Read 读
  */
 export async function buildUserContent(text: string, attachments: Attachment[]): Promise<UserContent> {
   if (!attachments.length) return text;
   const blocks: ContentBlock[] = [];
-  if (text) blocks.push({ type: "text", text });
-  blocks.push({ type: "text", text: formatAttachments(attachments) });
-  if (config.imageInput) {
-    for (const a of attachments) {
-      const mediaType = IMAGE_TYPES[path.extname(a.name).toLowerCase()];
-      if (!mediaType || a.size > MAX_IMAGE_BYTES) continue;
-      const data = (await readFile(a.path)).toString("base64");
-      blocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data } });
+  const files: Attachment[] = [];
+  for (const a of attachments) {
+    const mediaType = imageType(a);
+    if (!mediaType) {
+      files.push(a);
+      continue;
     }
+    const data = (await readFile(a.path)).toString("base64");
+    blocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data } });
   }
+  if (text) blocks.push({ type: "text", text });
+  if (files.length) blocks.push({ type: "text", text: formatAttachments(files) });
   return blocks;
 }
 

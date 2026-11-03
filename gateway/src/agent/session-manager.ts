@@ -1,16 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   getSessionInfo,
   getSessionMessages,
   listSessions,
   renameSession,
+  type EffortLevel,
   type PermissionMode,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
-import type { SessionSummary } from "../shared/types.js";
+import type { SessionListItem } from "../shared/types.js";
 import { loadAttachments } from "./attachments.js";
 import { AgentSession } from "./session.js";
 
@@ -36,10 +40,11 @@ export class SessionManager {
   /** 新建会话并发送第一条消息 */
   async create(
     text: string,
-    opts: { model?: string; permissionMode?: PermissionMode; attachments?: string[] },
+    opts: { cwd?: string; model?: string; effort?: EffortLevel; permissionMode?: PermissionMode; attachments?: string[] },
   ): Promise<AgentSession> {
+    const cwd = opts.cwd ? await resolveDir(opts.cwd) : config.workspaceDir;
     const attachments = await loadAttachments(opts.attachments ?? []);
-    const session = await this.launch(randomUUID(), false, opts);
+    const session = await this.launch(randomUUID(), false, { ...opts, cwd });
     await session.send(text, attachments);
     return session;
   }
@@ -47,38 +52,36 @@ export class SessionManager {
   /** 发送消息；会话不活跃时先 resume */
   async send(sessionId: string, text: string, attachmentIds: string[] = []): Promise<string> {
     const attachments = await loadAttachments(attachmentIds);
-    let session = this.active.get(sessionId);
-    if (!session) {
-      if (!(await this.exists(sessionId))) throw new NotFoundError(`会话不存在：${sessionId}`);
-      session = await this.launch(sessionId, true, {});
-    }
-    return session.send(text, attachments);
+    return (await this.activate(sessionId)).send(text, attachments);
   }
 
-  async list(): Promise<SessionSummary[]> {
-    const stored = await listSessions({ dir: config.workspaceDir });
-    const result: SessionSummary[] = stored.map((info) => ({
-      sessionId: info.sessionId,
-      title: info.customTitle || info.firstPrompt || info.summary || "新会话",
-      lastModified: info.lastModified,
-      active: this.active.has(info.sessionId),
-      state: this.active.get(info.sessionId)?.state,
-    }));
-    // 刚建的会话第一轮还没落盘时也要出现在列表里
+  /** 活跃会话直接返回；子进程已回收的用原来的工作目录 resume */
+  async activate(sessionId: string): Promise<AgentSession> {
+    const session = this.active.get(sessionId);
+    if (session) return session;
+    const info = await getSessionInfo(sessionId);
+    if (!info) throw new NotFoundError(`会话不存在：${sessionId}`);
+    return this.launch(sessionId, true, { cwd: info.cwd || config.workspaceDir });
+  }
+
+  async list(): Promise<SessionListItem[]> {
+    // 不传 dir：所有工作目录（项目）的会话
+    const stored: SessionListItem[] = (await listSessions()).map((info) => ({ ...info, state: this.active.get(info.sessionId)?.state }));
+    // 刚建的会话第一轮还没落盘时也要出现在列表里，字段按 SDKSessionInfo 补
     for (const session of this.active.values()) {
-      if (!result.some((s) => s.sessionId === session.id)) {
-        result.unshift({ sessionId: session.id, title: "新会话", lastModified: session.lastActiveAt, active: true, state: session.state });
+      if (!stored.some((s) => s.sessionId === session.id)) {
+        stored.push({ sessionId: session.id, summary: "", lastModified: session.lastActiveAt, cwd: session.cwd, state: session.state });
       }
     }
-    return result.sort((a, b) => b.lastModified - a.lastModified);
+    return stored.sort((a, b) => b.lastModified - a.lastModified);
   }
 
   async messages(sessionId: string) {
-    return getSessionMessages(sessionId, { dir: config.workspaceDir });
+    return getSessionMessages(sessionId);
   }
 
   async rename(sessionId: string, title: string): Promise<void> {
-    await renameSession(sessionId, title, { dir: config.workspaceDir });
+    await renameSession(sessionId, title);
   }
 
   async closeSession(sessionId: string): Promise<void> {
@@ -93,12 +96,18 @@ export class SessionManager {
   private async launch(
     sessionId: string,
     resume: boolean,
-    opts: { model?: string; permissionMode?: PermissionMode },
+    opts: { cwd: string; model?: string; effort?: EffortLevel; permissionMode?: PermissionMode },
   ): Promise<AgentSession> {
     await this.makeRoom();
     const session = new AgentSession(
       sessionId,
-      { resume, model: opts.model, permissionMode: opts.permissionMode ?? config.defaultPermissionMode },
+      {
+        resume,
+        cwd: opts.cwd,
+        model: opts.model,
+        effort: opts.effort ?? config.defaultEffort,
+        permissionMode: opts.permissionMode ?? config.defaultPermissionMode,
+      },
       this.hub,
       this.log,
       (closed) => {
@@ -106,12 +115,8 @@ export class SessionManager {
       },
     );
     this.active.set(sessionId, session);
-    this.log.info({ sessionId, resume }, "启动 claude 会话");
+    this.log.info({ sessionId, resume, cwd: opts.cwd }, "启动 claude 会话");
     return session;
-  }
-
-  private async exists(sessionId: string): Promise<boolean> {
-    return Boolean(await getSessionInfo(sessionId, { dir: config.workspaceDir }));
   }
 
   /** 活跃会话到上限时，关掉最久没用的空闲会话 */
@@ -135,5 +140,16 @@ export class SessionManager {
   }
 }
 
+/** 新会话选的文件夹：支持 ~，必须是已存在的目录 */
+async function resolveDir(dir: string): Promise<string> {
+  const expanded = dir.trim().replace(/^~(?=$|\/)/, os.homedir());
+  if (!path.isAbsolute(expanded)) throw new BadRequestError(`请填写绝对路径：${dir}`);
+  const resolved = path.resolve(expanded);
+  const info = await stat(resolved).catch(() => null);
+  if (!info?.isDirectory()) throw new BadRequestError(`文件夹不存在：${resolved}`);
+  return resolved;
+}
+
 export class NotFoundError extends Error {}
+export class BadRequestError extends Error {}
 export class BusyError extends Error {}

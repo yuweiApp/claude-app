@@ -1,27 +1,195 @@
-import type { SessionSummary } from "../api";
+import { useState, type ReactNode } from "react";
+import type { SessionListItem } from "../api";
+import { SidebarToggle } from "./SidebarToggle";
 
-interface Props {
-  sessions: SessionSummary[];
-  currentId: string | null;
-  onSelect: (id: string | null) => void;
+/** 会话标题：SDKSessionInfo.summary 就是 SDK 给的显示标题（自定义标题、自动摘要或第一条提问） */
+export const sessionTitle = (s: SessionListItem) => s.summary || s.firstPrompt || "新会话";
+
+/** 项目名：工作目录的最后一级 */
+export const folderName = (dir: string) => dir.replace(/\/+$/, "").split("/").pop() || dir;
+
+/** 一个项目：同一个文件夹（工作目录）下的会话。Claude Code 按工作目录区分项目 */
+interface FolderGroup {
+  cwd: string;
+  sessions: SessionListItem[];
 }
 
-export function Sidebar({ sessions, currentId, onSelect }: Props) {
+const COLLAPSED_KEY = "sidebarCollapsedGroups";
+const SECTION_PROJECTS = "section:projects";
+const SECTION_CHATS = "section:chats";
+
+function loadCollapsed(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]") as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+/** 按文件夹分组，最近有活动的组排前面（sessions 已按 lastModified 倒序） */
+export function groupByFolder(sessions: SessionListItem[], workspaceDir: string): FolderGroup[] {
+  const groups: FolderGroup[] = [];
+  for (const s of sessions) {
+    const cwd = s.cwd || workspaceDir;
+    const group = groups.find((g) => g.cwd === cwd);
+    if (group) group.sessions.push(s);
+    else groups.push({ cwd, sessions: [s] });
+  }
+  return groups;
+}
+
+interface Props {
+  sessions: SessionListItem[];
+  /** 默认工作目录：没选文件夹的会话在这里跑，列在「会话」里；其他工作目录各是一个「项目」 */
+  workspaceDir: string;
+  currentId: string | null;
+  onSelect: (id: string) => void;
+  /** 新会话；cwd 是在哪个文件夹里，不传是无文件夹 */
+  onNew: (cwd?: string) => void;
+  onCollapse: () => void;
+}
+
+export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, onCollapse }: Props) {
+  const [collapsed, setCollapsed] = useState(loadCollapsed);
+  const toggle = (key: string) =>
+    setCollapsed((cur) => {
+      const next = new Set(cur);
+      if (!next.delete(key)) next.add(key);
+      try {
+        localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+      } catch {
+        // 写不了就只在这次打开里生效
+      }
+      return next;
+    });
+
+  // 同 codex-app-server 的侧边栏：「项目」是选了文件夹的会话，按文件夹分组；「会话」是没选文件夹（默认工作目录）的
+  const projects = groupByFolder(sessions, workspaceDir).filter((g) => g.cwd !== workspaceDir);
+  const chats = sessions.filter((s) => !s.cwd || s.cwd === workspaceDir);
+  const projectsOpen = !collapsed.has(SECTION_PROJECTS);
+  const chatsOpen = !collapsed.has(SECTION_CHATS);
+
+  const row = (s: SessionListItem) => (
+    <li key={s.sessionId}>
+      <button className={`session-row${s.sessionId === currentId ? " active" : ""}`} onClick={() => onSelect(s.sessionId)} title={sessionTitle(s)}>
+        <span className="session-title">
+          {s.state === "running" && <span className="dot" />}
+          {sessionTitle(s)}
+        </span>
+        <span className="session-meta">{relativeTime(s.lastModified)}</span>
+      </button>
+    </li>
+  );
+
   return (
     <aside className="sidebar">
-      <button className="new-chat" onClick={() => onSelect(null)}>
+      <div className="sidebar-head">
+        <SidebarToggle collapsed={false} onToggle={onCollapse} />
+      </div>
+      <button className="nav-item" onClick={() => onNew()}>
+        <ComposeIcon />
         新会话
       </button>
-      <ul>
-        {sessions.map((s) => (
-          <li key={s.sessionId}>
-            <button className={s.sessionId === currentId ? "active" : ""} onClick={() => onSelect(s.sessionId)} title={s.title}>
-              {s.state === "running" && <span className="dot" />}
-              {s.title}
-            </button>
-          </li>
-        ))}
-      </ul>
+      <div className="sidebar-divider" />
+
+      <div className="section-title">
+        <SectionToggle label="项目" icon={<ProjectsIcon />} count={projects.length} expanded={projectsOpen} onClick={() => toggle(SECTION_PROJECTS)} />
+      </div>
+      {projectsOpen && projects.length === 0 && <div className="group-empty">暂无项目，新会话时选择文件夹</div>}
+      {projectsOpen &&
+        projects.map((g) => {
+          const open = !collapsed.has(g.cwd);
+          return (
+            <div key={g.cwd} className="group">
+              <div className="group-head">
+                <button className="group-toggle" onClick={() => toggle(g.cwd)} title={g.cwd}>
+                  <CaretIcon open={open} />
+                  <FolderIcon />
+                  <span className="group-name">{folderName(g.cwd)}</span>
+                </button>
+                <div className="group-actions">
+                  <button className="icon-btn" title="在此项目中新建会话" aria-label={`在 ${folderName(g.cwd)} 中新建会话`} onClick={() => onNew(g.cwd)}>
+                    <ComposeIcon />
+                  </button>
+                </div>
+              </div>
+              {open && <ul className="group-list">{g.sessions.map(row)}</ul>}
+            </div>
+          );
+        })}
+
+      <div className="section-title section-gap">
+        <SectionToggle label="会话" icon={<ChatIcon />} count={chats.length} expanded={chatsOpen} onClick={() => toggle(SECTION_CHATS)} />
+      </div>
+      {chatsOpen && chats.length === 0 && <div className="group-empty">暂无会话</div>}
+      {chatsOpen && <ul>{chats.map(row)}</ul>}
     </aside>
   );
 }
+
+/** 相对时间：刚刚、N 分钟前、N 小时前、N 天前，更早的显示日期（同 codex-app-server 的 relativeTime；ms 是毫秒） */
+function relativeTime(ms: number) {
+  const diff = (Date.now() - ms) / 1000;
+  if (diff < 60) return "刚刚";
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+  if (diff < 86400 * 30) return `${Math.floor(diff / 86400)} 天前`;
+  return new Date(ms).toLocaleDateString();
+}
+
+function SectionToggle({ label, icon, count, expanded, onClick }: { label: string; icon: ReactNode; count: number; expanded: boolean; onClick: () => void }) {
+  return (
+    <button className="section-toggle" aria-expanded={expanded} onClick={onClick}>
+      <span className="section-icon">{icon}</span>
+      <span className="section-label">{label}</span>
+      <span className="section-count">{count}</span>
+      <span className="section-spacer" />
+      <CaretIcon open={expanded} />
+    </button>
+  );
+}
+
+// 图标同 codex-app-server 的 client/src/icons（compose、projects-stack、chat-bubble、folder、group-caret）
+
+function ProjectsIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 6.1 8 2.8l6 3.3L8 9.4 2 6.1Z" fill="currentColor" fillOpacity="0.12" />
+      <path d="m2.4 8.8 5.6 3.1 5.6-3.1M2.4 11.2 8 14.3l5.6-3.1" />
+    </svg>
+  );
+}
+
+function ComposeIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M13.5 8.5v4a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 4 2.5h4M11.8 2.2a1.2 1.2 0 0 1 1.7 1.7L8.2 9.2l-2.4.7.7-2.4z" />
+    </svg>
+  );
+}
+
+
+function ChatIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.5 3.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5v-2.5h-.5a1 1 0 0 1-1-1z" />
+    </svg>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" />
+    </svg>
+  );
+}
+
+function CaretIcon({ open }: { open: boolean }) {
+  return (
+    <svg className={`caret${open ? " open" : ""}`} width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+      <path d="M3.5 2 7 5 3.5 8" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseEnv } from "node:util";
-import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 
 // 按优先级从低到高覆盖：.env.local > .env > 系统环境变量
 for (const file of [".env", ".env.local"]) {
@@ -36,6 +36,15 @@ function permissionMode(name: string, fallback: PermissionMode): PermissionMode 
   return raw as PermissionMode;
 }
 
+const effortLevels: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+
+function effortLevel(name: string, fallback: EffortLevel): EffortLevel {
+  const raw = env[name]?.trim();
+  if (!raw) return fallback;
+  if (!effortLevels.includes(raw as EffortLevel)) throw new Error(`环境变量 ${name} 只能是 ${effortLevels.join(" / ")}，当前为 "${raw}"`);
+  return raw as EffortLevel;
+}
+
 export const config = {
   host: env.HOST || "127.0.0.1",
   port: int("PORT", 8788),
@@ -50,6 +59,8 @@ export const config = {
   /** 主模型，不填时用 Claude Code 自己的默认（接第三方模型时必须填） */
   model: env.ANTHROPIC_MODEL?.trim() || undefined,
   defaultPermissionMode: permissionMode("DEFAULT_PERMISSION_MODE", "default"),
+  /** 新会话和续接会话的推理强度，同 Claude 桌面版启动参数里的 --effort=high */
+  defaultEffort: effortLevel("DEFAULT_EFFORT", "high"),
   /** 禁用的内置工具。WebSearch 是 Anthropic 服务端工具，第三方模型用不了 */
   disallowedTools: list("DISALLOWED_TOOLS", ["WebSearch"]),
   /** 追加到 Claude Code 系统提示后面的说明 */
@@ -66,8 +77,6 @@ export const config = {
 
   /** 单个上传文件的大小上限（MB） */
   maxUploadMb: int("MAX_UPLOAD_MB", 20),
-  /** 图片附件同时作为 image 块发给模型（模型要能看图）；关闭时图片和其他文件一样只给路径 */
-  imageInput: env.IMAGE_INPUT === "true",
 };
 
 // listSessions() / getSessionMessages() 在网关进程里读会话文件，也按 CLAUDE_CONFIG_DIR 找目录

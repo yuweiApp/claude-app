@@ -1,7 +1,7 @@
-import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, GatewayEvent, SessionSummary } from "@gateway/shared/types";
+import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import type { Attachment, GatewayEvent, SessionListItem } from "@gateway/shared/types";
 
-export type { Attachment, GatewayEvent, SessionSummary };
+export type { Attachment, GatewayEvent, SessionListItem };
 
 const BASE = "/api";
 
@@ -37,19 +37,36 @@ export interface HistoryMessage {
   parent_tool_use_id: string | null;
 }
 
+/** GET /folders：网关机器上一个文件夹里的子文件夹 */
+export interface FolderListing {
+  path: string;
+  parent: string | null;
+  home: string;
+  entries: { name: string; path: string }[];
+}
+
 export interface GatewayConfig {
   workspaceDir: string;
   model: string | null;
   permissionMode: PermissionMode;
+  effort: EffortLevel;
   maxUploadMb: number;
-  imageInput: boolean;
 }
 
 export const api = {
   config: () => request<GatewayConfig>("GET", "/config"),
-  listSessions: () => request<{ sessions: SessionSummary[] }>("GET", "/sessions").then((r) => r.sessions),
-  createSession: (text: string, attachments: string[], permissionMode?: PermissionMode) =>
-    request<{ sessionId: string }>("POST", "/sessions", { text, attachments, permissionMode }).then((r) => r.sessionId),
+  listSessions: () => request<{ sessions: SessionListItem[] }>("GET", "/sessions").then((r) => r.sessions),
+  folders: (path?: string) => request<FolderListing>("GET", `/folders${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  /** Claude Code 的模型列表（SDK 的 ModelInfo） */
+  models: () => request<{ models: ModelInfo[] }>("GET", "/models").then((r) => r.models),
+  /** opts.cwd：在哪个文件夹里开，不传是无文件夹（默认工作目录）；model 是模型列表里的 value（别名） */
+  createSession: (
+    text: string,
+    attachments: string[],
+    opts: { permissionMode?: PermissionMode; cwd?: string; model?: string; effort?: EffortLevel },
+  ) => request<{ sessionId: string }>("POST", "/sessions", { text, attachments, ...opts }).then((r) => r.sessionId),
+  /** 切换会话的模型或推理强度，只传要改的 */
+  setModel: (id: string, change: { model?: string; effort?: EffortLevel }) => request("POST", `/sessions/${id}/model`, change),
   messages: (id: string) =>
     request<{ messages: HistoryMessage[] }>("GET", `/sessions/${id}/messages`).then((r) => r.messages),
   send: (id: string, text: string, attachments: string[]) =>
@@ -65,10 +82,35 @@ export const api = {
     request("POST", `/sessions/${id}/permissions/${requestId}`, { behavior, always }),
 };
 
-/** 订阅会话事件；断线后 EventSource 自动重连并带上 Last-Event-ID */
+/**
+ * 订阅会话事件。断线时 EventSource 自己会带 Last-Event-ID 重连，但遇到 502 这类错误状态（网关正在重启）会彻底放弃，
+ * 这时隔一会儿自己重新连，用 ?since= 带上收到的最后一个事件 id
+ */
 export function subscribe(sessionId: string, onEvent: (event: GatewayEvent) => void): () => void {
-  const t = token();
-  const source = new EventSource(`${BASE}/sessions/${sessionId}/events${t ? `?token=${encodeURIComponent(t)}` : ""}`);
-  source.onmessage = (e) => onEvent(JSON.parse(e.data as string) as GatewayEvent);
-  return () => source.close();
+  let source: EventSource | null = null;
+  let lastId = "";
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
+  const connect = () => {
+    const params = new URLSearchParams();
+    const t = token();
+    if (t) params.set("token", t);
+    if (lastId) params.set("since", lastId);
+    const query = params.toString();
+    source = new EventSource(`${BASE}/sessions/${sessionId}/events${query ? `?${query}` : ""}`);
+    source.onmessage = (e) => {
+      if (e.lastEventId) lastId = e.lastEventId;
+      onEvent(JSON.parse(e.data as string) as GatewayEvent);
+    };
+    source.onerror = () => {
+      if (stopped || source?.readyState !== EventSource.CLOSED) return;
+      timer = setTimeout(connect, 2000);
+    };
+  };
+  connect();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    source?.close();
+  };
 }

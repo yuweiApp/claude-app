@@ -5,3 +5,6 @@ dist/
 *.tsbuildinfo
 # 网关的工作目录和 Claude Code 配置目录（会话记录等）
 gateway/.data/
+# 编辑器交换文件、Claude Code 本机设置
+*.swp
+.claude/settings.local.json
