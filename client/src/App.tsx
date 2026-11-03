@@ -85,10 +85,10 @@ function Chat({ sessionId, config, onCreated, onChanged, onError }: ChatProps) {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [view.items.length, view.streaming.text, view.permissions.length]);
 
-  const send = async (text: string) => {
+  const send = async (text: string, attachments: string[]) => {
     try {
-      if (sessionId) await api.send(sessionId, text);
-      else onCreated(await api.createSession(text, newMode));
+      if (sessionId) await api.send(sessionId, text, attachments);
+      else onCreated(await api.createSession(text, attachments, newMode));
     } catch (e) {
       onError((e as Error).message);
       throw e;
@@ -126,6 +126,7 @@ function Chat({ sessionId, config, onCreated, onChanged, onError }: ChatProps) {
       <Composer
         running={view.state === "running"}
         permissionMode={permissionMode}
+        maxUploadMb={config.maxUploadMb}
         onSend={send}
         onInterrupt={() => sessionId && api.interrupt(sessionId).catch((e: Error) => onError(e.message))}
         onPermissionMode={changeMode}

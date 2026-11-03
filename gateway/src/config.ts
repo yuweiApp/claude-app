@@ -63,6 +63,11 @@ export const config = {
   permissionTimeoutMs: int("PERMISSION_TIMEOUT_MS", 10 * 60_000),
   /** 每个会话事件频道保留的事件数（断线续传用） */
   eventBufferSize: int("EVENT_BUFFER_SIZE", 5000),
+
+  /** 单个上传文件的大小上限（MB） */
+  maxUploadMb: int("MAX_UPLOAD_MB", 20),
+  /** 图片附件同时作为 image 块发给模型（模型要能看图）；关闭时图片和其他文件一样只给路径 */
+  imageInput: env.IMAGE_INPUT === "true",
 };
 
 // listSessions() / getSessionMessages() 在网关进程里读会话文件，也按 CLAUDE_CONFIG_DIR 找目录

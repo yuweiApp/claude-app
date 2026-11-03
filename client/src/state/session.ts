@@ -1,5 +1,12 @@
 import type { GatewayEvent, HistoryMessage } from "../api";
 
+/** 消息里显示的附件（历史消息里只有路径，没有大小） */
+export interface AttachmentChip {
+  name: string;
+  path: string;
+  size?: number;
+}
+
 /** assistant 消息里的内容块（只取渲染要用的字段） */
 export type Block =
   | { type: "text"; text: string }
@@ -7,7 +14,7 @@ export type Block =
   | { type: "tool_use"; id: string; name: string; input: unknown };
 
 export type Item =
-  | { kind: "user"; uuid: string; text: string }
+  | { kind: "user"; uuid: string; text: string; attachments: AttachmentChip[] }
   | { kind: "assistant"; uuid: string; blocks: Block[] }
   | { kind: "result"; uuid: string; isError: boolean; text: string; durationMs: number; costUsd: number }
   | { kind: "error"; uuid: string; text: string };
@@ -77,7 +84,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
   const next: SessionView = { ...view, items: [...view.items], children: { ...view.children } };
   switch (event.type) {
     case "user_message":
-      pushItem(next, null, { kind: "user", uuid: event.uuid, text: event.text });
+      pushItem(next, null, { kind: "user", uuid: event.uuid, text: event.text, attachments: event.attachments ?? [] });
       break;
     case "state":
       next.state = event.state;
@@ -161,21 +168,40 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
 
   if (type === "user") {
     if (typeof content === "string") {
-      pushItem(view, parent, { kind: "user", uuid, text: content });
+      pushItem(view, parent, { kind: "user", uuid, text: content, attachments: [] });
       return;
     }
     if (!Array.isArray(content)) return;
     const texts: string[] = [];
+    const attachments: AttachmentChip[] = [];
     for (const b of content as Array<Record<string, unknown>>) {
       if (b.type === "tool_result") {
         view.toolResults = { ...view.toolResults, [String(b.tool_use_id)]: { text: resultText(b.content), isError: b.is_error === true } };
       } else if (b.type === "text" && typeof b.text === "string") {
-        texts.push(b.text);
+        const parsed = parseAttachments(b.text);
+        if (parsed) attachments.push(...parsed);
+        else texts.push(b.text);
       }
     }
-    if (texts.length) pushItem(view, parent, { kind: "user", uuid, text: texts.join("\n") });
-    else view.seen = new Set(view.seen).add(uuid);
+    if (texts.length || attachments.length) {
+      pushItem(view, parent, { kind: "user", uuid, text: texts.join("\n"), attachments });
+    } else {
+      view.seen = new Set(view.seen).add(uuid);
+    }
   }
+}
+
+/** 网关拼在用户消息里的 <attachments> 段（见 gateway/src/agent/attachments.ts），每行 "- 路径" */
+function parseAttachments(text: string): AttachmentChip[] | null {
+  const m = /^<attachments>\n([\s\S]*)\n<\/attachments>$/.exec(text.trim());
+  if (!m) return null;
+  return m[1]!
+    .split("\n")
+    .filter((line) => line.startsWith("- "))
+    .map((line) => {
+      const path = line.slice(2);
+      return { path, name: path.split("/").pop() || path };
+    });
 }
 
 function resultText(content: unknown): string {

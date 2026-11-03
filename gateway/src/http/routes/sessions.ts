@@ -1,19 +1,27 @@
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import type { FastifyInstance } from "fastify";
+import { AttachmentError } from "../../agent/attachments.js";
 import { NotFoundError, type SessionManager } from "../../agent/session-manager.js";
 import type { EventHub } from "../../events/event-hub.js";
 import { streamSession } from "../sse.js";
 
 const permissionModes = ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"];
 
+const attachmentsSchema = { type: "array", items: { type: "string" }, maxItems: 20 };
+
 interface IdParams {
   id: string;
+}
+
+/** 文字和附件至少要有一样 */
+function requireContent(body: { text: string; attachments?: string[] }): void {
+  if (!body.text.trim() && !body.attachments?.length) throw new AttachmentError("消息不能为空");
 }
 
 export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hub: EventHub): void {
   app.get("/sessions", async () => ({ sessions: await sessions.list() }));
 
-  app.post<{ Body: { text: string; model?: string; permissionMode?: PermissionMode } }>(
+  app.post<{ Body: { text: string; model?: string; permissionMode?: PermissionMode; attachments?: string[] } }>(
     "/sessions",
     {
       schema: {
@@ -21,15 +29,17 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
           type: "object",
           required: ["text"],
           properties: {
-            text: { type: "string", minLength: 1 },
+            text: { type: "string" },
             model: { type: "string" },
             permissionMode: { type: "string", enum: permissionModes },
+            attachments: attachmentsSchema,
           },
         },
       },
     },
     async (req) => {
-      const session = await sessions.create(req.body.text, req.body);
+      requireContent(req.body);
+      const session = await sessions.create(req.body.text.trim(), req.body);
       return { sessionId: session.id };
     },
   );
@@ -49,14 +59,21 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     messages: await sessions.messages(req.params.id),
   }));
 
-  app.post<{ Params: IdParams; Body: { text: string } }>(
+  app.post<{ Params: IdParams; Body: { text: string; attachments?: string[] } }>(
     "/sessions/:id/messages",
     {
       schema: {
-        body: { type: "object", required: ["text"], properties: { text: { type: "string", minLength: 1 } } },
+        body: {
+          type: "object",
+          required: ["text"],
+          properties: { text: { type: "string" }, attachments: attachmentsSchema },
+        },
       },
     },
-    async (req) => ({ uuid: await sessions.send(req.params.id, req.body.text) }),
+    async (req) => {
+      requireContent(req.body);
+      return { uuid: await sessions.send(req.params.id, req.body.text.trim(), req.body.attachments) };
+    },
   );
 
   app.patch<{ Params: IdParams; Body: { title: string } }>(

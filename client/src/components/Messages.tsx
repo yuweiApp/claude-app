@@ -1,6 +1,7 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Block, Item, SessionView } from "../state/session";
+import { Attachments } from "./Attachments";
 
 export function Messages({ view }: { view: SessionView }) {
   return (
@@ -22,7 +23,12 @@ export function Messages({ view }: { view: SessionView }) {
 function ItemView({ item, view }: { item: Item; view: SessionView }) {
   switch (item.kind) {
     case "user":
-      return <div className="user">{item.text}</div>;
+      return (
+        <div className="user">
+          {item.attachments.length > 0 && <Attachments items={item.attachments} />}
+          {item.text}
+        </div>
+      );
     case "assistant":
       return (
         <>

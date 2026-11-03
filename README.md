@@ -9,8 +9,8 @@
 | 目录 | 说明 |
 | --- | --- |
 | [docs/](docs/README.md) | 技术方案：架构、会话模型、事件流、权限、模型接入、接口、路线图、风险 |
-| gateway/ | Node 22 + TypeScript + Fastify：会话生命周期、SSE 断线续传、权限请求挂起与回复、历史会话 |
-| client/ | Vite + React 19 + TypeScript：会话列表、流式对话、工具调用折叠、权限确认、中断 |
+| gateway/ | Node 22 + TypeScript + Fastify：会话生命周期、SSE 断线续传、权限请求挂起与回复、历史会话、附件上传 |
+| client/ | Vite + React 19 + TypeScript：会话列表、流式对话、工具调用折叠、权限确认、中断、附件 |
 
 ## 快速开始
 
@@ -27,4 +27,4 @@ cd client && npm install && npm run dev                   # http://localhost:517
 
 > 智能体能在网关所在机器上执行命令、读写文件。默认只监听 `127.0.0.1`；对外开放时务必设置 `API_TOKEN`。
 >
-> Agent SDK 和 Claude Code 是 Anthropic 专有许可，使用前看一下 [docs/README.md 的「风险」](docs/README.md#9-风险)。
+> Agent SDK 和 Claude Code 是 Anthropic 专有许可，使用前看一下 [docs/README.md 的「风险」](docs/README.md#10-风险)。

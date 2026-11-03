@@ -10,7 +10,8 @@ import {
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
-import type { GatewayEvent, SessionState } from "../shared/types.js";
+import type { Attachment, GatewayEvent, SessionState } from "../shared/types.js";
+import { buildUserContent } from "./attachments.js";
 import { InputQueue } from "./input-queue.js";
 import { buildOptions } from "./options.js";
 
@@ -66,15 +67,16 @@ export class AgentSession {
     this.done = this.consume();
   }
 
-  send(text: string): string {
+  async send(text: string, attachments: Attachment[] = []): Promise<string> {
     const uuid = randomUUID();
+    const content = await buildUserContent(text, attachments);
     this.input.push({
       type: "user",
       uuid,
-      message: { role: "user", content: text },
+      message: { role: "user", content },
       parent_tool_use_id: null,
     });
-    this.publish({ type: "user_message", uuid, text });
+    this.publish({ type: "user_message", uuid, text, ...(attachments.length ? { attachments } : {}) });
     this.setState("running");
     return uuid;
   }

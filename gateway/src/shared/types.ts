@@ -7,7 +7,7 @@ export type SessionState = "starting" | "idle" | "running" | "closed";
 /** 发给客户端的事件，见 docs/README.md「事件类型」 */
 export type GatewayEvent =
   | { type: "sdk"; message: SDKMessage }
-  | { type: "user_message"; uuid: string; text: string }
+  | { type: "user_message"; uuid: string; text: string; attachments?: Attachment[] }
   | { type: "state"; state: SessionState; model?: string; permissionMode?: string }
   | {
       type: "permission_request";
@@ -23,6 +23,15 @@ export type GatewayEvent =
   | { type: "permission_resolved"; requestId: string; behavior: "allow" | "deny" }
   | { type: "error"; message: string }
   | { type: "reset" };
+
+/** 上传后的附件（POST /uploads 返回），发消息时只传 id */
+export interface Attachment {
+  id: string;
+  name: string;
+  /** 绝对路径，在工作目录的 .attachments/<id>/ 下 */
+  path: string;
+  size: number;
+}
 
 /** GET /sessions 的列表项 */
 export interface SessionSummary {

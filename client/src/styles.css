@@ -98,6 +98,19 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   display: block; width: 100%; resize: vertical; border: 1px solid var(--border); border-radius: 10px;
   padding: 10px; background: var(--bg);
 }
+.composer.dragging textarea { border-color: var(--accent); border-style: dashed; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 260px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 3px 4px 3px 8px; background: var(--bg);
+}
+.user .chip { background: var(--bg); }
+.chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-meta { color: var(--muted); white-space: nowrap; }
+.chip.error { border-color: var(--err); }
+.chip.error .chip-meta { color: var(--err); }
+.chip-remove { border: none; padding: 0 4px; line-height: 1; color: var(--muted); }
+.user .chips:last-child { margin-bottom: 0; }
 .composer-bar { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
 .composer-bar select { border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; background: var(--bg); }
 .spacer { flex: 1; }

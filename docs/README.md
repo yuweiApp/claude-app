@@ -54,7 +54,7 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
 - 消息：`getSessionMessages(id, { dir })`
 - 改名：`renameSession(id, title)`
 
-多项目支持（每个会话有自己的 cwd）放到后续，见 §8。
+多项目支持（每个会话有自己的 cwd）放到后续，见 §9。
 
 ### 2.3 配置隔离
 
@@ -75,7 +75,7 @@ Claude Code 默认读写 `~/.claude`。gateway 通过 `env.CLAUDE_CONFIG_DIR` �
 | type | 数据 | 说明 |
 | --- | --- | --- |
 | `sdk` | `SDKMessage` 原样 | assistant / user（工具结果）/ stream_event（增量）/ result / system 等，客户端自己归并 |
-| `user_message` | `{ uuid, text }` | 用户发的消息（gateway 推进队列时发出，SDK 默认不回显用户输入） |
+| `user_message` | `{ uuid, text, attachments? }` | 用户发的消息（gateway 推进队列时发出，SDK 默认不回显用户输入） |
 | `state` | `{ state, model?, permissionMode? }` | 会话状态变化 |
 | `permission_request` | `{ requestId, toolName, input, title?, description?, decisionReason? }` | `canUseTool` 挂起的权限请求 |
 | `permission_resolved` | `{ requestId, behavior }` | 已回复或超时、取消 |
@@ -98,9 +98,30 @@ SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类
   - 允许：`{ behavior: 'allow', updatedInput: input }`；勾"以后都允许"时带上 `updatedPermissions: suggestions`
   - 拒绝：`{ behavior: 'deny', message }`
 - `signal` 中止（用户打断）或超过 `PERMISSION_TIMEOUT_MS`（默认 10 分钟）时自动拒绝，并发 `permission_resolved`。
-- `AskUserQuestion` 也走 `canUseTool`，入参里是问题和选项。客户端单独渲染成选择题，用户的回答通过 `updatedInput.answers` 返回（第一版先按普通权限处理，见 §8）。
+- `AskUserQuestion` 也走 `canUseTool`，入参里是问题和选项。客户端单独渲染成选择题，用户的回答通过 `updatedInput.answers` 返回（第一版先按普通权限处理，见 §9）。
 
-## 5. 模型接入（newapi / DeepSeek）
+## 5. 附件
+
+1. 网页选文件、拖入或粘贴后立刻 `POST /uploads`（multipart，可多个），网关存到 `<工作目录>/.attachments/<id>/<文件名>`，返回 `{ id, name, path, size }`。单个文件上限 `MAX_UPLOAD_MB`（默认 20）。
+2. 发消息时只传附件 id（`attachments: string[]`），网关按 id 找回文件，拼成用户消息：
+
+   ```
+   [text] 用户输入的文字（可以为空）
+   [text] <attachments>
+          用户上传了以下文件，已保存在这些路径，需要时用 Read 工具读取：
+          - /…/.attachments/<id>/report.pdf
+          </attachments>
+   [image] 仅 IMAGE_INPUT=true 时，png / jpeg / gif / webp 且不超过 5 MB 的图片
+   ```
+
+3. 模型按需用 Read 读取。附件在工作目录里，Read 不需要用户确认；Read 本身支持文本、图片、PDF、notebook。
+4. 历史消息里没有单独的附件字段，网页按 `<attachments>` 段还原出附件，显示在用户消息里。
+
+图片默认**不**作为 image 块发送：DeepSeek 的文本模型不看图，带上 image 块可能直接报错。换成能看图的模型后再设 `IMAGE_INPUT=true`。
+
+附件目录不自动清理，跟着工作目录走。
+
+## 6. 模型接入（newapi / DeepSeek）
 
 Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSeek 有两条路，都只是改环境变量：
 
@@ -121,16 +142,17 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 - `WebSearch` 是 Anthropic 服务端工具，第三方模型用不了，默认放进 `disallowedTools`。
 - 兼容性需要实测：工具调用格式、`thinking` 块、prompt caching 字段、并行工具调用。不兼容时优先在 newapi 侧修，其次关掉对应特性（如 `MAX_THINKING_TOKENS=0`）。
 
-## 6. HTTP 接口（第一版）
+## 7. HTTP 接口（第一版）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/health` | 网关状态 |
-| GET | `/config` | 工作目录、默认模型、默认权限模式 |
+| GET | `/config` | 工作目录、默认模型、默认权限模式、上传大小上限、是否发送图片 |
 | GET | `/sessions` | 历史会话列表（含活跃状态） |
-| POST | `/sessions` | 新建会话并发送第一条消息 `{ text, model?, permissionMode? }` → `{ sessionId }` |
+| POST | `/sessions` | 新建会话并发送第一条消息 `{ text, attachments?, model?, permissionMode? }` → `{ sessionId }` |
 | GET | `/sessions/:id/messages` | 历史消息 |
-| POST | `/sessions/:id/messages` | 发送消息 `{ text }`；会话不活跃时自动 resume |
+| POST | `/sessions/:id/messages` | 发送消息 `{ text, attachments? }`（文字和附件至少有一样）；会话不活跃时自动 resume |
+| POST | `/uploads` | 上传附件（multipart，可多个）→ `{ attachments: [{ id, name, path, size }] }` |
 | POST | `/sessions/:id/interrupt` | 打断当前一轮 |
 | POST | `/sessions/:id/permission-mode` | `{ mode }` |
 | POST | `/sessions/:id/permissions/:requestId` | `{ behavior: 'allow' \| 'deny', message?, always? }` |
@@ -139,7 +161,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 
 鉴权：设置了 `API_TOKEN` 时所有接口要求 `Authorization: Bearer <token>`；SSE 因为 `EventSource` 不能带头，用 `?token=`。
 
-## 7. 目录结构
+## 8. 目录结构
 
 ```
 gateway/
@@ -152,6 +174,8 @@ gateway/
       session.ts          单个活跃会话：query、消费循环、状态、权限挂起
       session-manager.ts  活跃会话表、创建 / resume / 空闲回收、历史读取
       options.ts          拼 SDK Options（env、模型、系统提示、工具白名单）
+      attachments.ts      附件保存、按 id 找回、拼用户消息
+    shared/types.ts       网关和网页共用的类型
     events/event-hub.ts   按会话分频道的环形缓冲 + 订阅
     http/sse.ts           SSE 输出、心跳、Last-Event-ID 续传
     http/routes/*.ts      路由
@@ -159,19 +183,19 @@ client/
   src/
     api.ts                HTTP + SSE 封装
     state/session.ts      事件归并成消息列表
-    components/*          侧边栏、消息、工具调用、权限卡片、输入框
+    components/*          侧边栏、消息、工具调用、权限卡片、输入框（附件选择、拖入、粘贴）
 ```
 
-## 8. 路线图
+## 9. 路线图
 
-1. **骨架（当前）**：单工作目录、流式对话、工具调用展示、权限确认、打断、历史会话。
-2. **对话体验**：Markdown 和代码高亮、diff 展示（Edit / Write 的入参）、思考块、AskUserQuestion 选择题、附件（图片走 `MessageParam` 的 image 块）、斜杠命令（`supportedCommands()`）、模型切换（`setModel()`）、上下文用量（`getContextUsage()`）。
+1. **骨架（已完成）**：单工作目录、流式对话、工具调用展示、权限确认、打断、历史会话、附件。
+2. **对话体验**：Markdown 和代码高亮、diff 展示（Edit / Write 的入参）、思考块、AskUserQuestion 选择题、斜杠命令（`supportedCommands()`）、模型切换（`setModel()`）、上下文用量（`getContextUsage()`）。
 3. **多项目**：会话带 cwd，`listSessions()` 不传 dir 读全部，按项目分组。
 4. **自定义工具**（`createSdkMcpServer()` 进程内 MCP）：内置浏览器（复用 codex-app-server 的 CDP 方案，或直接挂 `@playwright/mcp`；DeepSeek 不看图时用无障碍树快照，不用截图 + 坐标）、终端读取、会话管理。
 5. **多人部署**：沿用 codex-app-server 的 hub + 每用户一个容器，每个容器一个 `CLAUDE_CONFIG_DIR`。
 6. **桌面版**：Electron 外壳。
 
-## 9. 风险
+## 10. 风险
 
 - **许可**：Agent SDK 和 Claude Code 二进制都是 Anthropic 专有许可（"All rights reserved"），使用受 Anthropic 条款约束，官方文档没有专门说明能否配第三方模型。自用风险低；对外收费或多人统一出 key 之前，需要跟 Anthropic 确认。详见 <https://code.claude.com/docs/en/legal-and-compliance>。
 - **引擎不可控**：二进制随 SDK 版本更新，行为、协议、对第三方 base URL 的支持都可能变。锁定 SDK 版本，升级前在测试环境验证。

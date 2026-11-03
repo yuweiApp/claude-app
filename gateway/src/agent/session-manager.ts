@@ -11,6 +11,7 @@ import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { SessionSummary } from "../shared/types.js";
+import { loadAttachments } from "./attachments.js";
 import { AgentSession } from "./session.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
@@ -33,20 +34,25 @@ export class SessionManager {
   }
 
   /** 新建会话并发送第一条消息 */
-  async create(text: string, opts: { model?: string; permissionMode?: PermissionMode }): Promise<AgentSession> {
+  async create(
+    text: string,
+    opts: { model?: string; permissionMode?: PermissionMode; attachments?: string[] },
+  ): Promise<AgentSession> {
+    const attachments = await loadAttachments(opts.attachments ?? []);
     const session = await this.launch(randomUUID(), false, opts);
-    session.send(text);
+    await session.send(text, attachments);
     return session;
   }
 
   /** 发送消息；会话不活跃时先 resume */
-  async send(sessionId: string, text: string): Promise<string> {
+  async send(sessionId: string, text: string, attachmentIds: string[] = []): Promise<string> {
+    const attachments = await loadAttachments(attachmentIds);
     let session = this.active.get(sessionId);
     if (!session) {
       if (!(await this.exists(sessionId))) throw new NotFoundError(`会话不存在：${sessionId}`);
       session = await this.launch(sessionId, true, {});
     }
-    return session.send(text);
+    return session.send(text, attachments);
   }
 
   async list(): Promise<SessionSummary[]> {
