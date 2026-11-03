@@ -8,6 +8,13 @@ import { sessionRoutes } from "./http/routes/sessions.js";
 import { folderRoutes } from "./http/routes/folders.js";
 import { uploadRoutes } from "./http/routes/uploads.js";
 
+// 终端里用 pino-pretty 格式化。不用 transport：它在 worker 线程里把 UTF-8 字节直接写 fd 1，
+// 中文 Windows 控制台按 GBK 显示会乱码；交给 process.stdout 由 Node 转成 UTF-16 写控制台。
+// pino-pretty 是开发依赖，只在终端里动态加载
+const prettyStream = process.stdout.isTTY
+  ? (await import("pino-pretty")).default({ translateTime: "HH:MM:ss", destination: process.stdout })
+  : undefined;
+
 export interface App {
   app: FastifyInstance;
   sessions: SessionManager;
@@ -17,7 +24,7 @@ export function buildApp(): App {
   const app = Fastify({
     logger: {
       level: process.env.LOG_LEVEL || "info",
-      transport: process.stdout.isTTY ? { target: "pino-pretty", options: { translateTime: "HH:MM:ss" } } : undefined,
+      stream: prettyStream,
     },
   });
   const hub = new EventHub(config.eventBufferSize);
