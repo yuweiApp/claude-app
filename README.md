@@ -11,6 +11,7 @@
 | [docs/](docs/README.md) | 技术方案：架构、会话模型、事件流、权限、模型接入、接口、路线图、风险 |
 | gateway/ | Node 22 + TypeScript + Fastify：会话生命周期、SSE 断线续传、权限请求挂起与回复、历史会话、附件上传 |
 | client/ | Vite + React 19 + TypeScript：会话列表、流式对话、工具调用折叠、权限确认、中断、附件 |
+| desktop/ | Electron 桌面版：拉起网关和网页，在应用窗口里打开 |
 
 ## 快速开始
 
@@ -22,6 +23,14 @@ npm run dev                                               # http://127.0.0.1:878
 ```bash
 cd client && npm install && npm run dev                   # http://localhost:5180
 ```
+
+以桌面应用启动（先按上面装好 gateway 和 client 的依赖、配好 `.env.local`）：
+
+```bash
+cd desktop && npm install && npm start
+```
+
+桌面版会拉起网关（`node --import tsx`）和网页（Vite），关窗口时一起结束；网关或网页已经在跑就直接用。VS Code 里选「启动桌面应用」。环境变量 `DESKTOP_GATEWAY_URL`、`DESKTOP_CLIENT_URL` 改地址，`DESKTOP_NODE` 指定 node。
 
 会话记录、settings、skills 等都在 `gateway/.data/claude-home`（`CLAUDE_CONFIG_DIR`），默认工作目录是 `gateway/.data/workspace`（`WORKSPACE_DIR`），都不会碰本机的 `~/.claude`。
 

@@ -1,0 +1,21 @@
+{
+  "name": "claude-app-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Electron desktop shell for claude-app: starts the gateway and web client, shows them in a window",
+  "main": "dist/main.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsc -p tsconfig.json && electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "electron": "44.9.0",
+    "typescript": "^7.0.2"
+  }
+}

@@ -28,6 +28,20 @@
         }
       },
       "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "启动桌面应用",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/desktop",
+      "preLaunchTask": "编译桌面版",
+      "runtimeExecutable": "${workspaceFolder}/desktop/node_modules/.bin/electron",
+      "windows": { "runtimeExecutable": "${workspaceFolder}/desktop/node_modules/.bin/electron.cmd" },
+      "args": ["."],
+      "outputCapture": "std",
+      "internalConsoleOptions": "openOnSessionStart",
+      "outFiles": ["${workspaceFolder}/desktop/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"]
     }
   ]
 }

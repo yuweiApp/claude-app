@@ -10,8 +10,8 @@ import { uploadRoutes } from "./http/routes/uploads.js";
 
 // 终端里用 pino-pretty 格式化。不用 transport：它在 worker 线程里把 UTF-8 字节直接写 fd 1，
 // 中文 Windows 控制台按 GBK 显示会乱码；交给 process.stdout 由 Node 转成 UTF-16 写控制台。
-// pino-pretty 是开发依赖，只在终端里动态加载
-const prettyStream = process.stdout.isTTY
+// pino-pretty 是开发依赖，只在终端里（或桌面版设了 LOG_PRETTY=1）动态加载
+const prettyStream = process.stdout.isTTY || process.env.LOG_PRETTY === "1"
   ? (await import("pino-pretty")).default({ translateTime: "HH:MM:ss", destination: process.stdout })
   : undefined;
 

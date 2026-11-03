@@ -11,6 +11,7 @@ export PATH="$HOME/.local/node/bin:$PATH"
 # 类型检查（改完代码后都要跑一遍）
 npm --prefix gateway run typecheck
 npm --prefix client run typecheck
+npm --prefix desktop run typecheck
 ```
 
 ## 开发服务
@@ -29,6 +30,8 @@ systemd-run --user --pty --same-dir --collect --unit=claude-app-gateway --setenv
 ```
 
 在项目根目录执行，Ctrl-C 停止。检查方法：`grep NoNewPrivs /proc/<网关 pid>/status` 应为 0。网页（Vite）不受影响，照常起。
+
+桌面版（`desktop/`）会自己拉起网关，同理：从桌面版终端里 `npm start` 起的网关也带 `no_new_privs`。需要 ping 时先用上面的命令单独起网关，桌面版检测到已经在跑就不再拉起。
 
 ## 约定
 
