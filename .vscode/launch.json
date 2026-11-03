@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "启动应用",
+      "name": "启动网页",
       "type": "node",
       "request": "launch",
       "cwd": "${workspaceFolder}/gateway",
