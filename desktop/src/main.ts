@@ -1,8 +1,8 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import path from "node:path";
-import { app, BrowserWindow, dialog, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
-// 桌面版：拉起网关和网页（Vite），在窗口里打开网页。已经在跑的（比如 VS Code 里先启动了「启动应用」）直接复用
+// 桌面版：拉起网关和网页（Vite），在窗口里打开网页。已经在跑的（比如 VS Code 里先启动了「启动网页」）直接复用
 const root = path.resolve(import.meta.dirname, "..", "..");
 const gatewayUrl = process.env.DESKTOP_GATEWAY_URL || "http://127.0.0.1:8788";
 const clientUrl = process.env.DESKTOP_CLIENT_URL || "http://localhost:5180";
@@ -83,8 +83,14 @@ function createWindow(): BrowserWindow {
     title: "Claude App",
     show: false,
     autoHideMenuBar: true,
+    // 不要系统标题栏：网页自己画（client/src/components/TitleBar.tsx），按钮通过 preload 调下面的 window:* 消息。
+    // macOS 保留左上角的红绿灯按钮
+    ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : { frame: false }),
+    webPreferences: { preload: path.join(import.meta.dirname, "preload.cjs") },
   });
   win.once("ready-to-show", () => win.show());
+  win.on("maximize", () => win.webContents.send("window:maximized", true));
+  win.on("unmaximize", () => win.webContents.send("window:maximized", false));
   // 网页里的外部链接用系统浏览器打开，不在应用窗口里跳走
   const external = (url: string) => !url.startsWith(clientUrl) && /^https?:/.test(url);
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -99,6 +105,16 @@ function createWindow(): BrowserWindow {
   void win.loadURL(clientUrl);
   return win;
 }
+
+// 网页标题栏上的窗口按钮
+ipcMain.on("window:minimize", (e) => BrowserWindow.fromWebContents(e.sender)?.minimize());
+ipcMain.on("window:toggle-maximize", (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (win?.isMaximized()) win.unmaximize();
+  else win?.maximize();
+});
+ipcMain.on("window:close", (e) => BrowserWindow.fromWebContents(e.sender)?.close());
+ipcMain.handle("window:is-maximized", (e) => BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false);
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();

@@ -47,12 +47,22 @@ function splitTurns(items: Item[]): Turn[] {
   return turns;
 }
 
-/** 通知里的 summary 形如 Background command "…" completed (exit code 0)，显示引号里的任务说明 */
+/** 通知 summary 里的退出码（… failed with exit code 124） */
+const taskExitCode = (task: TaskItem) => /exit code (-?\d+)/.exec(task.text)?.[1];
+
+/**
+ * 通知里的 summary 形如 Background command "…" completed (exit code 0)，显示引号里的任务说明。
+ * 退出码不是 0 时 Claude Code 记成 failed，但命令可能只是被 timeout 结束了（124），所以不写「失败」，只写退出码；
+ * 没有退出码的失败（任务本身出错）才写「失败」
+ */
 function taskLabel(task: TaskItem): string {
-  const status =
-    task.status === "completed" ? "后台任务已完成" : task.status === "failed" ? "后台任务失败" : task.status === "stopped" ? "后台任务已停止" : "后台任务结束";
+  const exit = task.status === "failed" ? taskExitCode(task) : undefined;
+  const status = exit
+    ? "后台任务已结束"
+    : task.status === "completed" ? "后台任务已完成" : task.status === "failed" ? "后台任务失败" : task.status === "stopped" ? "后台任务已停止" : "后台任务结束";
   const name = /"(.+)"/.exec(task.text)?.[1] ?? task.text;
-  return name ? `${status}：${name}` : status;
+  const label = name ? `${status}：${name}` : status;
+  return exit ? `${label}（退出码 ${exit}）` : label;
 }
 
 export function Messages({ view }: { view: SessionView }) {
@@ -110,7 +120,7 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
   return (
     <section className="turn">
       {turn.task && (
-        <div className={`task-line${turn.task.status === "failed" ? " error" : ""}`} title={turn.task.text}>
+        <div className={`task-line${turn.task.status === "failed" && !taskExitCode(turn.task) ? " error" : ""}`} title={turn.task.text}>
           {taskLabel(turn.task)}
         </div>
       )}

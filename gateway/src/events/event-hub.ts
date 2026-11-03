@@ -62,4 +62,9 @@ export class EventHub {
   publish(sessionId: string, event: GatewayEvent): void {
     this.channel(sessionId).publish(event);
   }
+
+  /** 会话删除后丢掉它的事件缓冲 */
+  remove(sessionId: string): void {
+    this.channels.delete(sessionId);
+  }
 }

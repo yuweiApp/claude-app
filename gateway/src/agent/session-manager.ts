@@ -4,6 +4,7 @@ import { stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  deleteSession,
   getSessionInfo,
   getSessionMessages,
   listSessions,
@@ -14,13 +15,16 @@ import {
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
-import type { SessionListItem } from "../shared/types.js";
+import type { BackgroundTask, SessionListItem } from "../shared/types.js";
 import { loadAttachments } from "./attachments.js";
 import { AgentSession } from "./session.js";
+import { readOutputTail, TaskList } from "./tasks.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
 export class SessionManager {
   private readonly active = new Map<string, AgentSession>();
+  /** 每个会话的后台任务，子进程回收后还留着（网关重启前） */
+  private readonly tasks = new Map<string, TaskList>();
   private readonly sweeper: NodeJS.Timeout;
 
   constructor(
@@ -88,6 +92,49 @@ export class SessionManager {
     await this.active.get(sessionId)?.close();
   }
 
+  /** 删除会话：先关掉子进程，再删 Claude Code 落盘的会话记录（jsonl 和子代理记录），事件缓冲一起清掉 */
+  async delete(sessionId: string): Promise<void> {
+    const session = this.active.get(sessionId);
+    await session?.close();
+    // 刚建的会话第一轮还没落盘时只有子进程，没有文件可删
+    if (await getSessionInfo(sessionId)) await deleteSession(sessionId);
+    else if (!session) throw new NotFoundError(`会话不存在：${sessionId}`);
+    this.hub.remove(sessionId);
+    this.tasks.delete(sessionId);
+  }
+
+  listTasks(sessionId: string): BackgroundTask[] {
+    return this.tasks.get(sessionId)?.list() ?? [];
+  }
+
+  /** 任务输出的最后一段；只能读这个会话自己记下的任务的输出文件 */
+  async taskOutput(sessionId: string, taskId: string): Promise<{ text: string; truncated: boolean }> {
+    const file = this.tasks.get(sessionId)?.outputFile(taskId);
+    if (!file) throw new NotFoundError("这个任务没有输出");
+    return readOutputTail(file).catch(() => ({ text: "", truncated: false }));
+  }
+
+  async stopTask(sessionId: string, taskId: string): Promise<void> {
+    const session = this.active.get(sessionId);
+    if (!session) throw new NotFoundError("会话不在运行");
+    await session.stopTask(taskId);
+  }
+
+  /** 清掉已经结束的后台任务 */
+  clearFinishedTasks(sessionId: string): void {
+    const list = this.tasks.get(sessionId);
+    if (list?.clearFinished()) this.hub.publish(sessionId, { type: "tasks", tasks: list.list() });
+  }
+
+  private taskList(sessionId: string): TaskList {
+    let list = this.tasks.get(sessionId);
+    if (!list) {
+      list = new TaskList();
+      this.tasks.set(sessionId, list);
+    }
+    return list;
+  }
+
   async closeAll(): Promise<void> {
     clearInterval(this.sweeper);
     await Promise.allSettled([...this.active.values()].map((s) => s.close()));
@@ -110,6 +157,7 @@ export class SessionManager {
       },
       this.hub,
       this.log,
+      this.taskList(sessionId),
       (closed) => {
         if (this.active.get(closed.id) === closed) this.active.delete(closed.id);
       },

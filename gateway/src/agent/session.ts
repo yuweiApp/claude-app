@@ -16,6 +16,7 @@ import { buildUserContent } from "./attachments.js";
 import { InputQueue } from "./input-queue.js";
 import { listModels } from "./models.js";
 import { buildOptions } from "./options.js";
+import type { TaskList } from "./tasks.js";
 
 interface PendingPermission {
   resolve: (result: PermissionResult) => void;
@@ -52,6 +53,7 @@ export class AgentSession {
     opts: { resume: boolean; cwd: string; model?: string; effort?: EffortLevel; permissionMode: PermissionMode },
     private readonly hub: EventHub,
     private readonly log: FastifyBaseLogger,
+    private readonly tasks: TaskList,
     private readonly onClosed: (session: AgentSession) => void,
   ) {
     this.model = opts.model ?? config.model;
@@ -91,6 +93,11 @@ export class AgentSession {
 
   async interrupt(): Promise<void> {
     await this.query.interrupt();
+  }
+
+  /** 停止后台任务，之后 SDK 会发 status 为 stopped 的 task_notification */
+  async stopTask(taskId: string): Promise<void> {
+    await this.query.stopTask(taskId);
   }
 
   async setPermissionMode(mode: PermissionMode): Promise<void> {
@@ -188,7 +195,9 @@ export class AgentSession {
         if ((message.type === "assistant" || message.type === "stream_event") && this.state === "idle") {
           this.setState("running");
         }
+        const tasksChanged = this.tasks.ingest(message);
         this.publish({ type: "sdk", message });
+        if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });
         if (message.type === "result") this.setState("idle");
       }
     } catch (err) {
@@ -201,6 +210,7 @@ export class AgentSession {
       for (const requestId of [...this.pending.keys()]) {
         this.resolvePermission(requestId, { behavior: "deny", message: "会话已结束" });
       }
+      if (this.tasks.processExited()) this.publish({ type: "tasks", tasks: this.tasks.list() });
       this.setState("closed");
       this.onClosed(this);
     }

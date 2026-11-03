@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, GatewayEvent, SessionListItem } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, GatewayEvent, SessionListItem } from "@gateway/shared/types";
 
-export type { Attachment, GatewayEvent, SessionListItem };
+export type { Attachment, BackgroundTask, GatewayEvent, SessionListItem };
 
 const BASE = "/api";
 
@@ -77,6 +77,16 @@ export const api = {
     return request<{ attachments: Attachment[] }>("POST", "/uploads", form).then((r) => r.attachments);
   },
   interrupt: (id: string) => request("POST", `/sessions/${id}/interrupt`),
+  /** 会话的后台任务 */
+  tasks: (id: string) => request<{ tasks: BackgroundTask[] }>("GET", `/sessions/${id}/tasks`).then((r) => r.tasks),
+  /** 后台任务输出的最后一段（64 KB） */
+  taskOutput: (id: string, taskId: string) =>
+    request<{ text: string; truncated: boolean }>("GET", `/sessions/${id}/tasks/${encodeURIComponent(taskId)}/output`),
+  stopTask: (id: string, taskId: string) => request("POST", `/sessions/${id}/tasks/${encodeURIComponent(taskId)}/stop`),
+  /** 清掉已经结束的后台任务 */
+  clearTasks: (id: string) => request("DELETE", `/sessions/${id}/tasks`),
+  /** 删除会话，会话记录一起删，不能恢复 */
+  deleteSession: (id: string) => request("DELETE", `/sessions/${id}`),
   setPermissionMode: (id: string, mode: PermissionMode) => request("POST", `/sessions/${id}/permission-mode`, { mode }),
   replyPermission: (id: string, requestId: string, behavior: "allow" | "deny", always = false) =>
     request("POST", `/sessions/${id}/permissions/${requestId}`, { behavior, always }),

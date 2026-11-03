@@ -23,7 +23,29 @@ export type GatewayEvent =
     }
   | { type: "permission_resolved"; requestId: string; behavior: "allow" | "deny" }
   | { type: "error"; message: string }
+  /** 会话的后台任务有变化：整个列表 */
+  | { type: "tasks"; tasks: BackgroundTask[] }
   | { type: "reset" };
+
+/** 会话的后台任务（Bash 后台命令、后台子代理等），见 gateway/src/agent/tasks.ts */
+export interface BackgroundTask {
+  taskId: string;
+  toolUseId?: string;
+  /** local_bash、local_agent 等 */
+  type?: string;
+  description: string;
+  /** Bash 任务的命令 */
+  command?: string;
+  status: "running" | "completed" | "failed" | "stopped";
+  /** 网关收到开始、结束消息的时间（毫秒） */
+  startedAt: number;
+  endedAt?: number;
+  exitCode?: number;
+  /** 完成通知里的一句话说明 */
+  summary?: string;
+  /** 有输出文件可以看（GET /sessions/:id/tasks/:taskId/output） */
+  hasOutput: boolean;
+}
 
 /** 上传后的附件（POST /uploads 返回），发消息时只传 id */
 export interface Attachment {

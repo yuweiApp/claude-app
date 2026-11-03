@@ -1,5 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type MouseEvent, type ReactNode } from "react";
 import type { SessionListItem } from "../api";
+import { useDismiss } from "./ComposerPickers";
 import { SidebarToggle } from "./SidebarToggle";
 
 /** 会话标题：SDKSessionInfo.summary 就是 SDK 给的显示标题（自定义标题、自动摘要或第一条提问） */
@@ -46,10 +47,13 @@ interface Props {
   onSelect: (id: string) => void;
   /** 新会话；cwd 是在哪个文件夹里，不传是无文件夹 */
   onNew: (cwd?: string) => void;
-  onCollapse: () => void;
+  /** 删除这些会话（已经确认过） */
+  onDelete: (ids: string[]) => void;
+  /** 收起侧边栏；不传时不显示按钮（桌面版的在标题栏上） */
+  onCollapse?: () => void;
 }
 
-export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, onCollapse }: Props) {
+export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, onDelete, onCollapse }: Props) {
   const [collapsed, setCollapsed] = useState(loadCollapsed);
   const toggle = (key: string) =>
     setCollapsed((cur) => {
@@ -83,18 +87,33 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-head">
-        <SidebarToggle collapsed={false} onToggle={onCollapse} />
-      </div>
+      {onCollapse && (
+        <div className="sidebar-head">
+          <SidebarToggle collapsed={false} onToggle={onCollapse} />
+        </div>
+      )}
       <button className="nav-item" onClick={() => onNew()}>
         <ComposeIcon />
         新会话
       </button>
       <div className="sidebar-divider" />
 
-      <div className="section-title">
+      <SectionHead
+        menu={[
+          {
+            label: "全部删除",
+            danger: true,
+            disabled: projects.length === 0,
+            onClick: () => {
+              const ids = projects.flatMap((g) => g.sessions.map((s) => s.sessionId));
+              const message = `删除「项目」里全部 ${projects.length} 个项目的 ${ids.length} 个会话？会话记录会一起删除，不能恢复；文件夹里的文件不受影响。`;
+              if (window.confirm(message)) onDelete(ids);
+            },
+          },
+        ]}
+      >
         <SectionToggle label="项目" icon={<ProjectsIcon />} count={projects.length} expanded={projectsOpen} onClick={() => toggle(SECTION_PROJECTS)} />
-      </div>
+      </SectionHead>
       {projectsOpen && projects.length === 0 && <div className="group-empty">暂无项目，新会话时选择文件夹</div>}
       {projectsOpen &&
         projects.map((g) => {
@@ -118,9 +137,21 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
           );
         })}
 
-      <div className="section-title section-gap">
+      <SectionHead
+        className="section-gap"
+        menu={[
+          {
+            label: "全部删除",
+            danger: true,
+            disabled: chats.length === 0,
+            onClick: () => {
+              if (window.confirm(`删除「会话」里的全部 ${chats.length} 个会话？会话记录会一起删除，不能恢复。`)) onDelete(chats.map((s) => s.sessionId));
+            },
+          },
+        ]}
+      >
         <SectionToggle label="会话" icon={<ChatIcon />} count={chats.length} expanded={chatsOpen} onClick={() => toggle(SECTION_CHATS)} />
-      </div>
+      </SectionHead>
       {chatsOpen && chats.length === 0 && <div className="group-empty">暂无会话</div>}
       {chatsOpen && <ul>{chats.map(row)}</ul>}
     </aside>
@@ -135,6 +166,66 @@ function relativeTime(ms: number) {
   if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
   if (diff < 86400 * 30) return `${Math.floor(diff / 86400)} 天前`;
   return new Date(ms).toLocaleDateString();
+}
+
+interface MenuAction {
+  label: string;
+  danger?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}
+
+/** 分区标题行：悬停时右边出现「…」，点它或在这一行上右键弹出菜单 */
+function SectionHead({ className, menu, children }: { className?: string; menu: MenuAction[]; children: ReactNode }) {
+  // 菜单位置（视口坐标）：点「…」时在按钮下方、和按钮右对齐，右键时在鼠标处往右下展开
+  const [at, setAt] = useState<{ left?: number; right?: number; top: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useDismiss(menuRef, at !== null, () => setAt(null));
+
+  const openAtButton = (e: MouseEvent<HTMLButtonElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setAt(at ? null : { right: window.innerWidth - rect.right, top: rect.bottom + 4 });
+  };
+  const openAtPointer = (e: MouseEvent) => {
+    e.preventDefault();
+    setAt({ left: Math.min(e.clientX, window.innerWidth - 180), top: e.clientY });
+  };
+
+  return (
+    <div className={`section-title section-head${at ? " menu-open" : ""}${className ? ` ${className}` : ""}`} onContextMenu={openAtPointer}>
+      {children}
+      <button
+        className="icon-btn section-more"
+        title="更多"
+        aria-label="更多"
+        aria-haspopup="menu"
+        aria-expanded={at !== null}
+        // 菜单开着时按下这个按钮不算点到外面，由 onClick 收起
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={openAtButton}
+      >
+        <MoreIcon />
+      </button>
+      {at && (
+        <div ref={menuRef} className="menu context-menu" role="menu" style={{ left: at.left ?? "auto", right: at.right ?? "auto", top: at.top }}>
+          {menu.map((item) => (
+            <button
+              key={item.label}
+              role="menuitem"
+              className={`menu-item${item.danger ? " danger" : ""}`}
+              disabled={item.disabled}
+              onClick={() => {
+                setAt(null);
+                item.onClick();
+              }}
+            >
+              <span className="menu-item-name">{item.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function SectionToggle({ label, icon, count, expanded, onClick }: { label: string; icon: ReactNode; count: number; expanded: boolean; onClick: () => void }) {
@@ -168,6 +259,16 @@ function ComposeIcon() {
   );
 }
 
+
+function MoreIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <circle cx="3.5" cy="8" r="1.2" />
+      <circle cx="8" cy="8" r="1.2" />
+      <circle cx="12.5" cy="8" r="1.2" />
+    </svg>
+  );
+}
 
 function ChatIcon() {
   return (

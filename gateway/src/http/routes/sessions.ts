@@ -15,6 +15,10 @@ interface IdParams {
   id: string;
 }
 
+interface TaskParams extends IdParams {
+  taskId: string;
+}
+
 /** 文字和附件至少要有一样 */
 function requireContent(body: { text: string; attachments?: string[] }): void {
   if (!body.text.trim() && !body.attachments?.length) throw new AttachmentError("消息不能为空");
@@ -169,6 +173,29 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
 
   app.delete<{ Params: IdParams }>("/sessions/:id/process", async (req) => {
     await sessions.closeSession(req.params.id);
+    return { ok: true };
+  });
+
+  app.get<{ Params: IdParams }>("/sessions/:id/tasks", async (req) => ({ tasks: sessions.listTasks(req.params.id) }));
+
+  app.get<{ Params: TaskParams }>("/sessions/:id/tasks/:taskId/output", async (req) =>
+    sessions.taskOutput(req.params.id, req.params.taskId),
+  );
+
+  app.post<{ Params: TaskParams }>("/sessions/:id/tasks/:taskId/stop", async (req) => {
+    await sessions.stopTask(req.params.id, req.params.taskId);
+    return { ok: true };
+  });
+
+  /** 清掉已经结束的后台任务 */
+  app.delete<{ Params: IdParams }>("/sessions/:id/tasks", async (req) => {
+    sessions.clearFinishedTasks(req.params.id);
+    return { ok: true };
+  });
+
+  /** 删除会话（会话记录一起删，不能恢复） */
+  app.delete<{ Params: IdParams }>("/sessions/:id", async (req) => {
+    await sessions.delete(req.params.id);
     return { ok: true };
   });
 }

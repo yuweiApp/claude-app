@@ -1,5 +1,5 @@
 import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
-import type { GatewayEvent, HistoryMessage } from "../api";
+import type { BackgroundTask, GatewayEvent, HistoryMessage } from "../api";
 
 /** 消息里显示的附件（历史消息里只有路径，没有大小） */
 export interface AttachmentChip {
@@ -28,6 +28,16 @@ export type Item =
   | { kind: "task"; uuid: string; status: string; text: string };
 
 export type TaskItem = Extract<Item, { kind: "task" }>;
+
+/**
+ * 实时收到、还没放进消息列表的后台任务通知。after：收到时模型正在进行（或刚完成）的那次 API 响应。
+ * 这一轮里之后又开始了别的 API 响应，说明 Claude Code 把通知并进了这一轮（历史里它在这一轮中间），就丢掉；
+ * 一直到这一轮结束都没有，它会让 Claude Code 开新的一轮，等那一轮开始时放进去当开头
+ */
+interface PendingTask {
+  task: TaskItem;
+  after?: string;
+}
 
 export interface ToolResult {
   text: string;
@@ -63,10 +73,15 @@ export interface SessionView {
   seen: Set<string>;
   /** 续传点已丢失，需要重新拉历史 */
   needsReload: boolean;
-  /** 上一轮已经结束（收到 result），之后还没有新的用户消息 */
+  /** 上一轮已经结束（收到 result，或 assistant 消息的 stop_reason 是 end_turn），之后还没有新的用户消息 */
   turnEnded: boolean;
   /** 实时收到、还没开始那一轮的后台任务通知：等下一轮自己开始（state 变成 running）时再放进消息列表，作为那一轮的开头 */
-  pendingTasks: TaskItem[];
+  pendingTasks: PendingTask[];
+  /** 当前这次模型 API 响应的 id（主线程），判断通知有没有被并进当前这一轮 */
+  apiMessageId?: string;
+  /** 会话的后台任务（网关的 tasks 事件，整个列表）；backgroundTasksLive：已经从事件流收到过，不再用接口拉到的覆盖 */
+  backgroundTasks: BackgroundTask[];
+  backgroundTasksLive: boolean;
 }
 
 export function emptyView(): SessionView {
@@ -81,12 +96,19 @@ export function emptyView(): SessionView {
     needsReload: false,
     turnEnded: false,
     pendingTasks: [],
+    backgroundTasks: [],
+    backgroundTasksLive: false,
   };
 }
 
-export type Action = { type: "event"; event: GatewayEvent } | { type: "history"; messages: HistoryMessage[] };
+export type Action =
+  | { type: "event"; event: GatewayEvent }
+  | { type: "history"; messages: HistoryMessage[] }
+  /** 打开会话时用接口拉到的后台任务（事件缓冲里的 tasks 事件可能已经被挤掉） */
+  | { type: "tasks"; tasks: BackgroundTask[] };
 
 export function reduce(view: SessionView, action: Action): SessionView {
+  if (action.type === "tasks") return view.backgroundTasksLive ? view : { ...view, backgroundTasks: action.tasks };
   if (action.type === "history") {
     // 历史放在前面，已经从事件流收到的（按 uuid）不重复
     const next = { ...emptyView(), state: view.state, model: view.model, effort: view.effort, permissionMode: view.permissionMode };
@@ -98,6 +120,8 @@ export function reduce(view: SessionView, action: Action): SessionView {
     next.permissions = view.permissions;
     next.turnEnded = view.turnEnded;
     next.pendingTasks = view.pendingTasks;
+    next.backgroundTasks = view.backgroundTasks;
+    next.backgroundTasksLive = view.backgroundTasksLive;
     return next;
   }
 
@@ -118,7 +142,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
       if (event.state !== "running") next.streaming = { text: "" };
       // 上一轮结束后没有用户消息就又开始运行：是后台任务的通知让 Claude Code 自动开了新的一轮（实时事件里没有这条 user 消息）
       if (event.state === "running" && view.turnEnded && view.pendingTasks.length) {
-        view.pendingTasks.forEach((task) => pushItem(next, null, task));
+        view.pendingTasks.forEach(({ task }) => pushItem(next, null, task));
         next.pendingTasks = [];
         next.turnEnded = false;
       }
@@ -131,6 +155,10 @@ export function reduce(view: SessionView, action: Action): SessionView {
       break;
     case "error":
       pushItem(next, null, { kind: "error", uuid: crypto.randomUUID(), text: event.message });
+      break;
+    case "tasks":
+      next.backgroundTasks = event.tasks;
+      next.backgroundTasksLive = true;
       break;
     case "reset":
       next.needsReload = true;
@@ -147,12 +175,18 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
     case "stream_event": {
       if (message.parent_tool_use_id) return;
       const e = message.event;
-      if (e.type === "message_start") view.streaming = { text: "" };
+      if (e.type === "message_start") {
+        view.streaming = { text: "" };
+        startApiMessage(view, e.message.id);
+      }
       if (e.type === "content_block_delta" && e.delta.type === "text_delta") view.streaming = { text: view.streaming.text + e.delta.text };
       return;
     }
     case "assistant":
-      if (!message.parent_tool_use_id) view.streaming = { text: "" };
+      if (!message.parent_tool_use_id) {
+        view.streaming = { text: "" };
+        startApiMessage(view, message.message.id);
+      }
       ingestMessage(view, "assistant", message.uuid, message.message, message.parent_tool_use_id);
       return;
     case "user":
@@ -160,7 +194,8 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       return;
     case "system":
       if (message.subtype === "task_notification" && !message.skip_transcript) {
-        view.pendingTasks = [...view.pendingTasks, { kind: "task", uuid: `task:${message.task_id}`, status: message.status, text: message.summary }];
+        const task: TaskItem = { kind: "task", uuid: `task:${message.task_id}`, status: message.status, text: message.summary };
+        view.pendingTasks = [...view.pendingTasks, { task, after: view.turnEnded ? undefined : view.apiMessageId }];
       }
       return;
     case "result":
@@ -179,6 +214,15 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
   }
 }
 
+/** 主线程开始（或收到）一次模型 API 响应：这一轮里在它之前收到的通知已经被并进这一轮了 */
+function startApiMessage(view: SessionView, id: string): void {
+  if (id === view.apiMessageId) return;
+  view.apiMessageId = id;
+  if (!view.turnEnded && view.pendingTasks.some((p) => p.after !== undefined)) {
+    view.pendingTasks = view.pendingTasks.filter((p) => p.after === undefined);
+  }
+}
+
 /** 把一条 user / assistant 消息（SDK 实时消息和 jsonl 历史格式相同）归并进视图 */
 function ingestMessage(view: SessionView, type: string, uuid: string, raw: unknown, parent: string | null): void {
   if (view.seen.has(uuid)) return;
@@ -193,6 +237,9 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       }
     }
     const messageId = (raw as { id?: unknown }).id;
+    // 历史里没有 result：按 stop_reason 判断这一轮是不是结束了（后台任务通知是开新一轮还是并进当前这一轮要用到）
+    const stop = (raw as { stop_reason?: unknown }).stop_reason;
+    if (!parent && typeof stop === "string") view.turnEnded = stop !== "tool_use" && stop !== "pause_turn";
     if (blocks.length) {
       pushItem(view, parent, { kind: "assistant", uuid, messageId: typeof messageId === "string" ? messageId : undefined, blocks });
     }
@@ -203,7 +250,10 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
   if (type === "user") {
     const task = typeof content === "string" ? taskNotification(content) : null;
     if (task) {
-      pushItem(view, parent, task);
+      // 上一轮结束后到的通知让 Claude Code 开了新的一轮，显示成那一轮的开头；
+      // 一轮还在进行时到的，Claude Code 把它并进当前这一轮（实时事件里也只有一个 result），对话里不单独显示，后台任务面板里有
+      if (parent || view.turnEnded) pushItem(view, parent, task);
+      view.turnEnded = false;
       view.seen = new Set(view.seen).add(uuid);
       return;
     }
@@ -215,6 +265,7 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
     }
     if (typeof content === "string") {
       pushItem(view, parent, { kind: "user", uuid, text: content, images: [], attachments: [] });
+      if (!parent) view.turnEnded = false;
       return;
     }
     if (!Array.isArray(content)) return;
@@ -239,6 +290,7 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
     }
     if (texts.length || images.length || attachments.length) {
       pushItem(view, parent, { kind: "user", uuid, text: texts.join("\n"), images, attachments });
+      if (!parent) view.turnEnded = false;
     } else {
       view.seen = new Set(view.seen).add(uuid);
     }
