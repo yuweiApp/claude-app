@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["vite/client"],
+    "paths": {
+      // 复用网关的事件类型和 SDK 的消息类型（只用于类型，不会打进产物）
+      "@gateway/*": ["../gateway/src/*"],
+      "@anthropic-ai/claude-agent-sdk": ["../gateway/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}
