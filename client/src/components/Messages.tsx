@@ -1,19 +1,20 @@
 import { useEffect, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Item, SessionView } from "../state/session";
+import type { Item, SessionView, TaskItem } from "../state/session";
 import { Attachments } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { CopyAction, MessageActions } from "./MessageActions";
-import { StepGroup, ThinkingStep, ToolStep, type ToolUse } from "./Steps";
+import { StepGroup, ToolStep, type ToolUse } from "./Steps";
 
 type UserItem = Extract<Item, { kind: "user" }>;
 type ResultItem = Extract<Item, { kind: "result" }>;
 
-/** 一轮：用户消息开头，到 result（这一轮结束）为止 */
+/** 一轮：用户消息（或自动开始这一轮的后台任务通知）开头，到 result（这一轮结束）为止 */
 interface Turn {
   key: string;
   user: UserItem | null;
+  task: TaskItem | null;
   body: Item[];
   result: ResultItem | null;
 }
@@ -23,16 +24,35 @@ function splitTurns(items: Item[]): Turn[] {
   const results: ResultItem[] = [];
   for (const item of items) {
     if (item.kind === "result") results.push(item);
-    else if (item.kind === "user" || !turns.length) {
-      turns.push({ key: item.uuid, user: item.kind === "user" ? item : null, body: item.kind === "user" ? [] : [item], result: null });
+    else if (item.kind === "user" || item.kind === "task" || !turns.length) {
+      turns.push({
+        key: item.uuid,
+        user: item.kind === "user" ? item : null,
+        task: item.kind === "task" ? item : null,
+        body: item.kind === "user" || item.kind === "task" ? [] : [item],
+        result: null,
+      });
     } else turns.at(-1)!.body.push(item);
   }
-  // 历史消息（getSessionMessages）里没有 result，事件流回放的 result 排在最后：按 SDK 的 user_message_uuid 挂回所属的那一轮
-  for (const r of results) {
-    const turn = turns.find((t) => t.user?.uuid === r.userMessageUuid) ?? turns.findLast((t) => !t.result);
-    if (turn) turn.result = r;
+  // 历史消息（getSessionMessages）里没有 result，事件流回放的 result 排在最后：按 SDK 的 user_message_uuid 挂回所属的那一轮。
+  // 后台任务开始的轮没有 user_message_uuid，事件缓冲也可能只剩最近几轮的 result：从后往前，挂到前面最近一个还没有 result 的轮
+  let limit = turns.length;
+  for (const r of results.toReversed()) {
+    let i = r.userMessageUuid ? turns.findIndex((t) => t.user?.uuid === r.userMessageUuid) : -1;
+    if (i < 0) i = turns.findLastIndex((t, j) => j < limit && !t.result);
+    if (i < 0) continue;
+    turns[i]!.result = r;
+    limit = i;
   }
   return turns;
+}
+
+/** 通知里的 summary 形如 Background command "…" completed (exit code 0)，显示引号里的任务说明 */
+function taskLabel(task: TaskItem): string {
+  const status =
+    task.status === "completed" ? "后台任务已完成" : task.status === "failed" ? "后台任务失败" : task.status === "stopped" ? "后台任务已停止" : "后台任务结束";
+  const name = /"(.+)"/.exec(task.text)?.[1] ?? task.text;
+  return name ? `${status}：${name}` : status;
 }
 
 export function Messages({ view }: { view: SessionView }) {
@@ -66,7 +86,7 @@ function Elapsed() {
 
 /**
  * 一轮的显示，参照 codex-app-server 的 TurnView（client/src/components/TurnView.tsx）：
- * 用户消息 → 中间过程（思考、工具调用、中间说明）折叠在「用时 Xs」下面 → 最终回复。
+ * 用户消息 → 中间过程（工具调用、中间说明）折叠在「用时 Xs」下面 → 最终回复。模型的思考不显示。
  * 进行中显示「已处理 Xs」并默认展开；结束后默认收起
  */
 function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: boolean }) {
@@ -81,14 +101,19 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
   // 网关报的错不折叠
   const errors = units.filter((u) => u.kind === "item");
   const process = units.filter((u, i) => i !== finalIdx && u.kind !== "item");
-  const streaming = live && (view.streaming.text || view.streaming.thinking);
-  const hasProcess = process.length > 0 || Boolean(live && view.streaming.thinking);
+  const streaming = live && view.streaming.text;
+  const hasProcess = process.length > 0;
   const expanded = live ? !liveCollapsed : open;
   // 工具正在执行时它的图标在转，不再另外显示「思考中…」
   const toolRunning = units.some((u) => u.kind === "steps" && u.tools.some((t) => !view.toolResults[t.id]));
 
   return (
     <section className="turn">
+      {turn.task && (
+        <div className={`task-line${turn.task.status === "failed" ? " error" : ""}`} title={turn.task.text}>
+          {taskLabel(turn.task)}
+        </div>
+      )}
       {turn.user && (
         <div className="msg-group msg-group-user">
           <ItemView item={turn.user} />
@@ -122,12 +147,6 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
               {process.map((u) => (
                 <UnitView key={u.key} unit={u} view={view} />
               ))}
-              {live && view.streaming.thinking && (
-                <details className="thinking streaming">
-                  <summary>思考中…</summary>
-                  {view.streaming.thinking}
-                </details>
-              )}
             </div>
           )}
           {live && !streaming && !(expanded && toolRunning) && <div className="working">思考中…</div>}
@@ -163,7 +182,6 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
 type Unit =
   | { kind: "item"; key: string; item: Exclude<Item, { kind: "assistant" }> }
   | { kind: "text"; key: string; text: string }
-  | { kind: "thinking"; key: string; text: string }
   | { kind: "steps"; key: string; messageId?: string; tools: ToolUse[] };
 
 function toUnits(items: Item[]): Unit[] {
@@ -175,8 +193,7 @@ function toUnits(items: Item[]): Unit[] {
     }
     item.blocks.forEach((block, i) => {
       const key = `${item.uuid}:${i}`;
-      if (block.type === "thinking") units.push({ kind: "thinking", key, text: block.thinking });
-      else if (block.type === "text") units.push({ kind: "text", key, text: block.text });
+      if (block.type === "text") units.push({ kind: "text", key, text: block.text });
       else {
         const last = units.at(-1);
         if (last?.kind === "steps" && item.messageId && last.messageId === item.messageId) last.tools.push(block);
@@ -209,8 +226,6 @@ function UnitView({ unit, view }: { unit: Unit; view: SessionView }) {
           <Markdown remarkPlugins={[remarkGfm]}>{unit.text}</Markdown>
         </div>
       );
-    case "thinking":
-      return <ThinkingStep text={unit.text} />;
     case "steps":
       return unit.tools.length === 1 ? (
         <ToolStep block={unit.tools[0]!} view={view} renderChildren={renderChildren} />
@@ -243,6 +258,8 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
       return <div className="result error">{item.text}</div>;
     case "notice":
       return <div className="notice-line">{item.text}</div>;
+    case "task":
+      return <div className="task-line">{taskLabel(item)}</div>;
   }
 }
 

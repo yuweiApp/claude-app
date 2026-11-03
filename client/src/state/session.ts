@@ -8,11 +8,8 @@ export interface AttachmentChip {
   size?: number;
 }
 
-/** assistant 消息里的内容块（只取渲染要用的字段） */
-export type Block =
-  | { type: "text"; text: string }
-  | { type: "thinking"; thinking: string }
-  | { type: "tool_use"; id: string; name: string; input: unknown };
+/** assistant 消息里的内容块（只取渲染要用的字段；思考不在界面上显示，不取） */
+export type Block = { type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: unknown };
 
 export type Item =
   /** images：用户消息里的 image 块（Claude 的结构，base64），转成 data: 地址直接显示 */
@@ -23,7 +20,14 @@ export type Item =
   | { kind: "result"; uuid: string; userMessageUuid?: string; isError: boolean; text: string; durationMs: number; costUsd: number }
   | { kind: "error"; uuid: string; text: string }
   /** 本地命令的输出（setModel 等会发一条 <local-command-stdout> 的 user 消息），显示成一行灰字，不算用户消息 */
-  | { kind: "notice"; uuid: string; text: string };
+  | { kind: "notice"; uuid: string; text: string }
+  /**
+   * 后台任务（Bash 后台命令、后台子代理等）完成的通知。模型空闲时 Claude Code 会拿它自动开始新的一轮，所以它和用户消息一样是一轮的开头。
+   * uuid 用 task:<task_id>：实时的 system/task_notification 和历史里的 <task-notification> 消息 uuid 不同，按任务 id 去重
+   */
+  | { kind: "task"; uuid: string; status: string; text: string };
+
+export type TaskItem = Extract<Item, { kind: "task" }>;
 
 export interface ToolResult {
   text: string;
@@ -50,7 +54,7 @@ export interface SessionView {
   children: Record<string, Item[]>;
   toolResults: Record<string, ToolResult>;
   /** 正在生成、还没收到完整 assistant 消息的文字 */
-  streaming: { text: string; thinking: string };
+  streaming: { text: string };
   permissions: PermissionRequest[];
   state: string;
   model?: string;
@@ -59,6 +63,10 @@ export interface SessionView {
   seen: Set<string>;
   /** 续传点已丢失，需要重新拉历史 */
   needsReload: boolean;
+  /** 上一轮已经结束（收到 result），之后还没有新的用户消息 */
+  turnEnded: boolean;
+  /** 实时收到、还没开始那一轮的后台任务通知：等下一轮自己开始（state 变成 running）时再放进消息列表，作为那一轮的开头 */
+  pendingTasks: TaskItem[];
 }
 
 export function emptyView(): SessionView {
@@ -66,11 +74,13 @@ export function emptyView(): SessionView {
     items: [],
     children: {},
     toolResults: {},
-    streaming: { text: "", thinking: "" },
+    streaming: { text: "" },
     permissions: [],
     state: "closed",
     seen: new Set(),
     needsReload: false,
+    turnEnded: false,
+    pendingTasks: [],
   };
 }
 
@@ -86,6 +96,8 @@ export function reduce(view: SessionView, action: Action): SessionView {
     next.toolResults = { ...view.toolResults, ...next.toolResults };
     next.streaming = view.streaming;
     next.permissions = view.permissions;
+    next.turnEnded = view.turnEnded;
+    next.pendingTasks = view.pendingTasks;
     return next;
   }
 
@@ -95,13 +107,21 @@ export function reduce(view: SessionView, action: Action): SessionView {
     case "user_message":
       // content 和会话历史里的格式一样，按同一套规则归并
       ingestMessage(next, "user", event.uuid, { content: event.content }, null);
+      next.turnEnded = false;
+      next.pendingTasks = [];
       break;
     case "state":
       next.state = event.state;
       next.model = event.model;
       next.effort = event.effort;
       next.permissionMode = event.permissionMode;
-      if (event.state !== "running") next.streaming = { text: "", thinking: "" };
+      if (event.state !== "running") next.streaming = { text: "" };
+      // 上一轮结束后没有用户消息就又开始运行：是后台任务的通知让 Claude Code 自动开了新的一轮（实时事件里没有这条 user 消息）
+      if (event.state === "running" && view.turnEnded && view.pendingTasks.length) {
+        view.pendingTasks.forEach((task) => pushItem(next, null, task));
+        next.pendingTasks = [];
+        next.turnEnded = false;
+      }
       break;
     case "permission_request":
       next.permissions = [...view.permissions.filter((p) => p.requestId !== event.requestId), event];
@@ -127,24 +147,25 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
     case "stream_event": {
       if (message.parent_tool_use_id) return;
       const e = message.event;
-      if (e.type === "message_start") view.streaming = { text: "", thinking: "" };
-      if (e.type === "content_block_delta") {
-        if (e.delta.type === "text_delta") view.streaming = { ...view.streaming, text: view.streaming.text + e.delta.text };
-        if (e.delta.type === "thinking_delta") {
-          view.streaming = { ...view.streaming, thinking: view.streaming.thinking + e.delta.thinking };
-        }
-      }
+      if (e.type === "message_start") view.streaming = { text: "" };
+      if (e.type === "content_block_delta" && e.delta.type === "text_delta") view.streaming = { text: view.streaming.text + e.delta.text };
       return;
     }
     case "assistant":
-      if (!message.parent_tool_use_id) view.streaming = { text: "", thinking: "" };
+      if (!message.parent_tool_use_id) view.streaming = { text: "" };
       ingestMessage(view, "assistant", message.uuid, message.message, message.parent_tool_use_id);
       return;
     case "user":
       if (message.uuid) ingestMessage(view, "user", message.uuid, message.message, message.parent_tool_use_id);
       return;
+    case "system":
+      if (message.subtype === "task_notification" && !message.skip_transcript) {
+        view.pendingTasks = [...view.pendingTasks, { kind: "task", uuid: `task:${message.task_id}`, status: message.status, text: message.summary }];
+      }
+      return;
     case "result":
-      view.streaming = { text: "", thinking: "" };
+      view.streaming = { text: "" };
+      view.turnEnded = true;
       pushItem(view, null, {
         kind: "result",
         uuid: message.uuid,
@@ -167,9 +188,7 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
     const blocks: Block[] = [];
     for (const b of content as Array<Record<string, unknown>>) {
       if (b.type === "text" && typeof b.text === "string") blocks.push({ type: "text", text: b.text });
-      else if (b.type === "thinking" && typeof b.thinking === "string" && b.thinking) {
-        blocks.push({ type: "thinking", thinking: b.thinking });
-      } else if (b.type === "tool_use" || b.type === "server_tool_use" || b.type === "mcp_tool_use") {
+      else if (b.type === "tool_use" || b.type === "server_tool_use" || b.type === "mcp_tool_use") {
         blocks.push({ type: "tool_use", id: String(b.id), name: String(b.name), input: b.input });
       }
     }
@@ -182,6 +201,12 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
   }
 
   if (type === "user") {
+    const task = typeof content === "string" ? taskNotification(content) : null;
+    if (task) {
+      pushItem(view, parent, task);
+      view.seen = new Set(view.seen).add(uuid);
+      return;
+    }
     const local = typeof content === "string" ? localCommandText(content) : null;
     if (local !== null) {
       if (local) pushItem(view, parent, { kind: "notice", uuid, text: local });
@@ -231,6 +256,14 @@ function parseAttachments(text: string): AttachmentChip[] | null {
       const path = line.slice(2);
       return { path, name: path.split("/").pop() || path };
     });
+}
+
+/** 历史里后台任务完成的通知：Claude Code 用它开始新一轮时存成一条 user 消息，内容是 <task-notification> 段 */
+function taskNotification(text: string): TaskItem | null {
+  const body = /^<task-notification>([\s\S]*)<\/task-notification>$/.exec(text.trim())?.[1];
+  if (body === undefined) return null;
+  const field = (name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(body)?.[1]?.trim() ?? "";
+  return { kind: "task", uuid: `task:${field("task-id")}`, status: field("status"), text: field("summary") };
 }
 
 /**

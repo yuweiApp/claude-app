@@ -94,9 +94,10 @@ SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类
 ### 3.3 客户端归并规则
 
 - 打开会话：先连 SSE，再拉 `GET /sessions/:id/messages` 的历史，两边按 `uuid` 去重合并。
-- `stream_event` 只用来拼"正在生成"的那段文字和思考；收到对应的完整 `assistant` 消息后丢掉临时内容。
+- `stream_event` 只用来拼"正在生成"的那段文字；收到对应的完整 `assistant` 消息后丢掉临时内容。模型的思考（`thinking` 块）不显示。
 - 工具调用：`assistant` 里的 `tool_use` 块和随后 `user` 消息里同 `tool_use_id` 的 `tool_result` 配对显示。
 - `parent_tool_use_id` 不为空的是子代理里的消息，折叠在对应的 Agent 工具调用下面。
+- 后台任务（Bash 后台命令、后台子代理）完成时，如果模型空闲，Claude Code 会拿通知自动开始新的一轮，没有用户消息。历史里这条通知存成内容是 `<task-notification>` 的 user 消息；实时事件里只有 `system/task_notification`，之后网关的状态从 `idle` 变回 `running`。网页把两者都显示成一行「后台任务已完成：…」作为新一轮的开头，按 `task:<task_id>` 去重。
 
 ## 4. 权限
 

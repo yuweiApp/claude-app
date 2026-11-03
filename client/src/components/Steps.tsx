@@ -154,15 +154,6 @@ export function ToolStep({ block, view, renderChildren }: { block: ToolUse; view
   );
 }
 
-export function ThinkingStep({ text }: { text: string }) {
-  return (
-    <details className="thinking">
-      <summary>思考</summary>
-      {text}
-    </details>
-  );
-}
-
 /** 同一次响应里并行的多个工具调用合成一组「运行了命令 N」/「调用了工具 N」，可以整组折叠 */
 export function StepGroup({ tools, view, renderChildren }: { tools: ToolUse[]; view: SessionView; renderChildren: (items: Item[]) => ReactNode }) {
   const [open, setOpen] = useState(true);
