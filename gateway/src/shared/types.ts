@@ -23,6 +23,8 @@ export type GatewayEvent =
     }
   | { type: "permission_resolved"; requestId: string; behavior: "allow" | "deny" }
   | { type: "error"; message: string }
+  /** 网关给新会话生成了标题，列表要刷新 */
+  | { type: "title"; title: string }
   /** 会话的后台任务有变化：整个列表 */
   | { type: "tasks"; tasks: BackgroundTask[] }
   | { type: "reset" };
@@ -45,6 +47,12 @@ export interface BackgroundTask {
   summary?: string;
   /** 有输出文件可以看（GET /sessions/:id/tasks/:taskId/output） */
   hasOutput: boolean;
+}
+
+/** 可用的技能和插件（GET /capabilities）。技能在消息开头写 /name 使用，插件在消息里写 @name 引用 */
+export interface Capabilities {
+  skills: { name: string; description: string }[];
+  plugins: { name: string; source?: string; version?: string }[];
 }
 
 /** 上传后的附件（POST /uploads 返回），发消息时只传 id */

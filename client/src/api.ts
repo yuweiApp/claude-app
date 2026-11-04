@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, GatewayEvent, SessionListItem } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, GatewayEvent, SessionListItem } from "@gateway/shared/types";
 
-export type { Attachment, BackgroundTask, GatewayEvent, SessionListItem };
+export type { Attachment, BackgroundTask, Capabilities, GatewayEvent, SessionListItem };
 
 const BASE = "/api";
 
@@ -79,6 +79,8 @@ export const api = {
     return request<{ attachments: Attachment[] }>("POST", "/uploads", form).then((r) => r.attachments);
   },
   interrupt: (id: string) => request("POST", `/sessions/${id}/interrupt`),
+  /** 工作目录下可用的技能和插件，不传是默认工作目录 */
+  capabilities: (cwd?: string) => request<Capabilities>("GET", `/capabilities${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`),
   /** 会话的后台任务 */
   tasks: (id: string) => request<{ tasks: BackgroundTask[] }>("GET", `/sessions/${id}/tasks`).then((r) => r.tasks),
   /** 后台任务输出的最后一段（64 KB） */

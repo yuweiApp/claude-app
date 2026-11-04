@@ -59,7 +59,7 @@ async function fromProvider(baseUrl: string): Promise<ModelInfo[]> {
   return ordered.map(toModelInfo);
 }
 
-async function* noInput(): AsyncGenerator<never> {
+export async function* noInput(): AsyncGenerator<never> {
   await new Promise(() => {});
 }
 

@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import { api, subscribe, type GatewayConfig, type SessionListItem } from "./api";
-import { Composer } from "./components/Composer";
+import { api, subscribe, type Capabilities, type GatewayConfig, type SessionListItem } from "./api";
+import { CapabilityPicker } from "./components/CapabilityPicker";
+import { Composer, type ComposerHandle } from "./components/Composer";
 import { Messages } from "./components/Messages";
 import { PermissionCard } from "./components/PermissionCard";
 import { FolderPicker } from "./components/FolderPicker";
 import { ModelPicker, PermissionPicker, resolveModel } from "./components/ComposerPickers";
 import { Sidebar, folderName, groupByFolder, sessionTitle } from "./components/Sidebar";
+import { DEFAULT_SIDEBAR_WIDTH, SidebarResizer } from "./components/SidebarResizer";
 import { SidebarToggle } from "./components/SidebarToggle";
-import { SessionBar, SessionBarButton } from "./components/SessionBar";
-import { TasksPanel } from "./components/TasksPanel";
+import { TasksPopover } from "./components/TasksPopover";
 import { TitleBar } from "./components/TitleBar";
 import { desktop } from "./desktop";
 import { emptyView, reduce } from "./state/session";
@@ -29,14 +30,15 @@ export function App() {
   const [newCwd, setNewCwd] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(initialCollapsed);
-  /**
-   * 对话右边的面板：会话栏，或从它打开的后台任务面板（两个不同时开）。
-   * 默认都不开，点按钮才开；切换会话（包括回到刚才那个）都收起
-   */
-  const [panel, setPanel] = useState<SidePanel | null>(null);
-  useEffect(() => setPanel(null), [currentId]);
-  const barOpen = panel === "bar";
-  const barButton = currentId ? <SessionBarButton open={barOpen} onClick={() => setPanel(barOpen ? null : "bar")} /> : null;
+  const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
+  const commitSidebarWidth = (width: number) => {
+    setSidebarWidth(width);
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+    } catch {
+      // 写不了就只在这次打开里生效
+    }
+  };
   const toggleSidebar = () =>
     setCollapsed((c) => {
       try {
@@ -113,19 +115,31 @@ export function App() {
         />
       )}
       <div className="app">
+        {/* 最左边的功能图标栏（同 codex-app-server 的 .sidebar-rail）：现在只有首页，之后的功能往这里加 */}
+        <nav className="app-rail" aria-label="功能">
+          <button className="rail-btn active" title="首页" aria-label="首页" aria-current="page" onClick={() => startNew()}>
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3.5 8.75 10 3.5l6.5 5.25V15.5a1 1 0 0 1-1 1h-3.25v-4.25h-4.5v4.25H4.5a1 1 0 0 1-1-1z" />
+            </svg>
+          </button>
+        </nav>
         {!collapsed && (
           <>
             {config && (
-              <Sidebar
-                sessions={sessions}
-                workspaceDir={config.workspaceDir}
-                currentId={currentId}
-                onSelect={select}
-                onNew={startNew}
-                onDelete={(ids) => void deleteSessions(ids)}
-                // 桌面版的收起按钮在标题栏上
-                onCollapse={desktop ? undefined : toggleSidebar}
-              />
+              <>
+                <Sidebar
+                  sessions={sessions}
+                  workspaceDir={config.workspaceDir}
+                  currentId={currentId}
+                  onSelect={select}
+                  onNew={startNew}
+                  onDelete={(ids) => void deleteSessions(ids)}
+                  // 桌面版的收起按钮在标题栏上
+                  onCollapse={desktop ? undefined : toggleSidebar}
+                  width={sidebarWidth}
+                />
+                <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} onCommit={commitSidebarWidth} onCollapse={toggleSidebar} />
+              </>
             )}
           </>
         )}
@@ -160,9 +174,6 @@ export function App() {
               headerStart={!desktop && collapsed && <SidebarToggle collapsed onToggle={toggleSidebar} />}
             title={title}
             folder={folder}
-            headerEnd={barButton}
-            panel={currentId ? panel : null}
-            onPanel={setPanel}
             />
           )}
         </main>
@@ -172,6 +183,15 @@ export function App() {
 }
 
 const COLLAPSED_KEY = "sidebarCollapsed";
+const SIDEBAR_WIDTH_KEY = "sidebarWidth";
+
+function initialSidebarWidth(): number {
+  try {
+    return Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || DEFAULT_SIDEBAR_WIDTH;
+  } catch {
+    return DEFAULT_SIDEBAR_WIDTH;
+  }
+}
 
 /** 侧边栏和对话并排、不盖在对话上（同 codex-app-server 的电脑布局），收起 / 展开记住上次的选择 */
 function initialCollapsed(): boolean {
@@ -181,9 +201,6 @@ function initialCollapsed(): boolean {
     return false;
   }
 }
-
-/** 对话右边的面板：会话栏、后台任务 */
-type SidePanel = "bar" | "tasks";
 
 interface ChatProps {
   sessionId: string | null;
@@ -196,11 +213,6 @@ interface ChatProps {
   /** 对话上方显示的会话标题和项目名 */
   title?: string | null;
   folder?: string | null;
-  /** 对话上方右边的按钮（会话栏按钮） */
-  headerEnd?: ReactNode;
-  /** 对话右边开着的面板 */
-  panel: SidePanel | null;
-  onPanel: (panel: SidePanel | null) => void;
   /** 工作目录（文件夹）；新会话页是选的文件夹，null 是无文件夹（默认工作目录） */
   cwd: string | null;
   /** 新会话页输入框工具栏里的选文件夹 */
@@ -217,9 +229,6 @@ function Chat({
   headerStart,
   title,
   folder,
-  headerEnd,
-  panel,
-  onPanel,
   folderPicker,
 }: ChatProps) {
   const [view, dispatch] = useReducer(reduce, undefined, emptyView);
@@ -232,13 +241,19 @@ function Chat({
     api.models().then(setModels, (e: Error) => onError(`读取模型列表失败：${e.message}`));
   }, []);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<ComposerHandle>(null);
+  // 技能和插件按工作目录（项目里可以有自己的技能）
+  const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
+  useEffect(() => {
+    api.capabilities(cwd ?? undefined).then(setCapabilities, () => setCapabilities(null));
+  }, [cwd]);
 
   // 先连事件流再拉历史，两边按 uuid 去重，见 docs/README.md「客户端归并规则」
   useEffect(() => {
     if (!sessionId) return;
     const unsubscribe = subscribe(sessionId, (event) => {
       dispatch({ type: "event", event });
-      if (event.type === "state") onChanged();
+      if (event.type === "state" || event.type === "title") onChanged();
     });
     api.messages(sessionId).then((messages) => dispatch({ type: "history", messages }), (e: Error) => onError(e.message));
     api.tasks(sessionId).then((tasks) => dispatch({ type: "tasks", tasks }), () => undefined);
@@ -287,63 +302,60 @@ function Chat({
               {folder}
             </span>
           )}
-          {headerEnd && <span className="chat-header-end">{headerEnd}</span>}
+          {sessionId && <TasksPopover sessionId={sessionId} tasks={view.backgroundTasks} onError={onError} />}
         </div>
       )}
-      <div className="chat-row">
-        <div className="chat-main">
-          <div className="scroll">
-            {!sessionId && (
-              <div className="empty">
-                有什么可以帮你？
-                {cwd && <div className="empty-sub">新会话在 {cwd}</div>}
-              </div>
-            )}
-            <Messages view={view} />
-            {view.permissions.map((request) => (
-              <PermissionCard
-                key={request.requestId}
-                request={request}
-                onReply={(behavior, always) => {
-                  if (sessionId) {
-                    api.replyPermission(sessionId, request.requestId, behavior, always).catch((e: Error) => onError(e.message));
-                  }
-                }}
-              />
-            ))}
-            <div ref={bottomRef} />
+      <div className="scroll">
+        {!sessionId && (
+          <div className="empty">
+            有什么可以帮你？
+            {cwd && <div className="empty-sub">新会话在 {cwd}</div>}
           </div>
-          <Composer
-            running={view.state === "running"}
-            maxUploadMb={config.maxUploadMb}
-            onSend={send}
-            onInterrupt={() => sessionId && api.interrupt(sessionId).catch((e: Error) => onError(e.message))}
-            left={<PermissionPicker value={permissionMode} onChange={changeMode} />}
-            top={folderPicker}
-            right={
-              <ModelPicker
-                models={models}
-                model={sessionId ? (view.model ?? config.model ?? undefined) : (resolveModel(models, newModel) ?? config.model ?? undefined)}
-                effort={sessionId ? (view.effort ?? config.effort) : newEffort}
-                onModel={(value) => {
-                  if (!sessionId) setNewModel(value);
-                  else api.setModel(sessionId, { model: value }).catch((e: Error) => onError(e.message));
-                }}
-                onEffort={(effort) => {
-                  if (!sessionId) setNewEffort(effort);
-                  else api.setModel(sessionId, { effort }).catch((e: Error) => onError(e.message));
-                }}
-              />
-            }
+        )}
+        <Messages view={view} />
+        {view.permissions.map((request) => (
+          <PermissionCard
+            key={request.requestId}
+            request={request}
+            onReply={(behavior, always) => {
+              if (sessionId) {
+                api.replyPermission(sessionId, request.requestId, behavior, always).catch((e: Error) => onError(e.message));
+              }
+            }}
           />
-        </div>
-        {panel === "bar" && sessionId && (
-          <SessionBar sessionId={sessionId} tasks={view.backgroundTasks} onOpenTasks={() => onPanel("tasks")} onError={onError} />
-        )}
-        {panel === "tasks" && sessionId && (
-          <TasksPanel sessionId={sessionId} tasks={view.backgroundTasks} onClose={() => onPanel(null)} onError={onError} />
-        )}
+        ))}
+        <div ref={bottomRef} />
       </div>
+      <Composer
+        running={view.state === "running"}
+        maxUploadMb={config.maxUploadMb}
+        onSend={send}
+        onInterrupt={() => sessionId && api.interrupt(sessionId).catch((e: Error) => onError(e.message))}
+        left={<PermissionPicker value={permissionMode} onChange={changeMode} />}
+        handle={composerRef}
+        top={
+          <>
+            {folderPicker}
+            <CapabilityPicker kind="技能" items={capabilities?.skills ?? []} onPick={(name) => composerRef.current?.useSkill(name)} />
+            <CapabilityPicker kind="插件" items={capabilities?.plugins ?? []} onPick={(name) => composerRef.current?.mention(name)} />
+          </>
+        }
+        right={
+          <ModelPicker
+            models={models}
+            model={sessionId ? (view.model ?? config.model ?? undefined) : (resolveModel(models, newModel) ?? config.model ?? undefined)}
+            effort={sessionId ? (view.effort ?? config.effort) : newEffort}
+            onModel={(value) => {
+              if (!sessionId) setNewModel(value);
+              else api.setModel(sessionId, { model: value }).catch((e: Error) => onError(e.message));
+            }}
+            onEffort={(effort) => {
+              if (!sessionId) setNewEffort(effort);
+              else api.setModel(sessionId, { effort }).catch((e: Error) => onError(e.message));
+            }}
+          />
+        }
+      />
     </div>
   );
 }

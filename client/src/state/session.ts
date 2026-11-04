@@ -29,16 +29,6 @@ export type Item =
 
 export type TaskItem = Extract<Item, { kind: "task" }>;
 
-/**
- * 实时收到、还没放进消息列表的后台任务通知。after：收到时模型正在进行（或刚完成）的那次 API 响应。
- * 这一轮里之后又开始了别的 API 响应，说明 Claude Code 把通知并进了这一轮（历史里它在这一轮中间），就丢掉；
- * 一直到这一轮结束都没有，它会让 Claude Code 开新的一轮，等那一轮开始时放进去当开头
- */
-interface PendingTask {
-  task: TaskItem;
-  after?: string;
-}
-
 export interface ToolResult {
   text: string;
   /** 工具返回的图片（Read 读图片时在 tool_result 里），data: 地址 */
@@ -79,10 +69,12 @@ export interface SessionView {
   needsReload: boolean;
   /** 上一轮已经结束（收到 result，或 assistant 消息的 stop_reason 是 end_turn），之后还没有新的用户消息 */
   turnEnded: boolean;
-  /** 实时收到、还没开始那一轮的后台任务通知：等下一轮自己开始（state 变成 running）时再放进消息列表，作为那一轮的开头 */
-  pendingTasks: PendingTask[];
-  /** 当前这次模型 API 响应的 id（主线程），判断通知有没有被并进当前这一轮 */
-  apiMessageId?: string;
+  /**
+   * 实时收到、还没开始那一轮的后台任务通知：等下一轮自己开始（state 变成 running）时再放进消息列表，作为那一轮的开头。
+   * 这一轮里之后又发出了模型请求（status: requesting），说明 Claude Code 把通知并进了这一轮，就丢掉。
+   * 看的是请求发出、不是响应开始：通知到时已经在路上的请求不带它，响应回来后通知还会开新的一轮
+   */
+  pendingTasks: TaskItem[];
   /** 会话的后台任务（网关的 tasks 事件，整个列表）；backgroundTasksLive：已经从事件流收到过，不再用接口拉到的覆盖 */
   backgroundTasks: BackgroundTask[];
   backgroundTasksLive: boolean;
@@ -150,7 +142,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
       if (event.state !== "running") next.streaming = { text: "" };
       // 上一轮结束后没有用户消息就又开始运行：是后台任务的通知让 Claude Code 自动开了新的一轮（实时事件里没有这条 user 消息）
       if (event.state === "running" && view.turnEnded && view.pendingTasks.length) {
-        view.pendingTasks.forEach(({ task }) => pushItem(next, null, task));
+        view.pendingTasks.forEach((task) => pushItem(next, null, task));
         next.pendingTasks = [];
         next.turnEnded = false;
       }
@@ -183,18 +175,12 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
     case "stream_event": {
       if (message.parent_tool_use_id) return;
       const e = message.event;
-      if (e.type === "message_start") {
-        view.streaming = { text: "" };
-        startApiMessage(view, e.message.id);
-      }
+      if (e.type === "message_start") view.streaming = { text: "" };
       if (e.type === "content_block_delta" && e.delta.type === "text_delta") view.streaming = { text: view.streaming.text + e.delta.text };
       return;
     }
     case "assistant":
-      if (!message.parent_tool_use_id) {
-        view.streaming = { text: "" };
-        startApiMessage(view, message.message.id);
-      }
+      if (!message.parent_tool_use_id) view.streaming = { text: "" };
       ingestMessage(view, "assistant", message.uuid, message.message, message.parent_tool_use_id);
       return;
     case "user":
@@ -202,9 +188,9 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       return;
     case "system":
       if (message.subtype === "task_notification" && !message.skip_transcript) {
-        const task: TaskItem = { kind: "task", uuid: `task:${message.task_id}`, status: message.status, text: message.summary };
-        view.pendingTasks = [...view.pendingTasks, { task, after: view.turnEnded ? undefined : view.apiMessageId }];
+        view.pendingTasks = [...view.pendingTasks, { kind: "task", uuid: `task:${message.task_id}`, status: message.status, text: message.summary }];
       }
+      if (message.subtype === "status" && message.status === "requesting" && !view.turnEnded) view.pendingTasks = [];
       return;
     case "result":
       view.streaming = { text: "" };
@@ -219,15 +205,6 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
         costUsd: message.total_cost_usd,
       });
       return;
-  }
-}
-
-/** 主线程开始（或收到）一次模型 API 响应：这一轮里在它之前收到的通知已经被并进这一轮了 */
-function startApiMessage(view: SessionView, id: string): void {
-  if (id === view.apiMessageId) return;
-  view.apiMessageId = id;
-  if (!view.turnEnded && view.pendingTasks.some((p) => p.after !== undefined)) {
-    view.pendingTasks = view.pendingTasks.filter((p) => p.after === undefined);
   }
 }
 
@@ -266,6 +243,17 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       view.seen = new Set(view.seen).add(uuid);
       return;
     }
+    // 用技能时 Claude Code 把消息存成命令标签，后面跟着技能内容（isMeta，不是用户写的）
+    const command = typeof content === "string" ? skillCommand(content) : null;
+    if (command) {
+      pushItem(view, parent, { kind: "user", uuid, at, text: command, images: [], attachments: [] });
+      if (!parent) view.turnEnded = false;
+      return;
+    }
+    if (typeof content === "string" && SKILL_META.test(content)) {
+      view.seen = new Set(view.seen).add(uuid);
+      return;
+    }
     const local = typeof content === "string" ? localCommandText(content) : null;
     if (local !== null) {
       if (local) pushItem(view, parent, { kind: "notice", uuid, text: local });
@@ -301,7 +289,7 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       } else if (b.type === "text" && typeof b.text === "string") {
         const parsed = parseAttachments(b.text);
         if (parsed) attachments.push(...parsed);
-        else texts.push(b.text);
+        else if (!SKILL_META.test(b.text)) texts.push(b.text);
       }
     }
     if (texts.length || images.length || attachments.length) {
@@ -332,6 +320,15 @@ function taskNotification(text: string): TaskItem | null {
   if (body === undefined) return null;
   const field = (name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(body)?.[1]?.trim() ?? "";
   return { kind: "task", uuid: `task:${field("task-id")}`, status: field("status"), text: field("summary") };
+}
+
+/** Claude Code 加载技能时写进对话的内容，不是用户发的 */
+const SKILL_META = /^(Base directory for this skill:|Skill \/\S+ is already loaded above)/;
+
+/** 用技能的消息：<command-message>…<command-name>/x</command-name><command-args>…</command-args>，还原成用户写的 /x 内容 */
+function skillCommand(text: string): string | null {
+  const match = /^<command-message>[\s\S]*?<command-name>(\/\S+)<\/command-name>(?:\s*<command-args>([\s\S]*?)<\/command-args>)?/.exec(text.trim());
+  return match ? `${match[1]} ${match[2] ?? ""}`.trim() : null;
 }
 
 /**

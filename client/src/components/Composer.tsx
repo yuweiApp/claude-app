@@ -1,4 +1,4 @@
-import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useImperativeHandle, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref } from "react";
 import { api, type Attachment } from "../api";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
@@ -15,6 +15,14 @@ interface PendingFile {
   preview?: string;
 }
 
+/** 外面往输入框里写内容 */
+export interface ComposerHandle {
+  /** 用技能：写到消息开头（Claude Code 只认开头的 /技能名），已经有技能时换掉 */
+  useSkill: (name: string) => void;
+  /** 引用插件：接在现有内容后面 */
+  mention: (name: string) => void;
+}
+
 interface Props {
   running: boolean;
   maxUploadMb: number;
@@ -24,13 +32,25 @@ interface Props {
   left?: ReactNode;
   /** 工具栏右边发送按钮前面：模型和推理强度 */
   right?: ReactNode;
-  /** 输入框上面一栏：新会话的选文件夹 */
+  /** 输入框上面一栏：新会话的选文件夹、技能、插件 */
   top?: ReactNode;
+  handle?: Ref<ComposerHandle>;
 }
 
 /** 输入框，样式同 codex-app-server：一个圆角框，上面输入，下面一行「+」、权限、模型、发送 */
-export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, right, top }: Props) {
+export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, right, top, handle }: Props) {
   const [text, setText] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useImperativeHandle(handle, () => ({
+    useSkill: (name) => {
+      setText((t) => `/${name} ${t.replace(/^\/\S+\s*/, "")}`);
+      textareaRef.current?.focus();
+    },
+    mention: (name) => {
+      setText((t) => `${t}${t && !/\s$/.test(t) ? " " : ""}@${name} `);
+      textareaRef.current?.focus();
+    },
+  }));
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -140,6 +160,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
         </div>
       )}
       <textarea
+        ref={textareaRef}
         value={text}
         placeholder="随心输入，可以拖入或粘贴文件；Enter 发送，Shift+Enter 换行"
         rows={2}

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { Block, Item, SessionView, ToolResult } from "../state/session";
 import { ImageThumb } from "./ImageThumb";
-import { formatDuration } from "./TasksPanel";
+import { formatDuration } from "./TasksPopover";
 
 export type ToolUse = Extract<Block, { type: "tool_use" }>;
 

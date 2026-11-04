@@ -12,6 +12,8 @@
   --warn: #b7791f;
   /* 对话区（消息和输入框）的宽度，居中，两边留白 */
   --content-width: 640px;
+  /* 外框色：标题栏和最左边的图标栏，比侧边栏深一点 */
+  --chrome: color-mix(in srgb, var(--panel) 94%, var(--text));
   color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
   font-size: 15px;
@@ -43,13 +45,17 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 pre { white-space: pre-wrap; word-break: break-word; }
 
 .app-shell { display: flex; flex-direction: column; height: 100vh; }
-.app { display: flex; flex: 1; min-height: 0; }
+.app { display: flex; flex: 1; min-height: 0; background: var(--chrome); }
+/* 最左边的功能图标栏（同 codex-app-server 的 .sidebar-rail / .rail-btn） */
+.app-rail { flex: none; width: 52px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0; }
+.rail-btn { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: none; border-radius: 10px; color: var(--muted); }
+.rail-btn:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+.rail-btn.active { background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--text); }
 
 /* 桌面版标题栏（窗口没有系统边框）：空白处拖动窗口，按钮不拖 */
 .titlebar {
   display: flex; align-items: center; flex-shrink: 0; height: 40px; padding-left: 8px;
-  background: color-mix(in srgb, var(--panel) 94%, var(--text)); border-bottom: 1px solid var(--border);
-  user-select: none; -webkit-app-region: drag;
+  background: var(--chrome); user-select: none; -webkit-app-region: drag;
 }
 .titlebar-mac { padding-left: 78px; }
 .titlebar button { -webkit-app-region: no-drag; }
@@ -65,9 +71,19 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .window-btn:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
 .window-close:hover { background: #e81123; color: #fff; }
 .sidebar {
-  width: 260px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--border);
-  padding: 0 12px 12px; overflow-y: auto;
+  width: var(--sidebar-width, 260px); flex-shrink: 0; background: var(--panel); border: solid var(--border); border-width: 1px 0 0 1px;
+  border-top-left-radius: 12px; padding: 0 12px 12px; overflow-y: auto;
 }
+/* 侧边栏和对话区之间的分割线：拖动调宽度。本身不占宽度，两边各伸出 4px 方便抓 */
+.sidebar-resizer { position: relative; z-index: 5; flex: none; width: 0; cursor: col-resize; touch-action: none; outline: none; }
+.sidebar-resizer::before { content: ""; position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; }
+/* 把手（同 codex-app-server）：平时看不到线，靠两边的底色区分；悬停时在垂直中间显示一小段圆角竖条，拖动时更深 */
+.sidebar-resizer::after {
+  content: ""; position: absolute; left: -2px; top: 50%; width: 4px; height: 36px; margin-top: -18px; border-radius: 2px;
+  background: var(--muted); opacity: 0; transition: opacity 0.15s; pointer-events: none;
+}
+.sidebar-resizer:hover::after, .sidebar-resizer:focus-visible::after { opacity: 0.45; transition-delay: 0.1s; }
+.sidebar-resizer:active::after { opacity: 0.7; transition-delay: 0s; }
 /* 侧边栏顶部一行：和对话区的标题行（.chat-header）一样高，下面的分割线连成一条 */
 .sidebar-top {
   position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 4px; min-height: 44px;
@@ -132,13 +148,11 @@ pre { white-space: pre-wrap; word-break: break-word; }
 }
 @media (prefers-reduced-motion: reduce) { .session-spinner { animation: none; } }
 
-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); border-top: 1px solid var(--border); }
+/* 侧边栏收起时对话区直接嵌在图标栏旁边，圆角和边线由它自己画 */
+.app-rail + main { border-left: 1px solid var(--border); border-top-left-radius: 12px; }
 .banner { background: var(--err); color: #fff; padding: 8px 16px; cursor: pointer; }
-/* 对话区：上面一行标题（通到最右边，右边是会话栏按钮），下面左边是对话、右边是会话栏 / 后台任务面板 */
 .chat { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.chat-row { flex: 1; min-height: 0; display: flex; }
-.chat-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.chat-header-end { margin-left: auto; display: flex; }
 .chat-header { display: flex; gap: 12px; align-items: center; min-height: 44px; padding: 6px 20px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .chat-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
 .muted { color: var(--muted); }
@@ -384,6 +398,19 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .spacer { flex: 1; }
 
 /* 新会话输入框上面一栏（同 codex-app-server 的 .new-chat-bar / .new-chat-chip） */
+/* 输入框上面的技能、插件：点开搜索选择 */
+.capability-picker { position: relative; flex-shrink: 0; }
+.capability-menu { width: 300px; min-width: 0; padding: 8px; }
+.capability-search {
+  width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 14px; outline: none;
+}
+.capability-search:focus { border-color: var(--accent); }
+.capability-list { max-height: 300px; margin-top: 6px; overflow-y: auto; }
+.capability-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 8px; border: none; border-radius: 8px; background: none; text-align: left; }
+.capability-item:hover { background: var(--panel); }
+.capability-avatar { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; color: #fff; font-size: 12px; font-weight: 600; }
+.capability-name { min-width: 0; overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.capability-empty { padding: 10px 8px; color: var(--muted); font-size: 13px; }
 .new-chat-bar { display: flex; align-items: center; gap: 4px; max-width: var(--content-width); margin: 0 auto 8px; padding: 0 4px; }
 .folder-picker { position: relative; min-width: 0; }
 .new-chat-chip {
@@ -442,64 +469,46 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 /* 窄屏：侧边栏照样和对话并排，只是窄一些 */
 @media (max-width: 720px) {
   .sidebar { width: 220px; }
+  .app-rail, .sidebar-resizer { display: none; }
   .chat-header { padding: 6px 12px; }
   .scroll { padding: 16px 12px; }
   .composer-wrap { padding: 6px 12px 12px; }
 }
 
-/* 会话栏（参照 Claude 桌面版右上角）：对话右边，和会话绑定；后台任务详情也在这里面 */
-.session-bar-btn.active { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
-.session-bar {
-  width: 320px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0;
-  border-left: 1px solid var(--border); background: var(--bg);
+/* 标题后面的后台任务按钮和弹窗（列表样式同 codex-app-server 的 .subagent-section / .subagent-row） */
+.tasks-anchor { flex-shrink: 0; display: flex; }
+.tasks-btn { position: relative; width: 28px; height: 28px; }
+.tasks-btn.active { color: var(--text); background: var(--panel); }
+.tasks-badge {
+  position: absolute; top: -2px; right: -4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+  background: var(--accent); color: var(--accent-text); font-size: 10px; line-height: 15px; text-align: center;
 }
-.session-bar.wide { width: min(640px, 55vw); }
-/* 会话栏本身没有背景和分隔线，只有卡片 */
-.session-bar-cards { background: transparent; border-left: none; }
-.bar-body { flex: 1; overflow-y: auto; padding: 12px; }
-/* 会话栏里每个功能区一张卡片 */
-.bar-card { margin-bottom: 10px; padding: 2px 8px 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
-.bar-card-head { display: flex; align-items: center; gap: 2px; min-height: 36px; }
-.bar-card-title { padding: 4px 6px; border: none; border-radius: 6px; background: none; font-size: 14px; }
-.bar-card-title:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
-.bar-card-caret { display: inline-flex; padding: 6px; border: none; border-radius: 6px; background: none; color: var(--muted); }
-.bar-card-caret:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
-.bar-card-body { padding: 2px 0 0; }
-.bar-row { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 2px 6px; font-size: 13px; color: var(--text); }
-.bar-row svg { flex-shrink: 0; color: var(--muted); }
-.bar-row-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bar-row-meta { flex-shrink: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-button.bar-row-button, .bar-row-main { border: none; background: none; text-align: left; border-radius: 6px; }
-button.bar-row-button { width: 100%; }
-button.bar-row-button:hover, .bar-row-main:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
-.bar-row-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
-.bar-empty { padding: 2px 6px 6px; font-size: 12px; color: var(--muted); }
-.tasks-head { display: flex; align-items: center; gap: 2px; min-height: 44px; padding: 6px 8px 6px 16px; border-bottom: 1px solid var(--border); }
-.tasks-title { flex: 1; font-size: 14px; font-weight: 600; }
-.tasks-head .icon-btn { width: 28px; height: 28px; }
-.tasks-head .icon-btn:disabled { opacity: 0.35; }
-.tasks-body { flex: 1; overflow-y: auto; padding: 10px 10px 16px; }
-.tasks-empty { color: var(--muted); font-size: 13px; text-align: center; margin-top: 40px; }
-.tasks-section { display: flex; align-items: center; gap: 6px; padding: 8px 6px 6px; font-size: 12px; color: var(--muted); }
-button.tasks-section-toggle { border: none; background: none; width: 100%; text-align: left; border-radius: 6px; }
-.task-card { margin-bottom: 6px; border-radius: 10px; background: var(--panel); }
-.task-row { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 4px; }
-.task-toggle {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 6px; border: none; background: none;
-  text-align: left; font-size: 13px; color: var(--text);
+.tasks-popover {
+  position: fixed; z-index: 30; max-width: calc(100vw - 24px); max-height: 70vh; overflow-y: auto; padding: 12px 8px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
 }
-.task-toggle:hover { background: none; }
-.task-toggle .caret { color: var(--muted); }
-.task-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tasks-section + .tasks-section { margin-top: 16px; }
+.tasks-section-title { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 6px; color: var(--muted); font-size: 12px; }
+.tasks-clear { padding: 0 4px; border: none; background: none; color: var(--muted); font-size: 12px; }
+.tasks-clear:hover { background: none; color: var(--text); }
+.tasks-empty { padding: 4px 8px; color: var(--muted); font-size: 13px; }
+.task-row { display: flex; align-items: center; gap: 4px; border-radius: 8px; }
+.task-row:hover { background: var(--panel); }
+.task-main { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 10px; padding: 8px; border: none; background: none; text-align: left; }
+.task-main:hover { background: none; }
+.task-main svg { flex-shrink: 0; margin-top: 1px; color: var(--muted); }
+.task-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.task-name { overflow: hidden; font-size: 14px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .task-name.failed { color: var(--err); }
-.task-time { flex-shrink: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.task-preview { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.task-time { flex-shrink: 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .task-stop {
-  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0;
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; margin-right: 6px; padding: 0;
   border: none; border-radius: 6px; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text);
 }
 .task-stop:hover { background: color-mix(in srgb, var(--err) 20%, transparent); color: var(--err); }
 .task-output {
-  margin: 0; padding: 4px 12px 10px 28px; max-height: 280px; overflow: auto;
+  margin: 2px 8px 8px 34px; padding: 8px 10px; max-height: 240px; overflow: auto; border-radius: 8px; background: var(--code-bg);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5;
   color: var(--muted); white-space: pre-wrap; word-break: break-all;
 }

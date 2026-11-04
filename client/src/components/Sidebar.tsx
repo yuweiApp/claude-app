@@ -1,11 +1,11 @@
-import { useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { SessionListItem } from "../api";
 import { useDismiss } from "./ComposerPickers";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { SidebarToggle } from "./SidebarToggle";
 
-/** 会话标题：SDKSessionInfo.summary 就是 SDK 给的显示标题（自定义标题、自动摘要或第一条提问） */
-export const sessionTitle = (s: SessionListItem) => s.summary || s.firstPrompt || "新会话";
+/** 会话标题：网关在第一条消息时生成的 customTitle；没有时用第一条提问。不用 summary，它没有自定义标题时跟着最新一条提问变 */
+export const sessionTitle = (s: SessionListItem) => s.customTitle || s.firstPrompt || s.summary || "新会话";
 
 /** 项目名：工作目录的最后一级 */
 export const folderName = (dir: string) => dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || dir;
@@ -52,9 +52,10 @@ interface Props {
   onDelete: (ids: string[]) => void;
   /** 收起侧边栏；不传时不显示按钮（桌面版的在标题栏上） */
   onCollapse?: () => void;
+  width: number;
 }
 
-export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, onDelete, onCollapse }: Props) {
+export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, onDelete, onCollapse, width }: Props) {
   const [collapsed, setCollapsed] = useState(loadCollapsed);
   /** 等用户确认的删除 */
   const [pendingDelete, setPendingDelete] = useState<{ title: string; message: string; ids: string[] } | null>(null);
@@ -91,7 +92,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
   );
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" style={{ "--sidebar-width": `${width}px` } as CSSProperties}>
       <div className="sidebar-top">
         {onCollapse && <SidebarToggle collapsed={false} onToggle={onCollapse} />}
         <button className="nav-item" onClick={() => onNew()}>

@@ -20,6 +20,7 @@ import type { ConversationLog } from "../logging/conversation-log.js";
 import type { BackgroundTask, SessionListItem } from "../shared/types.js";
 import { loadAttachments } from "./attachments.js";
 import { AgentSession } from "./session.js";
+import { generateTitle } from "./title.js";
 import { readOutputTail, TaskList } from "./tasks.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
@@ -53,7 +54,24 @@ export class SessionManager {
     const attachments = await loadAttachments(opts.attachments ?? []);
     const session = await this.launch(randomUUID(), false, { ...opts, cwd });
     await session.send(text, attachments);
+    void this.nameSession(session.id, text || (attachments[0]?.name ?? ""));
     return session;
+  }
+
+  /** 新会话的第一条消息生成简短标题，写成自定义标题（之后不再变）；第一条消息落盘后才能改名，所以多试几次 */
+  private async nameSession(sessionId: string, text: string): Promise<void> {
+    if (!text) return;
+    const title = await generateTitle(text);
+    for (let i = 0; i < 20; i++) {
+      try {
+        await renameSession(sessionId, title);
+        this.hub.publish(sessionId, { type: "title", title });
+        return;
+      } catch {
+        await sleep(500);
+      }
+    }
+    this.log.warn({ sessionId }, "给新会话设置标题失败");
   }
 
   /** 发送消息；会话不活跃时先 resume */

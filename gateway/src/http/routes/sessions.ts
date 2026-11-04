@@ -5,6 +5,8 @@ import { AttachmentError } from "../../agent/attachments.js";
 import { NotFoundError, type SessionManager } from "../../agent/session-manager.js";
 import type { EventHub } from "../../events/event-hub.js";
 import { streamSession } from "../sse.js";
+import { listCapabilities } from "../../agent/capabilities.js";
+import { config } from "../../config.js";
 
 const permissionModes = ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"];
 const effortLevels = ["low", "medium", "high", "xhigh", "max"];
@@ -29,6 +31,9 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
 
   /** Claude Code 的模型列表（SDK 的 ModelInfo） */
   app.get("/models", async () => ({ models: await listModels() }));
+
+  /** 可用的技能和插件；cwd 不传是默认工作目录 */
+  app.get<{ Querystring: { cwd?: string } }>("/capabilities", async (req) => listCapabilities(req.query.cwd || config.workspaceDir));
 
   app.post<{
     Body: { text: string; cwd?: string; model?: string; effort?: EffortLevel; permissionMode?: PermissionMode; attachments?: string[] };

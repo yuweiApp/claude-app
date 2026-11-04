@@ -6,7 +6,7 @@ import { Attachments } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { CopyAction, MessageActions } from "./MessageActions";
 import { StepGroup, ToolStep, type ToolUse } from "./Steps";
-import { formatDuration } from "./TasksPanel";
+import { formatDuration } from "./TasksPopover";
 
 type UserItem = Extract<Item, { kind: "user" }>;
 type ResultItem = Extract<Item, { kind: "result" }>;
