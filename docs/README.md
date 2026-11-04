@@ -216,3 +216,14 @@ client/
 - **许可**：Agent SDK 和 Claude Code 二进制都是 Anthropic 专有许可（"All rights reserved"），使用受 Anthropic 条款约束，官方文档没有专门说明能否配第三方模型。自用风险低；对外收费或多人统一出 key 之前，需要跟 Anthropic 确认。详见 <https://code.claude.com/docs/en/legal-and-compliance>。
 - **引擎不可控**：二进制随 SDK 版本更新，行为、协议、对第三方 base URL 的支持都可能变。锁定 SDK 版本，升级前在测试环境验证。
 - **一会话一进程**：每个活跃会话一个 Node 子进程（约 100–200 MB），靠空闲回收和并发上限（`MAX_ACTIVE_SESSIONS`）控制。
+
+## 11. 对话日志
+
+网关把用户的原始内容和模型的实际响应写到 `gateway/.data/logs/`（`LOG_DIR`），排查问题用，和 Fastify 的运行日志分开，实现在 `gateway/src/logging/conversation-log.ts`。
+
+- **格式**：每行一条 JSON，`{ time, sessionId, event }`，`event` 就是发给网页的事件（SDK 消息原样）。文件名 `conversation-日期[.序号].jsonl`，日期按网关本机时区，`time` 是 UTC。
+- **记什么**：`user_message`、SDK 的 `assistant`（含思考和工具调用）、`user`（工具结果）、`result`、权限请求和回复、错误，以及 `api_retry`、`compact_boundary`、`task_notification` 等排查用得上的 system 消息。`stream_event` 是同一份内容的逐字片段，不记。
+- **图片**：消息里的 base64 内容（`source.type` 是 `base64`）存成 `images/<内容哈希>.<扩展名>`，同一张图只存一份；日志里的 `source` 换成 `{ type: "file", media_type, file }`，`file` 是绝对路径。`tool_use_result` 里同样内容的副本只留长度。
+- **不是 HTTP 抓包**：记录的是 SDK 交给网关的消息，不包含 Claude Code 发给模型接口的完整请求（系统提示、工具定义）和请求头，接口密钥不会写入。
+- **限制**：单文件 `LOG_MAX_FILE_MB`（默认 20），超过换下一个序号；总量 `LOG_MAX_TOTAL_MB`（默认 500，含图片），超过从最旧的文件删；保留 `LOG_RETENTION_DAYS` 天（默认 14，图片再次出现时重新计时）；单条 `LOG_MAX_ENTRY_KB`（默认 512），超过只留开头一段并标 `truncated`。启动时、每小时、换文件时清理。`LOG_ENABLED=0` 关闭。
+- **隐私**：日志里有完整的对话和工具输出，文件权限 600。删除会话不会删日志，要等保留期到期或手动删。写失败只记运行日志，不影响会话。

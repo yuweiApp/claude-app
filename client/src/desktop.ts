@@ -5,6 +5,8 @@ export interface DesktopApi {
   toggleMaximize(): void;
   close(): void;
   isMaximized(): Promise<boolean>;
+  /** 弹系统的文件夹对话框，取消时返回 null */
+  pickFolder(defaultPath?: string): Promise<string | null>;
   /** 返回取消订阅的函数 */
   onMaximizedChange(callback: (maximized: boolean) => void): () => void;
 }

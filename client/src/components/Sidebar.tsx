@@ -8,7 +8,7 @@ import { SidebarToggle } from "./SidebarToggle";
 export const sessionTitle = (s: SessionListItem) => s.summary || s.firstPrompt || "新会话";
 
 /** 项目名：工作目录的最后一级 */
-export const folderName = (dir: string) => dir.replace(/\/+$/, "").split("/").pop() || dir;
+export const folderName = (dir: string) => dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || dir;
 
 /** 一个项目：同一个文件夹（工作目录）下的会话。Claude Code 按工作目录区分项目 */
 interface FolderGroup {
@@ -145,7 +145,6 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
       <SectionHead
         className="section-gap"
         menu={[
-          { label: "新建会话", onClick: () => onNew() },
           {
             label: "全部删除",
             danger: true,

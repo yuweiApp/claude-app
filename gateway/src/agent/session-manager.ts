@@ -16,6 +16,7 @@ import {
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
+import type { ConversationLog } from "../logging/conversation-log.js";
 import type { BackgroundTask, SessionListItem } from "../shared/types.js";
 import { loadAttachments } from "./attachments.js";
 import { AgentSession } from "./session.js";
@@ -31,6 +32,7 @@ export class SessionManager {
   constructor(
     private readonly hub: EventHub,
     private readonly log: FastifyBaseLogger,
+    private readonly conversationLog: ConversationLog,
   ) {
     mkdirSync(config.workspaceDir, { recursive: true });
     mkdirSync(config.claudeConfigDir, { recursive: true });
@@ -146,6 +148,7 @@ export class SessionManager {
   async closeAll(): Promise<void> {
     clearInterval(this.sweeper);
     await Promise.allSettled([...this.active.values()].map((s) => s.close()));
+    await this.conversationLog.close();
   }
 
   private async launch(
@@ -165,6 +168,7 @@ export class SessionManager {
       },
       this.hub,
       this.log,
+      this.conversationLog,
       this.taskList(sessionId),
       (closed) => {
         if (this.active.get(closed.id) === closed) this.active.delete(closed.id);

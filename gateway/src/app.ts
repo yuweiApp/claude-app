@@ -4,6 +4,7 @@ import { AttachmentError } from "./agent/attachments.js";
 import { BadRequestError, BusyError, NotFoundError, SessionManager } from "./agent/session-manager.js";
 import { config } from "./config.js";
 import { EventHub } from "./events/event-hub.js";
+import { ConversationLog } from "./logging/conversation-log.js";
 import { sessionRoutes } from "./http/routes/sessions.js";
 import { folderRoutes } from "./http/routes/folders.js";
 import { uploadRoutes } from "./http/routes/uploads.js";
@@ -28,7 +29,7 @@ export function buildApp(): App {
     },
   });
   const hub = new EventHub(config.eventBufferSize);
-  const sessions = new SessionManager(hub, app.log);
+  const sessions = new SessionManager(hub, app.log, new ConversationLog(config.conversationLog, app.log));
 
   if (config.apiToken) {
     app.addHook("onRequest", async (req, reply) => {

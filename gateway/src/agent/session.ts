@@ -11,6 +11,7 @@ import {
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
+import type { ConversationLog } from "../logging/conversation-log.js";
 import type { Attachment, GatewayEvent, SessionState } from "../shared/types.js";
 import { buildUserContent } from "./attachments.js";
 import { InputQueue } from "./input-queue.js";
@@ -53,6 +54,7 @@ export class AgentSession {
     opts: { resume: boolean; cwd: string; model?: string; effort?: EffortLevel; permissionMode: PermissionMode },
     private readonly hub: EventHub,
     private readonly log: FastifyBaseLogger,
+    private readonly conversationLog: ConversationLog,
     private readonly tasks: TaskList,
     private readonly onClosed: (session: AgentSession) => void,
   ) {
@@ -229,5 +231,6 @@ export class AgentSession {
 
   private publish(event: GatewayEvent): void {
     this.hub.publish(this.id, event);
+    this.conversationLog.record(this.id, event);
   }
 }

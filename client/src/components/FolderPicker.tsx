@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { desktop } from "../desktop";
 import { FolderPickerDialog } from "./FolderPickerDialog";
 import { folderName } from "./Sidebar";
 
@@ -12,7 +13,8 @@ interface Props {
 
 /**
  * 新会话输入框上面的「选择文件夹」（同 codex-app-server 新聊天页输入框上面那一栏）：
- * 点开是最近用过的文件夹，「选择文件夹…」打开对话框浏览网关这台机器上的文件夹
+ * 点开是最近用过的文件夹，「选择文件夹…」在桌面版里弹系统的文件夹对话框，网页里打开对话框浏览网关这台机器上的文件夹；
+ * 没有别的可选时不弹菜单，点按钮直接选
  */
 export function FolderPicker({ value, recent, onChange }: Props) {
   const [open, setOpen] = useState(false);
@@ -33,9 +35,16 @@ export function FolderPicker({ value, recent, onChange }: Props) {
     setOpen(false);
   };
 
+  const browse = () => {
+    setOpen(false);
+    if (!desktop) return setBrowsing(true);
+    void desktop.pickFolder(value ?? recent[0]).then((dir) => dir && onChange(dir));
+  };
+  const onlyBrowse = recent.length === 0 && value === null;
+
   return (
     <div className="folder-picker" ref={ref}>
-      <button className="new-chat-chip" onClick={() => setOpen((o) => !o)} title={value ?? "选择会话在哪个文件夹里运行"}>
+      <button className="new-chat-chip" onClick={() => (onlyBrowse ? browse() : setOpen((o) => !o))} title={value ?? "选择会话在哪个文件夹里运行"}>
         <FolderIcon />
         <span className="new-chat-chip-label">{value ? folderName(value) : "选择文件夹"}</span>
       </button>
@@ -54,13 +63,7 @@ export function FolderPicker({ value, recent, onChange }: Props) {
             </button>
           )}
           {(recent.length > 0 || value !== null) && <div className="menu-divider" />}
-          <button
-            className="menu-item"
-            onClick={() => {
-              setOpen(false);
-              setBrowsing(true);
-            }}
-          >
+          <button className="menu-item" onClick={browse}>
             <span className="menu-item-name">选择文件夹…</span>
           </button>
         </div>

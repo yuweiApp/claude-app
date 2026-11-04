@@ -92,6 +92,16 @@ export const config = {
 
   /** 单个上传文件的大小上限（MB） */
   maxUploadMb: int("MAX_UPLOAD_MB", 20),
+
+  /** 对话日志：用户的原始内容和模型的实际响应，见 src/logging/conversation-log.ts */
+  conversationLog: {
+    enabled: env.LOG_ENABLED !== "0",
+    dir: path.resolve(env.LOG_DIR || path.join(gatewayRoot, ".data", "logs")),
+    maxFileBytes: int("LOG_MAX_FILE_MB", 20) * 1024 * 1024,
+    maxTotalBytes: int("LOG_MAX_TOTAL_MB", 500) * 1024 * 1024,
+    retentionDays: int("LOG_RETENTION_DAYS", 14),
+    maxEntryBytes: int("LOG_MAX_ENTRY_KB", 512) * 1024,
+  },
 };
 
 // listSessions() / getSessionMessages() 在网关进程里读会话文件，也按 CLAUDE_CONFIG_DIR 找目录

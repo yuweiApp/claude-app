@@ -1,6 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import path from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
 
 // 桌面版：拉起网关和网页（Vite），在窗口里打开网页。已经在跑的（比如 VS Code 里先启动了「启动网页」）直接复用
 const root = path.resolve(import.meta.dirname, "..", "..");
@@ -116,6 +116,18 @@ ipcMain.on("window:toggle-maximize", (e) => {
 });
 ipcMain.on("window:close", (e) => BrowserWindow.fromWebContents(e.sender)?.close());
 ipcMain.handle("window:is-maximized", (e) => BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false);
+
+// 新会话的「选择文件夹…」：系统的文件夹对话框（Windows 上是资源管理器），取消时返回 null
+ipcMain.handle("dialog:pick-folder", async (e, defaultPath: unknown) => {
+  const options: OpenDialogOptions = {
+    title: "选择文件夹",
+    properties: ["openDirectory"],
+    defaultPath: typeof defaultPath === "string" ? defaultPath : undefined,
+  };
+  const win = BrowserWindow.fromWebContents(e.sender);
+  const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+});
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();

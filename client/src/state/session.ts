@@ -359,7 +359,12 @@ function resultText(content: unknown): string {
   if (!Array.isArray(content)) return "";
   return content
     .filter((c: Record<string, unknown>) => c.type !== "image")
-    .map((c: Record<string, unknown>) => (c.type === "text" ? String(c.text) : `[${String(c.type)}]`))
+    .map((c: Record<string, unknown>) => {
+      if (c.type === "text") return String(c.text);
+      // ToolSearch 的结果：只带工具名，完整定义不在消息里
+      if (c.type === "tool_reference") return `已加载工具：${String(c.tool_name)}`;
+      return `[${String(c.type)}]`;
+    })
     .join("\n");
 }
 
