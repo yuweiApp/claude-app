@@ -1,6 +1,7 @@
 import { useRef, useState, type MouseEvent, type ReactNode } from "react";
 import type { SessionListItem } from "../api";
 import { useDismiss } from "./ComposerPickers";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { SidebarToggle } from "./SidebarToggle";
 
 /** 会话标题：SDKSessionInfo.summary 就是 SDK 给的显示标题（自定义标题、自动摘要或第一条提问） */
@@ -55,6 +56,8 @@ interface Props {
 
 export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, onDelete, onCollapse }: Props) {
   const [collapsed, setCollapsed] = useState(loadCollapsed);
+  /** 等用户确认的删除 */
+  const [pendingDelete, setPendingDelete] = useState<{ title: string; message: string; ids: string[] } | null>(null);
   const toggle = (key: string) =>
     setCollapsed((cur) => {
       const next = new Set(cur);
@@ -75,28 +78,27 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
 
   const row = (s: SessionListItem) => (
     <li key={s.sessionId}>
-      <button className={`session-row${s.sessionId === currentId ? " active" : ""}`} onClick={() => onSelect(s.sessionId)} title={sessionTitle(s)}>
-        <span className="session-title">
-          {s.state === "running" && <span className="dot" />}
-          {sessionTitle(s)}
-        </span>
+      <button
+        className={`session-row${s.sessionId === currentId ? " active" : ""}${s.state === "running" ? " running" : ""}`}
+        onClick={() => onSelect(s.sessionId)}
+        title={sessionTitle(s)}
+      >
+        <span className="session-title">{sessionTitle(s)}</span>
         <span className="session-meta">{relativeTime(s.lastModified)}</span>
+        {s.state === "running" && <span className="session-spinner" aria-label="运行中" />}
       </button>
     </li>
   );
 
   return (
     <aside className="sidebar">
-      {onCollapse && (
-        <div className="sidebar-head">
-          <SidebarToggle collapsed={false} onToggle={onCollapse} />
-        </div>
-      )}
-      <button className="nav-item" onClick={() => onNew()}>
-        <ComposeIcon />
-        新会话
-      </button>
-      <div className="sidebar-divider" />
+      <div className="sidebar-top">
+        {onCollapse && <SidebarToggle collapsed={false} onToggle={onCollapse} />}
+        <button className="nav-item" onClick={() => onNew()}>
+          <ComposeIcon />
+          新会话
+        </button>
+      </div>
 
       <SectionHead
         menu={[
@@ -106,8 +108,11 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
             disabled: projects.length === 0,
             onClick: () => {
               const ids = projects.flatMap((g) => g.sessions.map((s) => s.sessionId));
-              const message = `删除「项目」里全部 ${projects.length} 个项目的 ${ids.length} 个会话？会话记录会一起删除，不能恢复；文件夹里的文件不受影响。`;
-              if (window.confirm(message)) onDelete(ids);
+              setPendingDelete({
+                title: "删除全部项目的会话",
+                message: `将删除 ${projects.length} 个项目下的 ${ids.length} 个会话，会话记录一起删除，不能恢复。文件夹里的文件不受影响。`,
+                ids,
+              });
             },
           },
         ]}
@@ -140,12 +145,17 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
       <SectionHead
         className="section-gap"
         menu={[
+          { label: "新建会话", onClick: () => onNew() },
           {
             label: "全部删除",
             danger: true,
             disabled: chats.length === 0,
             onClick: () => {
-              if (window.confirm(`删除「会话」里的全部 ${chats.length} 个会话？会话记录会一起删除，不能恢复。`)) onDelete(chats.map((s) => s.sessionId));
+              setPendingDelete({
+                title: "删除全部会话",
+                message: `将删除「会话」里的 ${chats.length} 个会话，会话记录一起删除，不能恢复。`,
+                ids: chats.map((s) => s.sessionId),
+              });
             },
           },
         ]}
@@ -154,6 +164,18 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
       </SectionHead>
       {chatsOpen && chats.length === 0 && <div className="group-empty">暂无会话</div>}
       {chatsOpen && <ul>{chats.map(row)}</ul>}
+      {pendingDelete && (
+        <ConfirmDialog
+          title={pendingDelete.title}
+          message={pendingDelete.message}
+          confirmLabel="全部删除"
+          onConfirm={() => {
+            onDelete(pendingDelete.ids);
+            setPendingDelete(null);
+          }}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
     </aside>
   );
 }

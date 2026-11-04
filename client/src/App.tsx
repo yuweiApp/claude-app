@@ -100,7 +100,7 @@ export function App() {
   }, [refresh]);
 
   return (
-    <div className="shell">
+    <div className="app-shell">
       {desktop && (
         <TitleBar
           desktop={desktop}

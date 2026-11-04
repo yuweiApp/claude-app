@@ -35,6 +35,8 @@ export interface HistoryMessage {
   uuid: string;
   message: unknown;
   parent_tool_use_id: string | null;
+  /** ISO 时间，历史里没有 result 时用它算一轮的用时 */
+  timestamp?: string;
 }
 
 /** GET /folders：网关机器上一个文件夹里的子文件夹 */

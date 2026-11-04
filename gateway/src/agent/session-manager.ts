@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   deleteSession,
   getSessionInfo,
@@ -99,6 +100,13 @@ export class SessionManager {
     // 刚建的会话第一轮还没落盘时只有子进程，没有文件可删
     if (await getSessionInfo(sessionId)) await deleteSession(sessionId);
     else if (!session) throw new NotFoundError(`会话不存在：${sessionId}`);
+    // close() 只等到消息流结束，子进程退出时还会往 jsonl 写最后几条记录，把删掉的文件又建出来，所以再查几次
+    if (session) {
+      for (let i = 0; i < 6; i++) {
+        await sleep(250);
+        if (await getSessionInfo(sessionId)) await deleteSession(sessionId);
+      }
+    }
     this.hub.remove(sessionId);
     this.tasks.delete(sessionId);
   }

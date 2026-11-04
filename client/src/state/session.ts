@@ -13,9 +13,9 @@ export type Block = { type: "text"; text: string } | { type: "tool_use"; id: str
 
 export type Item =
   /** images：用户消息里的 image 块（Claude 的结构，base64），转成 data: 地址直接显示 */
-  | { kind: "user"; uuid: string; text: string; images: string[]; attachments: AttachmentChip[] }
+  | { kind: "user"; uuid: string; at?: number; text: string; images: string[]; attachments: AttachmentChip[] }
   /** messageId：模型 API 那一次响应的 id。一次响应里的多个内容块会拆成多条消息，id 相同；同一个 id 下的多个工具调用是并行的 */
-  | { kind: "assistant"; uuid: string; messageId?: string; blocks: Block[] }
+  | { kind: "assistant"; uuid: string; at?: number; messageId?: string; blocks: Block[] }
   /** userMessageUuid：SDKResultMessage.user_message_uuid，这一轮开头那条用户消息 */
   | { kind: "result"; uuid: string; userMessageUuid?: string; isError: boolean; text: string; durationMs: number; costUsd: number }
   | { kind: "error"; uuid: string; text: string }
@@ -25,7 +25,7 @@ export type Item =
    * 后台任务（Bash 后台命令、后台子代理等）完成的通知。模型空闲时 Claude Code 会拿它自动开始新的一轮，所以它和用户消息一样是一轮的开头。
    * uuid 用 task:<task_id>：实时的 system/task_notification 和历史里的 <task-notification> 消息 uuid 不同，按任务 id 去重
    */
-  | { kind: "task"; uuid: string; status: string; text: string };
+  | { kind: "task"; uuid: string; at?: number; status: string; text: string };
 
 export type TaskItem = Extract<Item, { kind: "task" }>;
 
@@ -44,6 +44,8 @@ export interface ToolResult {
   /** 工具返回的图片（Read 读图片时在 tool_result 里），data: 地址 */
   images: string[];
   isError: boolean;
+  /** 工具调用的耗时：调用到结果的时间差，历史按消息时间戳，实时按收到的时间 */
+  durationMs?: number;
 }
 
 export interface PermissionRequest {
@@ -63,6 +65,8 @@ export interface SessionView {
   /** 子代理里的消息，按所属 Agent 工具调用的 id 分组 */
   children: Record<string, Item[]>;
   toolResults: Record<string, ToolResult>;
+  /** 工具调用开始的时间（毫秒），按 tool_use id，算耗时用 */
+  toolStarts: Record<string, number>;
   /** 正在生成、还没收到完整 assistant 消息的文字 */
   streaming: { text: string };
   permissions: PermissionRequest[];
@@ -89,6 +93,7 @@ export function emptyView(): SessionView {
     items: [],
     children: {},
     toolResults: {},
+    toolStarts: {},
     streaming: { text: "" },
     permissions: [],
     state: "closed",
@@ -112,10 +117,13 @@ export function reduce(view: SessionView, action: Action): SessionView {
   if (action.type === "history") {
     // 历史放在前面，已经从事件流收到的（按 uuid）不重复
     const next = { ...emptyView(), state: view.state, model: view.model, effort: view.effort, permissionMode: view.permissionMode };
-    for (const m of action.messages) ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id);
+    for (const m of action.messages) {
+      ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id, m.timestamp ? Date.parse(m.timestamp) : undefined);
+    }
     for (const item of view.items) pushItem(next, null, item);
     for (const [parent, items] of Object.entries(view.children)) items.forEach((item) => pushItem(next, parent, item));
     next.toolResults = { ...view.toolResults, ...next.toolResults };
+    next.toolStarts = { ...view.toolStarts, ...next.toolStarts };
     next.streaming = view.streaming;
     next.permissions = view.permissions;
     next.turnEnded = view.turnEnded;
@@ -224,7 +232,7 @@ function startApiMessage(view: SessionView, id: string): void {
 }
 
 /** 把一条 user / assistant 消息（SDK 实时消息和 jsonl 历史格式相同）归并进视图 */
-function ingestMessage(view: SessionView, type: string, uuid: string, raw: unknown, parent: string | null): void {
+function ingestMessage(view: SessionView, type: string, uuid: string, raw: unknown, parent: string | null, at?: number): void {
   if (view.seen.has(uuid)) return;
   const content = (raw as { content?: unknown } | null)?.content;
 
@@ -234,6 +242,7 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       if (b.type === "text" && typeof b.text === "string") blocks.push({ type: "text", text: b.text });
       else if (b.type === "tool_use" || b.type === "server_tool_use" || b.type === "mcp_tool_use") {
         blocks.push({ type: "tool_use", id: String(b.id), name: String(b.name), input: b.input });
+        view.toolStarts = { ...view.toolStarts, [String(b.id)]: at ?? Date.now() };
       }
     }
     const messageId = (raw as { id?: unknown }).id;
@@ -241,7 +250,7 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
     const stop = (raw as { stop_reason?: unknown }).stop_reason;
     if (!parent && typeof stop === "string") view.turnEnded = stop !== "tool_use" && stop !== "pause_turn";
     if (blocks.length) {
-      pushItem(view, parent, { kind: "assistant", uuid, messageId: typeof messageId === "string" ? messageId : undefined, blocks });
+      pushItem(view, parent, { kind: "assistant", uuid, at, messageId: typeof messageId === "string" ? messageId : undefined, blocks });
     }
     else view.seen = new Set(view.seen).add(uuid);
     return;
@@ -252,7 +261,7 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
     if (task) {
       // 上一轮结束后到的通知让 Claude Code 开了新的一轮，显示成那一轮的开头；
       // 一轮还在进行时到的，Claude Code 把它并进当前这一轮（实时事件里也只有一个 result），对话里不单独显示，后台任务面板里有
-      if (parent || view.turnEnded) pushItem(view, parent, task);
+      if (parent || view.turnEnded) pushItem(view, parent, { ...task, at });
       view.turnEnded = false;
       view.seen = new Set(view.seen).add(uuid);
       return;
@@ -264,7 +273,7 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       return;
     }
     if (typeof content === "string") {
-      pushItem(view, parent, { kind: "user", uuid, text: content, images: [], attachments: [] });
+      pushItem(view, parent, { kind: "user", uuid, at, text: content, images: [], attachments: [] });
       if (!parent) view.turnEnded = false;
       return;
     }
@@ -275,9 +284,16 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
     for (const b of content as Array<Record<string, unknown>>) {
       if (b.type === "tool_result") {
         const inner = Array.isArray(b.content) ? (b.content as unknown[]) : [];
+        const id = String(b.tool_use_id);
+        const start = view.toolStarts[id];
         view.toolResults = {
           ...view.toolResults,
-          [String(b.tool_use_id)]: { text: resultText(b.content), images: inner.flatMap((c) => imageSrc(c) ?? []), isError: b.is_error === true },
+          [id]: {
+            text: resultText(b.content),
+            images: inner.flatMap((c) => imageSrc(c) ?? []),
+            isError: b.is_error === true,
+            durationMs: start === undefined ? undefined : Math.max(0, (at ?? Date.now()) - start),
+          },
         };
       } else if (b.type === "image") {
         const src = imageSrc(b);
@@ -289,7 +305,7 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       }
     }
     if (texts.length || images.length || attachments.length) {
-      pushItem(view, parent, { kind: "user", uuid, text: texts.join("\n"), images, attachments });
+      pushItem(view, parent, { kind: "user", uuid, at, text: texts.join("\n"), images, attachments });
       if (!parent) view.turnEnded = false;
     } else {
       view.seen = new Set(view.seen).add(uuid);

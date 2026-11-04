@@ -81,6 +81,7 @@ function createWindow(): BrowserWindow {
     minWidth: 720,
     minHeight: 480,
     title: "Claude App",
+    icon: path.join(root, "desktop", "assets", "icon.png"),
     show: false,
     autoHideMenuBar: true,
     // 不要系统标题栏：网页自己画（client/src/components/TitleBar.tsx），按钮通过 preload 调下面的 window:* 消息。

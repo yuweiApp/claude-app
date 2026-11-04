@@ -6,6 +6,7 @@ import { Attachments } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { CopyAction, MessageActions } from "./MessageActions";
 import { StepGroup, ToolStep, type ToolUse } from "./Steps";
+import { formatDuration } from "./TasksPanel";
 
 type UserItem = Extract<Item, { kind: "user" }>;
 type ResultItem = Extract<Item, { kind: "result" }>;
@@ -47,6 +48,14 @@ function splitTurns(items: Item[]): Turn[] {
   return turns;
 }
 
+/** 这一轮的用时：有 result 用它的；历史里没有 result（网关重启过），按这一轮第一条和最后一条消息的时间算 */
+function turnDuration(turn: Turn): number | null {
+  if (turn.result) return turn.result.durationMs;
+  const start = (turn.user ?? turn.task)?.at;
+  const end = turn.body.findLast((item) => item.kind === "assistant")?.at;
+  return start && end && end > start ? end - start : null;
+}
+
 /** 通知 summary 里的退出码（… failed with exit code 124） */
 const taskExitCode = (task: TaskItem) => /exit code (-?\d+)/.exec(task.text)?.[1];
 
@@ -76,11 +85,6 @@ export function Messages({ view }: { view: SessionView }) {
       ))}
     </div>
   );
-}
-
-function formatDuration(ms: number) {
-  const s = Math.round(ms / 1000);
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
 /** 进行中的计时，每秒刷新；从开始显示时算起 */
@@ -113,6 +117,7 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
   const process = units.filter((u, i) => i !== finalIdx && u.kind !== "item");
   const streaming = live && view.streaming.text;
   const hasProcess = process.length > 0;
+  const duration = live ? null : turnDuration(turn);
   const expanded = live ? !liveCollapsed : open;
   // 工具正在执行时它的图标在转，不再另外显示「思考中…」
   const toolRunning = units.some((u) => u.kind === "steps" && u.tools.some((t) => !view.toolResults[t.id]));
@@ -134,8 +139,8 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
           )}
         </div>
       )}
-      {(hasProcess || live) && (
-        <div className="process-wrap">
+      {(hasProcess || live || duration !== null) && (
+        <div className={`process-wrap${final ? " has-final" : ""}`}>
           <button
             className="process-toggle"
             onClick={() => (live ? setLiveCollapsed((c) => !c) : setOpen((o) => !o))}
@@ -145,8 +150,8 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
               <>
                 已处理 <Elapsed />
               </>
-            ) : turn.result ? (
-              `用时 ${formatDuration(turn.result.durationMs)}`
+            ) : duration !== null ? (
+              `用时 ${formatDuration(duration)}`
             ) : (
               "处理过程"
             )}
