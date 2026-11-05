@@ -50,7 +50,7 @@ interface Props {
   onSelect: (id: string) => void;
   /** 新会话；cwd 是在哪个文件夹里，不传是无文件夹 */
   onNew: (cwd?: string) => void;
-  /** 删除这些会话（已经确认过） */
+  /** 删除这些会话（单个会话、单个项目不确认，「全部删除」已经确认过） */
   onDelete: (ids: string[]) => void;
   /** 收起侧边栏；不传时不显示按钮（桌面版的在标题栏上） */
   onCollapse?: () => void;
@@ -79,20 +79,9 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
   const projectsOpen = !collapsed.has(SECTION_PROJECTS);
   const chatsOpen = !collapsed.has(SECTION_CHATS);
 
-  const deleteSession = (s: SessionListItem) =>
-    setPendingDelete({
-      title: "删除会话",
-      message: `将删除「${sessionTitle(s)}」，会话记录一起删除，不能恢复。${s.state === "running" ? "会话正在运行，会先停止。" : ""}`,
-      confirmLabel: "删除",
-      ids: [s.sessionId],
-    });
-  const deleteProject = (g: FolderGroup) =>
-    setPendingDelete({
-      title: "删除项目",
-      message: `将删除项目「${folderName(g.cwd)}」下的 ${g.sessions.length} 个会话，会话记录一起删除，不能恢复。文件夹里的文件不受影响。`,
-      confirmLabel: "删除",
-      ids: g.sessions.map((s) => s.sessionId),
-    });
+  // 单个会话和单个项目直接删，不弹确认；「全部删除」影响面大，仍要确认
+  const deleteSession = (s: SessionListItem) => onDelete([s.sessionId]);
+  const deleteProject = (g: FolderGroup) => onDelete(g.sessions.map((s) => s.sessionId));
 
   const row = (s: SessionListItem) => <SessionRow key={s.sessionId} session={s} active={s.sessionId === currentId} onSelect={onSelect} onDelete={deleteSession} />;
 
