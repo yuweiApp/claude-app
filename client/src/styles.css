@@ -640,8 +640,14 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; background:
 .panel-toggle { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
 .panel-toggle.active, .panel-toggle:hover { color: var(--text); }
 .side-panel { position: relative; flex: none; min-width: 320px; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg); }
-.side-panel-resizer { position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; z-index: 6; cursor: col-resize; touch-action: none; }
-.side-panel-resizer:hover, .side-panel-resizer:active { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+/* 左边缘的分割线，和侧边栏的 .sidebar-resizer 一样：两边各伸出 4px 方便抓，平时只看到边框线，悬停时中间显示一小段圆角竖条 */
+.side-panel-resizer { position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; z-index: 6; cursor: col-resize; touch-action: none; outline: none; }
+.side-panel-resizer::after {
+  content: ""; position: absolute; left: 2px; top: 50%; width: 4px; height: 36px; margin-top: -18px; border-radius: 2px;
+  background: var(--muted); opacity: 0; transition: opacity 0.15s; pointer-events: none;
+}
+.side-panel-resizer:hover::after, .side-panel-resizer:focus-visible::after { opacity: 0.45; transition-delay: 0.1s; }
+.side-panel-resizer:active::after { opacity: 0.7; transition-delay: 0s; }
 .panel-head { display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .panel-tabs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
 .panel-tab {
@@ -781,3 +787,28 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; background:
 .terminal-host { flex: 1; min-height: 0; padding: 6px 0 0 8px; overflow: hidden; }
 .terminal-host .xterm { height: 100%; }
 @media (max-width: 720px) { .side-panel { display: none; } }
+
+/* 右侧面板的内置浏览器（只有桌面版有）：画面区域是空的，网页是外壳叠放上来的原生视图 */
+.browser-tab { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.browser-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.browser-btn { flex: none; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
+.browser-btn:hover:not(:disabled) { color: var(--text); }
+.browser-btn:disabled { opacity: 0.4; cursor: default; }
+.browser-address { flex: 1; min-width: 0; height: 32px; padding: 0 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--panel); color: var(--text); font-size: 13px; outline: none; }
+.browser-address:focus { border-color: var(--accent); background: var(--bg); }
+.browser-area { flex: 1; min-height: 0; position: relative; background: #fff; }
+.browser-covered { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; color: var(--muted); font-size: 13px; background: var(--bg); }
+.panel-tool:disabled { opacity: 0.5; cursor: not-allowed; }
+.panel-new-tab-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.browser-nav { flex: none; display: flex; align-items: center; gap: 2px; padding: 0 4px; height: 32px; border-radius: 16px; background: var(--panel); }
+.browser-nav-sep { width: 1px; height: 16px; margin: 0 2px; background: var(--border); }
+.browser-address-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
+.browser-suggest { position: absolute; top: calc(100% + 4px); bottom: auto; left: 0; right: 0; min-width: 0; max-width: none; z-index: 20; max-height: 320px; overflow-y: auto; padding: 4px; }
+.browser-suggest-item { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 10px; border: none; border-radius: 6px; background: none; text-align: left; }
+.browser-suggest-item.active { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.browser-suggest-title { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text); }
+.browser-suggest-url { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
+.browser-covered img { width: 100%; height: 100%; object-fit: fill; display: block; }
+.browser-covered:has(img) { padding: 0; }
+.mention-tab { display: inline-flex; align-items: center; gap: 3px; vertical-align: bottom; }
+.mention-tab svg { width: 13px; height: 13px; flex: none; }

@@ -16,6 +16,7 @@ import { newPanelState, PanelIcon, SidePanel, type PanelState } from "./componen
 import { TasksPopover } from "./components/TasksPopover";
 import { TitleBar } from "./components/TitleBar";
 import { desktop } from "./desktop";
+import { useBrowserTabs } from "./state/browserTabs";
 import { emptyView, reduce } from "./state/session";
 
 export function App() {
@@ -25,6 +26,9 @@ export function App() {
   const [currentId, setCurrentId] = useState<string | null>(null);
   /** 新聊天页选的项目（工作目录），null 是默认工作目录 */
   const [newCwd, setNewCwd] = useState<string | null>(null);
+  // 新会话页的内置浏览器标签页先记在这个草稿名下，发出第一条消息、会话建好后转给新会话
+  // 存在 localStorage 里：刷新页面后新会话页开着的标签页还在
+  const [draftId, setDraftId] = useState(initialDraftId);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   /** 图标栏上开着的页面：首页（会话）或设置 */
@@ -50,31 +54,35 @@ export function App() {
   /** 删掉的会话正在看的话回到新会话页 */
   const forget = (ids: string[]) => setCurrentId((id) => (id && ids.includes(id) ? null : id));
   const select = (id: string | null) => setCurrentId(id);
+  /** 切到新会话页：右侧面板默认收起，要用再点开 */
   const startNew = (cwd?: string) => {
     setNewCwd(cwd ?? null);
     select(null);
+    showPanel(false);
   };
   const current = sessions.find((s) => s.sessionId === currentId);
   // 会话标题和所在项目，显示在对话上方那一行（右边是会话栏按钮）；新会话页没有
   const title = currentId ? (current ? sessionTitle(current) : "新会话") : null;
   const folder = current?.cwd && config && current.cwd !== config.workspaceDir ? folderName(current.cwd) : null;
-  // 右侧面板：只在项目里（选了文件夹的会话、新会话页选了文件夹）有；开着还是收起全局记住，标签页按项目文件夹分开
+  // 右侧面板：项目里（选了文件夹的会话、新会话页选了文件夹）有文件和终端，普通会话只有终端（开在工作区）；
+  // 开着还是收起全局记住，标签页按文件夹分开（普通会话共用工作区那一份）
   const chatCwd = currentId ? (current?.cwd ?? null) : newCwd;
-  const projectCwd = chatCwd && config && chatCwd !== config.workspaceDir ? chatCwd : null;
+  const panelCwd = config ? (chatCwd ?? config.workspaceDir) : null;
+  const isProject = !!panelCwd && panelCwd !== config?.workspaceDir;
   const [panelOpen, setPanelOpen] = useState(initialPanelOpen);
   const [panels, setPanels] = useState<Record<string, PanelState>>({});
   // 还没改过的项目用同一个默认状态（每次渲染新建的话标签页 id 会变）
   const defaultPanels = useRef<Record<string, PanelState>>({});
   const panelOf = (all: Record<string, PanelState>, cwd: string) => all[cwd] ?? (defaultPanels.current[cwd] ??= newPanelState());
-  const togglePanel = () =>
-    setPanelOpen((open) => {
-      try {
-        localStorage.setItem(PANEL_OPEN_KEY, String(!open));
-      } catch {
-        // 忽略
-      }
-      return !open;
-    });
+  const showPanel = (open: boolean) => {
+    setPanelOpen(open);
+    try {
+      localStorage.setItem(PANEL_OPEN_KEY, String(open));
+    } catch {
+      // 忽略
+    }
+  };
+  const togglePanel = () => showPanel(!panelOpen);
 
   const deleteSessions = async (ids: string[]) => {
     const results = await Promise.allSettled(ids.map((id) => api.deleteSession(id)));
@@ -175,7 +183,19 @@ export function App() {
                   )
                 }
                 config={config}
+                draftId={draftId}
                 onCreated={(id) => {
+                  desktop?.browser.reassign(draftId, id);
+                  // 面板里这些标签页也马上改过去（不等外壳推来新的列表，不然中间会以为当前会话没有标签页，补出一个新标签页）
+                  setPanels((all) =>
+                    Object.fromEntries(
+                      Object.entries(all).map(([cwd, st]) => [
+                        cwd,
+                        { ...st, tabs: st.tabs.map((t) => (t.kind === "browser" && t.sessionId === draftId ? { ...t, sessionId: id } : t)) },
+                      ]),
+                    ),
+                  );
+                  setDraftId(newDraftId());
                   select(id);
                   refresh();
                 }}
@@ -186,11 +206,11 @@ export function App() {
               folder={folder}
                 headerEnd={
                   // 面板开着时收起按钮在面板上
-                  projectCwd && !panelOpen && (
+                  panelCwd && !panelOpen && (
                     <button
                       className="icon-btn panel-toggle"
                       onClick={togglePanel}
-                      title="打开右侧面板（文件、终端）"
+                      title={`打开右侧面板（${[isProject && "文件", "终端", desktop && "浏览器"].filter(Boolean).join("、")}）`}
                       aria-label="打开右侧面板"
                     >
                       <PanelIcon />
@@ -199,16 +219,18 @@ export function App() {
                 }
               />
             )}
-            {projectCwd && panelOpen && (
+            {panelCwd && panelOpen && (
               <SidePanel
-                key={projectCwd}
-                cwd={projectCwd}
-                state={panelOf(panels, projectCwd)}
+                key={panelCwd}
+                cwd={panelCwd}
+                sessionId={currentId ?? draftId}
+                files={isProject}
+                state={panelOf(panels, panelCwd)}
                 onChange={(update) =>
                   setPanels((all) => {
-                    const current = panelOf(all, projectCwd);
+                    const current = panelOf(all, panelCwd);
                     const next = update(current);
-                    return next === current ? all : { ...all, [projectCwd]: next };
+                    return next === current ? all : { ...all, [panelCwd]: next };
                   })
                 }
                 onClose={togglePanel}
@@ -220,6 +242,26 @@ export function App() {
       </div>
     </div>
   );
+}
+
+const DRAFT_KEY = "browserDraftId";
+
+function initialDraftId(): string {
+  try {
+    return localStorage.getItem(DRAFT_KEY) || newDraftId();
+  } catch {
+    return newDraftId();
+  }
+}
+
+function newDraftId(): string {
+  const id = `draft:${crypto.randomUUID()}`;
+  try {
+    localStorage.setItem(DRAFT_KEY, id);
+  } catch {
+    // 无痕模式等写不了，只在这次打开里生效
+  }
+  return id;
 }
 
 const COLLAPSED_KEY = "sidebarCollapsed";
@@ -253,6 +295,8 @@ function initialCollapsed(): boolean {
 
 interface ChatProps {
   sessionId: string | null;
+  /** 新会话页的内置浏览器标签页记在这个草稿名下 */
+  draftId: string;
   config: GatewayConfig;
   onCreated: (id: string) => void;
   onChanged: () => void;
@@ -272,6 +316,7 @@ interface ChatProps {
 
 function Chat({
   sessionId,
+  draftId,
   cwd,
   config,
   onCreated,
@@ -293,6 +338,8 @@ function Chat({
     api.models().then(setModels, (e: Error) => onError(`读取模型列表失败：${e.message}`));
   }, []);
   const composerRef = useRef<ComposerHandle>(null);
+  // 桌面版内置浏览器里这个会话的标签页，输入框 @ 可以引用
+  const browserTabs = useBrowserTabs(sessionId ?? draftId);
   // 技能和插件按工作目录（项目里可以有自己的技能）
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   useEffect(() => {
@@ -476,6 +523,7 @@ function Chat({
         left={<PermissionPicker value={permissionMode} onChange={changeMode} />}
         handle={composerRef}
         cwd={cwd}
+        browserTabs={browserTabs}
         top={
           <>
             {folderPicker}

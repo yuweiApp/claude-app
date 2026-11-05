@@ -23,6 +23,7 @@ import { enabledSkillNames } from "./capabilities.js";
 import { disabledSkills } from "./extensions.js";
 import { AgentSession } from "./session.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
+import type { BrowserHost } from "../browser/host.js";
 import { generateTitle } from "./title.js";
 import { readOutputTail, TaskList } from "./tasks.js";
 
@@ -37,8 +38,10 @@ export class SessionManager {
     private readonly hub: EventHub,
     private readonly log: FastifyBaseLogger,
     private readonly conversationLog: ConversationLog,
-    /** 右侧面板的终端，项目里的会话给模型用（读终端、往终端里写命令） */
+    /** 右侧面板的终端，给模型用（读终端、往终端里写命令） */
     private readonly terminals?: TerminalManager,
+    /** 桌面版的内置浏览器，给模型用（Playwright MCP） */
+    private readonly browser?: BrowserHost,
   ) {
     mkdirSync(config.workspaceDir, { recursive: true });
     mkdirSync(config.claudeConfigDir, { recursive: true });
@@ -200,6 +203,7 @@ export class SessionManager {
         if (this.active.get(closed.id) === closed) this.active.delete(closed.id);
       },
       this.terminals,
+      this.browser,
     );
     this.active.set(sessionId, session);
     this.log.info({ sessionId, resume, cwd: opts.cwd }, "启动 claude 会话");

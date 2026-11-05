@@ -55,8 +55,8 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
 - 改名：`renameSession(id, title)`
 - 技能和插件：输入框上面的「技能」「插件」选择后写进输入框。技能写成消息开头的 `/技能名`（Claude Code 只认开头），插件写成 `@插件名`，只是文字引用，Claude Code 没有对应的命令。用技能的消息在历史里是 `<command-message>` 标签加一条技能内容，网页还原成 `/技能名 内容`，技能内容不显示。
 - 引用文件：有项目文件夹时，输入框里打 `@` 弹出项目里的文件、文件夹，选中写成 `@相对路径`（带空格的加引号 `@"a b.txt"`），和 Claude Code 命令行的 @ 引用一样交给 SDK。输入框里只列文件，插件用上面的「插件」按钮；也没有 `/` 命令菜单，技能用「技能」按钮。候选来自网关 `GET /files?cwd=&q=`：`q` 为空列第一层，以 `/` 结尾列那个文件夹，否则在整个项目里按名字搜（git 仓库用 `git ls-files` 按 `.gitignore` 过滤，列表缓存 10 秒）。技能名、插件和文件引用在输入框里高亮，删除、移动光标都按一个整体。
-- 右侧面板：有项目文件夹时对话标题栏右边有开关（开没开全局记住），面板有标签页，新标签页里选「文件」或「终端」（xterm.js，按需加载）。文件工具同 codex-app-server：一个标签里左边目录树（顶部「筛选文件…」在整个项目里搜，可以收起、拖动调宽）、右边内容；单击文件预览打开（标签名斜体，再单击别的文件换掉它），双击文件或标签固定；文本打开就能编辑，Ctrl+S 保存（不自动保存，没保存的标签显示圆点，关闭时问），文件被外面改过时保存报冲突，可以放弃或覆盖；Markdown 默认所见即所得（`MarkdownLiveEditor`，从 codex-app-server 移植，CodeMirror）：编辑的是源码，只是把 Markdown 符号藏起来、按渲染效果显示，整个元素选中时才露出符号，任务列表的复选框可以直接点，项目里的文件链接在面板里打开，「预览 / 源代码」开关切到带行号的源代码编辑；文件、文件夹图标用 Material Icon Theme（`material-icon-theme`，图标按需加载），输入框 @ 的候选也用它。目录树里的图片（png、jpg、gif、webp、bmp、svg，5 MB 以内）显示 16px 的缩略图，`/files/list` 给图片带上大小和修改时间，修改时间放进地址里，图片改了缩略图跟着变，读不出来退回类型图标。标签页按项目文件夹分开存在内存里；终端进程在网关上，跟网页断开无关，刷新页面后按 `GET /terminals?cwd=` 补回标签页，关标签页才结束。
-- 模型用终端（参照 Claude 桌面版的终端工具）：项目里的会话，网关给 SDK 加一个进程内 MCP 服务器 `terminal`（`gateway/src/terminal/tool.ts`，`createSdkMcpServer`），工具有 `read_terminal`（读屏幕上的文字：清屏之前的丢掉，去掉控制序列，回车、退格按覆盖处理；可以先等新输出）、`list_terminal_tabs`、`run_in_terminal`（敲一行命令并回车；不传 tab_id 开新终端，title 是标签页名字）、`stop_terminal_tab`（Ctrl-C 或关闭）。读的两个在 `allowedTools` 里不用确认，写命令、停止走权限卡片（「完全访问权限」下直接执行）。模型只能往它自己开的、用户没敲过、回到了提示符的终端里写命令，只能停止、关闭它自己开的；前台在跑什么用 node-pty 的 `process`（Unix 上是 tcgetpgrp，Windows 上拿不到）。面板每 2 秒对一次 `GET /terminals?cwd=`：模型开的终端补成标签页（不抢当前标签），关掉的去掉。
+- 右侧面板：对话标题栏右边有开关（开没开全局记住），面板有标签页，新标签页里选「文件」或「终端」（xterm.js，按需加载），桌面版的新标签页顶部还有浏览器的地址栏（见第 12 节「内置浏览器」）；普通会话（没选文件夹）只有「终端」，开在工作区，所有普通会话共用一组。文件工具同 codex-app-server：一个标签里左边目录树（顶部「筛选文件…」在整个项目里搜，可以收起、拖动调宽）、右边内容；单击文件预览打开（标签名斜体，再单击别的文件换掉它），双击文件或标签固定；文本打开就能编辑，Ctrl+S 保存（不自动保存，没保存的标签显示圆点，关闭时问），文件被外面改过时保存报冲突，可以放弃或覆盖；Markdown 默认所见即所得（`MarkdownLiveEditor`，从 codex-app-server 移植，CodeMirror）：编辑的是源码，只是把 Markdown 符号藏起来、按渲染效果显示，整个元素选中时才露出符号，任务列表的复选框可以直接点，项目里的文件链接在面板里打开，「预览 / 源代码」开关切到带行号的源代码编辑；文件、文件夹图标用 Material Icon Theme（`material-icon-theme`，图标按需加载），输入框 @ 的候选也用它。目录树里的图片（png、jpg、gif、webp、bmp、svg，5 MB 以内）显示 16px 的缩略图，`/files/list` 给图片带上大小和修改时间，修改时间放进地址里，图片改了缩略图跟着变，读不出来退回类型图标。标签页按文件夹分开存在内存里；终端进程在网关上，跟网页断开无关，刷新页面后按 `GET /terminals?cwd=` 补回标签页，关标签页才结束。
+- 模型用终端（参照 Claude 桌面版的终端工具）：每个会话（普通会话操作工作区那一组终端），网关给 SDK 加一个进程内 MCP 服务器 `terminal`（`gateway/src/terminal/tool.ts`，`createSdkMcpServer`），工具有 `read_terminal`（读屏幕上的文字：清屏之前的丢掉，去掉控制序列，回车、退格按覆盖处理；可以先等新输出）、`list_terminal_tabs`、`run_in_terminal`（敲一行命令并回车；不传 tab_id 开新终端，title 是标签页名字）、`stop_terminal_tab`（Ctrl-C 或关闭）。读的两个在 `allowedTools` 里不用确认，写命令、停止走权限卡片（「完全访问权限」下直接执行）。模型只能往它自己开的、用户没敲过、回到了提示符的终端里写命令，只能停止、关闭它自己开的；前台在跑什么用 node-pty 的 `process`（Unix 上是 tcgetpgrp，Windows 上拿不到）。面板每 2 秒对一次 `GET /terminals?cwd=`：模型开的终端补成标签页（不抢当前标签），关掉的去掉。
 - 导入技能和插件：技能文件夹要有 `SKILL.md`，复制到 `$CLAUDE_CONFIG_DIR/skills/<名称>/`，Claude Code 自己发现；插件文件夹要有 `.claude-plugin/plugin.json`，复制到 `$CLAUDE_CONFIG_DIR/gateway-plugins/<名称>/`，通过 `options.plugins` 加载，它的技能叫 `插件名:技能名`。桌面版用系统对话框选文件夹，网页用 `GET /folders` 浏览。
 - 停用技能：停用的名称存在 `$CLAUDE_CONFIG_DIR/gateway-disabled-skills.json`。有停用的技能时，网关把其余技能作为 `options.skills` 白名单传给 SDK，模型看不到停用的技能，调 Skill 工具也会被拒绝；这个白名单管不到用户自己输入的 `/技能名`，所以网关在新建和发送时再拦一次，返回 400。白名单在拉起 claude 进程时确定，已经活跃的会话要等进程重启才更新，`/技能名` 的拦截立即生效。内置技能只能停用；删除只针对导入的技能，是删文件，SDK 没有对应接口。
 - MCP 服务器：设置页添加的存在 `$CLAUDE_CONFIG_DIR/gateway-mcp-servers.json`（权限 600，请求头和环境变量可能有令牌），启用的通过 `options.mcpServers` 传给会话，对新会话和子进程重启后的会话生效。插件或配置文件带来的服务器只显示，不能在设置页改。
@@ -182,6 +182,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | GET | `/terminals/:id/stream` | 终端输出（SSE）：连上先给保留的输出（最多 512K 字符）还原屏幕，之后实时推 `data`、`exit` |
 | POST | `/terminals/:id/input`、`/terminals/:id/resize` | 输入 `{ data }`（网页按顺序发，前一个回来才发下一个）、改大小 `{ cols, rows }` |
 | DELETE | `/terminals/:id` | 关终端（关标签页时）；网关退出时全部结束 |
+| GET（WebSocket） | `/browser/host` | 桌面版外壳连上来，转发各会话 Playwright 的 CDP 消息（见第 12 节） |
 | POST | `/sessions/:id/interrupt` | 打断当前一轮 |
 | POST | `/sessions/:id/permission-mode` | `{ mode }` |
 | POST | `/sessions/:id/model` | `{ model?, effort? }` 切换模型（`Query.setModel`）和推理强度（`Query.applyFlagSettings({ effortLevel })`）；子进程回收了的会话先 resume |
@@ -233,7 +234,7 @@ client/
 
 1. **骨架（已完成）**：单工作目录、流式对话、工具调用展示、权限确认、打断、历史会话、附件。
 2. **对话体验**：Markdown 和代码高亮、diff 展示（Edit / Write 的入参）、思考块、AskUserQuestion 选择题、斜杠命令（`supportedCommands()`）、模型切换（`setModel()`）、上下文用量（`getContextUsage()`）。
-3. **自定义工具**（`createSdkMcpServer()` 进程内 MCP）：内置浏览器（复用 codex-app-server 的 CDP 方案，或直接挂 `@playwright/mcp`；DeepSeek 不看图时用无障碍树快照，不用截图 + 坐标）、终端读取、会话管理。
+3. **自定义工具**（`createSdkMcpServer()` 进程内 MCP）：内置浏览器（已完成第一版，只有桌面版，见第 12 节）、终端读取（已完成）、会话管理。
 4. **多人部署**：沿用 codex-app-server 的 hub + 每用户一个容器，每个容器一个 `CLAUDE_CONFIG_DIR`。
 5. **桌面版**：Electron 外壳。
 
@@ -253,3 +254,23 @@ client/
 - **不是 HTTP 抓包**：记录的是 SDK 交给网关的消息，不包含 Claude Code 发给模型接口的完整请求（系统提示、工具定义）和请求头，接口密钥不会写入。
 - **限制**：单文件 `LOG_MAX_FILE_MB`（默认 20），超过换下一个序号；总量 `LOG_MAX_TOTAL_MB`（默认 500，含图片），超过从最旧的文件删；保留 `LOG_RETENTION_DAYS` 天（默认 14，图片再次出现时重新计时）；单条 `LOG_MAX_ENTRY_KB`（默认 512），超过只留开头一段并标 `truncated`。启动时、每小时、换文件时清理。`LOG_ENABLED=0` 关闭。
 - **隐私**：日志里有完整的对话和工具输出，文件权限 600。删除会话不会删日志，要等保留期到期或手动删。写失败只记运行日志，不影响会话。
+
+## 12. 内置浏览器（只有桌面版）
+
+右侧面板的浏览器，用户和 AI 都能操作，每个对话会话有自己的标签页。网页版没有。做法参照 VS Code 的内置浏览器（`src/vs/platform/browserView`）：网页是原生网页视图，AI 用 Playwright 经 Electron 自带的调试接口操作，不开调试端口。
+
+```
+网关：会话的 Playwright MCP ──connectOverCDP(transport)──▶ BrowserHost ──WebSocket /browser/host──▶
+外壳：GatewayBridge ──▶ 这个会话的 CdpProxy ──▶ 各标签页的 webContents.debugger ──▶ 网页视图
+```
+
+- **标签页**（`desktop/src/browser/views.ts`）：每个一个 `WebContentsView`，分区 `persist:claude-browser`（登录状态所有会话共用），记着所属会话。显示中的那个叠放在主窗口面板的画面区域上（界面每一帧对一次位置，变了才经 preload 的 `browser.show` 告诉外壳，按界面缩放换算）；其他的放在屏幕外的停放窗口里继续渲染：从窗口里拿走的视图不出画面，AI 截图会一直等到超时。Windows 加 `disable-features=CalculateNativeWinOcclusion`（屏幕外的窗口会被当成被挡住、不再绘制）；macOS 会把屏幕外的窗口挪回来，停放窗口保持隐藏，截图期间接连 `capturePage`（`stayHidden`）让网页出画面。User-Agent 去掉 Electron；网页的权限请求除了写剪贴板都拒绝；下载直接存进系统的「下载」文件夹；`target=_blank`、`window.open` 装进新视图，归同一个会话；焦点在网页里时 Ctrl+R / F5 刷新、F12 开发者工具、Alt+←/→ 后退前进。右键是系统菜单：链接（新标签页打开、复制地址）、图片（新标签页打开、复制图片、复制地址）、输入框（撤销、重做、剪切、复制、粘贴、全选）、选中文字（复制、用必应搜索），空白处是后退、前进、重新加载，最后都有「检查」（单独窗口的开发者工具，选中右键处的元素）。
+- **CDP 代理**（`desktop/src/browser/cdp-proxy.ts`，参照 VS Code 的 `browserView/common/cdp/proxy.ts`）：Electron 只有每个网页各自的调试接口，没有浏览器级的。代理替这个会话扮演「一个浏览器」：浏览器级的命令（没有 sessionId：`Browser.getVersion`、`Target.setAutoAttach`、`getTargets`、`createTarget`、`closeTarget`、`activateTarget`……）自己回答，只报这个会话的标签页，所以 Playwright 看不到别的会话的标签页，也看不到界面窗口；发给标签页的转给那个标签页的 `webContents.debugger`。标签页在 Playwright 那边的会话号是 `S` + targetId，iframe、Worker 的子会话号由调试接口分配，原样转发。`createTarget` 新建视图时先发 `attachedToTarget` 再回复（Playwright 要求这个顺序）。`Emulation.setDeviceMetricsOverride` 吞掉（视口由面板决定）；`Page.captureScreenshot` 期间让后台标签页出画面。
+- **连接**（`desktop/src/browser/bridge.ts`、`gateway/src/browser/host.ts`）：外壳启动后连网关的 `ws://…/browser/host`（设了 `API_TOKEN` 时外壳要有同样的 `DESKTOP_GATEWAY_TOKEN` 或 `API_TOKEN`），网关重启时每 2 秒重连。网关为每个会话的 Playwright 连接发 `open`，之后 `cdp` 消息双向转发，`close` 结束；外壳只认最新连上来的一个。
+- **浏览历史**（`desktop/src/browser/history.ts`）：Electron 的网页视图不写 Chrome 的历史数据库，外壳在主框架跳转时自己记（网址、标题、访问次数、最近访问时间，只记 http(s)，最多 5000 个），存在用户数据目录的 `browser-history.json`。地址栏输入时下面弹出建议：网址或标题包含输入里的每个词，按访问次数和远近排（网址以输入开头的靠前），上下键选、回车打开。
+- **临时标签页**：AI 开的标签页（`Target.createTarget`，以及从它弹出的新页面）是临时的，网关在一轮结束（SDK 的 `result`）时发 `turnEnded`，外壳关掉这个会话里没留下的。留下的情况：AI 调用 `browser_keep_tab`（网关加的工具，留的是这个会话里 AI 最近操作过的标签页，CDP 代理按跳转、输入、读页面、截图这些命令记）、用户在地址栏里自己跳转过、这一轮结束时用户正在面板里看着它。模型常忘了留，`browser_navigate`、`browser_tabs new` 的结果后面附一句提醒。用户开的标签页一直留着。
+- **新会话页**：还没有会话，标签页先记在草稿名 `draft:…` 下（存在 localStorage，刷新页面不丢），发出第一条消息、会话建好后外壳把它们转给新会话（`browser.reassign`），面板里的同时改过去。
+- **@ 引用标签页**：输入框打 @ 时，候选里先列这个会话的标签页（标题或网址包含输入的，最多 5 个），再列项目文件。插入 `@[标题](网址)`，整体高亮、整体删除；消息里显示成带地球图标的标题，会话标题里只留标题。模型按浏览器说明里写的，用 `browser_tabs` 按网址找到它切过去。
+- **AI 的工具**（`gateway/src/browser/tool.ts`）：`playwright-core` 自带的 Playwright MCP（`@playwright/mcp` 也只是转出 `lib/coreBundle` 的 `tools.createConnection`），每个会话一个，作为 `type: "sdk"` 的 MCP 服务器挂上（SDK 只调用 `instance.connect`）。第一次调用工具时才 `chromium.connectOverCDP(transport)`；桌面版没开时工具返回错误，开了之后再调用就能用，断开后下次调用重连，所以每个会话都挂上。去掉 `browser_resize`、`browser_close`（改写 MCP 服务器的 `tools/list`、`tools/call`）。`browser_run_code_unsafe` 保留：它拿 Playwright 的 `page` 在网关进程里跑脚本，等同于 Bash，不放进 `allowedTools`，每次走权限卡片；只在网页里执行 JS 用 `browser_evaluate`。读页面、截图、查找、控制台、网络请求、等待、`browser_keep_tab` 在 `allowedTools` 里不用确认，打开网址、点击、输入等走权限卡片。截图等文件存在 `WORKSPACE_DIR/.playwright-mcp/<会话>/`。
+- **面板**（`client/src/components/BrowserTab.tsx`、`SidePanel.tsx`）：新标签页顶部是地址栏（同 codex-app-server），输入网址这个标签页就变成浏览器；像网址的补上协议，否则用必应搜索。面板只显示当前会话的浏览器标签页，外壳推来标签页列表时把当前会话的、面板里还没有的（AI 开的）补成标签页，关掉的去掉；AI 切标签页时面板跟着切。界面的对话框、菜单、地址栏建议盖住画面区域时（在画面区域上取 5×5 个点 `elementFromPoint`，离边 6px，避开面板左边缘调宽度的那条）先给网页拍一张快照贴在原位（`browser.snapshot`，`capturePage`），再把视图收起来，不然会挡住它们；露出来后叠回去。
+- **没做的**：页面批注；清除浏览历史的入口。macOS、Windows 还没实测；右键菜单没有自动化测过（系统菜单弹出后脚本关不掉）。

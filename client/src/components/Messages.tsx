@@ -267,7 +267,7 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
             </div>
           )}
           {item.attachments.length > 0 && <Attachments items={item.attachments} />}
-          <MentionText text={item.text} />
+          <MentionText text={item.text} compact />
         </div>
       );
     case "result":

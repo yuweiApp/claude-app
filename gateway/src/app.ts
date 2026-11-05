@@ -1,4 +1,6 @@
 import multipart from "@fastify/multipart";
+import websocket from "@fastify/websocket";
+import { BrowserHost } from "./browser/host.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import { AttachmentError } from "./agent/attachments.js";
 import { BadRequestError, BusyError, NotFoundError, SessionManager } from "./agent/session-manager.js";
@@ -23,6 +25,7 @@ export interface App {
   app: FastifyInstance;
   sessions: SessionManager;
   terminals: TerminalManager;
+  browser: BrowserHost;
 }
 
 export function buildApp(): App {
@@ -34,7 +37,8 @@ export function buildApp(): App {
   });
   const hub = new EventHub(config.eventBufferSize);
   const terminals = new TerminalManager();
-  const sessions = new SessionManager(hub, app.log, new ConversationLog(config.conversationLog, app.log), terminals);
+  const browser = new BrowserHost();
+  const sessions = new SessionManager(hub, app.log, new ConversationLog(config.conversationLog, app.log), terminals, browser);
 
   if (config.apiToken) {
     app.addHook("onRequest", async (req, reply) => {
@@ -72,5 +76,15 @@ export function buildApp(): App {
   folderRoutes(app);
   fileRoutes(app);
   terminalRoutes(app, terminals);
-  return { app, sessions, terminals };
+
+  // 桌面版外壳连上来（内置浏览器），见 browser/host.ts 和 desktop/src/browser/bridge.ts
+  void app.register(websocket);
+  void app.register(async (scoped) => {
+    scoped.get("/browser/host", { websocket: true }, (socket) => {
+      app.log.info("桌面版的内置浏览器已连上");
+      browser.attach(socket);
+      socket.on("close", () => app.log.info("桌面版的内置浏览器断开了"));
+    });
+  });
+  return { app, sessions, terminals, browser };
 }

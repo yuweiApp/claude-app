@@ -30,7 +30,7 @@ cd client && npm install && npm run dev                   # http://localhost:518
 cd desktop && npm install && npm start
 ```
 
-桌面版会拉起网关（`node --import tsx`）和网页（Vite），关窗口时一起结束；网关或网页已经在跑就直接用。VS Code 里选「启动桌面应用」。环境变量 `DESKTOP_GATEWAY_URL`、`DESKTOP_CLIENT_URL` 改地址，`DESKTOP_NODE` 指定 node。
+桌面版会拉起网关（`node --import tsx`）和网页（Vite），关窗口时一起结束；网关或网页已经在跑就直接用。VS Code 里选「启动桌面应用」。环境变量 `DESKTOP_GATEWAY_URL`、`DESKTOP_CLIENT_URL` 改地址，`DESKTOP_NODE` 指定 node，`DESKTOP_USER_DATA` 指定单独的数据目录（开发时可以和已经开着的桌面版同时运行），网关设了 `API_TOKEN` 时用 `DESKTOP_GATEWAY_TOKEN` 告诉外壳。桌面版右侧面板有内置浏览器，AI 也能操作，见 [docs/README.md](docs/README.md) 第 12 节。
 
 会话记录、settings、skills 等都在 `gateway/.data/claude-home`（`CLAUDE_CONFIG_DIR`），默认工作目录是 `gateway/.data/workspace`（`WORKSPACE_DIR`），都不会碰本机的 `~/.claude`。
 

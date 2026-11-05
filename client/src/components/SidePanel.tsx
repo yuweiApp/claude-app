@@ -1,5 +1,7 @@
-import { lazy, Suspense, useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { api } from "../api";
+import { desktop, type BrowserTabInfo } from "../desktop";
+import { BrowserTab, BrowserToolbar, GlobeIcon } from "./BrowserTab";
 import { getDraft, setDraft, useHasDraft } from "../state/fileDrafts";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FileBrowser } from "./FileBrowser";
@@ -16,7 +18,9 @@ const TerminalView = lazy(() => import("./TerminalView").then((m) => ({ default:
 export type PanelTab =
   | { id: string; kind: "new" }
   | { id: string; kind: "files"; path: string | null; transient: boolean }
-  | { id: string; kind: "terminal"; terminalId: string; label: string };
+  | { id: string; kind: "terminal"; terminalId: string; label: string }
+  /** 内置浏览器（只有桌面版有）：标签页属于对话会话，面板里只显示当前会话的 */
+  | { id: string; kind: "browser"; browserId: string; sessionId: string };
 
 /** 一个项目文件夹的面板：标签页和当前选中的 */
 export interface PanelState {
@@ -33,6 +37,10 @@ const WIDTH_KEY = "sidePanelWidth";
 const MIN_WIDTH = 320;
 /** 打开面板时对话区至少留这么宽 */
 const CHAT_MIN_WIDTH = 420;
+/** 拖到最小宽度后再往右这么多就收起（同左侧分割线），免得刚好拖到最小时误收 */
+const COLLAPSE_MARGIN = 30;
+
+const defaultWidth = () => Math.round(window.innerWidth * 0.42);
 
 function initialWidth(): number {
   try {
@@ -41,20 +49,32 @@ function initialWidth(): number {
   } catch {
     // localStorage 不可用
   }
-  return Math.round(window.innerWidth * 0.42);
+  return defaultWidth();
+}
+
+function saveWidth(width: number) {
+  try {
+    localStorage.setItem(WIDTH_KEY, String(width));
+  } catch {
+    // 忽略
+  }
 }
 
 interface Props {
   cwd: string;
+  /** 当前会话；新会话页是草稿名（draft:…），那里开的浏览器标签页在会话建好后转给它 */
+  sessionId: string;
+  /** 普通会话（工作区）没有项目文件，只给终端 */
+  files?: boolean;
   state: PanelState;
   onChange: (update: (state: PanelState) => PanelState) => void;
   onClose: () => void;
 }
 
 /** 对话区右边的面板（参照 codex-app-server 的 SidePanel）：标签页，新标签页里选「文件」「终端」 */
-export function SidePanel({ cwd, state, onChange, onClose }: Props) {
+export function SidePanel({ cwd, sessionId, files = true, state, onChange, onClose }: Props) {
   const [width, setWidth] = useState(initialWidth);
-  const drag = useRef<{ x: number; width: number } | null>(null);
+  const drag = useRef<{ x: number; width: number; latest: number } | null>(null);
   const asideRef = useRef<HTMLElement>(null);
   // 能用的宽度是对话区加面板（侧边栏开着时比窗口窄），窗口或侧边栏变了要重新算
   const [available, setAvailable] = useState(window.innerWidth);
@@ -68,22 +88,38 @@ export function SidePanel({ cwd, state, onChange, onClose }: Props) {
   const maxWidth = () => Math.max(MIN_WIDTH, available - CHAT_MIN_WIDTH);
   const clampWidth = (n: number) => Math.min(maxWidth(), Math.max(MIN_WIDTH, Math.round(n)));
 
+  // 左边缘的分割线，和侧边栏的一样：拖动调宽度，拖过最小宽度时收起面板，双击恢复默认，也可以用左右方向键
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
-    drag.current = { x: e.clientX, width };
+    drag.current = { x: e.clientX, width, latest: width };
   };
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
-    if (drag.current) setWidth(clampWidth(drag.current.width - (e.clientX - drag.current.x)));
+    if (!drag.current) return;
+    const next = drag.current.width - (e.clientX - drag.current.x);
+    if (next < MIN_WIDTH - COLLAPSE_MARGIN) {
+      // 宽度回到拖动之前，下次打开还是原来的样子
+      setWidth(drag.current.width);
+      drag.current = null;
+      onClose();
+      return;
+    }
+    drag.current.latest = clampWidth(next);
+    setWidth(drag.current.latest);
   };
   const onPointerUp = () => {
-    if (!drag.current) return;
+    if (drag.current) saveWidth(drag.current.latest);
     drag.current = null;
-    try {
-      localStorage.setItem(WIDTH_KEY, String(width));
-    } catch {
-      // 忽略
-    }
+  };
+  const commitWidth = (n: number) => {
+    setWidth(n);
+    saveWidth(n);
+  };
+  const onResizerKey = (e: KeyboardEvent) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    // 面板在右边：往左是变宽
+    commitWidth(clampWidth(Math.min(width, maxWidth()) + (e.key === "ArrowLeft" ? 20 : -20)));
   };
 
   // 和网关上这个项目的终端对齐（每 2 秒）：刷新页面后还开着的、模型用 run_in_terminal 开的补成标签页（不抢当前标签），
@@ -138,6 +174,80 @@ export function SidePanel({ cwd, state, onChange, onClose }: Props) {
     };
   }, [cwd]);
 
+  // 内置浏览器：外壳推来全部标签页。当前会话的、面板里还没有的（AI 开的、刷新页面前开的）补成标签页（不抢当前标签），关掉的去掉
+  const browserApi = desktop?.browser;
+  const [browserTabs, setBrowserTabs] = useState<Map<string, BrowserTabInfo>>(new Map());
+  useEffect(() => {
+    if (!browserApi) return;
+    const apply = (list: BrowserTabInfo[]) => setBrowserTabs(new Map(list.map((t) => [t.id, t])));
+    void browserApi.list().then(apply);
+    const offTabs = browserApi.onTabs(apply);
+    // AI 切了标签页（当前会话的），面板跟着切
+    const offActivate = browserApi.onActivate((browserId) =>
+      onChange((s) => {
+        const tab = s.tabs.find((t) => t.kind === "browser" && t.browserId === browserId);
+        return tab ? { ...s, active: tab.id } : s;
+      }),
+    );
+    return () => {
+      offTabs();
+      offActivate();
+    };
+  }, [browserApi]);
+  const browserLoaded = useRef(false);
+  useEffect(() => {
+    if (!browserApi) return;
+    // 第一次推来之前是空表，不能据此删标签页
+    if (!browserLoaded.current) {
+      browserLoaded.current = browserTabs.size > 0;
+      if (!browserLoaded.current) return;
+    }
+    onChange((s) => {
+      let changed = false;
+      let tabs = s.tabs.flatMap((t): PanelTab[] => {
+        if (t.kind !== "browser") return [t];
+        const info = browserTabs.get(t.browserId);
+        if (!info) {
+          changed = true;
+          return [];
+        }
+        // 新会话页开的标签页，会话建好后转给了新会话。只从草稿改成正式会话、不改回去：
+        // 会话刚建好时面板已经先改了（App 的 onCreated），外壳推来的列表可能还是旧的（还在草稿名下）
+        if (info.sessionId !== t.sessionId && t.sessionId.startsWith("draft:") && !info.sessionId.startsWith("draft:")) {
+          changed = true;
+          return [{ ...t, sessionId: info.sessionId }];
+        }
+        return [t];
+      });
+      if (sessionId) {
+        const have = new Set(tabs.flatMap((t) => (t.kind === "browser" ? [t.browserId] : [])));
+        const missing = [...browserTabs.values()].filter((b) => b.sessionId === sessionId && !have.has(b.id));
+        if (missing.length) {
+          changed = true;
+          const added = missing.map((b): PanelTab => ({ id: crypto.randomUUID(), kind: "browser", browserId: b.id, sessionId: b.sessionId }));
+          // 当前会话只有一个空的新标签页时直接换掉
+          const visible = tabs.filter((t) => t.kind !== "browser" || t.sessionId === sessionId);
+          const onlyNew = visible.length === 1 && visible[0]!.kind === "new";
+          if (onlyNew) tabs = tabs.filter((t) => t !== visible[0]);
+          tabs = [...tabs, ...added];
+          if (onlyNew) return { tabs, active: added[0]!.id };
+        }
+      }
+      if (!changed) return s;
+      if (!tabs.length) return newPanelState();
+      return { tabs, active: tabs.some((t) => t.id === s.active) ? s.active : tabs[0]!.id };
+    });
+  }, [browserTabs, sessionId]);
+
+  // 只显示当前会话的浏览器标签页；当前标签是别的会话的就退到第一个看得见的，一个都没有就补一个新标签页
+  const visibleTabs = state.tabs.filter((t) => t.kind !== "browser" || t.sessionId === sessionId);
+  const activeId = visibleTabs.some((t) => t.id === state.active) ? state.active : visibleTabs[0]?.id;
+  useEffect(() => {
+    if (visibleTabs.length) return;
+    const tab: PanelTab = { id: crypto.randomUUID(), kind: "new" };
+    onChange((s) => ({ tabs: [...s.tabs, tab], active: tab.id }));
+  }, [visibleTabs.length]);
+
   const select = (id: string) => onChange((s) => ({ ...s, active: id }));
   const addTab = () => {
     const tab: PanelTab = { id: crypto.randomUUID(), kind: "new" };
@@ -151,13 +261,17 @@ export function SidePanel({ cwd, state, onChange, onClose }: Props) {
   };
   const closeTab = (tab: PanelTab) => {
     if (tab.kind === "terminal") void api.closeTerminal(tab.terminalId).catch(() => undefined);
+    if (tab.kind === "browser") browserApi?.close(tab.browserId);
     if (tab.kind === "files" && tab.path !== null) setDraft(cwd, tab.path, undefined);
     onChange((s) => {
-      const index = s.tabs.findIndex((t) => t.id === tab.id);
       const tabs = s.tabs.filter((t) => t.id !== tab.id);
       if (!tabs.length) return newPanelState();
-      const active = s.active === tab.id ? tabs[Math.min(index, tabs.length - 1)]!.id : s.active;
-      return { tabs, active };
+      if (s.active !== tab.id) return { tabs, active: s.active };
+      // 关的是当前标签：切到同一个会话里看得见的、原来在它旁边的那个
+      const visible = s.tabs.filter((t) => t.kind !== "browser" || t.sessionId === sessionId);
+      const index = visible.findIndex((t) => t.id === tab.id);
+      const rest = visible.filter((t) => t.id !== tab.id);
+      return { tabs, active: rest[Math.min(index, rest.length - 1)]?.id ?? tabs[0]!.id };
     });
   };
   /** 新标签页里选了工具：这个标签页变成那个工具 */
@@ -185,6 +299,27 @@ export function SidePanel({ cwd, state, onChange, onClose }: Props) {
   /** 固定预览打开的文件标签 */
   const pin = (id: string) =>
     onChange((s) => ({ ...s, tabs: s.tabs.map((t) => (t.id === id && t.kind === "files" && t.transient ? { ...t, transient: false } : t)) }));
+  /** 新标签页的地址栏里输入了网址：给当前会话建一个浏览器标签页，这个标签页变成它 */
+  const openBrowser = async (id: string, url: string) => {
+    if (!browserApi) return;
+    let info;
+    try {
+      info = await browserApi.create(sessionId, url);
+    } catch (err) {
+      // 常见于桌面版外壳还是旧的（网页刷新后用了新的预加载脚本，主进程没有对应的处理）：提示重启
+      window.alert(`打开网页失败：${(err as Error).message}\n\n如果刚更新过代码，请重启桌面版。`);
+      return;
+    }
+    if (!info) return;
+    setBrowserTabs((all) => new Map(all).set(info.id, info));
+    onChange((s) => {
+      // 外壳推来的列表可能先到，已经补成了标签页：去掉这个新标签页，切过去
+      const existing = s.tabs.find((t) => t.kind === "browser" && t.browserId === info.id);
+      if (existing) return { tabs: s.tabs.filter((t) => t.id !== id), active: existing.id };
+      const tab: PanelTab = { id, kind: "browser", browserId: info.id, sessionId: info.sessionId };
+      return { tabs: s.tabs.map((t) => (t.id === id ? tab : t)), active: id };
+    });
+  };
   const openTerminal = async (id: string) => {
     try {
       const terminal = await api.createTerminal(cwd, 80, 24);
@@ -204,20 +339,27 @@ export function SidePanel({ cwd, state, onChange, onClose }: Props) {
         role="separator"
         aria-orientation="vertical"
         aria-label="调整右侧面板宽度"
-        title="拖动调整宽度"
+        aria-valuenow={Math.min(width, maxWidth())}
+        aria-valuemin={MIN_WIDTH}
+        aria-valuemax={maxWidth()}
+        tabIndex={0}
+        title="拖动调整宽度，双击恢复默认"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onDoubleClick={() => commitWidth(clampWidth(defaultWidth()))}
+        onKeyDown={onResizerKey}
       />
       <div className="panel-head">
         <div className="panel-tabs">
-          {state.tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <TabButton
               key={tab.id}
               cwd={cwd}
               tab={tab}
-              active={tab.id === state.active}
+              browserInfo={tab.kind === "browser" ? browserTabs.get(tab.browserId) : undefined}
+              active={tab.id === activeId}
               onSelect={() => select(tab.id)}
               onPin={() => pin(tab.id)}
               onClose={() => requestClose(tab)}
@@ -232,27 +374,32 @@ export function SidePanel({ cwd, state, onChange, onClose }: Props) {
         </button>
       </div>
       <div className="panel-body">
-        {state.tabs.map((tab) => (
+        {visibleTabs.map((tab) => (
           // 不在前面的标签页也留着（终端不断开、文件树不重新加载），只是藏起来
-          <div key={tab.id} className="panel-page" hidden={tab.id !== state.active}>
+          <div key={tab.id} className="panel-page" hidden={tab.id !== activeId}>
             {tab.kind === "new" && (
               <NewTab
-                onFiles={() => replaceTab(tab.id, { id: tab.id, kind: "files", path: null, transient: false })}
+                onFiles={files ? () => replaceTab(tab.id, { id: tab.id, kind: "files", path: null, transient: false }) : undefined}
                 onTerminal={() => void openTerminal(tab.id)}
+                // 只有桌面版有内置浏览器
+                browser={browserApi ? (url) => void openBrowser(tab.id, url) : undefined}
               />
+            )}
+            {tab.kind === "browser" && browserApi && (
+              <BrowserTab api={browserApi} id={tab.browserId} info={browserTabs.get(tab.browserId)} active={tab.id === activeId} />
             )}
             {tab.kind === "files" && (
               <FileBrowser
                 cwd={cwd}
                 path={tab.path}
-                active={tab.id === state.active}
+                active={tab.id === activeId}
                 onSelectFile={(path, pinned) => openFile(tab.id, path, pinned)}
                 onEdited={() => pin(tab.id)}
               />
             )}
             {tab.kind === "terminal" && (
               <Suspense fallback={<div className="panel-empty">正在加载终端…</div>}>
-                <TerminalView terminalId={tab.terminalId} active={tab.id === state.active} />
+                <TerminalView terminalId={tab.terminalId} active={tab.id === activeId} />
               </Suspense>
             )}
           </div>
@@ -294,34 +441,47 @@ function tabLabel(tab: PanelTab): string {
       return tab.path === null ? "打开文件" : tab.path.split("/").pop() || tab.path;
     case "terminal":
       return tab.label;
+    case "browser":
+      return "新标签页";
   }
 }
 
 function tabIcon(tab: PanelTab): ReactNode {
   switch (tab.kind) {
     case "new":
-      return <PlusSquareIcon />;
+      // 桌面版的新标签页顶部是地址栏，图标同浏览器
+      return desktop?.browser ? <GlobeIcon /> : <PlusSquareIcon />;
     case "files":
       return tab.path === null ? <FilesIcon /> : <FileTypeIcon name={tab.path.split("/").pop() || tab.path} />;
     case "terminal":
       return <TerminalIcon />;
+    case "browser":
+      return <GlobeIcon />;
   }
 }
 
 /** 标签：预览打开的文件是斜体（双击固定），有没保存的修改时关闭按钮的位置显示圆点（鼠标移上去变回 ×） */
-function TabButton({ cwd, tab, active, onSelect, onPin, onClose }: { cwd: string; tab: PanelTab; active: boolean; onSelect: () => void; onPin: () => void; onClose: () => void }) {
+function TabButton({ cwd, tab, browserInfo, active, onSelect, onPin, onClose }: { cwd: string; tab: PanelTab; browserInfo?: BrowserTabInfo; active: boolean; onSelect: () => void; onPin: () => void; onClose: () => void }) {
   const unsaved = useHasDraft(cwd, tab.kind === "files" ? tab.path : null);
   const transient = tab.kind === "files" && tab.transient;
   return (
     <div
       className={`panel-tab${active ? " active" : ""}${transient ? " temporary" : ""}`}
-      title={tab.kind === "files" && tab.path ? (transient ? `${tab.path}\n预览打开，双击标签固定` : tab.path) : undefined}
+      title={
+        tab.kind === "files" && tab.path
+          ? transient
+            ? `${tab.path}\n预览打开，双击标签固定`
+            : tab.path
+          : tab.kind === "browser" && browserInfo
+            ? [browserInfo.title, browserInfo.url].filter(Boolean).join("\n")
+            : undefined
+      }
       onClick={onSelect}
       onDoubleClick={onPin}
       onAuxClick={(e) => e.button === 1 && onClose()}
     >
       <span className="panel-tab-icon">{tabIcon(tab)}</span>
-      <span className="panel-tab-label">{tabLabel(tab)}</span>
+      <span className="panel-tab-label">{(tab.kind === "browser" && (browserInfo?.title || browserInfo?.url)) || tabLabel(tab)}</span>
       <button
         className={`panel-tab-close${unsaved ? " unsaved" : ""}`}
         title={unsaved ? "有未保存的修改（Ctrl+S 保存），关闭时会问" : "关闭"}
@@ -339,20 +499,38 @@ function TabButton({ cwd, tab, active, onSelect, onPin, onClose }: { cwd: string
 }
 
 /** 新标签页：选一个工具 */
-function NewTab({ onFiles, onTerminal }: { onFiles: () => void; onTerminal: () => void }) {
+/**
+ * 新标签页：桌面版顶部是浏览器的地址栏（同 codex-app-server），输入网址这个标签页就变成浏览器；下面选别的工具。
+ * browser：undefined 是没有内置浏览器（网页版）
+ */
+function NewTab({ onFiles, onTerminal, browser }: { onFiles?: () => void; onTerminal: () => void; browser?: (url: string) => void }) {
+  const [address, setAddress] = useState("");
   return (
+    <div className="panel-new-tab-wrap">
+      {browser !== undefined && (
+        <BrowserToolbar
+          address={address}
+          onAddress={setAddress}
+          onReset={() => undefined}
+          onSubmit={(url) => browser?.(url)}
+          suggest={desktop?.browser.suggest}
+        />
+      )}
     <div className="panel-new-tab">
       <div className="panel-section-title">工具</div>
       <div className="panel-tools">
-        <button className="panel-tool" onClick={onFiles}>
-          <FilesIcon />
-          <span>文件</span>
-        </button>
+        {onFiles && (
+          <button className="panel-tool" onClick={onFiles}>
+            <FilesIcon />
+            <span>文件</span>
+          </button>
+        )}
         <button className="panel-tool" onClick={onTerminal}>
           <TerminalIcon />
           <span>终端</span>
         </button>
       </div>
+    </div>
     </div>
   );
 }

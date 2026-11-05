@@ -4,7 +4,7 @@ import { AddMenu } from "./AddMenu";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { MentionMenu, type MentionOption } from "./MentionMenu";
-import { fileMention, findMentions, MentionText, PluginNamesContext, type Mention } from "./MentionText";
+import { fileMention, findMentions, MentionText, PluginNamesContext, tabMention, type Mention } from "./MentionText";
 
 /** 输入框下方的附件：选中后立刻上传，发送时只传 id */
 interface PendingFile {
@@ -42,10 +42,12 @@ interface Props {
   cwd?: string | null;
   /** 上一轮被中断了：输入框空着时发送按钮变成「继续」 */
   onContinue?: () => void;
+  /** 桌面版内置浏览器里这个会话的标签页：输入 @ 可以引用 */
+  browserTabs?: { title: string; url: string }[];
 }
 
 /** 输入框，样式同 codex-app-server：一个圆角框，上面输入，下面一行「+」、权限、模型、发送 */
-export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, onContinue }: Props) {
+export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, onContinue, browserTabs }: Props) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
@@ -67,7 +69,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
   useEffect(() => {
     if (atStart < 0) setDismissed(-1);
   }, [atStart]);
-  const menuWanted = focused && atStart >= 0 && !completed && dismissed !== atStart && !!cwd;
+  const menuWanted = focused && atStart >= 0 && !completed && dismissed !== atStart && (!!cwd || !!browserTabs?.length);
   const [options, setOptions] = useState<MentionOption[]>([]);
   const [activeOption, setActiveOption] = useState(0);
   useEffect(() => {
@@ -76,10 +78,16 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
       return;
     }
     let stale = false;
+    // 标签页排在文件前面：标题或网址包含输入的，最多 5 个
+    const q = atQuery.toLowerCase();
+    const tabs = (browserTabs ?? [])
+      .filter((t) => !q || t.title.toLowerCase().includes(q) || t.url.toLowerCase().includes(q))
+      .slice(0, 5)
+      .map((t): MentionOption => ({ kind: "tab", value: t.url, title: t.title }));
     const timer = setTimeout(() => {
-      void api.files(cwd!, atQuery).catch(() => []).then((entries) => {
+      void (cwd ? api.files(cwd, atQuery).catch(() => []) : Promise.resolve([])).then((entries) => {
         if (stale) return;
-        setOptions(entries.map((e): MentionOption => ({ kind: e.dir ? "dir" : "file", value: e.path })));
+        setOptions([...tabs, ...entries.map((e): MentionOption => ({ kind: e.dir ? "dir" : "file", value: e.path }))]);
         setActiveOption(0);
       });
     }, 80);
@@ -87,17 +95,17 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
       stale = true;
       clearTimeout(timer);
     };
-  }, [menuWanted, atQuery, cwd]);
+  }, [menuWanted, atQuery, cwd, browserTabs]);
   const menuOpen = menuWanted && options.length > 0;
 
   const pickOption = (option: MentionOption) => {
-    // 文件夹不加空格，菜单接着列里面的；文件后面加空格
-    const token = fileMention(option.value);
+    // 文件夹不加空格，菜单接着列里面的；文件、标签页后面加空格
+    const token = option.kind === "tab" ? tabMention(option.title ?? "", option.value) : fileMention(option.value);
     const insert = option.kind === "dir" ? token : `${token} `;
     const rest = text.slice(caret);
     pendingCaret.current = atStart + insert.length;
     setText(text.slice(0, atStart) + insert + (insert.endsWith(" ") && rest.startsWith(" ") ? rest.slice(1) : rest));
-    setPicked((prev) => (prev.includes(option.value) ? prev : [...prev, option.value]));
+    if (option.kind !== "tab") setPicked((prev) => (prev.includes(option.value) ? prev : [...prev, option.value]));
   };
   // 镜像层跟着输入框：滚动位置一致，出滚动条时让出同样的宽度，换行才对得上
   const syncMirror = () => {

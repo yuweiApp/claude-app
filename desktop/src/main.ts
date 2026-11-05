@@ -1,6 +1,8 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import path from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions, type Rectangle } from "electron";
+import { GatewayBridge } from "./browser/bridge.js";
+import { BrowserViews, tabInfo } from "./browser/views.js";
 
 // 桌面版：拉起网关和网页（Vite），在窗口里打开网页。已经在跑的（比如 VS Code 里先启动了「启动网页」）直接复用
 const root = path.resolve(import.meta.dirname, "..", "..");
@@ -9,6 +11,14 @@ const clientUrl = process.env.DESKTOP_CLIENT_URL || "http://localhost:5180";
 /** 拉起子进程用的 node，默认取 PATH 里的（Electron 自带的 Node 版本和网关要求的不一定一致） */
 const nodeBin = process.env.DESKTOP_NODE || "node";
 const readyTimeoutMs = 60_000;
+/** 网关设了 API_TOKEN 时，外壳连网关（内置浏览器）也要带上 */
+const gatewayToken = process.env.DESKTOP_GATEWAY_TOKEN || process.env.API_TOKEN || "";
+
+// 开发时指定单独的数据目录，可以和已经开着的桌面版同时运行（单实例锁、登录状态都按数据目录分开）
+if (process.env.DESKTOP_USER_DATA) app.setPath("userData", path.resolve(process.env.DESKTOP_USER_DATA));
+
+// Windows 会把屏幕外、被挡住的窗口当成不可见、不再绘制，内置浏览器的停放窗口要一直渲染（见 browser/views.ts）
+app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 
 interface Service {
   name: string;
@@ -117,6 +127,40 @@ ipcMain.on("window:toggle-maximize", (e) => {
 ipcMain.on("window:close", (e) => BrowserWindow.fromWebContents(e.sender)?.close());
 ipcMain.handle("window:is-maximized", (e) => BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false);
 
+// 内置浏览器（右侧面板的「浏览器」）：界面经 preload 的 browser 接口建标签页、导航、告诉外壳显示位置；
+// 标签页有变化时把整个列表推给界面（browser:tabs），AI 切标签页时让面板跟着切（browser:activate）
+let mainWindow: BrowserWindow | undefined;
+const browserViews = new BrowserViews(() => mainWindow);
+const fromUi = (sender: Electron.WebContents) => !!mainWindow && !mainWindow.isDestroyed() && sender === mainWindow.webContents;
+let tabsPush: NodeJS.Timeout | undefined;
+const pushTabs = () => {
+  tabsPush ??= setTimeout(() => {
+    tabsPush = undefined;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("browser:tabs", browserViews.list().map(tabInfo));
+  }, 50);
+};
+for (const event of ["created", "closed", "changed"] as const) browserViews.on(event, pushTabs);
+browserViews.on("activate", (tab) => mainWindow?.webContents.send("browser:activate", tab.id));
+ipcMain.handle("browser:list", (e) => (fromUi(e.sender) ? browserViews.list().map(tabInfo) : []));
+ipcMain.handle("browser:create", async (e, sessionId: unknown, url: unknown) => {
+  if (!fromUi(e.sender) || typeof sessionId !== "string") return null;
+  return tabInfo(await browserViews.create(sessionId, typeof url === "string" && url ? url : undefined, "user"));
+});
+ipcMain.on("browser:close", (e, id: unknown) => fromUi(e.sender) && typeof id === "string" && browserViews.close(id));
+ipcMain.on("browser:navigate", (e, id: unknown, url: unknown) => {
+  if (fromUi(e.sender) && typeof id === "string" && typeof url === "string") void browserViews.navigate(id, url);
+});
+ipcMain.on("browser:go", (e, id: unknown, action: unknown) => {
+  if (fromUi(e.sender) && typeof id === "string" && (action === "back" || action === "forward" || action === "reload" || action === "stop")) browserViews.go(id, action);
+});
+ipcMain.on("browser:show", (e, id: unknown, bounds: Rectangle) => fromUi(e.sender) && typeof id === "string" && browserViews.show(id, bounds));
+ipcMain.on("browser:hide", (e) => fromUi(e.sender) && browserViews.hide());
+ipcMain.on("browser:reassign", (e, from: unknown, to: unknown) => {
+  if (fromUi(e.sender) && typeof from === "string" && typeof to === "string") browserViews.reassign(from, to);
+});
+ipcMain.handle("browser:snapshot", (e, id: unknown) => (fromUi(e.sender) && typeof id === "string" ? browserViews.snapshot(id) : null));
+ipcMain.handle("browser:suggest", (e, query: unknown) => (fromUi(e.sender) && typeof query === "string" ? browserViews.history.suggest(query) : []));
+
 // 新会话的「选择文件夹…」：系统的文件夹对话框（Windows 上是资源管理器），取消时返回 null
 ipcMain.handle("dialog:pick-folder", async (e, defaultPath: unknown) => {
   const options: OpenDialogOptions = {
@@ -132,15 +176,21 @@ ipcMain.handle("dialog:pick-folder", async (e, defaultPath: unknown) => {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  let win: BrowserWindow | undefined;
+  let bridge: GatewayBridge | undefined;
 
   app.on("second-instance", () => {
+    const win = mainWindow;
     if (!win) return;
     if (win.isMinimized()) win.restore();
     win.focus();
   });
+  // 停放窗口不算：主窗口关了就退出
   app.on("window-all-closed", () => app.quit());
-  app.on("will-quit", stopAll);
+  app.on("will-quit", () => {
+    bridge?.stop();
+    browserViews.history.flush();
+    stopAll();
+  });
 
   // 入口模块不能在顶层 await whenReady()：Electron 要等入口模块的顶层 await 结束才发 ready，会互相等死
   void app.whenReady().then(async () => {
@@ -150,7 +200,13 @@ if (!app.requestSingleInstanceLock()) {
         start("网关", path.join(root, "gateway"), ["--import", "tsx", "src/index.ts"], { LOG_PRETTY: "1" }),
       );
       await ensure(clientUrl, () => start("网页", path.join(root, "client"), ["node_modules/vite/bin/vite.js"]));
-      win = createWindow();
+      await browserViews.init();
+      mainWindow = createWindow();
+      mainWindow.on("closed", () => app.quit());
+      const ws = new URL("/browser/host", gatewayUrl.replace(/^http/, "ws"));
+      if (gatewayToken) ws.searchParams.set("token", gatewayToken);
+      bridge = new GatewayBridge(ws.toString(), browserViews, (message) => console.log(message));
+      bridge.start();
     } catch (err) {
       dialog.showErrorBox("Claude App 启动失败", (err as Error).message);
       app.quit();

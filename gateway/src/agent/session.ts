@@ -17,6 +17,7 @@ import { buildUserContent } from "./attachments.js";
 import { InputQueue } from "./input-queue.js";
 import { listModels } from "./models.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
+import type { BrowserHost } from "../browser/host.js";
 import { buildOptions } from "./options.js";
 import type { TaskList } from "./tasks.js";
 
@@ -59,6 +60,7 @@ export class AgentSession {
     private readonly tasks: TaskList,
     private readonly onClosed: (session: AgentSession) => void,
     terminals?: TerminalManager,
+    private readonly browser?: BrowserHost,
   ) {
     this.model = opts.model ?? config.model;
     this.effort = opts.effort;
@@ -76,6 +78,7 @@ export class AgentSession {
         skills: opts.skills,
         canUseTool: this.canUseTool,
         terminals,
+        browser,
         abortController: this.abortController,
         stderr: (data) => this.log.debug({ sessionId: id, stderr: data.trimEnd() }, "claude stderr"),
       }),
@@ -204,7 +207,11 @@ export class AgentSession {
         const tasksChanged = this.tasks.ingest(message);
         this.publish({ type: "sdk", message });
         if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });
-        if (message.type === "result") this.setState("idle");
+        if (message.type === "result") {
+          this.setState("idle");
+          // 一轮结束：内置浏览器关掉 AI 这一轮开的、没留下的临时标签页
+          this.browser?.turnEnded(this.id);
+        }
       }
     } catch (err) {
       if (!this.closing && !this.abortController.signal.aborted) {
