@@ -5,8 +5,11 @@ import { chromium } from "playwright-core";
 import { config } from "../config.js";
 import type { BrowserHost } from "./host.js";
 
-/** MCP 服务器名：工具全名是 mcp__browser__browser_navigate 这样 */
-export const BROWSER_SERVER = "browser";
+/**
+ * MCP 服务器名：工具全名是 mcp__web__browser_navigate 这样。
+ * 不叫 browser：Playwright 的工具名自带 browser_ 前缀，叫 browser 就成了 mcp__browser__browser_navigate，又长又重复
+ */
+export const BROWSER_SERVER = "web";
 
 /** 只读的工具不用确认（options.allowedTools）；打开网址、点击、输入等走权限卡片（「完全访问权限」下直接执行） */
 export const BROWSER_READ_TOOLS = [
