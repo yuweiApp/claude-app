@@ -3,6 +3,7 @@ import path from "node:path";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { chromium } from "playwright-core";
 import { config } from "../config.js";
+import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
 import type { BrowserHost } from "./host.js";
 
 /**
@@ -33,6 +34,9 @@ export const BROWSER_READ_TOOLS = [
  * 所以不放进 allowedTools，每次走权限卡片（「完全访问权限」下和 Bash 一样直接执行）
  */
 const HIDDEN_TOOLS = new Set(["browser_resize", "browser_close"]);
+
+// 常驻哪些工具（第一轮就给完整定义、不藏在 ToolSearch 后面）在 gateway/config.yml 的 tools.alwaysLoad 里配，
+// 默认是 snapshot、navigate、click、type、tabs、keep_tab；为什么要常驻见那里的说明和 docs/README.md 第 12 节
 
 const INSTRUCTIONS =
   "这些工具操作的是用户界面右侧面板里的内置浏览器（桌面版里的真实网页，用户能看到、也能自己操作），" +
@@ -92,7 +96,7 @@ export function browserServer(host: BrowserHost, sessionId: string): McpSdkServe
 
 /**
  * 改写 Playwright MCP 的工具：去掉 HIDDEN_TOOLS（它的配置关不掉核心工具）；加上 browser_keep_tab；
- * 打开网页（browser_navigate、browser_tabs new）的结果后面附 KEEP_HINT
+ * config.yml 里配了常驻的标上 _meta；打开网页（browser_navigate、browser_tabs new）的结果后面附 KEEP_HINT
  */
 function patchTools(server: McpServerLike, host: BrowserHost, sessionId: string): void {
   const handlers = server._requestHandlers;
@@ -100,8 +104,11 @@ function patchTools(server: McpServerLike, host: BrowserHost, sessionId: string)
   const call = handlers.get("tools/call");
   if (!list || !call) throw new Error("Playwright MCP 的接口变了：找不到 tools/list、tools/call");
   handlers.set("tools/list", async (request, extra) => {
-    const result = (await list(request, extra)) as { tools: { name: string }[] };
-    return { ...result, tools: [...result.tools.filter((t) => !HIDDEN_TOOLS.has(t.name)), KEEP_TOOL] };
+    const result = (await list(request, extra)) as { tools: { name: string; _meta?: Record<string, unknown> }[] };
+    const tools = [...result.tools.filter((t) => !HIDDEN_TOOLS.has(t.name)), KEEP_TOOL].map((t) =>
+      isAlwaysLoad(`mcp__${BROWSER_SERVER}__${t.name}`) ? { ...t, _meta: { ...("_meta" in t ? t._meta : undefined), [ALWAYS_LOAD_META]: true } } : t,
+    );
+    return { ...result, tools };
   });
   handlers.set("tools/call", async (request, extra) => {
     const params = (request as { params?: { name?: string; arguments?: { action?: string } } }).params;

@@ -20,6 +20,8 @@ cd gateway && npm install && cp .env.example .env.local   # 填 ANTHROPIC_BASE_U
 npm run dev                                               # http://127.0.0.1:8788
 ```
 
+`gateway/config.yml` 是功能上的配置（比如哪些 MCP 工具常驻、不用先 ToolSearch），改完要重启网关。
+
 ```bash
 cd client && npm install && npm run dev                   # http://localhost:5180
 ```

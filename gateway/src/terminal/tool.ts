@@ -1,5 +1,6 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
+import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
 import type { TerminalInfo } from "../shared/types.js";
 import type { TerminalManager } from "./terminal-manager.js";
 
@@ -23,7 +24,10 @@ export function terminalServer(terminals: TerminalManager, cwd: string): McpSdkS
       "用户界面右侧面板里有这个项目的终端（网关机器上的真实 shell）。用户说「终端」「内置终端」「看一下终端」时指的就是它们：" +
       "用 read_terminal 读屏幕上的内容，用 run_in_terminal 在终端里敲命令（用户能在面板里看到、接着操作）。" +
       "需要在本轮拿到结果的短命令照常用 Bash；要让用户看着、长时间运行或交互的（开发服务、日志、REPL）用 run_in_terminal。",
-    tools: terminalTools(terminals, cwd),
+    // config.yml 里配了常驻的：第一轮就给完整定义（默认都不常驻，用到时 ToolSearch）
+    tools: terminalTools(terminals, cwd).map((t) =>
+      isAlwaysLoad(`mcp__${TERMINAL_SERVER}__${t.name}`) ? { ...t, _meta: { ...t._meta, [ALWAYS_LOAD_META]: true } } : t,
+    ),
   });
 }
 

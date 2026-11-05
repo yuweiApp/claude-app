@@ -18,7 +18,7 @@ npm --prefix desktop run typecheck
 
 用预览工具按 [.claude/launch.json](.claude/launch.json) 启动，不要用 Bash 起常驻服务：
 
-- `gateway`：`tsx watch src/index.ts`，`127.0.0.1:8788`，配置在 `gateway/.env.local`
+- `gateway`：`tsx watch src/index.ts`，`127.0.0.1:8788`，配置在 `gateway/.env.local`（部署相关）和 `gateway/config.yml`（功能上的，如常驻哪些 MCP 工具，改完要重启网关）
 - `client`：Vite，`http://localhost:5180`，`/api` 代理到网关
 
 端口和 codex-app-server（8787 / 5173，5173 被占时它的 Vite 会顺延到 5174、5175）错开，两个项目可以同时开。

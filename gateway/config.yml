@@ -1,0 +1,19 @@
+# 网关功能上的配置，启动时读一次，改完要重启网关。
+# 端口、密钥、目录、默认模型这些部署相关的仍在 .env.local（见 src/config.ts）。
+
+# 网关自带的 MCP 工具：内置浏览器 mcp__web__…、终端 mcp__terminal__…
+tools:
+  # 常驻的工具：第一轮就把完整定义给模型，不藏在 ToolSearch 后面；没列的照旧延迟加载，用到时模型先 ToolSearch。
+  # 写工具全名。只对上面两个服务器生效，
+  # 设置页添加的 MCP 服务器和 Claude Code 自带的工具管不到。
+  #
+  # 常驻越多上下文越大：浏览器的工具每个约 50～440 token，全部 24 个约 5200 token。
+  # 也不要都不常驻：GPT 类模型常在 ToolSearch 的 select: 里把二十多个浏览器工具名列了又列，
+  # 写满输出上限才停，界面「思考中」两分多钟。下面 6 个够打开网页、读页面、点击、输入、切标签页、留标签页。
+  alwaysLoad:
+    - mcp__web__browser_snapshot
+    - mcp__web__browser_navigate
+    - mcp__web__browser_click
+    - mcp__web__browser_type
+    - mcp__web__browser_tabs
+    - mcp__web__browser_keep_tab
