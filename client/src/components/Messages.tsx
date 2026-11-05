@@ -17,6 +17,8 @@ interface Turn {
   key: string;
   user: UserItem | null;
   task: TaskItem | null;
+  /** 这一轮进行中用户又发的消息：SDK 在下一次工具调用之后把它并进这一轮，不另开一轮（只有一个 result，指向开头那条） */
+  inserted: UserItem[];
   body: Item[];
   result: ResultItem | null;
 }
@@ -24,17 +26,31 @@ interface Turn {
 function splitTurns(items: Item[]): Turn[] {
   const turns: Turn[] = [];
   const results: ResultItem[] = [];
+  // 这一轮是不是停在工具调用上（还没结束）：此时来的用户消息是中途插入的。
+  // 历史记录里插入的消息排在它被读到的那个工具结果后面，实时发的也是在工具执行时发出，两边都是跟在以工具调用结尾的 assistant 消息后面
+  let midTool = false;
   for (const item of items) {
-    if (item.kind === "result") results.push(item);
-    else if (item.kind === "user" || item.kind === "task" || !turns.length) {
+    if (item.kind === "result") {
+      results.push(item);
+      midTool = false;
+    } else if (item.kind === "user" && midTool) {
+      turns.at(-1)!.inserted.push(item);
+    } else if (item.kind === "user" || item.kind === "task" || !turns.length) {
       turns.push({
         key: item.uuid,
         user: item.kind === "user" ? item : null,
         task: item.kind === "task" ? item : null,
+        inserted: [],
         body: item.kind === "user" || item.kind === "task" ? [] : [item],
         result: null,
       });
-    } else turns.at(-1)!.body.push(item);
+      midTool = false;
+    } else {
+      turns.at(-1)!.body.push(item);
+      if (item.kind === "assistant") {
+        if (item.blocks.length) midTool = item.blocks.at(-1)!.type === "tool_use";
+      } else if (item.kind === "interrupted" || item.kind === "error") midTool = false;
+    }
   }
   // 历史消息（getSessionMessages）里没有 result，事件流回放的 result 排在最后：按 SDK 的 user_message_uuid 挂回所属的那一轮。
   // 后台任务开始的轮没有 user_message_uuid，事件缓冲也可能只剩最近几轮的 result：从后往前，挂到前面最近一个还没有 result 的轮
@@ -142,6 +158,17 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
           )}
         </div>
       )}
+      {/* 进行中插入的消息跟在开头那条下面（放进折叠的过程里，收起后就看不到自己发了什么） */}
+      {turn.inserted.map((item) => (
+        <div key={item.uuid} className="msg-group msg-group-user">
+          <ItemView item={item} />
+          {item.text && (
+            <MessageActions align="end">
+              <CopyAction text={item.text} title="复制消息" />
+            </MessageActions>
+          )}
+        </div>
+      ))}
       {(hasProcess || live || duration !== null) && (
         // 下面有最终回复，或这一轮被中断（下面是「已中断」）时，「用时」下面画分割线
         <div className={`process-wrap${final || (!live && turn.body.some((item) => item.kind === "interrupted")) ? " has-final" : ""}`}>
