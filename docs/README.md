@@ -55,6 +55,8 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
 - 改名：`renameSession(id, title)`
 - 技能和插件：输入框上面的「技能」「插件」选择后写进输入框。技能写成消息开头的 `/技能名`（Claude Code 只认开头），插件写成 `@插件名`，只是文字引用，Claude Code 没有对应的命令。用技能的消息在历史里是 `<command-message>` 标签加一条技能内容，网页还原成 `/技能名 内容`，技能内容不显示。
 - 引用文件：有项目文件夹时，输入框里打 `@` 弹出项目里的文件、文件夹，选中写成 `@相对路径`（带空格的加引号 `@"a b.txt"`），和 Claude Code 命令行的 @ 引用一样交给 SDK。输入框里只列文件，插件用上面的「插件」按钮；也没有 `/` 命令菜单，技能用「技能」按钮。候选来自网关 `GET /files?cwd=&q=`：`q` 为空列第一层，以 `/` 结尾列那个文件夹，否则在整个项目里按名字搜（git 仓库用 `git ls-files` 按 `.gitignore` 过滤，列表缓存 10 秒）。技能名、插件和文件引用在输入框里高亮，删除、移动光标都按一个整体。
+- 右侧面板：有项目文件夹时对话标题栏右边有开关（开没开全局记住），面板有标签页，新标签页里选「文件」或「终端」（xterm.js，按需加载）。文件工具同 codex-app-server：一个标签里左边目录树（顶部「筛选文件…」在整个项目里搜，可以收起、拖动调宽）、右边内容；单击文件预览打开（标签名斜体，再单击别的文件换掉它），双击文件或标签固定；文本打开就能编辑，Ctrl+S 保存（不自动保存，没保存的标签显示圆点，关闭时问），文件被外面改过时保存报冲突，可以放弃或覆盖；Markdown 默认所见即所得（`MarkdownLiveEditor`，从 codex-app-server 移植，CodeMirror）：编辑的是源码，只是把 Markdown 符号藏起来、按渲染效果显示，整个元素选中时才露出符号，任务列表的复选框可以直接点，项目里的文件链接在面板里打开，「预览 / 源代码」开关切到带行号的源代码编辑；文件、文件夹图标用 Material Icon Theme（`material-icon-theme`，图标按需加载），输入框 @ 的候选也用它。目录树里的图片（png、jpg、gif、webp、bmp、svg，5 MB 以内）显示 16px 的缩略图，`/files/list` 给图片带上大小和修改时间，修改时间放进地址里，图片改了缩略图跟着变，读不出来退回类型图标。标签页按项目文件夹分开存在内存里；终端进程在网关上，跟网页断开无关，刷新页面后按 `GET /terminals?cwd=` 补回标签页，关标签页才结束。
+- 模型用终端（参照 Claude 桌面版的终端工具）：项目里的会话，网关给 SDK 加一个进程内 MCP 服务器 `terminal`（`gateway/src/terminal/tool.ts`，`createSdkMcpServer`），工具有 `read_terminal`（读屏幕上的文字：清屏之前的丢掉，去掉控制序列，回车、退格按覆盖处理；可以先等新输出）、`list_terminal_tabs`、`run_in_terminal`（敲一行命令并回车；不传 tab_id 开新终端，title 是标签页名字）、`stop_terminal_tab`（Ctrl-C 或关闭）。读的两个在 `allowedTools` 里不用确认，写命令、停止走权限卡片（「完全访问权限」下直接执行）。模型只能往它自己开的、用户没敲过、回到了提示符的终端里写命令，只能停止、关闭它自己开的；前台在跑什么用 node-pty 的 `process`（Unix 上是 tcgetpgrp，Windows 上拿不到）。面板每 2 秒对一次 `GET /terminals?cwd=`：模型开的终端补成标签页（不抢当前标签），关掉的去掉。
 - 导入技能和插件：技能文件夹要有 `SKILL.md`，复制到 `$CLAUDE_CONFIG_DIR/skills/<名称>/`，Claude Code 自己发现；插件文件夹要有 `.claude-plugin/plugin.json`，复制到 `$CLAUDE_CONFIG_DIR/gateway-plugins/<名称>/`，通过 `options.plugins` 加载，它的技能叫 `插件名:技能名`。桌面版用系统对话框选文件夹，网页用 `GET /folders` 浏览。
 - 停用技能：停用的名称存在 `$CLAUDE_CONFIG_DIR/gateway-disabled-skills.json`。有停用的技能时，网关把其余技能作为 `options.skills` 白名单传给 SDK，模型看不到停用的技能，调 Skill 工具也会被拒绝；这个白名单管不到用户自己输入的 `/技能名`，所以网关在新建和发送时再拦一次，返回 400。白名单在拉起 claude 进程时确定，已经活跃的会话要等进程重启才更新，`/技能名` 的拦截立即生效。内置技能只能停用；删除只针对导入的技能，是删文件，SDK 没有对应接口。
 - MCP 服务器：设置页添加的存在 `$CLAUDE_CONFIG_DIR/gateway-mcp-servers.json`（权限 600，请求头和环境变量可能有令牌），启用的通过 `options.mcpServers` 传给会话，对新会话和子进程重启后的会话生效。插件或配置文件带来的服务器只显示，不能在设置页改。
@@ -170,6 +172,16 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | POST | `/sessions/:id/messages` | 发送消息 `{ text, attachments? }`（文字和附件至少有一样）；会话不活跃时自动 resume |
 | POST | `/uploads` | 上传附件（multipart，可多个）→ `{ attachments: [{ id, name, path, size }] }` |
 | GET | `/folders?path=` | 网关机器上一个文件夹里的子文件夹 `{ path, parent, home, entries }`，不传 path 是主目录，支持 `~` |
+| GET | `/files?cwd=&q=` | 输入框 @ 引用文件的候选，见上面「引用文件」 |
+| GET | `/files/list?cwd=&path=` | 右侧面板文件树：项目里一个文件夹的直接子项（`path` 相对项目文件夹，空是根，不能跳出项目） |
+| GET | `/files/read?cwd=&path=` | 右侧面板查看文件：`{ kind: text \| image \| binary \| too-large, text?, mtimeMs }`，文本最大 2 MB，前 8 KB 有 0 字节算二进制 |
+| POST | `/files/write` | 右侧面板保存文件 `{ cwd, path, text, mtimeMs, force? }`：`mtimeMs` 和磁盘上的对不上（打开之后被改过）返回 409，`force` 覆盖 |
+| GET | `/files/raw?cwd=&path=` | 图片原文件（只允许图片类型，带禁脚本的 CSP） |
+| GET | `/terminals?cwd=` | 右侧面板的终端列表（刷新页面后把还开着的补成标签页） |
+| POST | `/terminals` | 开终端 `{ cwd, cols, rows }`：网关机器上的 pty（`@lydell/node-pty`，带各平台预编译包），shell 是 `$SHELL`，Windows 是 PowerShell |
+| GET | `/terminals/:id/stream` | 终端输出（SSE）：连上先给保留的输出（最多 512K 字符）还原屏幕，之后实时推 `data`、`exit` |
+| POST | `/terminals/:id/input`、`/terminals/:id/resize` | 输入 `{ data }`（网页按顺序发，前一个回来才发下一个）、改大小 `{ cols, rows }` |
+| DELETE | `/terminals/:id` | 关终端（关标签页时）；网关退出时全部结束 |
 | POST | `/sessions/:id/interrupt` | 打断当前一轮 |
 | POST | `/sessions/:id/permission-mode` | `{ mode }` |
 | POST | `/sessions/:id/model` | `{ model?, effort? }` 切换模型（`Query.setModel`）和推理强度（`Query.applyFlagSettings({ effortLevel })`）；子进程回收了的会话先 resume |

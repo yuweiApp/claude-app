@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
-import { FileTypeIcon } from "./FileTypeIcon";
-import { FolderIcon } from "./FolderPicker";
+import { FileTypeIcon, FolderTypeIcon } from "./FileTypeIcon";
 
 /** 输入 @ 后弹出的一项：项目里的文件、文件夹（value 相对项目文件夹，文件夹以 / 结尾） */
 export interface MentionOption {
@@ -42,7 +41,7 @@ export function MentionMenu({ options, active, onHover, onPick }: Props) {
             onClick={() => onPick(option)}
           >
             <span className="mention-option-icon">
-              {option.kind === "dir" ? <FolderIcon /> : <FileTypeIcon name={name} />}
+              {option.kind === "dir" ? <FolderTypeIcon open={false} name={name} /> : <FileTypeIcon name={name} />}
             </span>
             <span className="mention-option-name">{name}</span>
             {parent && <span className="mention-option-sub">{parent}</span>}

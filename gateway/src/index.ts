@@ -1,13 +1,14 @@
 import { buildApp } from "./app.js";
 import { config } from "./config.js";
 
-const { app, sessions } = buildApp();
+const { app, sessions, terminals } = buildApp();
 
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   app.log.info({ signal }, "正在关闭：结束所有 claude 子进程");
+  terminals.closeAll();
   await sessions.closeAll();
   await app.close();
   process.exit(0);

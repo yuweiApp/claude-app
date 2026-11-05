@@ -16,6 +16,7 @@ import type { Attachment, GatewayEvent, SessionState } from "../shared/types.js"
 import { buildUserContent } from "./attachments.js";
 import { InputQueue } from "./input-queue.js";
 import { listModels } from "./models.js";
+import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { buildOptions } from "./options.js";
 import type { TaskList } from "./tasks.js";
 
@@ -57,6 +58,7 @@ export class AgentSession {
     private readonly conversationLog: ConversationLog,
     private readonly tasks: TaskList,
     private readonly onClosed: (session: AgentSession) => void,
+    terminals?: TerminalManager,
   ) {
     this.model = opts.model ?? config.model;
     this.effort = opts.effort;
@@ -73,6 +75,7 @@ export class AgentSession {
         permissionMode: opts.permissionMode,
         skills: opts.skills,
         canUseTool: this.canUseTool,
+        terminals,
         abortController: this.abortController,
         stderr: (data) => this.log.debug({ sessionId: id, stderr: data.trimEnd() }, "claude stderr"),
       }),

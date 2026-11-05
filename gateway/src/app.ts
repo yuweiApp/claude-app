@@ -7,6 +7,8 @@ import { EventHub } from "./events/event-hub.js";
 import { ConversationLog } from "./logging/conversation-log.js";
 import { sessionRoutes } from "./http/routes/sessions.js";
 import { fileRoutes } from "./http/routes/files.js";
+import { terminalRoutes } from "./http/routes/terminals.js";
+import { TerminalError, TerminalManager } from "./terminal/terminal-manager.js";
 import { folderRoutes } from "./http/routes/folders.js";
 import { uploadRoutes } from "./http/routes/uploads.js";
 
@@ -20,6 +22,7 @@ const prettyStream = process.stdout.isTTY || process.env.LOG_PRETTY === "1"
 export interface App {
   app: FastifyInstance;
   sessions: SessionManager;
+  terminals: TerminalManager;
 }
 
 export function buildApp(): App {
@@ -30,7 +33,8 @@ export function buildApp(): App {
     },
   });
   const hub = new EventHub(config.eventBufferSize);
-  const sessions = new SessionManager(hub, app.log, new ConversationLog(config.conversationLog, app.log));
+  const terminals = new TerminalManager();
+  const sessions = new SessionManager(hub, app.log, new ConversationLog(config.conversationLog, app.log), terminals);
 
   if (config.apiToken) {
     app.addHook("onRequest", async (req, reply) => {
@@ -44,7 +48,7 @@ export function buildApp(): App {
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
     if (err instanceof BusyError) return reply.code(429).send({ error: err.message });
-    if (err instanceof AttachmentError || err instanceof BadRequestError) return reply.code(400).send({ error: err.message });
+    if (err instanceof AttachmentError || err instanceof BadRequestError || err instanceof TerminalError) return reply.code(400).send({ error: err.message });
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) app.log.error(err);
     return reply.code(status).send({ error: err instanceof Error ? err.message : String(err) });
@@ -67,5 +71,6 @@ export function buildApp(): App {
   uploadRoutes(app);
   folderRoutes(app);
   fileRoutes(app);
-  return { app, sessions };
+  terminalRoutes(app, terminals);
+  return { app, sessions, terminals };
 }

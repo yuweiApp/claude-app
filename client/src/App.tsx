@@ -12,22 +12,17 @@ import { Sidebar, folderName, groupByFolder, sessionTitle } from "./components/S
 import { DEFAULT_SIDEBAR_WIDTH, SidebarResizer } from "./components/SidebarResizer";
 import { SidebarToggle } from "./components/SidebarToggle";
 import { SettingsPage } from "./components/SettingsPage";
+import { newPanelState, PanelIcon, SidePanel, type PanelState } from "./components/SidePanel";
 import { TasksPopover } from "./components/TasksPopover";
 import { TitleBar } from "./components/TitleBar";
 import { desktop } from "./desktop";
 import { emptyView, reduce } from "./state/session";
 
-/** 浏览记录（桌面版标题栏的后退 / 前进）：打开过的会话，null 是新会话页 */
-interface History {
-  stack: (string | null)[];
-  index: number;
-}
-
 export function App() {
   const [config, setConfig] = useState<GatewayConfig | null>(null);
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
-  const [history, setHistory] = useState<History>({ stack: [null], index: 0 });
-  const currentId = history.stack[history.index] ?? null;
+  /** 正在看的会话，null 是新会话页 */
+  const [currentId, setCurrentId] = useState<string | null>(null);
   /** 新聊天页选的项目（工作目录），null 是默认工作目录 */
   const [newCwd, setNewCwd] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,31 +47,9 @@ export function App() {
       }
       return !c;
     });
-  /** 打开会话（null 是新会话页）；replace 时替换当前这条记录，不新增 */
-  const navigate = (id: string | null, replace = false) =>
-    setHistory((h) => {
-      if (h.stack[h.index] === id) return h;
-      const stack = [...h.stack.slice(0, replace ? h.index : h.index + 1), id];
-      return { stack, index: stack.length - 1 };
-    });
-  const go = (delta: number) =>
-    setHistory((h) => {
-      const index = h.index + delta;
-      return index >= 0 && index < h.stack.length ? { ...h, index } : h;
-    });
-  /** 删掉的会话在浏览记录里换成新会话页（正在看的被删了就回到新会话页），相邻重复的合并 */
-  const forget = (ids: string[]) =>
-    setHistory((h) => {
-      const stack: (string | null)[] = [];
-      let index = 0;
-      h.stack.forEach((id, i) => {
-        const entry = id && ids.includes(id) ? null : id;
-        if (!stack.length || stack.at(-1) !== entry) stack.push(entry);
-        if (i === h.index) index = stack.length - 1;
-      });
-      return { stack, index };
-    });
-  const select = (id: string | null) => navigate(id);
+  /** 删掉的会话正在看的话回到新会话页 */
+  const forget = (ids: string[]) => setCurrentId((id) => (id && ids.includes(id) ? null : id));
+  const select = (id: string | null) => setCurrentId(id);
   const startNew = (cwd?: string) => {
     setNewCwd(cwd ?? null);
     select(null);
@@ -85,6 +58,23 @@ export function App() {
   // 会话标题和所在项目，显示在对话上方那一行（右边是会话栏按钮）；新会话页没有
   const title = currentId ? (current ? sessionTitle(current) : "新会话") : null;
   const folder = current?.cwd && config && current.cwd !== config.workspaceDir ? folderName(current.cwd) : null;
+  // 右侧面板：只在项目里（选了文件夹的会话、新会话页选了文件夹）有；开着还是收起全局记住，标签页按项目文件夹分开
+  const chatCwd = currentId ? (current?.cwd ?? null) : newCwd;
+  const projectCwd = chatCwd && config && chatCwd !== config.workspaceDir ? chatCwd : null;
+  const [panelOpen, setPanelOpen] = useState(initialPanelOpen);
+  const [panels, setPanels] = useState<Record<string, PanelState>>({});
+  // 还没改过的项目用同一个默认状态（每次渲染新建的话标签页 id 会变）
+  const defaultPanels = useRef<Record<string, PanelState>>({});
+  const panelOf = (all: Record<string, PanelState>, cwd: string) => all[cwd] ?? (defaultPanels.current[cwd] ??= newPanelState());
+  const togglePanel = () =>
+    setPanelOpen((open) => {
+      try {
+        localStorage.setItem(PANEL_OPEN_KEY, String(!open));
+      } catch {
+        // 忽略
+      }
+      return !open;
+    });
 
   const deleteSessions = async (ids: string[]) => {
     const results = await Promise.allSettled(ids.map((id) => api.deleteSession(id)));
@@ -110,10 +100,6 @@ export function App() {
       {desktop && (
         <TitleBar
           desktop={desktop}
-          canBack={history.index > 0}
-          canForward={history.index < history.stack.length - 1}
-          onBack={() => go(-1)}
-          onForward={() => go(1)}
           sidebarCollapsed={collapsed}
           onToggleSidebar={toggleSidebar}
         />
@@ -173,11 +159,12 @@ export function App() {
                 {error}
               </div>
             )}
+            <div className="main-split">
             {config && (
               <Chat
                 key={currentId ?? "new"}
                 sessionId={currentId}
-                cwd={currentId ? (current?.cwd ?? null) : newCwd}
+                cwd={chatCwd}
                 folderPicker={
                   !currentId && (
                     <FolderPicker
@@ -189,8 +176,7 @@ export function App() {
                 }
                 config={config}
                 onCreated={(id) => {
-                  // 新会话页变成了这个会话，不另记一条
-                  navigate(id, true);
+                  select(id);
                   refresh();
                 }}
                 onChanged={refresh}
@@ -198,8 +184,37 @@ export function App() {
                 headerStart={!desktop && collapsed && <SidebarToggle collapsed onToggle={toggleSidebar} />}
               title={title}
               folder={folder}
+                headerEnd={
+                  // 面板开着时收起按钮在面板上
+                  projectCwd && !panelOpen && (
+                    <button
+                      className="icon-btn panel-toggle"
+                      onClick={togglePanel}
+                      title="打开右侧面板（文件、终端）"
+                      aria-label="打开右侧面板"
+                    >
+                      <PanelIcon />
+                    </button>
+                  )
+                }
               />
             )}
+            {projectCwd && panelOpen && (
+              <SidePanel
+                key={projectCwd}
+                cwd={projectCwd}
+                state={panelOf(panels, projectCwd)}
+                onChange={(update) =>
+                  setPanels((all) => {
+                    const current = panelOf(all, projectCwd);
+                    const next = update(current);
+                    return next === current ? all : { ...all, [projectCwd]: next };
+                  })
+                }
+                onClose={togglePanel}
+              />
+            )}
+            </div>
           </main>
         )}
       </div>
@@ -208,6 +223,15 @@ export function App() {
 }
 
 const COLLAPSED_KEY = "sidebarCollapsed";
+const PANEL_OPEN_KEY = "sidePanelOpen";
+
+function initialPanelOpen(): boolean {
+  try {
+    return localStorage.getItem(PANEL_OPEN_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
 const SIDEBAR_WIDTH_KEY = "sidebarWidth";
 
 function initialSidebarWidth(): number {
@@ -235,6 +259,8 @@ interface ChatProps {
   onError: (message: string) => void;
   /** 标题栏最左边的内容：侧边栏收起时是「展开侧边栏」按钮 */
   headerStart?: ReactNode;
+  /** 标题栏最右边：右侧面板的开关 */
+  headerEnd?: ReactNode;
   /** 对话上方显示的会话标题和项目名 */
   title?: string | null;
   folder?: string | null;
@@ -252,6 +278,7 @@ function Chat({
   onChanged,
   onError,
   headerStart,
+  headerEnd,
   title,
   folder,
   folderPicker,
@@ -265,7 +292,6 @@ function Chat({
   useEffect(() => {
     api.models().then(setModels, (e: Error) => onError(`读取模型列表失败：${e.message}`));
   }, []);
-  const bottomRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
   // 技能和插件按工作目录（项目里可以有自己的技能）
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
@@ -293,37 +319,90 @@ function Chat({
     }
   }, [view.needsReload, sessionId]);
 
-  // 在底部时跟着新内容往下滚；往上翻了就不动，出「回到底部」按钮
+  // 在底部时跟着新内容往下滚；用户自己往上翻了才不跟，出「回到底部」按钮。
+  // 是不是用户在滚只看输入事件（滚轮、触摸、按键、拖滚动条），不看 scrollTop 变小：
+  // 平滑滚动和设 scrollTop 打架、内容收起时浏览器夹住 scrollTop，都会让它变小，但不是用户要往上看
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
+  const lastTopRef = useRef(0);
+  const userScrollRef = useRef(0); // 最近一次用户滚动输入的时间
+  const pointerDownRef = useRef(false); // 按住滚动条拖动中
+  const pinToBottom = () => {
+    const el = scrollRef.current;
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+  };
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-    stickRef.current = bottom;
-    setAtBottom(bottom);
+    const byUser = pointerDownRef.current || performance.now() - userScrollRef.current < 300;
+    if (bottom) stickRef.current = true;
+    else if (byUser && el.scrollTop < lastTopRef.current - 2) stickRef.current = false;
+    lastTopRef.current = el.scrollTop;
+    setAtBottom(bottom || stickRef.current);
   };
-  const scrollToBottom = (behavior: ScrollBehavior) => {
-    stickRef.current = true;
-    bottomRef.current?.scrollIntoView({ block: "end", behavior });
-  };
-  useEffect(() => {
-    if (stickRef.current) bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [view.items.length, view.streaming.text, view.permissions.length]);
-  // 内容变高（图片加载完、展开工具输出、流式文字）时，在底部的继续贴着底部
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    const mark = () => (userScrollRef.current = performance.now());
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) mark();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (["ArrowUp", "PageUp", "Home"].includes(e.key) || (e.key === " " && e.shiftKey)) mark();
+    };
+    // 点在滚动容器自身（不是里面的内容）上，就是在拖滚动条
+    const onDown = (e: PointerEvent) => {
+      if (e.target === el) pointerDownRef.current = true;
+    };
+    const onUp = () => (pointerDownRef.current = false);
+    // 平滑滚动停下时内容可能又长了，补一下
+    const onScrollEnd = () => pinToBottom();
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("touchmove", mark, { passive: true });
+    el.addEventListener("keydown", onKey);
+    el.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointerup", onUp);
+    el.addEventListener("scrollend", onScrollEnd);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchmove", mark);
+      el.removeEventListener("keydown", onKey);
+      el.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointerup", onUp);
+      el.removeEventListener("scrollend", onScrollEnd);
+    };
+  }, []);
+  const scrollToBottom = (behavior: ScrollBehavior) => {
+    stickRef.current = true;
+    setAtBottom(true);
+    const el = scrollRef.current;
+    el?.scrollTo({ top: el.scrollHeight, behavior });
+  };
+  useEffect(pinToBottom, [view.items.length, view.streaming.text, view.permissions.length]);
+  // 内容变高（流式文字、图片加载完、展开工具输出）或对话区变矮（输入框变高）时，在底部的继续贴着底部
+  useEffect(() => {
+    const el = scrollRef.current;
+    const content = contentRef.current;
+    if (!el || !content) return;
     const observer = new ResizeObserver(() => {
       if (stickRef.current) el.scrollTop = el.scrollHeight;
+      // 内容变矮时浏览器把 scrollTop 夹到底部，不一定发 scroll 事件，这里补上「已在底部」
+      else if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) {
+        stickRef.current = true;
+        setAtBottom(true);
+      }
     });
-    for (const child of el.children) observer.observe(child);
+    observer.observe(el);
+    observer.observe(content);
     return () => observer.disconnect();
   }, []);
 
   const send = async (text: string, attachments: string[]) => {
-    scrollToBottom("smooth");
+    // 发消息直接跳到底部：平滑滚动途中新消息、回复接连进来，和贴底部的跳转打架
+    scrollToBottom("auto");
     try {
       if (sessionId) await api.send(sessionId, text, attachments);
       else onCreated(await api.createSession(text, attachments, { permissionMode: newMode, cwd: cwd ?? undefined, model: newModel, effort: newEffort }));
@@ -346,7 +425,7 @@ function Chat({
   return (
     <PluginNamesContext.Provider value={pluginNames}>
     <div className="chat">
-      {(headerStart || title) && (
+      {(headerStart || title || headerEnd) && (
         <div className="chat-header">
           {headerStart}
           {title && (
@@ -360,10 +439,12 @@ function Chat({
             </span>
           )}
           {sessionId && <TasksPopover sessionId={sessionId} tasks={view.backgroundTasks} onError={onError} />}
+          {headerEnd && <span className="chat-header-end">{headerEnd}</span>}
         </div>
       )}
       <div className="scroll-area">
       <div className="scroll" ref={scrollRef} onScroll={onScroll}>
+        <div className="scroll-content" ref={contentRef}>
         {!sessionId && (
           <div className="empty">
             有什么可以帮你？
@@ -382,7 +463,7 @@ function Chat({
             }}
           />
         ))}
-        <div ref={bottomRef} />
+        </div>
       </div>
       {!atBottom && <ScrollToBottom running={view.state === "running"} onClick={() => scrollToBottom("smooth")} />}
       </div>

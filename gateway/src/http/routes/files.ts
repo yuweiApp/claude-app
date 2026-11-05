@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { readdir, stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { open, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { FastifyInstance } from "fastify";
 import { BadRequestError } from "../../agent/session-manager.js";
-import type { ProjectEntry } from "../../shared/types.js";
+import type { FileContent, ProjectEntry } from "../../shared/types.js";
 
 const run = promisify(execFile);
 const LIMIT = 50;
@@ -13,6 +14,18 @@ const SKIP = new Set([".git", "node_modules", ".venv", "venv", "__pycache__", "d
 const MAX_FILES = 20000;
 /** 输入 @ 后每敲一个字都会来查，文件列表缓存一会儿 */
 const CACHE_MS = 10_000;
+/** 右侧面板直接显示的文本文件上限 */
+const MAX_TEXT_BYTES = 2 * 1024 * 1024;
+const IMAGE_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+};
 const cache = new Map<string, { at: number; entries: Promise<ProjectEntry[]> }>();
 
 /**
@@ -33,20 +46,88 @@ export function fileRoutes(app: FastifyInstance): void {
     }
     return { entries: search(await projectEntries(cwd), q) };
   });
+
+  // 右侧面板的文件树：一个文件夹的直接子项（path 相对项目文件夹，空是根）
+  app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/list", async (req) => {
+    const { cwd, abs } = resolveInProject(req.query.cwd, req.query.path);
+    const entries = await listDir(cwd, abs, true);
+    if (!entries) throw new BadRequestError("不是文件夹");
+    return { entries };
+  });
+
+  // 右侧面板查看文件：文本直接给内容，图片让网页用 /files/raw 取
+  app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/read", async (req): Promise<FileContent> => {
+    const { abs } = resolveInProject(req.query.cwd, req.query.path);
+    const info = await stat(abs).catch(() => null);
+    if (!info?.isFile()) throw new BadRequestError("文件不存在");
+    const rel = req.query.path ?? "";
+    const meta = { path: rel, size: info.size, mtimeMs: info.mtimeMs };
+    if (IMAGE_TYPES[path.extname(abs).toLowerCase()]) return { ...meta, kind: "image" };
+    if (info.size > MAX_TEXT_BYTES) return { ...meta, kind: "too-large" };
+    const handle = await open(abs, "r");
+    try {
+      const buf = await handle.readFile();
+      // 前 8KB 里有 0 字节就当二进制
+      if (buf.subarray(0, 8192).includes(0)) return { ...meta, kind: "binary" };
+      return { ...meta, kind: "text", text: buf.toString("utf8") };
+    } finally {
+      await handle.close();
+    }
+  });
+
+  // 右侧面板编辑后保存（Ctrl+S）：mtimeMs 是读的时候的修改时间，对不上说明期间被改过（Claude 改了、终端里改了），不覆盖，除非 force
+  app.post<{ Body: { cwd?: string; path?: string; text?: string; mtimeMs?: number; force?: boolean } }>("/files/write", async (req, reply) => {
+    const { abs } = resolveInProject(req.body?.cwd, req.body?.path);
+    if (typeof req.body?.text !== "string") throw new BadRequestError("缺少文件内容");
+    const info = await stat(abs).catch(() => null);
+    if (!info?.isFile()) throw new BadRequestError("文件不存在");
+    if (!req.body.force && req.body.mtimeMs !== undefined && Math.abs(info.mtimeMs - req.body.mtimeMs) > 1) {
+      return reply.code(409).send({ error: "文件在打开之后被修改过", mtimeMs: info.mtimeMs });
+    }
+    await writeFile(abs, req.body.text, "utf8");
+    return { mtimeMs: (await stat(abs)).mtimeMs };
+  });
+
+  app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/raw", async (req, reply) => {
+    const { abs } = resolveInProject(req.query.cwd, req.query.path);
+    const info = await stat(abs).catch(() => null);
+    if (!info?.isFile()) throw new BadRequestError("文件不存在");
+    const type = IMAGE_TYPES[path.extname(abs).toLowerCase()];
+    if (!type) throw new BadRequestError("只能直接取图片");
+    // svg 里可以有脚本，按附件的 CSP 禁掉
+    return reply.type(type).header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox").send(createReadStream(abs));
+  });
 }
 
-/** 一个文件夹的直接子项，文件夹在前；不是文件夹时返回 null */
-async function listDir(cwd: string, dir: string): Promise<ProjectEntry[] | null> {
+/** 项目里的路径（/ 分隔的相对路径）转成绝对路径，不能跳出项目文件夹 */
+function resolveInProject(cwd: string | undefined, rel: string | undefined): { cwd: string; abs: string } {
+  if (!cwd || !path.isAbsolute(cwd)) throw new BadRequestError("缺少项目文件夹");
+  const root = path.resolve(cwd);
+  const abs = path.resolve(root, rel ?? "");
+  if (abs !== root && !abs.startsWith(root + path.sep)) throw new BadRequestError("路径不在项目里");
+  return { cwd: root, abs };
+}
+
+/** 一个文件夹的直接子项，文件夹在前；不是文件夹时返回 null。withImageInfo：图片文件带上大小和修改时间（目录树的缩略图用） */
+async function listDir(cwd: string, dir: string, withImageInfo = false): Promise<ProjectEntry[] | null> {
   const dirents = await readdir(dir, { withFileTypes: true }).catch(() => null);
   if (!dirents) return null;
-  return dirents
-    .filter((d) => d.name !== ".git")
-    .map((d) => {
-      const rel = path.relative(cwd, path.join(dir, d.name)).split(path.sep).join("/");
-      const isDir = d.isDirectory();
-      return { path: isDir ? `${rel}/` : rel, dir: isDir };
-    })
-    .sort((a, b) => Number(b.dir) - Number(a.dir) || a.path.localeCompare(b.path));
+  const entries = await Promise.all(
+    dirents
+      .filter((d) => d.name !== ".git")
+      .map(async (d): Promise<ProjectEntry> => {
+        const abs = path.join(dir, d.name);
+        const rel = path.relative(cwd, abs).split(path.sep).join("/");
+        const isDir = d.isDirectory();
+        if (isDir) return { path: `${rel}/`, dir: true };
+        if (withImageInfo && IMAGE_TYPES[path.extname(d.name).toLowerCase()]) {
+          const info = await stat(abs).catch(() => null);
+          if (info) return { path: rel, dir: false, size: info.size, mtimeMs: info.mtimeMs };
+        }
+        return { path: rel, dir: false };
+      }),
+  );
+  return entries.sort((a, b) => Number(b.dir) - Number(a.dir) || a.path.localeCompare(b.path));
 }
 
 function projectEntries(cwd: string): Promise<ProjectEntry[]> {

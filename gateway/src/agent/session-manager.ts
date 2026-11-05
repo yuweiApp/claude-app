@@ -22,6 +22,7 @@ import { loadAttachments } from "./attachments.js";
 import { enabledSkillNames } from "./capabilities.js";
 import { disabledSkills } from "./extensions.js";
 import { AgentSession } from "./session.js";
+import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { generateTitle } from "./title.js";
 import { readOutputTail, TaskList } from "./tasks.js";
 
@@ -36,6 +37,8 @@ export class SessionManager {
     private readonly hub: EventHub,
     private readonly log: FastifyBaseLogger,
     private readonly conversationLog: ConversationLog,
+    /** 右侧面板的终端，项目里的会话给模型用（读终端、往终端里写命令） */
+    private readonly terminals?: TerminalManager,
   ) {
     mkdirSync(config.workspaceDir, { recursive: true });
     mkdirSync(config.claudeConfigDir, { recursive: true });
@@ -196,6 +199,7 @@ export class SessionManager {
       (closed) => {
         if (this.active.get(closed.id) === closed) this.active.delete(closed.id);
       },
+      this.terminals,
     );
     this.active.set(sessionId, session);
     this.log.info({ sessionId, resume, cwd: opts.cwd }, "启动 claude 会话");

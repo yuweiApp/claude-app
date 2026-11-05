@@ -4,19 +4,15 @@ import { SidebarToggle } from "./SidebarToggle";
 
 interface Props {
   desktop: DesktopApi;
-  canBack: boolean;
-  canForward: boolean;
-  onBack: () => void;
-  onForward: () => void;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
 }
 
 /**
- * 桌面版的标题栏（窗口没有系统边框）：左边后退、前进、收起侧边栏，右边最小化、最大化、关闭（会话标题在对话上方那一行）。
+ * 桌面版的标题栏（窗口没有系统边框）：左边收起侧边栏，右边最小化、最大化、关闭（会话标题在对话上方那一行）。
  * 空白处可以拖动窗口；macOS 用系统的红绿灯按钮，只在左边留出位置
  */
-export function TitleBar({ desktop, canBack, canForward, onBack, onForward, sidebarCollapsed, onToggleSidebar }: Props) {
+export function TitleBar({ desktop, sidebarCollapsed, onToggleSidebar }: Props) {
   const [maximized, setMaximized] = useState(false);
   useEffect(() => {
     void desktop.isMaximized().then(setMaximized);
@@ -27,12 +23,6 @@ export function TitleBar({ desktop, canBack, canForward, onBack, onForward, side
   return (
     <header className={`titlebar${mac ? " titlebar-mac" : ""}`}>
       <div className="titlebar-nav">
-        <button className="icon-btn" title="后退" aria-label="后退" disabled={!canBack} onClick={onBack}>
-          <ArrowIcon dir="left" />
-        </button>
-        <button className="icon-btn" title="前进" aria-label="前进" disabled={!canForward} onClick={onForward}>
-          <ArrowIcon dir="right" />
-        </button>
         <SidebarToggle collapsed={sidebarCollapsed} onToggle={onToggleSidebar} />
       </div>
 
@@ -68,13 +58,5 @@ export function TitleBar({ desktop, canBack, canForward, onBack, onForward, side
         </div>
       )}
     </header>
-  );
-}
-
-function ArrowIcon({ dir }: { dir: "left" | "right" }) {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {dir === "left" ? <path d="M13 8H3M7 4 3 8l4 4" /> : <path d="M3 8h10M9 4l4 4-4 4" />}
-    </svg>
   );
 }

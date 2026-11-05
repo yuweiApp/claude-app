@@ -58,7 +58,7 @@ interface Props {
 export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, onDelete, onCollapse, width }: Props) {
   const [collapsed, setCollapsed] = useState(loadCollapsed);
   /** 等用户确认的删除 */
-  const [pendingDelete, setPendingDelete] = useState<{ title: string; message: string; ids: string[] } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ title: string; message: string; confirmLabel: string; ids: string[] } | null>(null);
   const toggle = (key: string) =>
     setCollapsed((cur) => {
       const next = new Set(cur);
@@ -77,19 +77,22 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
   const projectsOpen = !collapsed.has(SECTION_PROJECTS);
   const chatsOpen = !collapsed.has(SECTION_CHATS);
 
-  const row = (s: SessionListItem) => (
-    <li key={s.sessionId}>
-      <button
-        className={`session-row${s.sessionId === currentId ? " active" : ""}${s.state === "running" ? " running" : ""}`}
-        onClick={() => onSelect(s.sessionId)}
-        title={sessionTitle(s)}
-      >
-        <span className="session-title">{sessionTitle(s)}</span>
-        <span className="session-meta">{relativeTime(s.lastModified)}</span>
-        {s.state === "running" && <span className="session-spinner" aria-label="运行中" />}
-      </button>
-    </li>
-  );
+  const deleteSession = (s: SessionListItem) =>
+    setPendingDelete({
+      title: "删除会话",
+      message: `将删除「${sessionTitle(s)}」，会话记录一起删除，不能恢复。${s.state === "running" ? "会话正在运行，会先停止。" : ""}`,
+      confirmLabel: "删除",
+      ids: [s.sessionId],
+    });
+  const deleteProject = (g: FolderGroup) =>
+    setPendingDelete({
+      title: "删除项目",
+      message: `将删除项目「${folderName(g.cwd)}」下的 ${g.sessions.length} 个会话，会话记录一起删除，不能恢复。文件夹里的文件不受影响。`,
+      confirmLabel: "删除",
+      ids: g.sessions.map((s) => s.sessionId),
+    });
+
+  const row = (s: SessionListItem) => <SessionRow key={s.sessionId} session={s} active={s.sessionId === currentId} onSelect={onSelect} onDelete={deleteSession} />;
 
   return (
     <aside className="sidebar" style={{ "--sidebar-width": `${width}px` } as CSSProperties}>
@@ -112,6 +115,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
               setPendingDelete({
                 title: "删除全部项目的会话",
                 message: `将删除 ${projects.length} 个项目下的 ${ids.length} 个会话，会话记录一起删除，不能恢复。文件夹里的文件不受影响。`,
+                confirmLabel: "全部删除",
                 ids,
               });
             },
@@ -124,23 +128,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
       {projectsOpen &&
         projects.map((g) => {
           const open = !collapsed.has(g.cwd);
-          return (
-            <div key={g.cwd} className="group">
-              <div className="group-head">
-                <button className="group-toggle" onClick={() => toggle(g.cwd)} title={g.cwd}>
-                  <CaretIcon open={open} />
-                  <FolderIcon />
-                  <span className="group-name">{folderName(g.cwd)}</span>
-                </button>
-                <div className="group-actions">
-                  <button className="icon-btn" title="在此项目中新建会话" aria-label={`在 ${folderName(g.cwd)} 中新建会话`} onClick={() => onNew(g.cwd)}>
-                    <ComposeIcon />
-                  </button>
-                </div>
-              </div>
-              {open && <ul className="group-list">{g.sessions.map(row)}</ul>}
-            </div>
-          );
+          return <ProjectGroup key={g.cwd} group={g} open={open} onToggle={() => toggle(g.cwd)} onNew={onNew} onDelete={deleteProject} row={row} />;
         })}
 
       <SectionHead
@@ -154,6 +142,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
               setPendingDelete({
                 title: "删除全部会话",
                 message: `将删除「会话」里的 ${chats.length} 个会话，会话记录一起删除，不能恢复。`,
+                confirmLabel: "全部删除",
                 ids: chats.map((s) => s.sessionId),
               });
             },
@@ -168,7 +157,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
         <ConfirmDialog
           title={pendingDelete.title}
           message={pendingDelete.message}
-          confirmLabel="全部删除"
+          confirmLabel={pendingDelete.confirmLabel}
           onConfirm={() => {
             onDelete(pendingDelete.ids);
             setPendingDelete(null);
@@ -197,55 +186,134 @@ interface MenuAction {
   onClick: () => void;
 }
 
-/** 分区标题行：悬停时右边出现「…」，点它或在这一行上右键弹出菜单 */
-function SectionHead({ className, menu, children }: { className?: string; menu: MenuAction[]; children: ReactNode }) {
-  // 菜单位置（视口坐标）：点「…」时在按钮下方、和按钮右对齐，右键时在鼠标处往右下展开
+/** 「…」菜单：点按钮时在按钮下方、和按钮右对齐，右键时在鼠标处往右下展开（位置是视口坐标） */
+function useRowMenu() {
   const [at, setAt] = useState<{ left?: number; right?: number; top: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   useDismiss(menuRef, at !== null, () => setAt(null));
-
-  const openAtButton = (e: MouseEvent<HTMLButtonElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setAt(at ? null : { right: window.innerWidth - rect.right, top: rect.bottom + 4 });
+  return {
+    at,
+    menuRef,
+    close: () => setAt(null),
+    openAtButton: (e: MouseEvent<HTMLButtonElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      setAt(at ? null : { right: window.innerWidth - rect.right, top: rect.bottom + 4 });
+    },
+    openAtPointer: (e: MouseEvent) => {
+      e.preventDefault();
+      setAt({ left: Math.min(e.clientX, window.innerWidth - 180), top: e.clientY });
+    },
   };
-  const openAtPointer = (e: MouseEvent) => {
-    e.preventDefault();
-    setAt({ left: Math.min(e.clientX, window.innerWidth - 180), top: e.clientY });
-  };
+}
 
+function MoreButton({ className, label, menu }: { className: string; label: string; menu: ReturnType<typeof useRowMenu> }) {
   return (
-    <div className={`section-title section-head${at ? " menu-open" : ""}${className ? ` ${className}` : ""}`} onContextMenu={openAtPointer}>
+    <button
+      className={`icon-btn ${className}`}
+      title="更多"
+      aria-label={label}
+      aria-haspopup="menu"
+      aria-expanded={menu.at !== null}
+      // 菜单开着时按下这个按钮不算点到外面，由 onClick 收起
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        menu.openAtButton(e);
+      }}
+    >
+      <MoreIcon />
+    </button>
+  );
+}
+
+function MenuPopup({ menu, items }: { menu: ReturnType<typeof useRowMenu>; items: MenuAction[] }) {
+  if (!menu.at) return null;
+  return (
+    <div ref={menu.menuRef} className="menu context-menu" role="menu" style={{ left: menu.at.left ?? "auto", right: menu.at.right ?? "auto", top: menu.at.top }}>
+      {items.map((item) => (
+        <button
+          key={item.label}
+          role="menuitem"
+          className={`menu-item${item.danger ? " danger" : ""}`}
+          disabled={item.disabled}
+          onClick={() => {
+            menu.close();
+            item.onClick();
+          }}
+        >
+          <span className="menu-item-name">{item.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** 分区标题行：悬停时右边出现「…」，点它或在这一行上右键弹出菜单 */
+function SectionHead({ className, menu: items, children }: { className?: string; menu: MenuAction[]; children: ReactNode }) {
+  const menu = useRowMenu();
+  return (
+    <div className={`section-title section-head${menu.at ? " menu-open" : ""}${className ? ` ${className}` : ""}`} onContextMenu={menu.openAtPointer}>
       {children}
+      <MoreButton className="section-more" label="更多" menu={menu} />
+      <MenuPopup menu={menu} items={items} />
+    </div>
+  );
+}
+
+/** 一个会话：悬停时右边出现「…」（运行中的转圈让位），点它或右键弹出菜单 */
+function SessionRow({ session: s, active, onSelect, onDelete }: { session: SessionListItem; active: boolean; onSelect: (id: string) => void; onDelete: (s: SessionListItem) => void }) {
+  const menu = useRowMenu();
+  return (
+    <li className={`session-item${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
       <button
-        className="icon-btn section-more"
-        title="更多"
-        aria-label="更多"
-        aria-haspopup="menu"
-        aria-expanded={at !== null}
-        // 菜单开着时按下这个按钮不算点到外面，由 onClick 收起
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={openAtButton}
+        className={`session-row${active ? " active" : ""}${s.state === "running" ? " running" : ""}`}
+        onClick={() => onSelect(s.sessionId)}
+        title={sessionTitle(s)}
       >
-        <MoreIcon />
+        <span className="session-title">{sessionTitle(s)}</span>
+        <span className="session-meta">{relativeTime(s.lastModified)}</span>
+        {s.state === "running" && <span className="session-spinner" aria-label="运行中" />}
       </button>
-      {at && (
-        <div ref={menuRef} className="menu context-menu" role="menu" style={{ left: at.left ?? "auto", right: at.right ?? "auto", top: at.top }}>
-          {menu.map((item) => (
-            <button
-              key={item.label}
-              role="menuitem"
-              className={`menu-item${item.danger ? " danger" : ""}`}
-              disabled={item.disabled}
-              onClick={() => {
-                setAt(null);
-                item.onClick();
-              }}
-            >
-              <span className="menu-item-name">{item.label}</span>
-            </button>
-          ))}
+      <MoreButton className="row-more" label={`「${sessionTitle(s)}」的更多操作`} menu={menu} />
+      <MenuPopup menu={menu} items={[{ label: "删除", danger: true, onClick: () => onDelete(s) }]} />
+    </li>
+  );
+}
+
+/** 一个项目（文件夹）：悬停时右边出现「新建会话」和「…」，「…」或右键可以删除整个项目 */
+function ProjectGroup({
+  group: g,
+  open,
+  onToggle,
+  onNew,
+  onDelete,
+  row,
+}: {
+  group: FolderGroup;
+  open: boolean;
+  onToggle: () => void;
+  onNew: (cwd?: string) => void;
+  onDelete: (g: FolderGroup) => void;
+  row: (s: SessionListItem) => ReactNode;
+}) {
+  const menu = useRowMenu();
+  return (
+    <div className="group">
+      <div className={`group-head${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
+        <button className="group-toggle" onClick={onToggle} title={g.cwd}>
+          <CaretIcon open={open} />
+          <FolderIcon />
+          <span className="group-name">{folderName(g.cwd)}</span>
+        </button>
+        <div className="group-actions">
+          <button className="icon-btn" title="在此项目中新建会话" aria-label={`在 ${folderName(g.cwd)} 中新建会话`} onClick={() => onNew(g.cwd)}>
+            <ComposeIcon />
+          </button>
+          <MoreButton className="group-more" label={`项目 ${folderName(g.cwd)} 的更多操作`} menu={menu} />
         </div>
-      )}
+        <MenuPopup menu={menu} items={[{ label: "删除项目", danger: true, onClick: () => onDelete(g) }]} />
+      </div>
+      {open && <ul className="group-list">{g.sessions.map(row)}</ul>}
     </div>
   );
 }

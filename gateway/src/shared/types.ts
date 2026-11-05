@@ -109,4 +109,40 @@ export type SessionListItem = SDKSessionInfo & { state?: SessionState };
 export interface ProjectEntry {
   path: string;
   dir: boolean;
+  /** 右侧面板目录树里的图片文件才有：大小和修改时间（缩略图用，太大的不加载，改了换地址） */
+  size?: number;
+  mtimeMs?: number;
+}
+
+/** 右侧面板的终端 */
+export interface TerminalInfo {
+  id: string;
+  cwd: string;
+  /** shell 的名字（bash、zsh、powershell.exe） */
+  shell: string;
+  /** 标签页上的名字：模型开的终端给的标题；用户开的没有，网页按「终端 2」这样编号 */
+  title?: string;
+  /** 谁开的：模型开的终端它可以接着用、停止、关闭，用户开的只能读 */
+  openedBy: "user" | "agent";
+  /** 用户在里面敲过东西（模型就不再往里写命令） */
+  userTyped: boolean;
+  status: "running" | "exited";
+  exitCode: number | null;
+  createdAt: number;
+  /** 最近一次有输出的时间 */
+  activeAt: number;
+}
+
+/** GET /terminals/:id/stream 推的事件：连上时先来一条 data 是已有的输出 */
+export type TerminalEvent = { type: "data"; data: string } | { type: "exit"; code: number };
+
+/** GET /files/read：右侧面板查看文件 */
+export interface FileContent {
+  path: string;
+  size: number;
+  /** text 带 text；image 用 /files/raw 取；binary、too-large 不显示内容 */
+  kind: "text" | "image" | "binary" | "too-large";
+  text?: string;
+  /** 修改时间，保存时带回来，文件在这期间被改过就报冲突 */
+  mtimeMs: number;
 }

@@ -306,6 +306,8 @@ export function toolBrief(name: string, input: unknown): string {
     case "Agent":
     case "Task":
       return pick("description");
+    case "mcp__terminal__run_in_terminal":
+      return pick("command");
     default:
       return "";
   }

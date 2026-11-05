@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, GatewayEvent, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, FileContent, GatewayEvent, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { Attachment, BackgroundTask, Capabilities, GatewayEvent, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail };
+export type { Attachment, BackgroundTask, Capabilities, FileContent, GatewayEvent, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -12,6 +12,25 @@ function token(): string | null {
     return null;
   }
 }
+
+/** 网关返回的错误，带 HTTP 状态码（保存文件冲突是 409） */
+export class RequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+/** 浏览器直接请求的地址（EventSource、<img>）带不了请求头，令牌放进 ?token= */
+export function withToken(path: string): string {
+  const t = token();
+  if (!t) return BASE + path;
+  return `${BASE}${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(t)}`;
+}
+
+const q = (params: Record<string, string>) => new URLSearchParams(params).toString();
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
@@ -25,7 +44,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
   });
   const data = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
+  if (!res.ok) throw new RequestError(data.error || `${res.status} ${res.statusText}`, res.status);
   return data;
 }
 
@@ -61,6 +80,22 @@ export const api = {
   /** 项目里的文件和文件夹，输入框 @ 引用用；q 为空是第一层 */
   files: (cwd: string, q: string) =>
     request<{ entries: ProjectEntry[] }>("GET", `/files?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(q)}`).then((r) => r.entries),
+  /** 右侧面板：项目里一个文件夹的直接子项（path 相对项目文件夹，空是根） */
+  listDir: (cwd: string, path: string) => request<{ entries: ProjectEntry[] }>("GET", `/files/list?${q({ cwd, path })}`).then((r) => r.entries),
+  readFile: (cwd: string, path: string) => request<FileContent>("GET", `/files/read?${q({ cwd, path })}`),
+  /** 保存文件；文件在 mtimeMs 之后被改过时报错（status 409），force 覆盖 */
+  writeFile: (cwd: string, path: string, text: string, mtimeMs: number, force = false) =>
+    request<{ mtimeMs: number }>("POST", "/files/write", { cwd, path, text, mtimeMs, force }),
+  /** 图片原文件；v（修改时间）变了地址就变，浏览器不会用缓存里的旧图 */
+  rawFileUrl: (cwd: string, path: string, v?: number) => withToken(`/files/raw?${q({ cwd, path, ...(v ? { v: String(Math.round(v)) } : {}) })}`),
+  /** 右侧面板的终端 */
+  terminals: (cwd: string) => request<{ terminals: TerminalInfo[] }>("GET", `/terminals?${q({ cwd })}`).then((r) => r.terminals),
+  createTerminal: (cwd: string, cols: number, rows: number) =>
+    request<{ terminal: TerminalInfo }>("POST", "/terminals", { cwd, cols, rows }).then((r) => r.terminal),
+  terminalInput: (id: string, data: string) => request("POST", `/terminals/${id}/input`, { data }),
+  resizeTerminal: (id: string, cols: number, rows: number) => request("POST", `/terminals/${id}/resize`, { cols, rows }),
+  closeTerminal: (id: string) => request("DELETE", `/terminals/${id}`),
+  terminalStreamUrl: (id: string) => withToken(`/terminals/${id}/stream`),
   folders: (path?: string) => request<FolderListing>("GET", `/folders${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   /** Claude Code 的模型列表（SDK 的 ModelInfo） */
   models: () => request<{ models: ModelInfo[] }>("GET", "/models").then((r) => r.models),
