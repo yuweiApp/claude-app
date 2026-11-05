@@ -12,15 +12,21 @@ import { MentionText } from "./MentionText";
 type UserItem = Extract<Item, { kind: "user" }>;
 type ResultItem = Extract<Item, { kind: "result" }>;
 
-/** 一轮：用户消息（或自动开始这一轮的后台任务通知）开头，到 result（这一轮结束）为止 */
+/**
+ * 一轮：用户消息（或自动开始这一轮的后台任务通知）开头，到 result（这一轮结束）为止。
+ * 这一轮进行中用户又发的消息，SDK 在下一次工具调用之后把它并进这一轮（只有一个 result，指向开头那条）。
+ * 显示上按时间顺序在它那里分段：每段一个 Turn，后面的段 continued，result 挂在最后一段，前面的段用时算到下一段开始
+ */
 interface Turn {
   key: string;
   user: UserItem | null;
   task: TaskItem | null;
-  /** 这一轮进行中用户又发的消息：SDK 在下一次工具调用之后把它并进这一轮，不另开一轮（只有一个 result，指向开头那条） */
-  inserted: UserItem[];
   body: Item[];
   result: ResultItem | null;
+  /** 接着上一段（这条用户消息是进行中插入的） */
+  continued: boolean;
+  /** 下一段（插入的消息）开始的时间，这一段的用时算到这里 */
+  nextAt?: number;
 }
 
 function splitTurns(items: Item[]): Turn[] {
@@ -33,16 +39,16 @@ function splitTurns(items: Item[]): Turn[] {
     if (item.kind === "result") {
       results.push(item);
       midTool = false;
-    } else if (item.kind === "user" && midTool) {
-      turns.at(-1)!.inserted.push(item);
     } else if (item.kind === "user" || item.kind === "task" || !turns.length) {
+      const continued = item.kind === "user" && midTool;
+      if (continued) turns.at(-1)!.nextAt = item.at;
       turns.push({
         key: item.uuid,
         user: item.kind === "user" ? item : null,
         task: item.kind === "task" ? item : null,
-        inserted: [],
         body: item.kind === "user" || item.kind === "task" ? [] : [item],
         result: null,
+        continued,
       });
       midTool = false;
     } else {
@@ -52,12 +58,18 @@ function splitTurns(items: Item[]): Turn[] {
       } else if (item.kind === "interrupted" || item.kind === "error") midTool = false;
     }
   }
+  // 一轮插入过消息的，result 挂到它的最后一段
+  const lastSegment = (i: number) => {
+    while (turns[i + 1]?.continued) i++;
+    return i;
+  };
   // 历史消息（getSessionMessages）里没有 result，事件流回放的 result 排在最后：按 SDK 的 user_message_uuid 挂回所属的那一轮。
   // 后台任务开始的轮没有 user_message_uuid，事件缓冲也可能只剩最近几轮的 result：从后往前，挂到前面最近一个还没有 result 的轮
   let limit = turns.length;
   for (const r of results.toReversed()) {
     let i = r.userMessageUuid ? turns.findIndex((t) => t.user?.uuid === r.userMessageUuid) : -1;
-    if (i < 0) i = turns.findLastIndex((t, j) => j < limit && !t.result);
+    if (i >= 0) i = lastSegment(i);
+    if (i < 0) i = turns.findLastIndex((t, j) => j < limit && !t.result && !turns[j + 1]?.continued);
     if (i < 0) continue;
     turns[i]!.result = r;
     limit = i;
@@ -67,9 +79,12 @@ function splitTurns(items: Item[]): Turn[] {
 
 /** 这一轮的用时：有 result 用它的；历史里没有 result（网关重启过），按这一轮第一条和最后一条消息的时间算 */
 function turnDuration(turn: Turn): number | null {
-  if (turn.result) return turn.result.durationMs;
+  if (turn.result) {
+    // 插入过消息的一轮，result 的用时是整轮的，最后一段只算它自己那部分
+    if (!turn.continued) return turn.result.durationMs;
+  }
   const start = (turn.user ?? turn.task)?.at;
-  const end = turn.body.findLast((item) => item.kind === "assistant")?.at;
+  const end = turn.nextAt ?? turn.body.findLast((item) => item.kind === "assistant")?.at;
   return start && end && end > start ? end - start : null;
 }
 
@@ -158,17 +173,6 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
           )}
         </div>
       )}
-      {/* 进行中插入的消息跟在开头那条下面（放进折叠的过程里，收起后就看不到自己发了什么） */}
-      {turn.inserted.map((item) => (
-        <div key={item.uuid} className="msg-group msg-group-user">
-          <ItemView item={item} />
-          {item.text && (
-            <MessageActions align="end">
-              <CopyAction text={item.text} title="复制消息" />
-            </MessageActions>
-          )}
-        </div>
-      ))}
       {(hasProcess || live || duration !== null) && (
         // 下面有最终回复，或这一轮被中断（下面是「已中断」）时，「用时」下面画分割线
         <div className={`process-wrap${final || (!live && turn.body.some((item) => item.kind === "interrupted")) ? " has-final" : ""}`}>
