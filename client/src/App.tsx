@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { api, subscribe, type Capabilities, type GatewayConfig, type SessionListItem } from "./api";
 import { CapabilityPicker } from "./components/CapabilityPicker";
+import { PluginNamesContext } from "./components/MentionText";
 import { Composer, type ComposerHandle } from "./components/Composer";
 import { Messages } from "./components/Messages";
 import { PermissionCard } from "./components/PermissionCard";
@@ -10,6 +11,7 @@ import { ModelPicker, PermissionPicker, resolveModel } from "./components/Compos
 import { Sidebar, folderName, groupByFolder, sessionTitle } from "./components/Sidebar";
 import { DEFAULT_SIDEBAR_WIDTH, SidebarResizer } from "./components/SidebarResizer";
 import { SidebarToggle } from "./components/SidebarToggle";
+import { SettingsPage } from "./components/SettingsPage";
 import { TasksPopover } from "./components/TasksPopover";
 import { TitleBar } from "./components/TitleBar";
 import { desktop } from "./desktop";
@@ -30,6 +32,8 @@ export function App() {
   const [newCwd, setNewCwd] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(initialCollapsed);
+  /** 图标栏上开着的页面：首页（会话）或设置 */
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
   const commitSidebarWidth = (width: number) => {
     setSidebarWidth(width);
@@ -117,13 +121,32 @@ export function App() {
       <div className="app">
         {/* 最左边的功能图标栏（同 codex-app-server 的 .sidebar-rail）：现在只有首页，之后的功能往这里加 */}
         <nav className="app-rail" aria-label="功能">
-          <button className="rail-btn active" title="首页" aria-label="首页" aria-current="page" onClick={() => startNew()}>
+          <button
+            className={`rail-btn${settingsOpen ? "" : " active"}`}
+            title="首页"
+            aria-label="首页"
+            aria-current={settingsOpen ? undefined : "page"}
+            onClick={() => (settingsOpen ? setSettingsOpen(false) : startNew())}
+          >
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M3.5 8.75 10 3.5l6.5 5.25V15.5a1 1 0 0 1-1 1h-3.25v-4.25h-4.5v4.25H4.5a1 1 0 0 1-1-1z" />
             </svg>
           </button>
+          <button
+            className={`rail-btn rail-bottom${settingsOpen ? " active" : ""}`}
+            title="设置"
+            aria-label="设置"
+            aria-current={settingsOpen ? "page" : undefined}
+            onClick={() => setSettingsOpen(true)}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9.49 5.25L10.30 2.55L13.70 2.55L14.51 5.25L16.59 6.45L19.33 5.80L21.03 8.75L19.10 10.80L19.10 13.20L21.03 15.25L19.33 18.20L16.59 17.55L14.51 18.75L13.70 21.45L10.30 21.45L9.49 18.75L7.41 17.55L4.67 18.20L2.97 15.25L4.90 13.20L4.90 10.80L2.97 8.75L4.67 5.80L7.41 6.45Z" />
+              <circle cx="12" cy="12" r="3.1" />
+            </svg>
+          </button>
         </nav>
-        {!collapsed && (
+        {settingsOpen && <SettingsPage />}
+        {!settingsOpen && !collapsed && (
           <>
             {config && (
               <>
@@ -143,40 +166,42 @@ export function App() {
             )}
           </>
         )}
-        <main>
-          {error && (
-            <div className="banner" onClick={() => setError(null)}>
-              {error}
-            </div>
-          )}
-          {config && (
-            <Chat
-              key={currentId ?? "new"}
-              sessionId={currentId}
-              cwd={currentId ? (current?.cwd ?? null) : newCwd}
-              folderPicker={
-                !currentId && (
-                  <FolderPicker
-                    value={newCwd}
-                    recent={groupByFolder(sessions, config.workspaceDir).map((g) => g.cwd).filter((d) => d !== config.workspaceDir)}
-                    onChange={setNewCwd}
-                  />
-                )
-              }
-              config={config}
-              onCreated={(id) => {
-                // 新会话页变成了这个会话，不另记一条
-                navigate(id, true);
-                refresh();
-              }}
-              onChanged={refresh}
-              onError={setError}
-              headerStart={!desktop && collapsed && <SidebarToggle collapsed onToggle={toggleSidebar} />}
-            title={title}
-            folder={folder}
-            />
-          )}
-        </main>
+        {!settingsOpen && (
+          <main>
+            {error && (
+              <div className="banner" onClick={() => setError(null)}>
+                {error}
+              </div>
+            )}
+            {config && (
+              <Chat
+                key={currentId ?? "new"}
+                sessionId={currentId}
+                cwd={currentId ? (current?.cwd ?? null) : newCwd}
+                folderPicker={
+                  !currentId && (
+                    <FolderPicker
+                      value={newCwd}
+                      recent={groupByFolder(sessions, config.workspaceDir).map((g) => g.cwd).filter((d) => d !== config.workspaceDir)}
+                      onChange={setNewCwd}
+                    />
+                  )
+                }
+                config={config}
+                onCreated={(id) => {
+                  // 新会话页变成了这个会话，不另记一条
+                  navigate(id, true);
+                  refresh();
+                }}
+                onChanged={refresh}
+                onError={setError}
+                headerStart={!desktop && collapsed && <SidebarToggle collapsed onToggle={toggleSidebar} />}
+              title={title}
+              folder={folder}
+              />
+            )}
+          </main>
+        )}
       </div>
     </div>
   );
@@ -247,6 +272,7 @@ function Chat({
   useEffect(() => {
     api.capabilities(cwd ?? undefined).then(setCapabilities, () => setCapabilities(null));
   }, [cwd]);
+  const pluginNames = useMemo(() => capabilities?.plugins.map((p) => p.name) ?? [], [capabilities]);
 
   // 先连事件流再拉历史，两边按 uuid 去重，见 docs/README.md「客户端归并规则」
   useEffect(() => {
@@ -267,11 +293,37 @@ function Chat({
     }
   }, [view.needsReload, sessionId]);
 
+  // 在底部时跟着新内容往下滚；往上翻了就不动，出「回到底部」按钮
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    stickRef.current = bottom;
+    setAtBottom(bottom);
+  };
+  const scrollToBottom = (behavior: ScrollBehavior) => {
+    stickRef.current = true;
+    bottomRef.current?.scrollIntoView({ block: "end", behavior });
+  };
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
+    if (stickRef.current) bottomRef.current?.scrollIntoView({ block: "end" });
   }, [view.items.length, view.streaming.text, view.permissions.length]);
+  // 内容变高（图片加载完、展开工具输出、流式文字）时，在底部的继续贴着底部
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      if (stickRef.current) el.scrollTop = el.scrollHeight;
+    });
+    for (const child of el.children) observer.observe(child);
+    return () => observer.disconnect();
+  }, []);
 
   const send = async (text: string, attachments: string[]) => {
+    scrollToBottom("smooth");
     try {
       if (sessionId) await api.send(sessionId, text, attachments);
       else onCreated(await api.createSession(text, attachments, { permissionMode: newMode, cwd: cwd ?? undefined, model: newModel, effort: newEffort }));
@@ -281,6 +333,10 @@ function Chat({
     }
   };
 
+  // 最后一轮是中断的（后面只有 result、换模型之类的提示）：输入框空着时可以一键「继续」
+  const lastItem = view.items.findLast((item) => item.kind !== "result" && item.kind !== "model" && item.kind !== "notice");
+  const interrupted = !!sessionId && view.state !== "running" && lastItem?.kind === "interrupted";
+
   const permissionMode = sessionId ? (view.permissionMode ?? config.permissionMode) : newMode;
   const changeMode = (mode: string) => {
     if (!sessionId) setNewMode(mode as PermissionMode);
@@ -288,6 +344,7 @@ function Chat({
   };
 
   return (
+    <PluginNamesContext.Provider value={pluginNames}>
     <div className="chat">
       {(headerStart || title) && (
         <div className="chat-header">
@@ -305,7 +362,8 @@ function Chat({
           {sessionId && <TasksPopover sessionId={sessionId} tasks={view.backgroundTasks} onError={onError} />}
         </div>
       )}
-      <div className="scroll">
+      <div className="scroll-area">
+      <div className="scroll" ref={scrollRef} onScroll={onScroll}>
         {!sessionId && (
           <div className="empty">
             有什么可以帮你？
@@ -326,17 +384,21 @@ function Chat({
         ))}
         <div ref={bottomRef} />
       </div>
+      {!atBottom && <ScrollToBottom running={view.state === "running"} onClick={() => scrollToBottom("smooth")} />}
+      </div>
       <Composer
         running={view.state === "running"}
         maxUploadMb={config.maxUploadMb}
         onSend={send}
         onInterrupt={() => sessionId && api.interrupt(sessionId).catch((e: Error) => onError(e.message))}
+        onContinue={interrupted ? () => void send("继续", []).catch(() => undefined) : undefined}
         left={<PermissionPicker value={permissionMode} onChange={changeMode} />}
         handle={composerRef}
+        cwd={cwd}
         top={
           <>
             {folderPicker}
-            <CapabilityPicker kind="技能" items={capabilities?.skills ?? []} onPick={(name) => composerRef.current?.useSkill(name)} />
+            <CapabilityPicker kind="技能" items={capabilities?.skills.filter((s) => s.enabled) ?? []} onPick={(name) => composerRef.current?.useSkill(name)} />
             <CapabilityPicker kind="插件" items={capabilities?.plugins ?? []} onPick={(name) => composerRef.current?.mention(name)} />
           </>
         }
@@ -357,5 +419,25 @@ function Chat({
         }
       />
     </div>
+    </PluginNamesContext.Provider>
+  );
+}
+
+/** 对话区底部正中的「回到底部」：平时是向下箭头，代理运行中是跳动的三个点 */
+function ScrollToBottom({ running, onClick }: { running: boolean; onClick: () => void }) {
+  return (
+    <button className="scroll-bottom" onClick={onClick} title="回到底部" aria-label="回到底部">
+      {running ? (
+        <span className="scroll-bottom-dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M8 3v10M3.5 8.5 8 13l4.5-4.5" />
+        </svg>
+      )}
+    </button>
   );
 }

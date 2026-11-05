@@ -1,11 +1,14 @@
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { listModels } from "../../agent/models.js";
 import type { FastifyInstance } from "fastify";
+import type { McpServerInput } from "../../shared/types.js";
 import { AttachmentError } from "../../agent/attachments.js";
-import { NotFoundError, type SessionManager } from "../../agent/session-manager.js";
+import { BadRequestError, NotFoundError, type SessionManager } from "../../agent/session-manager.js";
 import type { EventHub } from "../../events/event-hub.js";
 import { streamSession } from "../sse.js";
-import { listCapabilities } from "../../agent/capabilities.js";
+import { clearCapabilitiesCache, listCapabilities } from "../../agent/capabilities.js";
+import { ExtensionError, importPlugin, importSkill, readSkill, removePlugin, removeSkill, setSkillEnabled } from "../../agent/extensions.js";
+import { removeMcpServer, saveMcpServer, setMcpServerEnabled } from "../../agent/mcp-config.js";
 import { config } from "../../config.js";
 
 const permissionModes = ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"];
@@ -32,8 +35,69 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
   /** Claude Code 的模型列表（SDK 的 ModelInfo） */
   app.get("/models", async () => ({ models: await listModels() }));
 
-  /** 可用的技能和插件；cwd 不传是默认工作目录 */
-  app.get<{ Querystring: { cwd?: string } }>("/capabilities", async (req) => listCapabilities(req.query.cwd || config.workspaceDir));
+  /** 可用的技能、插件和 MCP 服务器；cwd 不传是默认工作目录，refresh=1 不用缓存 */
+  app.get<{ Querystring: { cwd?: string; refresh?: string } }>("/capabilities", async (req) => {
+    if (req.query.refresh === "1") clearCapabilitiesCache();
+    return listCapabilities(req.query.cwd || config.workspaceDir);
+  });
+
+  /** 技能的 SKILL.md；内置技能没有文件，返回 404 */
+  app.get<{ Params: { name: string }; Querystring: { cwd?: string } }>("/skills/:name", async (req) => {
+    const skill = await readSkill(req.params.name, req.query.cwd || config.workspaceDir);
+    if (!skill) throw new NotFoundError("这个技能没有可查看的文件");
+    return skill;
+  });
+
+  /** 导入技能、插件：path 是网关机器上的文件夹，复制到 Claude Code 配置目录 */
+  app.post<{ Body: { path: string } }>("/skills/import", async (req) => {
+    const name = await importing(() => importSkill(String(req.body?.path ?? "")));
+    return { name };
+  });
+
+  app.post<{ Body: { path: string } }>("/plugins/import", async (req) => {
+    const name = await importing(() => importPlugin(String(req.body?.path ?? "")));
+    return { name };
+  });
+
+  /** 启用、停用技能（内置的也可以）。对新会话和子进程重启后的会话生效 */
+  app.patch<{ Params: { name: string }; Body: { enabled: boolean } }>("/skills/:name", async (req) => {
+    setSkillEnabled(req.params.name, req.body.enabled !== false);
+    clearCapabilitiesCache();
+    return { ok: true };
+  });
+
+  app.delete<{ Params: { name: string } }>("/skills/:name", async (req) => {
+    if (!(await importing(() => removeSkill(req.params.name)))) throw new NotFoundError("只能删除导入的技能");
+    return { ok: true };
+  });
+
+  app.delete<{ Params: { name: string } }>("/plugins/:name", async (req) => {
+    if (!(await importing(() => removePlugin(req.params.name)))) throw new NotFoundError("只能删除导入的插件");
+    return { ok: true };
+  });
+
+  /** 添加 MCP 服务器，同名时覆盖。对新会话和子进程重启后的会话生效 */
+  app.put<{ Params: { name: string }; Body: Omit<McpServerInput, "name"> }>("/mcp-servers/:name", async (req) => {
+    const { name } = req.params;
+    const { type, command, url } = req.body;
+    if (!/^[\w-]+$/.test(name)) throw new BadRequestError("名称只能用字母、数字、下划线和连字符");
+    if (type === "stdio" ? !command?.trim() : !/^https?:\/\//.test(url ?? "")) throw new BadRequestError(type === "stdio" ? "请填写命令" : "请填写 http 或 https 地址");
+    saveMcpServer({ ...req.body, name });
+    clearCapabilitiesCache();
+    return { ok: true };
+  });
+
+  app.patch<{ Params: { name: string }; Body: { enabled: boolean } }>("/mcp-servers/:name", async (req) => {
+    if (!setMcpServerEnabled(req.params.name, req.body.enabled)) throw new NotFoundError("MCP 服务器不存在");
+    clearCapabilitiesCache();
+    return { ok: true };
+  });
+
+  app.delete<{ Params: { name: string } }>("/mcp-servers/:name", async (req) => {
+    if (!removeMcpServer(req.params.name)) throw new NotFoundError("MCP 服务器不存在");
+    clearCapabilitiesCache();
+    return { ok: true };
+  });
 
   app.post<{
     Body: { text: string; cwd?: string; model?: string; effort?: EffortLevel; permissionMode?: PermissionMode; attachments?: string[] };
@@ -203,6 +267,18 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     await sessions.delete(req.params.id);
     return { ok: true };
   });
+}
+
+/** 导入、删除后列表要重新读；校验不通过时返回 400 */
+async function importing<T>(action: () => Promise<T>): Promise<T> {
+  try {
+    const result = await action();
+    clearCapabilitiesCache();
+    return result;
+  } catch (err) {
+    if (err instanceof ExtensionError) throw new BadRequestError(err.message);
+    throw err;
+  }
 }
 
 function activeOr404(sessions: SessionManager, id: string) {

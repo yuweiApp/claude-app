@@ -19,6 +19,8 @@ import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
 import type { BackgroundTask, SessionListItem } from "../shared/types.js";
 import { loadAttachments } from "./attachments.js";
+import { enabledSkillNames } from "./capabilities.js";
+import { disabledSkills } from "./extensions.js";
 import { AgentSession } from "./session.js";
 import { generateTitle } from "./title.js";
 import { readOutputTail, TaskList } from "./tasks.js";
@@ -50,6 +52,7 @@ export class SessionManager {
     text: string,
     opts: { cwd?: string; model?: string; effort?: EffortLevel; permissionMode?: PermissionMode; attachments?: string[] },
   ): Promise<AgentSession> {
+    rejectDisabledSkill(text);
     const cwd = opts.cwd ? await resolveDir(opts.cwd) : config.workspaceDir;
     const attachments = await loadAttachments(opts.attachments ?? []);
     const session = await this.launch(randomUUID(), false, { ...opts, cwd });
@@ -76,6 +79,7 @@ export class SessionManager {
 
   /** 发送消息；会话不活跃时先 resume */
   async send(sessionId: string, text: string, attachmentIds: string[] = []): Promise<string> {
+    rejectDisabledSkill(text);
     const attachments = await loadAttachments(attachmentIds);
     return (await this.activate(sessionId)).send(text, attachments);
   }
@@ -183,6 +187,7 @@ export class SessionManager {
         model: opts.model,
         effort: opts.effort ?? config.defaultEffort,
         permissionMode: opts.permissionMode ?? config.defaultPermissionMode,
+        skills: await enabledSkillNames(opts.cwd),
       },
       this.hub,
       this.log,
@@ -216,6 +221,12 @@ export class SessionManager {
       }
     }
   }
+}
+
+/** SDK 的 skills 名单只拦模型调用 Skill 工具，用户在消息开头写 /技能名 还是会执行，所以这里拦 */
+function rejectDisabledSkill(text: string): void {
+  const name = /^\/(\S+)/.exec(text.trim())?.[1];
+  if (name && disabledSkills().includes(name)) throw new BadRequestError(`技能「${name}」已停用，可以在设置里启用`);
 }
 
 /** 新会话选的文件夹：支持 ~，必须是已存在的目录 */

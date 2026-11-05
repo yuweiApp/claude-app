@@ -1,6 +1,8 @@
 import type { CanUseTool, EffortLevel, Options, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { agentEnv, config } from "../config.js";
 import { attachmentsDir } from "./attachments.js";
+import { importedPlugins } from "./extensions.js";
+import { enabledMcpServers } from "./mcp-config.js";
 
 export interface SessionLaunch {
   sessionId: string;
@@ -11,6 +13,8 @@ export interface SessionLaunch {
   model?: string;
   effort?: EffortLevel;
   permissionMode: PermissionMode;
+  /** 启用的技能，不传是 Claude Code 的默认（全部） */
+  skills?: string[];
   canUseTool: CanUseTool;
   abortController: AbortController;
   stderr: (data: string) => void;
@@ -32,6 +36,9 @@ export function buildOptions(launch: SessionLaunch): Options {
     canUseTool: launch.canUseTool,
     disallowedTools: config.disallowedTools,
     settingSources: ["user", "project", "local"],
+    mcpServers: enabledMcpServers(),
+    plugins: importedPlugins(),
+    ...(launch.skills ? { skills: launch.skills } : {}),
     systemPrompt: {
       type: "preset",
       preset: "claude_code",

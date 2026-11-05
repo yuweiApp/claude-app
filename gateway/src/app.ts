@@ -6,6 +6,7 @@ import { config } from "./config.js";
 import { EventHub } from "./events/event-hub.js";
 import { ConversationLog } from "./logging/conversation-log.js";
 import { sessionRoutes } from "./http/routes/sessions.js";
+import { fileRoutes } from "./http/routes/files.js";
 import { folderRoutes } from "./http/routes/folders.js";
 import { uploadRoutes } from "./http/routes/uploads.js";
 
@@ -65,5 +66,6 @@ export function buildApp(): App {
   sessionRoutes(app, sessions, hub);
   uploadRoutes(app);
   folderRoutes(app);
+  fileRoutes(app);
   return { app, sessions };
 }

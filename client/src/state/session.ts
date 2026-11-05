@@ -21,6 +21,14 @@ export type Item =
   | { kind: "error"; uuid: string; text: string }
   /** 本地命令的输出（setModel 等会发一条 <local-command-stdout> 的 user 消息），显示成一行灰字，不算用户消息 */
   | { kind: "notice"; uuid: string; text: string }
+  /** 用户中断了这一轮：Claude Code 写的 [Request interrupted by user] 消息，显示成一行「已中断」，不当用户消息 */
+  | { kind: "interrupted"; uuid: string }
+  /**
+   * 换了模型。实时：setModel 后 SDK 发一条 <local-command-stdout>Set model to X</…>，换成这一行；
+   * 这条不写进会话文件，历史里按主线程 assistant 消息的 model 和前面的不同推出来，补在那一轮的用户消息前面。
+   * 都没有时（换了还没发消息、事件缓冲也挤掉了）由 Messages 按 view.model 和 shownModel 不同临时显示
+   */
+  | { kind: "model"; uuid: string; from: string; to: string }
   /**
    * 后台任务（Bash 后台命令、后台子代理等）完成的通知。模型空闲时 Claude Code 会拿它自动开始新的一轮，所以它和用户消息一样是一轮的开头。
    * uuid 用 task:<task_id>：实时的 system/task_notification 和历史里的 <task-notification> 消息 uuid 不同，按任务 id 去重
@@ -78,6 +86,8 @@ export interface SessionView {
   /** 会话的后台任务（网关的 tasks 事件，整个列表）；backgroundTasksLive：已经从事件流收到过，不再用接口拉到的覆盖 */
   backgroundTasks: BackgroundTask[];
   backgroundTasksLive: boolean;
+  /** 对话里已经体现的模型：最近一条主线程 assistant 消息的，或已经显示过的切换 */
+  shownModel?: string;
 }
 
 export function emptyView(): SessionView {
@@ -112,7 +122,15 @@ export function reduce(view: SessionView, action: Action): SessionView {
     for (const m of action.messages) {
       ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id, m.timestamp ? Date.parse(m.timestamp) : undefined);
     }
-    for (const item of view.items) pushItem(next, null, item);
+    for (const item of view.items) {
+      if (item.kind === "model") {
+        // 实时那条切换历史里已经推出来了（最近一次切换就是换到它），不重复
+        const derived = next.items.findLast((i) => i.kind === "model");
+        next.shownModel = item.to;
+        if (derived?.kind === "model" && derived.to === item.to) continue;
+      }
+      pushItem(next, null, item);
+    }
     for (const [parent, items] of Object.entries(view.children)) items.forEach((item) => pushItem(next, parent, item));
     next.toolResults = { ...view.toolResults, ...next.toolResults };
     next.toolStarts = { ...view.toolStarts, ...next.toolStarts };
@@ -192,19 +210,22 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       }
       if (message.subtype === "status" && message.status === "requesting" && !view.turnEnded) view.pendingTasks = [];
       return;
-    case "result":
+    case "result": {
       view.streaming = { text: "" };
       view.turnEnded = true;
+      // 中断的一轮也是 error_during_execution（errors 里是 [ede_diagnostic] …），前面已经有「已中断」，不算出错
+      const interrupted = view.items.at(-1)?.kind === "interrupted";
       pushItem(view, null, {
         kind: "result",
         uuid: message.uuid,
         userMessageUuid: message.user_message_uuid,
-        isError: message.is_error,
+        isError: message.is_error && !interrupted,
         text: message.subtype === "success" ? "" : message.errors.join("\n") || message.subtype,
         durationMs: message.duration_ms,
         costUsd: message.total_cost_usd,
       });
       return;
+    }
   }
 }
 
@@ -223,6 +244,12 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       }
     }
     const messageId = (raw as { id?: unknown }).id;
+    // 主线程换了模型：在这一轮开头（用户消息）前面补一条；<synthetic> 是 Claude Code 自己造的消息，不算
+    const model = (raw as { model?: unknown }).model;
+    if (!parent && typeof model === "string" && !model.startsWith("<")) {
+      if (view.shownModel && model !== view.shownModel) insertBeforeTurn(view, { kind: "model", uuid: `model:${uuid}`, from: view.shownModel, to: model });
+      view.shownModel = model;
+    }
     // 历史里没有 result：按 stop_reason 判断这一轮是不是结束了（后台任务通知是开新一轮还是并进当前这一轮要用到）
     const stop = (raw as { stop_reason?: unknown }).stop_reason;
     if (!parent && typeof stop === "string") view.turnEnded = stop !== "tool_use" && stop !== "pause_turn";
@@ -234,6 +261,10 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
   }
 
   if (type === "user") {
+    if (!parent && isInterruptNotice(content)) {
+      pushItem(view, null, { kind: "interrupted", uuid });
+      return;
+    }
     const task = typeof content === "string" ? taskNotification(content) : null;
     if (task) {
       // 上一轮结束后到的通知让 Claude Code 开了新的一轮，显示成那一轮的开头；
@@ -255,6 +286,14 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       return;
     }
     const local = typeof content === "string" ? localCommandText(content) : null;
+    const switched = local ? /^Set model to (\S+)/.exec(local)?.[1] : undefined;
+    if (switched && !parent) {
+      // 回放的、已经从历史推出来的切换（换到的就是现在的模型）不再显示
+      if (view.shownModel !== switched) pushItem(view, null, { kind: "model", uuid, from: view.shownModel ?? "", to: switched });
+      else view.seen = new Set(view.seen).add(uuid);
+      view.shownModel = switched;
+      return;
+    }
     if (local !== null) {
       if (local) pushItem(view, parent, { kind: "notice", uuid, text: local });
       else view.seen = new Set(view.seen).add(uuid);
@@ -299,6 +338,15 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       view.seen = new Set(view.seen).add(uuid);
     }
   }
+}
+
+/** 用户中断时 Claude Code 写进对话的 user 消息（字符串，或只有一个 text 块） */
+const INTERRUPT = /^\[Request interrupted by user( for tool use)?\]$/;
+function isInterruptNotice(content: unknown): boolean {
+  if (typeof content === "string") return INTERRUPT.test(content.trim());
+  if (!Array.isArray(content) || content.length !== 1) return false;
+  const b = content[0] as { type?: unknown; text?: unknown };
+  return b.type === "text" && typeof b.text === "string" && INTERRUPT.test(b.text.trim());
 }
 
 /** 网关拼在用户消息里的 <attachments> 段（见 gateway/src/agent/attachments.ts），每行 "- 路径" */
@@ -363,6 +411,14 @@ function resultText(content: unknown): string {
       return `[${String(c.type)}]`;
     })
     .join("\n");
+}
+
+/** 插到主线程当前这一轮的开头（最后一条用户消息或后台任务通知）前面 */
+function insertBeforeTurn(view: SessionView, item: Item): void {
+  if (view.seen.has(item.uuid)) return;
+  view.seen = new Set(view.seen).add(item.uuid);
+  const start = view.items.findLastIndex((i) => i.kind === "user" || i.kind === "task");
+  view.items = start < 0 ? [...view.items, item] : [...view.items.slice(0, start), item, ...view.items.slice(start)];
 }
 
 function pushItem(view: SessionView, parent: string | null, item: Item): void {

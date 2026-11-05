@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, GatewayEvent, SessionListItem } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, GatewayEvent, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail } from "@gateway/shared/types";
 
-export type { Attachment, BackgroundTask, Capabilities, GatewayEvent, SessionListItem };
+export type { Attachment, BackgroundTask, Capabilities, GatewayEvent, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail };
 
 const BASE = "/api";
 
@@ -58,6 +58,9 @@ export interface GatewayConfig {
 export const api = {
   config: () => request<GatewayConfig>("GET", "/config"),
   listSessions: () => request<{ sessions: SessionListItem[] }>("GET", "/sessions").then((r) => r.sessions),
+  /** 项目里的文件和文件夹，输入框 @ 引用用；q 为空是第一层 */
+  files: (cwd: string, q: string) =>
+    request<{ entries: ProjectEntry[] }>("GET", `/files?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(q)}`).then((r) => r.entries),
   folders: (path?: string) => request<FolderListing>("GET", `/folders${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   /** Claude Code 的模型列表（SDK 的 ModelInfo） */
   models: () => request<{ models: ModelInfo[] }>("GET", "/models").then((r) => r.models),
@@ -79,8 +82,20 @@ export const api = {
     return request<{ attachments: Attachment[] }>("POST", "/uploads", form).then((r) => r.attachments);
   },
   interrupt: (id: string) => request("POST", `/sessions/${id}/interrupt`),
-  /** 工作目录下可用的技能和插件，不传是默认工作目录 */
-  capabilities: (cwd?: string) => request<Capabilities>("GET", `/capabilities${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`),
+  /** 工作目录下可用的技能、插件和 MCP 服务器，不传是默认工作目录；refresh 不用网关的缓存 */
+  capabilities: (cwd?: string, refresh = false) => {
+    const params = new URLSearchParams({ ...(cwd ? { cwd } : {}), ...(refresh ? { refresh: "1" } : {}) });
+    return request<Capabilities>("GET", `/capabilities?${params}`);
+  },
+  /** 技能的 SKILL.md，内置技能没有文件时报错 */
+  skill: (name: string) => request<SkillDetail>("GET", `/skills/${encodeURIComponent(name)}`),
+  setSkillEnabled: (name: string, enabled: boolean) => request("PATCH", `/skills/${encodeURIComponent(name)}`, { enabled }),
+  /** 导入技能、插件：path 是网关机器上的文件夹 */
+  importExtension: (kind: "skills" | "plugins", path: string) => request<{ name: string }>("POST", `/${kind}/import`, { path }),
+  deleteExtension: (kind: "skills" | "plugins", name: string) => request("DELETE", `/${kind}/${encodeURIComponent(name)}`),
+  saveMcpServer: (name: string, input: Omit<McpServerInput, "name">) => request("PUT", `/mcp-servers/${encodeURIComponent(name)}`, input),
+  setMcpServerEnabled: (name: string, enabled: boolean) => request("PATCH", `/mcp-servers/${encodeURIComponent(name)}`, { enabled }),
+  deleteMcpServer: (name: string) => request("DELETE", `/mcp-servers/${encodeURIComponent(name)}`),
   /** 会话的后台任务 */
   tasks: (id: string) => request<{ tasks: BackgroundTask[] }>("GET", `/sessions/${id}/tasks`).then((r) => r.tasks),
   /** 后台任务输出的最后一段（64 KB） */

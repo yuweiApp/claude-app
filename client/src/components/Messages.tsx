@@ -7,6 +7,7 @@ import { ImageThumb } from "./ImageThumb";
 import { CopyAction, MessageActions } from "./MessageActions";
 import { StepGroup, ToolStep, type ToolUse } from "./Steps";
 import { formatDuration } from "./TasksPopover";
+import { MentionText } from "./MentionText";
 
 type UserItem = Extract<Item, { kind: "user" }>;
 type ResultItem = Extract<Item, { kind: "result" }>;
@@ -83,6 +84,8 @@ export function Messages({ view }: { view: SessionView }) {
       {turns.map((turn, i) => (
         <TurnView key={turn.key} turn={turn} view={view} live={busy && i === turns.length - 1 && !turn.result} />
       ))}
+      {/* 换了模型还没发消息：先临时显示，新模型回复后由那条消息补出正式的一行 */}
+      {!busy && view.model && view.shownModel && view.model !== view.shownModel && <ModelLine from={view.shownModel} to={view.model} />}
     </div>
   );
 }
@@ -140,7 +143,8 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
         </div>
       )}
       {(hasProcess || live || duration !== null) && (
-        <div className={`process-wrap${final ? " has-final" : ""}`}>
+        // 下面有最终回复，或这一轮被中断（下面是「已中断」）时，「用时」下面画分割线
+        <div className={`process-wrap${final || (!live && turn.body.some((item) => item.kind === "interrupted")) ? " has-final" : ""}`}>
           <button
             className="process-toggle"
             onClick={() => (live ? setLiveCollapsed((c) => !c) : setOpen((o) => !o))}
@@ -263,7 +267,7 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
             </div>
           )}
           {item.attachments.length > 0 && <Attachments items={item.attachments} />}
-          {item.text}
+          <MentionText text={item.text} />
         </div>
       );
     case "result":
@@ -273,6 +277,10 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
       return <div className="result error">{item.text}</div>;
     case "notice":
       return <div className="notice-line">{item.text}</div>;
+    case "interrupted":
+      return <div className="interrupted-line">已中断</div>;
+    case "model":
+      return <ModelLine from={item.from} to={item.to} />;
     case "task":
       return <div className="task-line">{taskLabel(item)}</div>;
   }
@@ -301,4 +309,19 @@ export function toolBrief(name: string, input: unknown): string {
     default:
       return "";
   }
+}
+
+/** 换模型的提示：居中一行，两边是分割线 */
+function ModelLine({ from, to }: { from: string; to: string }) {
+  return (
+    <div className="model-line">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" aria-hidden="true">
+        <path d="M8 1.8 13.5 5v6L8 14.2 2.5 11V5z" />
+        <path d="M2.5 5 8 8.2 13.5 5M8 8.2v6" />
+      </svg>
+      <span>
+        {from ? `模型已从 ${from} 更改为 ${to}。` : `模型已更改为 ${to}。`}
+      </span>
+    </div>
+  );
 }

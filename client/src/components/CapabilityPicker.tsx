@@ -15,7 +15,7 @@ interface Props {
 const COLORS = ["#d9822b", "#2563eb", "#1890ff", "#dc2626", "#c2410c", "#15803d", "#7c3aed", "#0d9488"];
 
 /** 名字首字母的小方块，颜色按名字固定 */
-function Avatar({ name }: { name: string }) {
+export function Avatar({ name }: { name: string }) {
   const hash = [...name].reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
   return (
     <span className="capability-avatar" style={{ background: COLORS[hash % COLORS.length] }}>

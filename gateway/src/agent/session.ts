@@ -51,7 +51,7 @@ export class AgentSession {
 
   constructor(
     readonly id: string,
-    opts: { resume: boolean; cwd: string; model?: string; effort?: EffortLevel; permissionMode: PermissionMode },
+    opts: { resume: boolean; cwd: string; model?: string; effort?: EffortLevel; permissionMode: PermissionMode; skills?: string[] },
     private readonly hub: EventHub,
     private readonly log: FastifyBaseLogger,
     private readonly conversationLog: ConversationLog,
@@ -71,6 +71,7 @@ export class AgentSession {
         model: opts.model,
         effort: opts.effort,
         permissionMode: opts.permissionMode,
+        skills: opts.skills,
         canUseTool: this.canUseTool,
         abortController: this.abortController,
         stderr: (data) => this.log.debug({ sessionId: id, stderr: data.trimEnd() }, "claude stderr"),
