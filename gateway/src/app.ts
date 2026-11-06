@@ -35,6 +35,11 @@ export function buildApp(): App {
     logger: {
       level: process.env.LOG_LEVEL || "info",
       stream: prettyStream,
+      formatters: {
+        // Fastify 的「request completed」里 responseTime 是原始毫秒数（8.909099999989849），保留两位小数
+        log: (obj) =>
+          typeof obj.responseTime === "number" ? { ...obj, responseTime: Math.round(obj.responseTime * 100) / 100 } : obj,
+      },
     },
   });
   const hub = new EventHub(config.eventBufferSize);
