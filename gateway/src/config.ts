@@ -120,8 +120,11 @@ export function agentEnv(): Record<string, string | undefined> {
           ["ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"].map((k) => [k, env[k] || config.model]),
         )
       : {};
+  // 外部浏览器的扩展 token（见 browser/chrome.ts）只给网关自己连 Chrome 用：模型拿到它就能在 Bash 里另起 Playwright
+  // 不经提示操作用户的 Chrome，绕过 mcp__chrome__ 工具的权限卡片
+  const { PLAYWRIGHT_MCP_EXTENSION_TOKEN: _token, ...inherited } = process.env;
   return {
-    ...process.env,
+    ...inherited,
     ...tiers,
     CLAUDE_CONFIG_DIR: config.claudeConfigDir,
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ?? "1",

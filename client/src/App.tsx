@@ -17,6 +17,7 @@ import { TasksPopover } from "./components/TasksPopover";
 import { TitleBar } from "./components/TitleBar";
 import { desktop } from "./desktop";
 import { useBrowserTabs } from "./state/browserTabs";
+import { TabPicker } from "./components/TabPicker";
 import { emptyView, reduce } from "./state/session";
 
 export function App() {
@@ -523,12 +524,12 @@ function Chat({
         left={<PermissionPicker value={permissionMode} onChange={changeMode} />}
         handle={composerRef}
         cwd={cwd}
-        browserTabs={browserTabs}
         top={
           <>
             {folderPicker}
             <CapabilityPicker kind="技能" items={capabilities?.skills.filter((s) => s.enabled) ?? []} onPick={(name) => composerRef.current?.useSkill(name)} />
             <CapabilityPicker kind="插件" items={capabilities?.plugins ?? []} onPick={(name) => composerRef.current?.mention(name)} />
+            <TabPicker inapp={browserTabs} onPick={(tab, chrome) => composerRef.current?.mentionTab(tab.title, tab.url, chrome)} />
           </>
         }
         right={

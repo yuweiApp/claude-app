@@ -4,7 +4,7 @@ import { AddMenu } from "./AddMenu";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { MentionMenu, type MentionOption } from "./MentionMenu";
-import { fileMention, findMentions, MentionText, PluginNamesContext, tabMention, type Mention } from "./MentionText";
+import { fileMention, findMentions, MentionText, PluginNamesContext, tabMention, tabToken, type Mention } from "./MentionText";
 
 /** 输入框下方的附件：选中后立刻上传，发送时只传 id */
 interface PendingFile {
@@ -24,6 +24,8 @@ export interface ComposerHandle {
   useSkill: (name: string) => void;
   /** 引用插件：接在现有内容后面 */
   mention: (name: string) => void;
+  /** 引用浏览器标签页（输入框上面的「标签页」）：接在现有内容后面，chrome 时是外部浏览器（用户的 Chrome）的 */
+  mentionTab: (title: string, url: string, chrome: boolean) => void;
 }
 
 interface Props {
@@ -42,22 +44,22 @@ interface Props {
   cwd?: string | null;
   /** 上一轮被中断了：输入框空着时发送按钮变成「继续」 */
   onContinue?: () => void;
-  /** 桌面版内置浏览器里这个会话的标签页：输入 @ 可以引用 */
-  browserTabs?: { title: string; url: string }[];
 }
 
 /** 输入框，样式同 codex-app-server：一个圆角框，上面输入，下面一行「+」、权限、模型、发送 */
-export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, onContinue, browserTabs }: Props) {
+export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, onContinue }: Props) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
   const plugins = useContext(PluginNamesContext);
   // @ 菜单里选过的文件，只有这些（和带引号的）算文件引用，手打的 @xxx 不算
   const [picked, setPicked] = useState<string[]>([]);
-  const mentions = findMentions(text, plugins, picked);
+  // 「标签页」里选过的：输入框里只显示 token（@[标题]），发送时换成 full（带网址的 @[标题](网址)）
+  const [pickedTabs, setPickedTabs] = useState<{ token: string; full: string }[]>([]);
+  const mentions = findMentions(text, plugins, picked, pickedTabs.map((t) => t.token));
   const highlighted = mentions.length > 0;
 
-  // 光标前紧挨着的 @xxx：弹出项目里的文件候选（插件走上面的「插件」按钮，这里不列）；已经是整体的引用不弹，选中的文件夹接着列里面的
+  // 光标前紧挨着的 @xxx：弹出项目里的文件候选（插件、浏览器标签页走上面的「插件」「标签页」按钮，这里不列）；已经是整体的引用不弹，选中的文件夹接着列里面的
   const [caret, setCaret] = useState(0);
   const [focused, setFocused] = useState(false);
   const atMatch = /(^|\s)@([^\s"]*)$/.exec(text.slice(0, caret));
@@ -69,7 +71,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
   useEffect(() => {
     if (atStart < 0) setDismissed(-1);
   }, [atStart]);
-  const menuWanted = focused && atStart >= 0 && !completed && dismissed !== atStart && (!!cwd || !!browserTabs?.length);
+  const menuWanted = focused && atStart >= 0 && !completed && dismissed !== atStart && !!cwd;
   const [options, setOptions] = useState<MentionOption[]>([]);
   const [activeOption, setActiveOption] = useState(0);
   useEffect(() => {
@@ -78,16 +80,10 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
       return;
     }
     let stale = false;
-    // 标签页排在文件前面：标题或网址包含输入的，最多 5 个
-    const q = atQuery.toLowerCase();
-    const tabs = (browserTabs ?? [])
-      .filter((t) => !q || t.title.toLowerCase().includes(q) || t.url.toLowerCase().includes(q))
-      .slice(0, 5)
-      .map((t): MentionOption => ({ kind: "tab", value: t.url, title: t.title }));
     const timer = setTimeout(() => {
       void (cwd ? api.files(cwd, atQuery).catch(() => []) : Promise.resolve([])).then((entries) => {
         if (stale) return;
-        setOptions([...tabs, ...entries.map((e): MentionOption => ({ kind: e.dir ? "dir" : "file", value: e.path }))]);
+        setOptions(entries.map((e): MentionOption => ({ kind: e.dir ? "dir" : "file", value: e.path })));
         setActiveOption(0);
       });
     }, 80);
@@ -95,17 +91,17 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
       stale = true;
       clearTimeout(timer);
     };
-  }, [menuWanted, atQuery, cwd, browserTabs]);
+  }, [menuWanted, atQuery, cwd]);
   const menuOpen = menuWanted && options.length > 0;
 
   const pickOption = (option: MentionOption) => {
-    // 文件夹不加空格，菜单接着列里面的；文件、标签页后面加空格
-    const token = option.kind === "tab" ? tabMention(option.title ?? "", option.value) : fileMention(option.value);
+    // 文件夹不加空格，菜单接着列里面的；文件后面加空格
+    const token = fileMention(option.value);
     const insert = option.kind === "dir" ? token : `${token} `;
     const rest = text.slice(caret);
     pendingCaret.current = atStart + insert.length;
     setText(text.slice(0, atStart) + insert + (insert.endsWith(" ") && rest.startsWith(" ") ? rest.slice(1) : rest));
-    if (option.kind !== "tab") setPicked((prev) => (prev.includes(option.value) ? prev : [...prev, option.value]));
+    setPicked((prev) => (prev.includes(option.value) ? prev : [...prev, option.value]));
   };
   // 镜像层跟着输入框：滚动位置一致，出滚动条时让出同样的宽度，换行才对得上
   const syncMirror = () => {
@@ -131,6 +127,16 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     },
     mention: (name) => {
       setText((t) => `${t}${t && !/\s$/.test(t) ? " " : ""}@${name} `);
+      textareaRef.current?.focus();
+    },
+    mentionTab: (title, url, chrome) => {
+      // 同名不同网址的标签页：标题后面加 (2)、(3) 区分
+      const full = (t: string) => tabMention(t, url, chrome);
+      let name = title || url;
+      for (let n = 2; pickedTabs.some((p) => p.token === tabToken(name, chrome) && p.full !== full(name)); n++) name = `${title || url} (${n})`;
+      const token = tabToken(name, chrome);
+      setPickedTabs((prev) => (prev.some((p) => p.token === token) ? prev : [...prev, { token, full: full(name) }]));
+      setText((t) => `${t}${t && !/\s$/.test(t) ? " " : ""}${token} `);
       textareaRef.current?.focus();
     },
   }));
@@ -164,9 +170,10 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     if (!canSend) return;
     setSending(true);
     try {
-      await onSend(text.trim(), ready.map((f) => f.attachment!.id));
+      await onSend(expandTabs(text.trim(), pickedTabs), ready.map((f) => f.attachment!.id));
       setText("");
       setPicked([]);
+      setPickedTabs([]);
       files.forEach((f) => f.preview && URL.revokeObjectURL(f.preview));
       setFiles([]);
     } finally {
@@ -326,7 +333,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
         />
         {highlighted && (
           <div ref={mirrorRef} className="composer-mirror" aria-hidden="true">
-            <MentionText text={text} files={picked} />
+            <MentionText text={text} files={picked} tabTokens={pickedTabs.map((t) => t.token)} />
             {/* 结尾的换行在 div 里不占一行，在 textarea 里占 */}
             {"\n"}
           </div>
@@ -370,4 +377,12 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     </div>
     </div>
   );
+}
+
+/** 发送前把输入框里的 @[标题]、@chrome[标题] 换成带网址的完整格式（模型按网址找标签页）；手打的、没选过的不动 */
+function expandTabs(text: string, tabs: { token: string; full: string }[]): string {
+  return tabs.reduce((acc, { token, full }) => {
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return acc.replace(new RegExp(`(^|\\s)${escaped}(?!\\()`, "g"), (_m, space: string) => space + full);
+  }, text);
 }

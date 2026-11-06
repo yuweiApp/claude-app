@@ -183,6 +183,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | POST | `/terminals/:id/input`、`/terminals/:id/resize` | 输入 `{ data }`（网页按顺序发，前一个回来才发下一个）、改大小 `{ cols, rows }` |
 | DELETE | `/terminals/:id` | 关终端（关标签页时）；网关退出时全部结束 |
 | GET（WebSocket） | `/browser/host` | 桌面版外壳连上来，转发各会话 Playwright 的 CDP 消息（见第 12 节） |
+| GET | `/chrome/tabs` | 外部浏览器（用户的 Chrome）里交给 Playwright 的标签页，输入框 @ 引用用（见第 13 节） |
 | POST | `/sessions/:id/interrupt` | 打断当前一轮 |
 | POST | `/sessions/:id/permission-mode` | `{ mode }` |
 | POST | `/sessions/:id/model` | `{ model?, effort? }` 切换模型（`Query.setModel`）和推理强度（`Query.applyFlagSettings({ effortLevel })`）；子进程回收了的会话先 resume |
@@ -234,7 +235,7 @@ client/
 
 1. **骨架（已完成）**：单工作目录、流式对话、工具调用展示、权限确认、打断、历史会话、附件。
 2. **对话体验**：Markdown 和代码高亮、diff 展示（Edit / Write 的入参）、思考块、AskUserQuestion 选择题、斜杠命令（`supportedCommands()`）、模型切换（`setModel()`）、上下文用量（`getContextUsage()`）。
-3. **自定义工具**（`createSdkMcpServer()` 进程内 MCP）：内置浏览器（已完成第一版，只有桌面版，见第 12 节）、终端读取（已完成）、会话管理。
+3. **自定义工具**（`createSdkMcpServer()` 进程内 MCP）：内置浏览器（已完成第一版，只有桌面版，见第 12 节）、外部浏览器（用户的 Chrome，原型，见第 13 节）、终端读取（已完成）、会话管理。
 4. **多人部署**：沿用 codex-app-server 的 hub + 每用户一个容器，每个容器一个 `CLAUDE_CONFIG_DIR`。
 5. **桌面版**：Electron 外壳。
 
@@ -270,7 +271,24 @@ client/
 - **浏览历史**（`desktop/src/browser/history.ts`）：Electron 的网页视图不写 Chrome 的历史数据库，外壳在主框架跳转时自己记（网址、标题、访问次数、最近访问时间，只记 http(s)，最多 5000 个），存在用户数据目录的 `browser-history.json`。地址栏输入时下面弹出建议：网址或标题包含输入里的每个词，按访问次数和远近排（网址以输入开头的靠前），上下键选、回车打开。
 - **临时标签页**：AI 开的标签页（`Target.createTarget`，以及从它弹出的新页面）是临时的，网关在一轮结束（SDK 的 `result`）时发 `turnEnded`，外壳关掉这个会话里没留下的。留下的情况：AI 调用 `browser_keep_tab`（网关加的工具，留的是这个会话里 AI 最近操作过的标签页，CDP 代理按跳转、输入、读页面、截图这些命令记）、用户在地址栏里自己跳转过、这一轮结束时用户正在面板里看着它。模型常忘了留，`browser_navigate`、`browser_tabs new` 的结果后面附一句提醒。用户开的标签页一直留着。
 - **新会话页**：还没有会话，标签页先记在草稿名 `draft:…` 下（存在 localStorage，刷新页面不丢），发出第一条消息、会话建好后外壳把它们转给新会话（`browser.reassign`），面板里的同时改过去。
-- **@ 引用标签页**：输入框打 @ 时，候选里先列这个会话的标签页（标题或网址包含输入的，最多 5 个），再列项目文件。插入 `@[标题](网址)`，整体高亮、整体删除；消息里显示成带地球图标的标题，会话标题里只留标题。模型按浏览器说明里写的，用 `browser_tabs` 按网址找到它切过去。
-- **AI 的工具**（`gateway/src/browser/tool.ts`）：`playwright-core` 自带的 Playwright MCP（`@playwright/mcp` 也只是转出 `lib/coreBundle` 的 `tools.createConnection`），每个会话一个，作为 `type: "sdk"` 的 MCP 服务器挂上（SDK 只调用 `instance.connect`），服务器名 `web`，工具全名如 `mcp__web__browser_click`（不叫 `browser`，免得和工具名自带的 `browser_` 前缀重复）。第一次调用工具时才 `chromium.connectOverCDP(transport)`；桌面版没开时工具返回错误，开了之后再调用就能用，断开后下次调用重连，所以每个会话都挂上。去掉 `browser_resize`、`browser_close`（改写 MCP 服务器的 `tools/list`、`tools/call`）。`browser_run_code_unsafe` 保留：它拿 Playwright 的 `page` 在网关进程里跑脚本，等同于 Bash，不放进 `allowedTools`，每次走权限卡片；只在网页里执行 JS 用 `browser_evaluate`。读页面、截图、查找、控制台、网络请求、等待、`browser_keep_tab` 在 `allowedTools` 里不用确认，打开网址、点击、输入等走权限卡片。常驻哪些工具在 `gateway/config.yml` 的 `tools.alwaysLoad` 里配（默认 `browser_snapshot`、`browser_navigate`、`browser_click`、`browser_type`、`browser_tabs`、`browser_keep_tab`，约 1100 token；终端的工具也能配），`tools/list` 里给它们加 `_meta["anthropic/alwaysLoad"]`，其余的延迟加载、用到时 ToolSearch：不常驻时 GPT 类模型常在 ToolSearch 的 `select:` 里把二十多个工具名列了又列，写满 `max_output_tokens` 才停，界面「思考中」两分多钟；拿卡住的请求重放，常驻后 6 次都直接调用工具，在说明里提醒「只加载要用的」反而 6 次全复读。截图等文件存在 `WORKSPACE_DIR/.playwright-mcp/<会话>/`。
+- **引用标签页**（`client/src/components/TabPicker.tsx`）：输入框上面和「技能」「插件」并排的「标签页」，点开搜索标题或网址，分「内置浏览器」（这个会话的标签页，只有桌面版）和「Chrome」（第 13 节，开了外部浏览器时）两组，两组都没有时不显示按钮；输入框里打 @ 只列项目文件。选中后在输入框末尾插入 `@[标题](网址)`（输入框里只显示 `@[标题]`，网址由输入框记着，发送时补回完整格式；同名不同网址的标题后面加「(2)」区分），整体高亮、整体删除；消息里显示成带地球图标的标题，会话标题里只留标题。模型按浏览器说明里写的，用 `browser_tabs` 按网址找到它切过去。
+- **AI 的工具**（`gateway/src/browser/tool.ts`）：`playwright-core` 自带的 Playwright MCP（`@playwright/mcp` 也只是转出 `lib/coreBundle` 的 `tools.createConnection`），每个会话一个，作为 `type: "sdk"` 的 MCP 服务器挂上（SDK 只调用 `instance.connect`），服务器名 `inapp`（应用内的浏览器，和第 13 节外部浏览器的 `chrome` 一眼能分开；以前叫 `web`，旧会话记录里的工具名还是 `mcp__web__…`），工具全名如 `mcp__inapp__browser_click`（不叫 `browser`，免得和工具名自带的 `browser_` 前缀重复）。第一次调用工具时才 `chromium.connectOverCDP(transport)`；桌面版没开时工具返回错误，开了之后再调用就能用，断开后下次调用重连，所以每个会话都挂上。去掉 `browser_resize`、`browser_close`（改写 MCP 服务器的 `tools/list`、`tools/call`）。`browser_run_code_unsafe` 保留：它拿 Playwright 的 `page` 在网关进程里跑脚本，等同于 Bash，不放进 `allowedTools`，每次走权限卡片；只在网页里执行 JS 用 `browser_evaluate`。读页面、截图、查找、控制台、网络请求、等待、`browser_keep_tab` 在 `allowedTools` 里不用确认，打开网址、点击、输入等走权限卡片。常驻哪些工具在 `gateway/config.yml` 的 `tools.alwaysLoad` 里配（默认 `browser_snapshot`、`browser_navigate`、`browser_click`、`browser_type`、`browser_tabs`、`browser_keep_tab`，约 1100 token；终端的工具也能配），`tools/list` 里给它们加 `_meta["anthropic/alwaysLoad"]`，其余的延迟加载、用到时 ToolSearch：不常驻时 GPT 类模型常在 ToolSearch 的 `select:` 里把二十多个工具名列了又列，写满 `max_output_tokens` 才停，界面「思考中」两分多钟；拿卡住的请求重放，常驻后 6 次都直接调用工具，在说明里提醒「只加载要用的」反而 6 次全复读。截图等文件存在 `WORKSPACE_DIR/.playwright-mcp/<会话>/`。
 - **面板**（`client/src/components/BrowserTab.tsx`、`SidePanel.tsx`）：新标签页顶部是地址栏（同 codex-app-server），输入网址这个标签页就变成浏览器；像网址的补上协议，否则用必应搜索。面板只显示当前会话的浏览器标签页，外壳推来标签页列表时把当前会话的、面板里还没有的（AI 开的）补成标签页，关掉的去掉；AI 切标签页时面板跟着切。界面的对话框、菜单、地址栏建议盖住画面区域时（在画面区域上取 5×5 个点 `elementFromPoint`，离边 6px，避开面板左边缘调宽度的那条）先给网页拍一张快照贴在原位（`browser.snapshot`，`capturePage`），再把视图收起来，不然会挡住它们；露出来后叠回去。
 - **没做的**：页面批注；清除浏览历史的入口。macOS、Windows 还没实测；右键菜单没有自动化测过（系统菜单弹出后脚本关不掉）。
+
+## 13. 外部浏览器（用户自己的 Chrome）
+
+让 AI 操作用户自己的 Chrome，带着里面的登录状态和 Cookie，和第 12 节的内置浏览器并存。用的是 Playwright 官方的 [Playwright Extension](https://chromewebstore.google.com/detail/playwright-mcp-bridge/mmlmfjhmonkocbjadbfplnigmagldckm)，网关这边是 `playwright-core` 自带的扩展模式，不另装依赖。网页版、桌面版都能用，但 Chrome 要和网关在同一台机器上。
+
+```
+网关：各会话的 Playwright MCP ──同一个 BrowserContext──▶ ChromeBridge ──本机中转（CDPRelayServer）──▶
+Chrome：Playwright Extension ──chrome.debugger──▶ Playwright 标签页组里的标签页
+```
+
+- **开关**：`gateway/config.yml` 的 `externalBrowser.enabled`，默认关。开了之后每个会话多一个 MCP 服务器 `chrome`，工具全名如 `mcp__chrome__browser_click`。工具和内置浏览器是同一套 Playwright MCP（`browser/tool.ts` 的 `patchTools` 两边共用），去掉 `browser_resize`（会改用户窗口的大小）和 `browser_close`（会断开共用的连接），没有 `browser_keep_tab`。只读的工具（`READ_TOOL_NAMES`）不用确认，打开网址、点击、输入、`browser_evaluate`、`browser_run_code_unsafe` 走权限卡片。常驻也在 `tools.alwaysLoad` 里配，默认一个都不常驻，用到时 ToolSearch。内置浏览器的说明里补一句「我的 Chrome」时用 `mcp__chrome__` 的工具。
+- **连接**（`gateway/src/browser/chrome.ts`）：所有会话共用一条。扩展同一个 Chrome 配置只认一个客户端，第二个连上来会把第一个顶掉、把它的标签页移出组（microsoft/playwright#41838、#42015），所以不能像内置浏览器那样每个会话各连一次。第一次调用工具时才连：`resolveCLIConfigForMCP({ extension: true })` + `createBrowserWithInfo` 起中转、拉起 Chrome 打开扩展的 `connect.html`，等扩展连上：没设 token 时等用户在连接页上选标签页、点允许，不限时（工具调用一直挂着，用户可以中断）；设了 token 时自动连，30 秒连不上报错。之后各会话的 Playwright MCP 经 `contextGetter` 拿到同一个 `BrowserContext`。会话结束时 Playwright MCP 只释放自己的标签页记录，不关上下文。断开后下次调用再连。`createBrowserWithInfo` 顺带的 `bind`（登记给 `playwright-cli` 接）连上后撤掉。
+- **配置**：都是 Playwright 自己读的环境变量，写在 `gateway/.env.local`。`PLAYWRIGHT_MCP_EXTENSION_TOKEN` 是扩展里显示的 token（连接页上有复制按钮），连接页带上它就自动连、不显示批准界面；拿到它的进程都能不经提示操作用户的 Chrome，所以 `agentEnv()` 不把它传给 claude 子进程，模型在 Bash 里读不到。扩展里重新生成 token 并重启浏览器就作废旧的；`PLAYWRIGHT_MCP_PROFILE_DIR_NAME` 指定 Chrome 配置（默认是装了扩展的、最近用过的那个）；`PLAYWRIGHT_MCP_BROWSER`（如 `msedge`）、`PLAYWRIGHT_MCP_EXECUTABLE_PATH` 换浏览器。
+- **能看到的标签页**：只有 Playwright 标签页组里的，也就是连接时用户选的，加上 AI 新开的；用户其他的标签页扩展不交出来。所有会话看到的是同一组。AI 开的标签页不自动关，说明里让模型用完关掉、不关用户的。
+- **引用标签页**：`GET /chrome/tabs` 列出组里的标签页（已经连上才有，不会为了列标签页去拉起连接页；后台冻结的标签页标题最多等 1 秒）。输入框上面的「标签页」里是「Chrome」那一组（每次打开时取一次）；选中后插入 `@chrome[标题](网址)`，消息里显示成「Chrome · 标题」，会话标题里只留标题。模型用 `mcp__chrome__browser_tabs` 按网址找到它切过去。
+- **注意**：网关是从桌面版里起的（带 `no_new_privs`，见 CLAUDE.md）、Chrome 又没开着时，由网关拉起的 Chrome 也会带上这个标志，Chrome 的沙箱可能起不来；先把 Chrome 开着，或者用 `systemd-run --user` 单独起网关。Chrome 顶部会显示扩展正在调试浏览器的提示条。
+- **没做的**：多会话各自隔离标签页、@ 引用用户全部的标签页（官方扩展做不到，要自己写扩展，复用第 12 节的 CDP 代理）。

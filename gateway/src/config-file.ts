@@ -13,3 +13,6 @@ export const isAlwaysLoad = (fullName: string) => alwaysLoad.includes(fullName);
 
 /** MCP 工具的常驻标记：tools/list 里的 _meta（SDK 的 tool({ alwaysLoad }) 也是写这个） */
 export const ALWAYS_LOAD_META = "anthropic/alwaysLoad";
+
+/** 外部浏览器（用户自己的 Chrome，经 Playwright 扩展连接）：config.yml 的 externalBrowser.enabled，默认关，见 browser/chrome.ts */
+export const externalBrowserEnabled: boolean = configFile?.externalBrowser?.enabled === true;

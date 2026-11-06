@@ -7,6 +7,8 @@ import { TERMINAL_READ_TOOLS, TERMINAL_SERVER, terminalServer } from "../termina
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { BROWSER_READ_TOOLS, BROWSER_SERVER, browserServer } from "../browser/tool.js";
 import type { BrowserHost } from "../browser/host.js";
+import { CHROME_READ_TOOLS, CHROME_SERVER, chromeServer } from "../browser/chrome.js";
+import { externalBrowserEnabled } from "../config-file.js";
 
 export interface SessionLaunch {
   sessionId: string;
@@ -34,7 +36,9 @@ export function buildOptions(launch: SessionLaunch): Options {
   const terminal = launch.terminals ? terminalServer(launch.terminals, launch.cwd) : null;
   // 网页版没有内置浏览器，但会话启动时不知道之后是不是在桌面版里打开，所以都挂上；桌面版没开时调用工具返回错误
   const browser = launch.browser ? browserServer(launch.browser, launch.sessionId) : null;
-  const allowedTools = [...(terminal ? TERMINAL_READ_TOOLS : []), ...(browser ? BROWSER_READ_TOOLS : [])];
+  // 外部浏览器（用户自己的 Chrome）：config.yml 里开了才挂，第一次调用工具时才连
+  const chrome = externalBrowserEnabled ? chromeServer(launch.sessionId) : null;
+  const allowedTools = [...(terminal ? TERMINAL_READ_TOOLS : []), ...(browser ? BROWSER_READ_TOOLS : []), ...(chrome ? CHROME_READ_TOOLS : [])];
   return {
     cwd: launch.cwd,
     // 附件存在默认工作目录下，项目里的会话也要能不经确认读到
@@ -54,6 +58,7 @@ export function buildOptions(launch: SessionLaunch): Options {
       ...enabledMcpServers(),
       ...(terminal ? { [TERMINAL_SERVER]: terminal } : {}),
       ...(browser ? { [BROWSER_SERVER]: browser } : {}),
+      ...(chrome ? { [CHROME_SERVER]: chrome } : {}),
     },
     plugins: importedPlugins(),
     ...(launch.skills ? { skills: launch.skills } : {}),

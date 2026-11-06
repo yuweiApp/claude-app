@@ -1,15 +1,10 @@
 import { useEffect, useRef } from "react";
-import { GlobeIcon } from "./BrowserTab";
 import { FileTypeIcon, FolderTypeIcon } from "./FileTypeIcon";
 
-/**
- * 输入 @ 后弹出的一项：项目里的文件、文件夹（value 相对项目文件夹，文件夹以 / 结尾），
- * 或者内置浏览器里这个会话的标签页（value 是网址，title 是标题）
- */
+/** 输入 @ 后弹出的一项：项目里的文件、文件夹（value 相对项目文件夹，文件夹以 / 结尾）。浏览器标签页走输入框上面的「标签页」 */
 export interface MentionOption {
-  kind: "file" | "dir" | "tab";
+  kind: "file" | "dir";
   value: string;
-  title?: string;
 }
 
 interface Props {
@@ -29,26 +24,6 @@ export function MentionMenu({ options, active, onHover, onPick }: Props) {
   return (
     <div className="menu mention-menu" role="listbox" ref={listRef}>
       {options.map((option, i) => {
-        if (option.kind === "tab") {
-          return (
-            <button
-              key={`tab:${option.value}`}
-              role="option"
-              aria-selected={i === active}
-              className={`mention-option${i === active ? " active" : ""}`}
-              title={option.value}
-              onMouseDown={(e) => e.preventDefault()}
-              onMouseMove={() => i !== active && onHover(i)}
-              onClick={() => onPick(option)}
-            >
-              <span className="mention-option-icon">
-                <GlobeIcon />
-              </span>
-              <span className="mention-option-name">{option.title || option.value}</span>
-              <span className="mention-option-sub">{option.value.replace(/^https?:\/\//, "")}</span>
-            </button>
-          );
-        }
         const trimmed = option.kind === "dir" ? option.value.slice(0, -1) : option.value;
         const slash = trimmed.lastIndexOf("/");
         const name = trimmed.slice(slash + 1);
@@ -76,4 +51,3 @@ export function MentionMenu({ options, active, onHover, onPick }: Props) {
     </div>
   );
 }
-

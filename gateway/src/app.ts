@@ -1,6 +1,8 @@
 import multipart from "@fastify/multipart";
 import websocket from "@fastify/websocket";
 import { BrowserHost } from "./browser/host.js";
+import { chromeBridge } from "./browser/chrome.js";
+import { externalBrowserEnabled } from "./config-file.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import { AttachmentError } from "./agent/attachments.js";
 import { BadRequestError, BusyError, NotFoundError, SessionManager } from "./agent/session-manager.js";
@@ -76,6 +78,9 @@ export function buildApp(): App {
   folderRoutes(app);
   fileRoutes(app);
   terminalRoutes(app, terminals);
+
+  // 外部浏览器（用户的 Chrome）里交给 Playwright 的标签页，输入框 @ 引用用；没开或还没连上时 tabs 是空的
+  app.get("/chrome/tabs", async () => ({ enabled: externalBrowserEnabled, tabs: externalBrowserEnabled ? ((await chromeBridge.tabs()) ?? []) : [] }));
 
   // 桌面版外壳连上来（内置浏览器），见 browser/host.ts 和 desktop/src/browser/bridge.ts
   void app.register(websocket);

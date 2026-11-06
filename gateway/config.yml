@@ -1,19 +1,27 @@
 # 网关功能上的配置，启动时读一次，改完要重启网关。
 # 端口、密钥、目录、默认模型这些部署相关的仍在 .env.local（见 src/config.ts）。
 
-# 网关自带的 MCP 工具：内置浏览器 mcp__web__…、终端 mcp__terminal__…
+# 网关自带的 MCP 工具：内置浏览器 mcp__inapp__…、外部浏览器 mcp__chrome__…、终端 mcp__terminal__…
 tools:
   # 常驻的工具：第一轮就把完整定义给模型，不藏在 ToolSearch 后面；没列的照旧延迟加载，用到时模型先 ToolSearch。
-  # 写工具全名。只对上面两个服务器生效，
+  # 写工具全名。只对上面这三个服务器生效，
   # 设置页添加的 MCP 服务器和 Claude Code 自带的工具管不到。
   #
   # 常驻越多上下文越大：浏览器的工具每个约 50～440 token，全部 24 个约 5200 token。
   # 也不要都不常驻：GPT 类模型常在 ToolSearch 的 select: 里把二十多个浏览器工具名列了又列，
   # 写满输出上限才停，界面「思考中」两分多钟。下面 6 个够打开网页、读页面、点击、输入、切标签页、留标签页。
   alwaysLoad:
-    - mcp__web__browser_snapshot
-    - mcp__web__browser_navigate
-    - mcp__web__browser_click
-    - mcp__web__browser_type
-    - mcp__web__browser_tabs
-    - mcp__web__browser_keep_tab
+    - mcp__inapp__browser_snapshot
+    - mcp__inapp__browser_navigate
+    - mcp__inapp__browser_click
+    - mcp__inapp__browser_type
+    - mcp__inapp__browser_tabs
+    - mcp__inapp__browser_keep_tab
+
+# 外部浏览器：模型多一组 mcp__chrome__… 工具，操作用户自己的 Chrome（带着登录状态），见 docs/README.md 第 13 节。
+# 要先在 Chrome 里装 Playwright Extension；第一次调用工具时 Chrome 打开扩展的连接页，在里面允许。
+# 在 .env.local 里设 PLAYWRIGHT_MCP_EXTENSION_TOKEN（连接页上复制的那一行）就自动连上、不用批准（不会传给模型的子进程），
+# PLAYWRIGHT_MCP_PROFILE_DIR_NAME 指定 Chrome 配置（如 "Profile 1"，默认是装了扩展的、最近用过的那个）。
+# mcp__chrome__… 的工具也可以写进上面的 tools.alwaysLoad。
+externalBrowser:
+  enabled: false
