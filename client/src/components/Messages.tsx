@@ -114,10 +114,11 @@ function taskReason(task: TaskItem): string | undefined {
   return line && (line.length > 200 ? `${line.slice(0, 200)}…` : line);
 }
 
+/** 后台任务的一行。失败也用灰色、不标红：模型接下来的回复里通常已经说明了原因，红色太扎眼 */
 function TaskLine({ task }: { task: TaskItem }) {
   const reason = taskReason(task);
   return (
-    <div className={`task-line${task.status === "failed" && !taskExitCode(task) ? " error" : ""}`} title={task.detail ?? task.text}>
+    <div className="task-line" title={task.detail ?? task.text}>
       {taskLabel(task)}
       {reason && <div className="task-reason">{reason}</div>}
     </div>
