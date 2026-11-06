@@ -28,6 +28,8 @@ export class TaskList {
   private readonly commands = new Map<string, string>();
   /** browser_run_code 调用的代码（input.code）：转到后台后 task_started 只带 tool_use_id */
   private readonly codes = new Map<string, string>();
+  /** 转到了后台的工具调用（tool_use_id）：结果里写着 moved to the background */
+  private readonly backgroundedCalls = new Map<string, true>();
   /** 工具调用发出的时间：跑久了才转到后台的（MCP 调用跑满 20 秒），开始时间按调用发出时算，不按转后台的时候 */
   private readonly toolStarts = new Map<string, number>();
   /**
@@ -148,31 +150,24 @@ export class TaskList {
       case "task_started": {
         // ambient：不算活动的任务（监视器之类），skip_transcript 的也不进对话，都不列
         if (message.ambient || message.skip_transcript) return false;
-        const existing = this.tasks.get(message.task_id);
-        this.tasks.set(message.task_id, {
-          taskId: message.task_id,
-          toolUseId: message.tool_use_id,
-          type: message.task_type,
-          description: message.description,
-          command: message.tool_use_id ? this.commands.get(message.tool_use_id) : undefined,
-          code: message.tool_use_id ? this.codes.get(message.tool_use_id) : undefined,
-          status: "running",
-          startedAt: (message.tool_use_id && this.toolStarts.get(message.tool_use_id)) || Date.now(),
-          hasOutput: false,
-          outputFile: existing?.outputFile,
-          backgrounded: Boolean(message.is_backgrounded) || this.liveBackground.has(message.task_id) || Boolean(existing?.backgrounded),
-        });
+        const task = this.ensure(message.task_id, message.tool_use_id, message.description, message.task_type);
+        if (task.status !== "running") {
+          // 结束过又开始（恢复的子代理）：重新算一次
+          Object.assign(task, { status: "running", startedAt: Date.now(), endedAt: undefined, summary: undefined, result: undefined, resultIsError: undefined, exitCode: undefined });
+        }
+        if (message.is_backgrounded || this.liveBackground.has(message.task_id)) task.backgrounded = true;
         return true;
       }
       case "background_tasks_changed": {
-        this.liveBackground = new Set(message.tasks.filter((t) => !t.ambient).map((t) => t.task_id));
+        // 完整的在跑列表（SDK 说 task_started 这类边沿消息可能漏掉，以它为准）：没登记过的也补上
+        const live = message.tasks.filter((t) => !t.ambient);
+        this.liveBackground = new Set(live.map((t) => t.task_id));
         let changed = false;
-        for (const id of this.liveBackground) {
-          const task = this.tasks.get(id);
-          if (task && !task.backgrounded) {
-            task.backgrounded = true;
-            changed = true;
-          }
+        for (const t of live) {
+          const known = this.tasks.get(t.task_id);
+          if (known?.backgrounded) continue;
+          this.ensure(t.task_id, undefined, t.description, t.task_type).backgrounded = true;
+          changed = true;
         }
         return changed;
       }
@@ -188,8 +183,13 @@ export class TaskList {
         return true;
       }
       case "task_notification": {
-        const task = this.tasks.get(message.task_id);
-        if (!task) return false;
+        // 没收到过开始消息的，按通知补上（转到后台的工具调用，tool_use_id 对得上调用发出的时间和代码）
+        if (message.skip_transcript) return false;
+        const known = this.tasks.get(message.task_id);
+        const task = known ?? this.ensure(message.task_id, message.tool_use_id, message.summary);
+        if (!known && (this.liveBackground.has(message.task_id) || (message.tool_use_id && this.backgroundedCalls.has(message.tool_use_id)))) {
+          task.backgrounded = true;
+        }
         task.status = message.status;
         task.summary = message.summary;
         task.outputFile = message.output_file || task.outputFile;
@@ -203,15 +203,51 @@ export class TaskList {
     }
   }
 
-  /** 放到后台的 Bash 立即返回一条 tool_result，里面写着输出文件路径（…/tasks/<task_id>.output），运行中就能看输出 */
+  /**
+   * 登记一个任务（已经有了就补上缺的字段，不改状态）。开始时间按工具调用发出的时间，没有就是现在
+   */
+  private ensure(taskId: string, toolUseId: string | undefined, description: string, type?: string): TaskRecord {
+    let task = this.tasks.get(taskId);
+    if (!task) {
+      task = { taskId, description, status: "running", startedAt: Date.now(), hasOutput: false, backgrounded: false };
+      this.tasks.set(taskId, task);
+    }
+    if (type) task.type ??= type;
+    if (toolUseId && !task.toolUseId) {
+      task.toolUseId = toolUseId;
+      task.startedAt = this.toolStarts.get(toolUseId) ?? task.startedAt;
+      task.command ??= this.commands.get(toolUseId);
+      task.code ??= this.codes.get(toolUseId);
+    }
+    return task;
+  }
+
+  /**
+   * 工具调用的结果：
+   * - 跑久了转到后台的 MCP 调用先返回「… was moved to the background as task <id> …」，据此登记（不依赖 task_started）；
+   * - 放到后台的 Bash 立即返回一条 tool_result，里面写着输出文件路径（…/tasks/<task_id>.output），运行中就能看输出
+   */
   private ingestToolResults(content: unknown): boolean {
     if (!Array.isArray(content)) return false;
     let changed = false;
     for (const block of content as Array<Record<string, unknown>>) {
       if (block.type !== "tool_result") continue;
+      const text = typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
+      // 结果是内容块数组时按原文找（JSON 里的引号被转义了）
+      const plain = Array.isArray(block.content)
+        ? (block.content as Array<{ type?: unknown; text?: unknown }>).map((c) => (c.type === "text" && typeof c.text === "string" ? c.text : "")).join("\n")
+        : text;
+      const moved = /MCP tool "([^"]+)" is still running[\s\S]*?moved to the background as task (\w+)/.exec(plain);
+      if (moved && typeof block.tool_use_id === "string") {
+        remember(this.backgroundedCalls, block.tool_use_id, true);
+        const task = this.ensure(moved[2]!, block.tool_use_id, moved[1]!, "mcp_task");
+        if (!task.backgrounded) {
+          task.backgrounded = true;
+          changed = true;
+        }
+      }
       const task = [...this.tasks.values()].find((t) => t.toolUseId === block.tool_use_id && !t.outputFile);
       if (!task) continue;
-      const text = typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
       const file = new RegExp(`(/[^\\s"'\\\\]*${task.taskId}\\.output)`).exec(text)?.[1];
       if (file) {
         task.outputFile = file;
