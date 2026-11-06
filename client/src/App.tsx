@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type Rea
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { api, subscribe, type Capabilities, type GatewayConfig, type SessionListItem } from "./api";
 import { CapabilityPicker } from "./components/CapabilityPicker";
-import { PluginNamesContext } from "./components/MentionText";
+import { MentionNamesContext } from "./components/MentionText";
 import { Composer, type ComposerHandle } from "./components/Composer";
 import { Messages } from "./components/Messages";
 import { PermissionCard } from "./components/PermissionCard";
@@ -336,7 +336,10 @@ function Chat({
   useEffect(() => {
     api.capabilities(cwd ?? undefined).then(setCapabilities, () => setCapabilities(null));
   }, [cwd]);
-  const pluginNames = useMemo(() => capabilities?.plugins.map((p) => p.name) ?? [], [capabilities]);
+  const mentionNames = useMemo(
+    () => ({ plugins: capabilities?.plugins.map((p) => p.name) ?? [], skills: capabilities?.skills.filter((s) => s.enabled).map((s) => s.name) ?? [] }),
+    [capabilities],
+  );
 
   // 先连事件流再拉历史，两边按 uuid 去重，见 docs/README.md「客户端归并规则」
   useEffect(() => {
@@ -461,7 +464,7 @@ function Chat({
   };
 
   return (
-    <PluginNamesContext.Provider value={pluginNames}>
+    <MentionNamesContext.Provider value={mentionNames}>
     <div className="chat">
       {(headerStart || title || headerEnd) && (
         <div className="chat-header">
@@ -517,9 +520,13 @@ function Chat({
         top={
           <>
             {folderPicker}
-            <CapabilityPicker kind="技能" items={capabilities?.skills.filter((s) => s.enabled) ?? []} onPick={(name) => composerRef.current?.useSkill(name)} />
-            <CapabilityPicker kind="插件" items={capabilities?.plugins ?? []} onPick={(name) => composerRef.current?.mention(name)} />
-            <TabPicker inapp={browserTabs} onPick={(tab, chrome) => composerRef.current?.mentionTab(tab.title, tab.url, chrome)} />
+            <CapabilityPicker kind="技能" items={capabilities?.skills.filter((s) => s.enabled && !s.builtin) ?? []} onPick={(name) => composerRef.current?.mentionSkill(name)} />
+            <CapabilityPicker kind="插件" items={capabilities?.plugins.filter((p) => !p.builtin) ?? []} onPick={(name) => composerRef.current?.mention(name)} />
+            <TabPicker
+              inapp={browserTabs}
+              onPick={(tab, chrome) => composerRef.current?.mentionTab(tab.title, tab.url, chrome)}
+              onPickBrowser={(chrome) => composerRef.current?.mentionBrowser(chrome)}
+            />
           </>
         }
         right={
@@ -539,7 +546,7 @@ function Chat({
         }
       />
     </div>
-    </PluginNamesContext.Provider>
+    </MentionNamesContext.Provider>
   );
 }
 

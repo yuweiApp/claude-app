@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { desktop } from "../desktop";
-import { GlobeIcon, SiteIcon } from "./BrowserTab";
+import { BrowserIcon, GlobeIcon, SiteIcon } from "./BrowserTab";
 import { useDismiss } from "./ComposerPickers";
 
 interface Tab {
@@ -26,13 +26,16 @@ interface Props {
   inapp: Tab[];
   /** 选中一个标签页：chrome 时是外部浏览器（用户的 Chrome）的 */
   onPick: (tab: Tab, chrome: boolean) => void;
+  /** 选中浏览器本身（每组第一行）：chrome 时是外部浏览器 */
+  onPickBrowser: (chrome: boolean) => void;
 }
 
 /**
- * 输入框上面的「标签页」：和「技能」「插件」一样点开搜索、选择，选中后把 @[标题](网址) 或 @chrome[标题](网址) 写进输入框。
- * 分两组：内置浏览器（只有桌面版）、Chrome（网关开了外部浏览器时；还没连上时是空的，不会为了列标签页去连）。两组都没有就不显示按钮
+ * 输入框上面的「标签页」：和「技能」「插件」一样点开搜索、选择，选中后插在输入框的光标处。
+ * 分两组：内置浏览器（只有桌面版）、Chrome（网关开了外部浏览器时；还没连上时是空的，不会为了列标签页去连）。两组都没有就不显示按钮。
+ * 每组第一行是浏览器本身（写成 @内置浏览器、@Chrome，指定用哪个浏览器），下面是它的标签页（@[标题](网址)、@chrome[标题](网址)）
  */
-export function TabPicker({ inapp, onPick }: Props) {
+export function TabPicker({ inapp, onPick, onPickBrowser }: Props) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [chromeOn, setChromeOn] = useState(false);
@@ -74,6 +77,10 @@ export function TabPicker({ inapp, onPick }: Props) {
     setOpen(false);
     onPick(tab, chrome);
   };
+  const pickBrowser = (chrome: boolean) => {
+    setOpen(false);
+    onPickBrowser(chrome);
+  };
 
   return (
     <div className="capability-picker" ref={ref}>
@@ -85,10 +92,23 @@ export function TabPicker({ inapp, onPick }: Props) {
         <div className="menu capability-menu tab-picker-menu" role="menu">
           <input ref={inputRef} className="capability-search" value={search} placeholder="搜索标题或网址…" onChange={(e) => setSearch(e.target.value)} />
           <div className="capability-list">
-            {hasInapp && <Group label="内置浏览器" tabs={filter(inapp)} empty={inapp.length ? "没有匹配的标签页" : "这个会话还没有标签页"} onPick={(t) => pick(t, false)} />}
+            {hasInapp && (
+              <Group
+                label="内置浏览器"
+                chrome={false}
+                hint="右侧面板"
+                tabs={filter(inapp)}
+                empty={inapp.length ? "没有匹配的标签页" : "这个会话还没有标签页"}
+                onPick={(t) => pick(t, false)}
+                onPickBrowser={() => pickBrowser(false)}
+              />
+            )}
             {chromeOn && (
               <Group
                 label="Chrome"
+                chrome
+                hint="你自己的 Chrome"
+                onPickBrowser={() => pickBrowser(true)}
                 tabs={chromeTabs ? filter(chromeTabs) : []}
                 empty={chromeTabs === null ? "加载中…" : chromeTabs.length ? "没有匹配的标签页" : "还没连上，或者没有交给 AI 的标签页"}
                 onPick={(t) => pick(t, true)}
@@ -102,12 +122,30 @@ export function TabPicker({ inapp, onPick }: Props) {
   );
 }
 
-function Group({ label, tabs, empty, onPick, guessIcon }: { label: string; tabs: Tab[]; empty: string; onPick: (tab: Tab) => void; guessIcon?: boolean }) {
+interface GroupProps {
+  label: string;
+  chrome: boolean;
+  /** 浏览器那一行右边的小字 */
+  hint: string;
+  tabs: Tab[];
+  empty: string;
+  onPick: (tab: Tab) => void;
+  onPickBrowser: () => void;
+  guessIcon?: boolean;
+}
+
+function Group({ label, chrome, hint, tabs, empty, onPick, onPickBrowser, guessIcon }: GroupProps) {
   return (
-    <>
-      <div className="menu-label">{label}</div>
+    <div className="tab-picker-group">
+      <button className="capability-item tab-picker-browser" role="menuitem" title={`引用${label}`} onClick={onPickBrowser}>
+        <span className={chrome ? "tab-picker-badge chrome" : "tab-picker-badge"}>
+          <BrowserIcon chrome={chrome} />
+        </span>
+        <span className="capability-name">{label}</span>
+        <span className="tab-picker-hint">{hint}</span>
+      </button>
       {tabs.map((tab) => (
-        <button key={tab.url} className="capability-item" role="menuitem" title={tab.url} onClick={() => onPick(tab)}>
+        <button key={tab.url} className="capability-item tab-picker-tab" role="menuitem" title={tab.url} onClick={() => onPick(tab)}>
           <span className="tab-picker-icon">
             <SiteIcon src={tab.favicon ?? (guessIcon ? rootFavicon(tab.url) : undefined)} />
           </span>
@@ -115,7 +153,7 @@ function Group({ label, tabs, empty, onPick, guessIcon }: { label: string; tabs:
           <span className="capability-name">{tab.title || tab.url.replace(/^https?:\/\//, "")}</span>
         </button>
       ))}
-      {tabs.length === 0 && <div className="capability-empty">{empty}</div>}
-    </>
+      {tabs.length === 0 && <div className="capability-empty tab-picker-empty">{empty}</div>}
+    </div>
   );
 }

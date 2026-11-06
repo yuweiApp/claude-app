@@ -79,13 +79,20 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
         tools: (server.tools ?? []).map(({ name, description }) => ({ name, description })),
       }));
     const value: Capabilities = {
-      skills: skills.map(({ name, description }) => ({
+      skills: skills.map(({ name, description, builtin }) => ({
         name,
         description,
         managed: importedSkills().includes(name),
         enabled: !disabledSkills().includes(name),
+        builtin: builtin === true,
       })),
-      plugins: plugins.map(({ name, source, version }) => ({ name, source, version, managed: importedPluginNames().includes(name) })),
+      plugins: plugins.map(({ name, source, version }) => ({
+        name,
+        source,
+        version,
+        managed: importedPluginNames().includes(name),
+        builtin: source?.endsWith("@builtin") === true,
+      })),
       mcpServers: [...managed, ...others],
     };
     cache.set(cwd, { at: Date.now(), value });

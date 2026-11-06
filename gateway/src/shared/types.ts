@@ -59,11 +59,12 @@ export interface BackgroundTask {
   hasOutput: boolean;
 }
 
-/** 可用的技能和插件（GET /capabilities）。技能在消息开头写 /name 使用，插件在消息里写 @name 引用 */
+/** 可用的技能和插件（GET /capabilities）。技能在消息里写 /name 使用（开头的由 Claude Code 展开），插件在消息里写 @name 引用 */
 export interface Capabilities {
-  /** managed：导入的，可以删除；enabled：false 时新会话里模型看不到、也调用不了 */
-  skills: { name: string; description: string; managed: boolean; enabled: boolean }[];
-  plugins: { name: string; source?: string; version?: string; managed: boolean }[];
+  /** managed：导入的，可以删除；enabled：false 时新会话里模型看不到、也调用不了；builtin：Claude Code 自带的 */
+  skills: { name: string; description: string; managed: boolean; enabled: boolean; builtin: boolean }[];
+  /** builtin：Claude Code 自带的（source 是 名字@builtin） */
+  plugins: { name: string; source?: string; version?: string; managed: boolean; builtin: boolean }[];
   mcpServers: McpServerInfo[];
 }
 

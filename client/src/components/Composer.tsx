@@ -4,7 +4,7 @@ import { AddMenu } from "./AddMenu";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { MentionMenu, type MentionOption } from "./MentionMenu";
-import { fileMention, findMentions, MentionText, PluginNamesContext, tabMention, tabToken, type Mention } from "./MentionText";
+import { fileMention, findMentions, MentionText, browserMention, MentionNamesContext, tabMention, tabToken, type Mention } from "./MentionText";
 
 /** 输入框下方的附件：选中后立刻上传，发送时只传 id */
 interface PendingFile {
@@ -20,12 +20,14 @@ interface PendingFile {
 
 /** 外面往输入框里写内容 */
 export interface ComposerHandle {
-  /** 用技能：写到消息开头（Claude Code 只认开头的 /技能名），已经有技能时换掉 */
-  useSkill: (name: string) => void;
-  /** 引用插件：接在现有内容后面 */
+  /** 用技能：插在光标处，写成 /技能名 */
+  mentionSkill: (name: string) => void;
+  /** 引用插件：插在光标处 */
   mention: (name: string) => void;
-  /** 引用浏览器标签页（输入框上面的「标签页」）：接在现有内容后面，chrome 时是外部浏览器（用户的 Chrome）的 */
+  /** 引用浏览器标签页（输入框上面的「标签页」）：插在光标处，chrome 时是外部浏览器（用户的 Chrome）的 */
   mentionTab: (title: string, url: string, chrome: boolean) => void;
+  /** 引用整个浏览器（「标签页」里点浏览器那一行）：插在光标处，chrome 时是外部浏览器 */
+  mentionBrowser: (chrome: boolean) => void;
 }
 
 interface Props {
@@ -51,12 +53,12 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
-  const plugins = useContext(PluginNamesContext);
+  const names = useContext(MentionNamesContext);
   // @ 菜单里选过的文件，只有这些（和带引号的）算文件引用，手打的 @xxx 不算
   const [picked, setPicked] = useState<string[]>([]);
   // 「标签页」里选过的：输入框里只显示 token（@[标题]），发送时换成 full（带网址的 @[标题](网址)）
   const [pickedTabs, setPickedTabs] = useState<{ token: string; full: string }[]>([]);
-  const mentions = findMentions(text, plugins, picked, pickedTabs.map((t) => t.token));
+  const mentions = findMentions(text, names, picked, pickedTabs.map((t) => t.token));
   const highlighted = mentions.length > 0;
 
   // 光标前紧挨着的 @xxx：弹出项目里的文件候选（插件、浏览器标签页走上面的「插件」「标签页」按钮，这里不列）；已经是整体的引用不弹，选中的文件夹接着列里面的
@@ -112,7 +114,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     mirror.style.right = `${input.offsetWidth - input.clientWidth}px`;
   };
   useLayoutEffect(syncMirror, [text]);
-  // 改了文字后要放的光标位置（技能名、插件引用整体删掉后），等新文字渲染完再放
+  // 改了文字后要放的光标位置（插入引用、整体删掉技能名和插件引用后），等新文字渲染完再放
   const pendingCaret = useRef<number | null>(null);
   useLayoutEffect(() => {
     if (pendingCaret.current === null) return;
@@ -120,15 +122,22 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     setCaret(pendingCaret.current);
     pendingCaret.current = null;
   }, [text]);
+  // 上面「技能」「插件」「标签页」选中的：插在光标处（输入框失焦后 textarea 还记着光标），前后不是空白的补空格，光标放到后面
+  const insertAtCaret = (token: string) => {
+    const input = textareaRef.current;
+    const start = input?.selectionStart ?? text.length;
+    const end = input?.selectionEnd ?? start;
+    const before = text.slice(0, start);
+    const after = text.slice(end);
+    const insert = `${before && !/\s$/.test(before) ? " " : ""}${token}${/^\s/.test(after) ? "" : " "}`;
+    pendingCaret.current = before.length + insert.length + (/^\s/.test(after) ? 1 : 0);
+    setText(before + insert + after);
+    input?.focus();
+  };
   useImperativeHandle(handle, () => ({
-    useSkill: (name) => {
-      setText((t) => `/${name} ${t.replace(/^\/\S+\s*/, "")}`);
-      textareaRef.current?.focus();
-    },
-    mention: (name) => {
-      setText((t) => `${t}${t && !/\s$/.test(t) ? " " : ""}@${name} `);
-      textareaRef.current?.focus();
-    },
+    mentionSkill: (name) => insertAtCaret(`/${name}`),
+    mention: (name) => insertAtCaret(`@${name}`),
+    mentionBrowser: (chrome) => insertAtCaret(browserMention(chrome)),
     mentionTab: (title, url, chrome) => {
       // 同名不同网址的标签页：标题后面加 (2)、(3) 区分
       const full = (t: string) => tabMention(t, url, chrome);
@@ -136,8 +145,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
       for (let n = 2; pickedTabs.some((p) => p.token === tabToken(name, chrome) && p.full !== full(name)); n++) name = `${title || url} (${n})`;
       const token = tabToken(name, chrome);
       setPickedTabs((prev) => (prev.some((p) => p.token === token) ? prev : [...prev, { token, full: full(name) }]));
-      setText((t) => `${t}${t && !/\s$/.test(t) ? " " : ""}${token} `);
-      textareaRef.current?.focus();
+      insertAtCaret(token);
     },
   }));
   const [files, setFiles] = useState<PendingFile[]>([]);
