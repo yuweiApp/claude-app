@@ -180,10 +180,11 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
     const apply = (list: BrowserTabInfo[]) => setBrowserTabs(new Map(list.map((t) => [t.id, t])));
     void browserApi.list().then(apply);
     const offTabs = browserApi.onTabs(apply);
-    // AI 切了标签页（当前会话的），面板跟着切
+    // AI 切了标签页（当前会话的），面板跟着切。AI 刚开的标签页可能还没补进面板（标签页列表还没推来），先记着，补上时再切
     const offActivate = browserApi.onActivate((browserId) =>
       onChange((s) => {
         const tab = s.tabs.find((t) => t.kind === "browser" && t.browserId === browserId);
+        pendingActivate.current = tab ? null : browserId;
         return tab ? { ...s, active: tab.id } : s;
       }),
     );
@@ -193,6 +194,8 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
     };
   }, [browserApi]);
   const browserLoaded = useRef(false);
+  /** AI 要切过去、但面板里还没有的标签页（外壳的 browserId） */
+  const pendingActivate = useRef<string | null>(null);
   useEffect(() => {
     if (!browserApi) return;
     // 第一次推来之前是空表，不能据此删标签页
@@ -216,14 +219,18 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
         if (missing.length) {
           changed = true;
           const added = missing.map((b): PanelTab => ({ id: crypto.randomUUID(), kind: "browser", browserId: b.id, sessionId: b.sessionId }));
+          // AI 已经要切过去的那个（切换通知比标签页列表先到）
+          const wanted = added.find((t) => t.kind === "browser" && t.browserId === pendingActivate.current);
+          if (wanted) pendingActivate.current = null;
           // 当前会话正看着的是空的新标签页：就地换成第一个，切过去（同渲染时的 activeId：当前标签看不见就算第一个看得见的）
           const visible = tabs.filter((t) => t.kind !== "browser" || t.sessionId === sessionId);
           const current = visible.find((t) => t.id === s.active) ?? visible[0];
           if (current?.kind === "new") {
             const [first, ...rest] = added;
-            return { tabs: [...tabs.map((t) => (t === current ? first! : t)), ...rest], active: first!.id };
+            return { tabs: [...tabs.map((t) => (t === current ? first! : t)), ...rest], active: (wanted ?? first!).id };
           }
           tabs = [...tabs, ...added];
+          if (wanted) return { tabs, active: wanted.id };
         }
       }
       if (!changed) return s;

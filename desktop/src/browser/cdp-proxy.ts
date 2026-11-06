@@ -20,6 +20,8 @@ export class CdpProxy {
   /** 子会话号 → 所在标签页 */
   private readonly children = new Map<string, string>();
   private readonly unsubscribe: () => void;
+  /** AI 上次让面板切过去的标签页：同一个标签页只切一次，用户手动切走后，AI 接着在原来的标签页上点不会把面板拉回来 */
+  private lastActivated: string | null = null;
 
   constructor(
     private readonly sessionId: string,
@@ -84,12 +86,28 @@ export class CdpProxy {
     const method = msg.method ?? "";
     // 视口由面板决定：Playwright 模拟设备尺寸会改掉原生视图里网页的大小
     if (method === "Emulation.setDeviceMetricsOverride" || method === "Emulation.clearDeviceMetricsOverride") return {};
+    // 切到这个标签页（Playwright 的 page.bringToFront()，网关在模型给 page 换了标签页时调用）：面板跟着切。
+    // 不转给网页：Electron 的网页视图收到它会去抢窗口焦点
+    if (method === "Page.bringToFront") {
+      tab.lastAgentUse = Date.now();
+      this.activate(tab, true);
+      return {};
+    }
     // 记下 AI 实际在操作哪个标签页（Playwright 连上时给每个标签页发的初始化命令不算），browser_keep_tab 留的是最近这个
     if (AGENT_ACTIONS.test(method)) tab.lastAgentUse = Date.now();
+    // AI 在这个标签页上跳转、输入：面板切过去，用户能看到它在操作哪个（模型可能用 page 以外的变量操作别的标签页）
+    if (VISIBLE_ACTIONS.test(method)) this.activate(tab);
     const child = sid === pageSession(tab.id) ? undefined : sid;
     const work = tab.view.webContents.debugger.sendCommand(method, msg.params, child);
     // 截图要等新的一帧，后台标签页要先让它出画面
     return method === "Page.captureScreenshot" ? this.views.whileRendering(tab.id, work) : work;
+  }
+
+  /** 让面板切到 AI 在操作的标签页；force 是 AI 明确要切（bringToFront、activateTarget），否则同一个标签页只切一次 */
+  private activate(tab: Tab, force = false): void {
+    if (!force && this.lastActivated === tab.id) return;
+    this.lastActivated = tab.id;
+    this.views.activate(tab.id);
   }
 
   private async browserCommand(method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -131,7 +149,7 @@ export class CdpProxy {
         return { success: this.views.close(tabOf(params.targetId).id) };
       case "Target.activateTarget":
         tabOf(params.targetId).lastAgentUse = Date.now();
-        this.views.activate(tabOf(params.targetId).id);
+        this.activate(tabOf(params.targetId), true);
         return {};
       case "Target.attachToTarget": {
         const tab = tabOf(params.targetId);
@@ -178,3 +196,8 @@ export class CdpProxy {
 const pageSession = (targetId: string) => `S${targetId}`;
 /** 算作 AI 在操作这个标签页的命令：跳转、输入、读页面、截图 */
 const AGENT_ACTIONS = /^(Input\.|DOM\.|Page\.(navigate|reload|captureScreenshot)|Runtime\.(evaluate|callFunctionOn))/;
+/**
+ * AI 在标签页上做的、用户应该看到的操作：跳转、输入。读页面（Runtime.evaluate 等）不算：
+ * Playwright 等元素、读内容时一直在发，算进去模型读别的标签页时面板会来回闪
+ */
+const VISIBLE_ACTIONS = /^(Input\.|Page\.(navigate|reload))/;

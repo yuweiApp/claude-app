@@ -294,6 +294,11 @@ export class BrowserRepl {
   private pageReplaced = false;
   /** 上次调用结束时开着的标签页 */
   private seen = new Set<Page>();
+  /**
+   * 代码里的 page（当前标签页）。vm 里的 page 是全局对象上的访问器（见构造函数）：模型给它赋了另一个标签页时
+   * 调用 bringToFront，内置浏览器的面板跟着切过去。网关这边换 page（标签页被关、browser_tabs select）直接改这个字段，不经访问器
+   */
+  private currentPage: unknown;
   /** 已经挂上关闭事件的浏览器上下文（断开重连后是新的） */
   private watched: BrowserContext | null = null;
 
@@ -336,6 +341,17 @@ export class BrowserRepl {
         sink.images.push({ data: base64, mimeType });
       },
     });
+    Object.defineProperty(this.sandbox, "page", {
+      enumerable: true,
+      get: () => this.currentPage,
+      set: (value: unknown) => {
+        const previous = this.currentPage;
+        this.currentPage = value;
+        // 换成了另一个还开着的标签页：切到前台（内置浏览器的面板跟着切；不等它，失败也不影响代码）
+        const next = value as Partial<Page> | null | undefined;
+        if (value !== previous && typeof next?.bringToFront === "function" && !next.isClosed?.()) next.bringToFront().catch(() => undefined);
+      },
+    });
     this.vmPromise = vm.runInContext("Promise", this.vmContext) as PromiseConstructor;
     vm.runInContext(
       `var ${LOOP_GUARD} = (() => { const check = __browserRunCodeCheckBlocked__; let n = 0; return () => { if ((++n & 1023) === 0) check(); }; })();`,
@@ -375,14 +391,14 @@ export class BrowserRepl {
     const context = await this.getContext();
     this.watch(context);
     this.sandbox.context = context;
-    const page = this.sandbox.page as Page | undefined;
+    const page = this.currentPage as Page | undefined;
     const usable = page && typeof page.isClosed === "function" && !page.isClosed() && page.context() === context;
     if (!usable) {
       if (note && page && typeof page.isClosed === "function" && page.isClosed()) this.pageReplaced = true;
-      this.sandbox.page = context.pages().at(-1);
+      this.currentPage = context.pages().at(-1);
     }
     this.seen = new Set(context.pages());
-    return { context, page: this.sandbox.page as Page | undefined };
+    return { context, page: this.currentPage as Page | undefined };
   }
 
   /** 给浏览器上下文里的标签页挂上关闭事件（新开的也挂），记下两次调用之间被关掉的 */
@@ -401,7 +417,7 @@ export class BrowserRepl {
   /** 自上次调用以来被关掉的标签页的说明（放在这次结果的开头），说过就清掉；没有返回 undefined */
   takeNotice(): string | undefined {
     if (!this.closedUrls.length && !this.pageReplaced) return undefined;
-    const page = this.sandbox.page as Page | undefined;
+    const page = this.currentPage as Page | undefined;
     const now = page ? `现在 page 指向 ${page.url()}` : "现在没有标签页，page 是 undefined，要用就 page = await context.newPage() 重新打开";
     const lines = [
       this.closedUrls.length ? `自上次调用以来，这些标签页被关掉了：\n${this.closedUrls.map((url) => `- ${url}`).join("\n")}` : "page 原来指向的标签页被关掉了。",
@@ -415,7 +431,7 @@ export class BrowserRepl {
 
   /** 切换当前标签页（browser_tabs select） */
   setPage(page: Page): void {
-    this.sandbox.page = page;
+    this.currentPage = page;
   }
 
   async run(code: string, timeoutMs: number, signal?: AbortSignal): Promise<RunResult> {
@@ -428,7 +444,7 @@ export class BrowserRepl {
     const { context } = await this.current();
     // 上次调用以来被关掉的标签页：放在这次结果的最前面（在跑代码之前取，代码自己关的不算）
     const notice = this.takeNotice();
-    const before = snapshotPages(context, this.sandbox.page as Page | undefined);
+    const before = snapshotPages(context, this.currentPage as Page | undefined);
     const sink: Sink = { lines: [], images: [] };
     this.sinks.push(sink);
 
@@ -476,7 +492,7 @@ export class BrowserRepl {
       isError = true;
       parts.push(errorText(outcome.error));
       // 模型常以为 page 一直在，没有标签页时直接 page.goto(...) 报「reading 'goto'」，提示它先开一个
-      if (this.sandbox.page === undefined) parts.push("（现在没有标签页，page 是 undefined：先 page = await context.newPage() 开一个。）");
+      if (this.currentPage === undefined) parts.push("（现在没有标签页，page 是 undefined：先 page = await context.newPage() 开一个。）");
     } else {
       isError = true;
       parts.push(outcome.stop);
