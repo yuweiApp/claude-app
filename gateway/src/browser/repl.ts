@@ -91,7 +91,7 @@ setInterval(() => {
 function loopGuard(): void {
   if (Date.now() - lastTick > MAX_BLOCK_MS) {
     lastTick = Date.now();
-    throw new Error(`循环连续占用网关超过 ${MAX_BLOCK_MS / 1000} 秒，已中止（会卡住整个网关）。要等待请用 await，比如 await page.waitForTimeout(1000) 或 locator.waitFor()，不要用同步的忙等。`);
+    throw new Error(`代码连续同步执行超过 ${MAX_BLOCK_MS / 1000} 秒（中间没有 await），已中止。`);
   }
 }
 
@@ -477,7 +477,7 @@ export class BrowserRepl {
     }
     this.localChanges = [];
     if (this.pageReplaced) {
-      lines.push(`- page 原来指向的标签页已经关闭，${page ? `现在 page 指向 ${page.url()}` : "现在没有标签页，page 是 undefined，要用就 page = await context.newPage() 重新打开"}`);
+      lines.push(`- page 原来指向的标签页已经关闭，${page ? `现在 page 指向 ${page.url()}` : "现在没有标签页，page 是 undefined"}`);
       this.pageReplaced = false;
     }
     const pages = this.watched?.pages() ?? [];
@@ -489,9 +489,9 @@ export class BrowserRepl {
     const out = [header, ...lines];
     if (fresh.length) {
       const list = await Promise.all(fresh.map(async (p) => `[${pages.indexOf(p)}] ${(await titleOf(p)) || "（无标题）"} — ${p.url()}`));
-      out.push(`不是你开的新标签页：${list.join("；")}。page 没有跟过去，要操作就 page = context.pages()[序号]。`);
+      out.push(`不是你开的新标签页（序号是在 context.pages() 里的位置）：${list.join("；")}。page 仍指向 ${page && !page.isClosed() ? page.url() : "undefined"}。`);
     }
-    if (turnEnd) out.push("你开的标签页在一轮结束时会自动关闭，要在之后的轮次接着用，就在一轮结束前调用 browser_keep_tab。");
+    if (turnEnd) out.push("你开的标签页在一轮结束时会自动关闭，除非调用过 browser_keep_tab。");
     return `（${out.join("\n")}）`;
   }
 
@@ -518,7 +518,7 @@ export class BrowserRepl {
     let onAbort: (() => void) | undefined;
     const stopped = new Promise<{ stop: string }>((resolve) => {
       timer = setTimeout(
-        () => resolve({ stop: `超过 ${timeoutMs / 1000} 秒还没跑完，不再等它（代码可能还在后台继续跑，比如还在等某个元素）。需要等更久就调大 timeout_ms。` }),
+        () => resolve({ stop: `超过 timeout_ms（${timeoutMs / 1000} 秒）还没跑完，这次调用先返回了；代码可能还在继续跑（比如还在等某个元素）。` }),
         timeoutMs,
       );
       if (signal) {
@@ -536,8 +536,10 @@ export class BrowserRepl {
       );
       outcome = await Promise.race([promise, stopped]);
     } catch (error) {
-      // 同步阶段就出错：第一个 await 之前同步跑超过 MAX_BLOCK_MS（vm 的 timeout），或者顶层的 var 和不可写的全局重名
-      outcome = { error };
+      // 同步阶段就出错：第一个 await 之前同步跑超过 MAX_BLOCK_MS（vm 的 timeout，报 Node 的原话，换成和循环检查一样的说法），
+      // 或者顶层的 var 和不可写的全局重名
+      const timedOut = /^Script execution timed out/.test(String((error as { message?: unknown })?.message ?? ""));
+      outcome = { error: timedOut ? new Error(`代码连续同步执行超过 ${MAX_BLOCK_MS / 1000} 秒（中间没有 await），已中止。`) : error };
     } finally {
       clearTimeout(timer);
       if (signal && onAbort) signal.removeEventListener("abort", onAbort);
@@ -557,8 +559,8 @@ export class BrowserRepl {
     } else if ("error" in outcome) {
       isError = true;
       parts.push(errorText(outcome.error));
-      // 模型常以为 page 一直在，没有标签页时直接 page.goto(...) 报「reading 'goto'」，提示它先开一个
-      if (this.currentPage === undefined) parts.push("（现在没有标签页，page 是 undefined：先 page = await context.newPage() 开一个。）");
+      // 没有标签页时 page.goto(...) 报「reading 'goto'」，看不出是 page 没有，补上这个事实
+      if (this.currentPage === undefined) parts.push("（现在没有标签页，page 是 undefined。）");
     } else {
       isError = true;
       parts.push(outcome.stop);

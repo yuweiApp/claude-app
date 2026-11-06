@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import type { Browser, BrowserContext } from "playwright-core";
 import { config } from "../config.js";
-import { browserMcpServer, CODE_GUIDE, READ_TOOL_NAMES, replFor } from "./tool.js";
+import { browserMcpServer, READ_TOOL_NAMES, replFor, RUNTIME_FACTS } from "./tool.js";
 
 /** MCP 服务器名：工具全名是 mcp__chrome__browser_run_code 这样 */
 export const CHROME_SERVER = "chrome";
@@ -24,14 +24,14 @@ const playwrightTools = createRequire(import.meta.url)("playwright-core/lib/core
   resolveCLIConfigForMCP(cliOptions: object, env: NodeJS.ProcessEnv): Promise<object>;
 };
 
-const INSTRUCTIONS =
-  "这些工具操作的是用户自己的 Chrome（经 Playwright 扩展连接，带着用户的登录状态和 Cookie），不是右侧面板里的内置浏览器（mcp__inapp__ 开头的工具）。" +
-  "用户说「我的 Chrome」「外部浏览器」，或者网页要用到用户的登录状态时才用；其他情况用内置浏览器。" +
-  "只能看到交给 Playwright 的标签页（Chrome 里 Playwright 标签页组里的：用户连接时选的，加上你新开的），看不到用户其他的标签页；所有会话共用这一组。" +
-  "第一次调用时 Chrome 会打开扩展的连接页，要等用户在 Chrome 里选标签页、点允许，工具才返回；报错时把错误告诉用户（比如扩展没装）。" +
-  CODE_GUIDE +
-  "你新开的标签页不会自动关闭：用完、用户也不需要看的，用 await page.close() 关掉；不要关用户自己的标签页。" +
-  "用户消息里的 @chrome[标题](网址) 指 Chrome 里的一个标签页：用 browser_tabs 列出标签页，按网址找到它再切过去。";
+const INSTRUCTIONS = [
+  "用户自己的 Chrome：经 Playwright 扩展连接，带着用户的登录状态和 Cookie；右侧面板里的内置浏览器是另一组工具（mcp__inapp__）。",
+  "能看到的标签页只有 Chrome 里 Playwright 标签页组里的（用户连接时选的，加上通过这里新开的），所有会话共用这一组。",
+  "第一次调用时，Chrome 会打开扩展的连接页，用户选好标签页、点允许之后工具才返回；扩展没装、连接失败时工具返回错误。",
+  RUNTIME_FACTS,
+  "标签页：通过这里开的标签页不会自动关闭。标签页被新开、关闭时，下一次工具结果里会列出变化，只能分出是不是你做的（扩展不提供是用户还是网页）。",
+  "用户消息里的 @chrome[标题](网址) 指这里的一个标签页。",
+].join("\n");
 
 /**
  * 到用户 Chrome 的连接，所有会话共用一条：Playwright 扩展同一个 Chrome 配置只认一个客户端，

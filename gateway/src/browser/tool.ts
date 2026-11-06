@@ -21,45 +21,40 @@ export const READ_TOOL_NAMES = ["browser_snapshot", "browser_take_screenshot", "
 
 export const BROWSER_READ_TOOLS = ["browser_keep_tab", ...READ_TOOL_NAMES].map((name) => `mcp__${BROWSER_SERVER}__${name}`);
 
-/**
- * 怎么用 browser_run_code（参照 Codex 的 js 工具），两个浏览器的说明都带上。
- * 后半段是等结果：网页要等一会儿才出结果时，模型常回一句「等结果出来再告诉你」就结束这一轮，
- * 但网页的变化不会叫醒它，所以要它把等待写在代码里。调用跑久了 Claude Code 会把它转到后台（config.ts 的 agentEnv），
- * 模型可以先回复，代码跑完后结果以 task_notification 送回来、开始新的一轮
- */
 /** MCP 调用跑多久后自动转到后台（config.ts 的 agentEnv 传给子进程的 CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS） */
 const BACKGROUND_SECONDS = (Number(process.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS) || MCP_AUTO_BACKGROUND_MS) / 1000;
 
-export const CODE_GUIDE =
-  "操作网页用 browser_run_code：写 JavaScript（Playwright 的 API），在一个常驻的 REPL 里跑，支持顶层 await，" +
-  "最后一个表达式的值和 console.log 的输出会返回给你。可以直接用的变量：page（当前标签页，Playwright 的 Page）、context（BrowserContext，context.pages() 是所有标签页）。" +
-  "顶层的 const / let / function 在之后的调用里还在（可以重新声明），常用的 locator、辅助函数可以存下来接着用。" +
-  "给 page 赋值就是切换当前标签页（browser_snapshot、browser_take_screenshot 跟着它走）：新开标签页 page = await context.newPage()；" +
-  "点链接弹出的新标签页不会自动切过去，用 const [p] = await Promise.all([context.waitForEvent('page'), locator.click()]); page = p。" +
-  "先用 browser_snapshot 读页面结构（带 [ref=e12] 的无障碍树），代码里用 page.locator('aria-ref=e12') 引用其中的元素，也可以用 getByRole、getByText 等；" +
-  "截图（browser_take_screenshot，或代码里 emitImage(await page.screenshot())）只在要看样式、图片时用。" +
-  "多步操作（填表、点击、等待、读结果）尽量写在一次调用里。" +
-  `一次调用默认最多跑 ${DEFAULT_TIMEOUT_MS / 1000} 秒，timeout_ms 最大 ${MAX_TIMEOUT_MS}（${MAX_TIMEOUT_MS / 60_000} 分钟）；Playwright 单个动作默认 30 秒超时，等更久要自己传 timeout。` +
-  "提交查询、让网页里的 AI 回答或生成之后，结果要一段时间才出来：在同一次调用里等到它再读出来" +
-  "（比如 await page.getByText('结果里会出现的字').waitFor({ timeout: 600000 })，或者循环检查页面内容、没好就 await page.waitForTimeout(5000)），" +
-  "timeout_ms 设得比要等的时间长一些。" +
-  `调用跑超过约 ${BACKGROUND_SECONDS} 秒会自动转到后台：你会先收到「在后台运行」的结果，这时可以先告诉用户在等什么、结束这一轮或做别的事，` +
-  "代码跑完后结果会以通知送回来，到时再读结果回复用户。不要因为转到了后台就重新提交同一个操作；后台的代码还在操作页面时，别的调用不要动同一个标签页。" +
-  "网页自己的变化不会通知你：没写在代码里等的结果，这一轮结束后就没人告诉你了，所以要等的东西一定写在代码里等。";
+/**
+ * browser_run_code 的运行环境，两个浏览器的说明都带上（各自独立：Chrome 可能没开，内置浏览器可能不在桌面版里）。
+ * 原则：只交代环境、能力、限制和会发生什么，不教模型怎么做（先看什么、怎么等、什么时候用哪个工具），决策留给模型。
+ * 以前写过「循环检查页面内容、没好就 waitForTimeout(5000)」这样的例子，模型照着写出等满 3 分钟的循环（判断条件是它自己补的，一直不成立）
+ */
+export const RUNTIME_FACTS = [
+  "browser_run_code 在一个常驻的 Node REPL 中执行 JavaScript（Playwright API），支持顶层 await：",
+  "- 全局变量：page 是当前标签页（Playwright Page；没有标签页时是 undefined），context 是 BrowserContext（context.pages() 是全部标签页）。",
+  "- 顶层的 const / let / function 在之后的调用里保留，可以重新声明。",
+  "- 返回最后一个表达式的值和 console.log 的输出；emitImage(buffer) 把图片加进结果。",
+  "- 给 page 赋另一个标签页时，那个标签页切到前台；browser_snapshot、browser_take_screenshot 读的是 page 指向的标签页。",
+  `- timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}；Playwright 单个动作默认 30 秒超时。`,
+  `- 调用超过约 ${BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，代码继续跑，结束后结果作为通知送达；会话空闲时，这个通知会开始新的一轮。多次调用可以同时在跑，操作的是同一批标签页。`,
+  "- 网页本身的变化不会通知你；一轮结束后，只有后台任务结束会再唤起你。",
+  "- 连续同步执行（中间没有 await）超过 2 秒的代码会被中止。",
+  "browser_snapshot 返回的结构里元素带 [ref=e12]，代码里 page.locator('aria-ref=e12') 指向同一个元素。",
+].join("\n");
 
-const INSTRUCTIONS =
-  "这些工具操作的是用户界面右侧面板里的内置浏览器（桌面版里的真实网页，用户能看到、也能自己操作），" +
-  "只能看到和操作这个会话自己的标签页。用户说「浏览器」「内置浏览器」「打开网页」时指的就是它。" +
-  CODE_GUIDE +
-  "你新开的标签页是临时的，这一轮结束时会自动关掉；用户要看的页面（比如让你打开、找到某个网页），在结束前对它调用 browser_keep_tab 留下。" +
-  "用户消息里的 @[标题](网址) 指内置浏览器里的一个标签页：用 browser_tabs 列出标签页，按网址找到它再切过去。";
+const INSTRUCTIONS = [
+  "内置浏览器：用户界面右侧面板里的真实网页，用户能看到，也能自己操作。这些工具只能看到这个会话自己的标签页。",
+  RUNTIME_FACTS,
+  "标签页：用 context.newPage() 开的是临时标签页，一轮结束时自动关闭（用户当时正在面板里看着的除外），browser_keep_tab 能把你最近操作的那个留下；用户开的不会自动关。" +
+    "标签页被新开、关闭、跳转时，下一次工具结果里会列出变化和是谁做的（你、用户、网页自己、一轮结束）。",
+  "用户消息里的 @[标题](网址) 指这里的一个标签页。",
+].join("\n");
 
-/** 开了外部浏览器（config.yml 的 externalBrowser.enabled）时补一句，区分两个浏览器 */
-const CHROME_NOTE =
-  "用户说「我的 Chrome」「外部浏览器」，或者要用到用户自己的登录状态时，用 mcp__chrome__ 开头的工具（用户自己的 Chrome），不是这里的工具。";
+/** 开了外部浏览器（config.yml 的 externalBrowser.enabled）时补一句：另一个浏览器是什么 */
+const CHROME_NOTE = "\n另有 mcp__chrome__ 开头的工具，操作的是用户自己的 Chrome，带着用户的登录状态。";
 
-/** browser_run_code 打开了网页后提醒模型：临时标签页这一轮结束会关，要留给用户就 browser_keep_tab（模型常忘） */
-const KEEP_HINT = "（这是你开的临时标签页，这一轮结束会自动关闭；如果是给用户看的页面，结束前调用 browser_keep_tab 留下。）";
+/** browser_run_code 打开了网页后附上：这是临时标签页（事实，不教怎么做） */
+const KEEP_HINT = "（这是你开的临时标签页，这一轮结束时会自动关闭，除非调用 browser_keep_tab。）";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const error = (t: string) => ({ ...text(t), isError: true });
@@ -146,16 +141,16 @@ export interface ServerOptions {
  * 以前挂的是 playwright-core 自带的 Playwright MCP（二十多个工具），点击、输入、等待这些现在都写在代码里
  */
 export function browserMcpServer({ name, instructions, repl, keep }: ServerOptions): McpSdkServerConfigWithInstance {
-  const noPage = "现在没有标签页：用 browser_run_code 执行 page = await context.newPage(); await page.goto('网址') 打开一个。";
+  const noPage = "现在没有标签页（page 是 undefined）。";
 
   const tools = [
     tool(
       "browser_run_code",
-      "在常驻的 REPL 里跑一段 JavaScript 操作浏览器（Playwright API），支持顶层 await。可以直接用 page（当前标签页）、context（所有标签页），" +
-        "顶层的 const / let / function 在之后的调用里还在；最后一个表达式的值和 console.log 的输出作为结果返回，emitImage(buffer) 返回图片。" +
-        `默认最多跑 ${DEFAULT_TIMEOUT_MS / 1000} 秒，要等网页里的长任务时调大 timeout_ms。`,
+      "在常驻的 REPL 里执行 JavaScript（Playwright API），支持顶层 await。全局有 page（当前标签页）、context（BrowserContext），顶层变量在之后的调用里保留；" +
+        "返回最后一个表达式的值和 console.log 的输出，emitImage(buffer) 把图片加进结果。" +
+        `timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}、最大 ${MAX_TIMEOUT_MS}；超过约 ${BACKGROUND_SECONDS} 秒转为后台任务，结束后结果作为通知送达。`,
       {
-        code: z.string().describe("要执行的 JavaScript，例如 await page.goto('https://example.com'); await page.title()"),
+        code: z.string().describe("要执行的 JavaScript"),
         timeout_ms: z
           .number()
           .int()
@@ -183,7 +178,7 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
     ),
     tool(
       "browser_snapshot",
-      "读当前标签页的页面结构（无障碍树，元素带 [ref=e12]，代码里用 page.locator('aria-ref=e12') 引用），前面列出所有标签页。不改动页面。",
+      "当前标签页（page）的无障碍树，元素带 [ref=e12]（代码里 page.locator('aria-ref=e12') 指向同一个元素），前面列出所有标签页。不改动页面。",
       {},
       async () => {
         try {
@@ -200,7 +195,7 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
     ),
     tool(
       "browser_take_screenshot",
-      "给当前标签页截图（默认只截可见区域，full_page 截整页）。只在要看样式、图片时用，读文字和结构用 browser_snapshot。",
+      "当前标签页（page）的截图：默认可见区域，full_page 截整页。",
       { full_page: z.boolean().optional().describe("截整个页面，默认只截可见区域") },
       async ({ full_page }) => {
         try {
@@ -225,7 +220,7 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
     ),
     tool(
       "browser_tabs",
-      "列出标签页（action: list），或把第 index 个设为当前标签页（action: select，代码里的 page 跟着换）。新开、关闭标签页用 browser_run_code。",
+      "action: list 列出标签页；action: select 把第 index 个设为 page，并切到前台。",
       {
         action: z.enum(["list", "select"]),
         index: z.number().int().min(0).optional().describe("action 为 select 时：标签页序号（list 结果里的 [序号]）"),
@@ -253,7 +248,7 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
       ? [
           tool(
             "browser_keep_tab",
-            "把你最近操作的那个标签页留给用户：不在这一轮结束时关闭。用户要看的页面（让你打开、找到的网页）在回复前调用。",
+            "把你最近操作的那个标签页标记为保留：这一轮结束时不关闭。",
             {},
             async () => {
               try {

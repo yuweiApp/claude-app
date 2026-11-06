@@ -20,12 +20,21 @@ export class TaskList {
   private readonly tasks = new Map<string, TaskRecord>();
   /** Bash 工具调用的命令：task_started 只带 tool_use_id */
   private readonly commands = new Map<string, string>();
+  /** 工具调用发出的时间：跑久了才转到后台的（MCP 调用跑满 20 秒），开始时间按调用发出时算，不按转后台的时候 */
+  private readonly toolStarts = new Map<string, number>();
+  /**
+   * 最近一条 background_tasks_changed 里的任务（SDK 说它是当前所有在跑的后台任务的完整列表）。
+   * 转到后台的 MCP 调用（mcp_task，比如 browser_run_code 跑满 20 秒）发的 task_started 不带 is_backgrounded，
+   * 只靠它认出来；它比 task_started 先到，所以记着，task_started 时再查
+   */
+  private liveBackground = new Set<string>();
 
   /** 处理一条 SDK 消息，任务列表有变化时返回 true */
   ingest(message: SDKMessage): boolean {
     switch (message.type) {
       case "assistant":
         for (const block of message.message.content) {
+          if (block.type === "tool_use") remember(this.toolStarts, block.id, Date.now());
           if (block.type === "tool_use" && block.name === "Bash") {
             const command = (block.input as { command?: unknown }).command;
             if (typeof command === "string") remember(this.commands, block.id, command);
@@ -86,12 +95,24 @@ export class TaskList {
           description: message.description,
           command: message.tool_use_id ? this.commands.get(message.tool_use_id) : undefined,
           status: "running",
-          startedAt: Date.now(),
+          startedAt: (message.tool_use_id && this.toolStarts.get(message.tool_use_id)) || Date.now(),
           hasOutput: false,
           outputFile: existing?.outputFile,
-          backgrounded: Boolean(message.is_backgrounded),
+          backgrounded: Boolean(message.is_backgrounded) || this.liveBackground.has(message.task_id) || Boolean(existing?.backgrounded),
         });
         return true;
+      }
+      case "background_tasks_changed": {
+        this.liveBackground = new Set(message.tasks.filter((t) => !t.ambient).map((t) => t.task_id));
+        let changed = false;
+        for (const id of this.liveBackground) {
+          const task = this.tasks.get(id);
+          if (task && !task.backgrounded) {
+            task.backgrounded = true;
+            changed = true;
+          }
+        }
+        return changed;
       }
       case "task_updated": {
         const task = this.tasks.get(message.task_id);
@@ -139,7 +160,7 @@ export class TaskList {
   }
 }
 
-function remember(map: Map<string, string>, key: string, value: string): void {
+function remember<T>(map: Map<string, T>, key: string, value: T): void {
   map.set(key, value);
   if (map.size > MAX_REMEMBERED) map.delete(map.keys().next().value!);
 }
