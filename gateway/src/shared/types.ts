@@ -27,6 +27,11 @@ export type GatewayEvent =
   | { type: "title"; title: string }
   /** 会话的后台任务有变化：整个列表 */
   | { type: "tasks"; tasks: BackgroundTask[] }
+  /**
+   * 转到后台的网关工具调用（browser_run_code 等）的结果，跟在那个任务的 task_notification 后面发：
+   * SDK 的通知里只有 summary（工具名），结果原文 Claude Code 直接交给了模型，网页拿不到，失败时用它显示原因
+   */
+  | { type: "task_result"; taskId: string; text: string; isError: boolean }
   | { type: "reset" };
 
 /** 会话的后台任务（Bash 后台命令、后台子代理等），见 gateway/src/agent/tasks.ts */

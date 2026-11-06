@@ -33,7 +33,15 @@ export type Item =
    * 后台任务（Bash 后台命令、后台子代理等）完成的通知。模型空闲时 Claude Code 会拿它自动开始新的一轮，所以它和用户消息一样是一轮的开头。
    * uuid 用 task:<task_id>：实时的 system/task_notification 和历史里的 <task-notification> 消息 uuid 不同，按任务 id 去重
    */
-  | { kind: "task"; uuid: string; at?: number; status: string; text: string };
+  | {
+      kind: "task";
+      uuid: string;
+      at?: number;
+      status: string;
+      text: string;
+      /** 失败的原因：网关补发的工具结果（task_result 事件），或历史通知里的 <result>；Bash 等其他任务没有 */
+      detail?: string;
+    };
 
 export type TaskItem = Extract<Item, { kind: "task" }>;
 
@@ -178,6 +186,15 @@ export function reduce(view: SessionView, action: Action): SessionView {
       next.backgroundTasks = event.tasks;
       next.backgroundTasksLive = true;
       break;
+    case "task_result": {
+      // 紧跟在这个任务的 task_notification 后面到：通知生成的那一项还在 pendingTasks 里，或者已经放进了消息列表
+      if (!event.isError) break;
+      const uuid = `task:${event.taskId}`;
+      const withDetail = (task: TaskItem): TaskItem => (task.uuid === uuid ? { ...task, detail: event.text } : task);
+      next.pendingTasks = view.pendingTasks.map(withDetail);
+      next.items = next.items.map((item) => (item.kind === "task" ? withDetail(item) : item));
+      break;
+    }
     case "reset":
       next.needsReload = true;
       break;
@@ -367,7 +384,10 @@ function taskNotification(text: string): TaskItem | null {
   const body = /^<task-notification>([\s\S]*)<\/task-notification>$/.exec(text.trim())?.[1];
   if (body === undefined) return null;
   const field = (name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(body)?.[1]?.trim() ?? "";
-  return { kind: "task", uuid: `task:${field("task-id")}`, status: field("status"), text: field("summary") };
+  const status = field("status");
+  // MCP 工具转到后台的任务，通知里带 <result>（结果原文，失败时以「Task failed: 」开头）；失败时拿它显示原因
+  const detail = status === "failed" ? field("result").replace(/^Task failed:\s*/, "") || undefined : undefined;
+  return { kind: "task", uuid: `task:${field("task-id")}`, status, text: field("summary"), ...(detail ? { detail } : {}) };
 }
 
 /** Claude Code 加载技能时写进对话的内容，不是用户发的 */

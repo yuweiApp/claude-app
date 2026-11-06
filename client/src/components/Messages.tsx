@@ -101,9 +101,27 @@ function taskLabel(task: TaskItem): string {
   const status = exit
     ? "后台任务已结束"
     : task.status === "completed" ? "后台任务已完成" : task.status === "failed" ? "后台任务失败" : task.status === "stopped" ? "后台任务已停止" : "后台任务结束";
-  const name = /"(.+)"/.exec(task.text)?.[1] ?? task.text;
+  // Bash：Background command "…" completed；MCP 工具（历史里）：MCP task <id> (inapp/browser_run_code) failed.，实时的只有工具名
+  const name = /"(.+)"/.exec(task.text)?.[1] ?? /^MCP task \S+ \((.+)\)/.exec(task.text)?.[1] ?? task.text;
   const label = name ? `${status}：${name}` : status;
   return exit ? `${label}（退出码 ${exit}）` : label;
+}
+
+/** 失败的后台任务的原因：结果原文的第一行（浏览器工具出错时是 Playwright 的报错），太长截断；全文在悬停提示里 */
+function taskReason(task: TaskItem): string | undefined {
+  if (task.status !== "failed" || !task.detail) return undefined;
+  const line = task.detail.split("\n").map((l) => l.trim()).find(Boolean);
+  return line && (line.length > 200 ? `${line.slice(0, 200)}…` : line);
+}
+
+function TaskLine({ task }: { task: TaskItem }) {
+  const reason = taskReason(task);
+  return (
+    <div className={`task-line${task.status === "failed" && !taskExitCode(task) ? " error" : ""}`} title={task.detail ?? task.text}>
+      {taskLabel(task)}
+      {reason && <div className="task-reason">{reason}</div>}
+    </div>
+  );
 }
 
 export function Messages({ view }: { view: SessionView }) {
@@ -158,11 +176,7 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
 
   return (
     <section className="turn">
-      {turn.task && (
-        <div className={`task-line${turn.task.status === "failed" && !taskExitCode(turn.task) ? " error" : ""}`} title={turn.task.text}>
-          {taskLabel(turn.task)}
-        </div>
-      )}
+      {turn.task && <TaskLine task={turn.task} />}
       {turn.user && (
         <div className="msg-group msg-group-user">
           <ItemView item={turn.user} />
@@ -313,7 +327,7 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
     case "model":
       return <ModelLine from={item.from} to={item.to} />;
     case "task":
-      return <div className="task-line">{taskLabel(item)}</div>;
+      return <TaskLine task={item} />;
   }
 }
 

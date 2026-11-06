@@ -96,6 +96,28 @@ export function disposeRepls(sessionId: string): void {
   }
 }
 
+/**
+ * 工具调用的结果，按 tool_use_id 记：调用跑久了会被 Claude Code 转到后台，结果只交给模型，
+ * 网关在 task_notification 里按 tool_use_id 取出来发给网页（task_result 事件），失败时显示原因。
+ * tool_use_id 是 Claude Code 调 MCP 工具时放在 _meta["claudecode/toolUseId"] 里的。只留最近的一些
+ */
+const toolResults = new Map<string, { text: string; isError: boolean }>();
+const MAX_TOOL_RESULTS = 50;
+
+function rememberResult(extra: unknown, text: string, isError: boolean): void {
+  const id = (extra as { _meta?: Record<string, unknown> } | undefined)?._meta?.["claudecode/toolUseId"];
+  if (typeof id !== "string") return;
+  toolResults.set(id, { text, isError });
+  if (toolResults.size > MAX_TOOL_RESULTS) toolResults.delete(toolResults.keys().next().value as string);
+}
+
+/** 取出（并删掉）一次工具调用的结果；不是网关的浏览器工具、或者已经被挤掉了返回 undefined */
+export function takeToolResult(toolUseId: string): { text: string; isError: boolean } | undefined {
+  const result = toolResults.get(toolUseId);
+  toolResults.delete(toolUseId);
+  return result;
+}
+
 /** 标签页的一行描述：[序号] 标题 — 网址；后台冻结的标签页 title() 可能迟迟不回，最多等 1 秒 */
 async function describe(pages: Page[], current: Page | undefined): Promise<string> {
   const title = (page: Page) =>
@@ -143,11 +165,13 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
           const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
           const result = await repl.run(code, timeout_ms ?? DEFAULT_TIMEOUT_MS, signal);
           const body = keep && result.opened && !result.isError ? `${result.text}\n\n${KEEP_HINT}` : result.text;
+          rememberResult(extra, result.text, result.isError);
           return {
             content: [{ type: "text" as const, text: body }, ...result.images.map((img) => ({ type: "image" as const, ...img }))],
             ...(result.isError ? { isError: true } : {}),
           };
         } catch (err) {
+          rememberResult(extra, errorMessage(err), true);
           return error(errorMessage(err));
         }
       },
