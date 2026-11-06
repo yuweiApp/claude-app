@@ -294,7 +294,8 @@ function FileTree({ cwd, activePath, autoFocus, onSelect }: { cwd: string; activ
       rows.push(<div key={`${dir}:error`} className="files-note files-error" style={{ paddingLeft: pad + 18 }}>{list.error}</div>);
       return;
     }
-    if (!list.length && depth > 0) rows.push(<div key={`${dir}:empty`} className="files-note" style={{ paddingLeft: pad + 18 }}>空文件夹</div>);
+    // 根目录空着（比如普通会话刚建的 scratch 目录）也写一句，不然面板一片空白
+    if (!list.length) rows.push(<div key={`${dir}:empty`} className="files-note" style={{ paddingLeft: pad + 18 }}>空文件夹</div>);
     for (const entry of list) {
       const name = basename(entry.path);
       const open = entry.dir && cache.expanded.has(entry.path);

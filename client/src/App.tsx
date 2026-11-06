@@ -59,9 +59,10 @@ export function App() {
     showPanel(false);
   };
   const current = sessions.find((s) => s.sessionId === currentId);
-  // 会话标题和所在项目，显示在对话上方那一行（右边是会话栏按钮）；新会话页没有
+  // 会话标题和工作目录，显示在对话上方那一行（右边是会话栏按钮）；新会话页没有。
+  // 项目会话是项目文件夹，普通会话是它的 scratch-… 目录（旧会话是 workspace 本身），悬停看完整路径
   const title = currentId ? (current ? sessionTitle(current) : "新会话") : null;
-  const folder = current?.cwd && !current.chat ? folderName(current.cwd) : null;
+  const folder = current?.cwd ? folderName(current.cwd) : null;
   const chatCwd = currentId ? (current?.cwd ?? null) : newCwd;
   // 右侧面板（文件、终端、浏览器）开在会话的工作目录：项目文件夹，或者普通会话自己的 scratch 目录。
   // 发出第一条消息、会话建好（列表里有了）之后才能用：新会话页还没有工作目录（普通会话的 scratch 目录是建会话时才有的），按钮置灰。
