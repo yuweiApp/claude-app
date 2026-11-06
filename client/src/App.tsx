@@ -132,8 +132,8 @@ export function App() {
             aria-current={settingsOpen ? undefined : "page"}
             onClick={() => (settingsOpen ? setSettingsOpen(false) : startNew())}
           >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M3.5 8.75 10 3.5l6.5 5.25V15.5a1 1 0 0 1-1 1h-3.25v-4.25h-4.5v4.25H4.5a1 1 0 0 1-1-1z" />
+            <svg className="ic ic-home" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path fill="currentColor" fillOpacity="0.15" d="M3.5 8.75 10 3.5l6.5 5.25V15.5a1 1 0 0 1-1 1h-3.25v-4.25h-4.5v4.25H4.5a1 1 0 0 1-1-1z" />
             </svg>
           </button>
           <button
@@ -143,8 +143,8 @@ export function App() {
             aria-current={settingsOpen ? "page" : undefined}
             onClick={() => setSettingsOpen(true)}
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M9.49 5.25L10.30 2.55L13.70 2.55L14.51 5.25L16.59 6.45L19.33 5.80L21.03 8.75L19.10 10.80L19.10 13.20L21.03 15.25L19.33 18.20L16.59 17.55L14.51 18.75L13.70 21.45L10.30 21.45L9.49 18.75L7.41 17.55L4.67 18.20L2.97 15.25L4.90 13.20L4.90 10.80L2.97 8.75L4.67 5.80L7.41 6.45Z" />
+            <svg className="ic ic-settings" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path fill="currentColor" fillOpacity="0.15" d="M9.49 5.25L10.30 2.55L13.70 2.55L14.51 5.25L16.59 6.45L19.33 5.80L21.03 8.75L19.10 10.80L19.10 13.20L21.03 15.25L19.33 18.20L16.59 17.55L14.51 18.75L13.70 21.45L10.30 21.45L9.49 18.75L7.41 17.55L4.67 18.20L2.97 15.25L4.90 13.20L4.90 10.80L2.97 8.75L4.67 5.80L7.41 6.45Z" />
               <circle cx="12" cy="12" r="3.1" />
             </svg>
           </button>

@@ -13,8 +13,22 @@
   --warn: #b7791f;
   /* 对话区（消息和输入框）的宽度，居中，两边留白 */
   --content-width: 640px;
-  /* 外框色：标题栏，比侧边栏深一点 */
-  --chrome: color-mix(in srgb, var(--panel) 94%, var(--text));
+  /* 图标的颜色：同一个东西在侧栏、输入框上面、设置页里一个颜色 */
+  --ic-home: #2f6fdb;
+  --ic-settings: #6366f1;
+  --ic-compose: var(--accent);
+  --ic-project: #d97706;
+  --ic-folder: #d9a020;
+  --ic-chat: #0d9488;
+  --ic-skill: #9333ea;
+  --ic-plugin: #2563eb;
+  --ic-tab: #059669;
+  --ic-mcp: #db2777;
+  /* 外框色：标题栏，比侧边栏、图标栏明显深一层 */
+  --chrome: color-mix(in srgb, var(--panel) 90%, var(--text));
+  /* 内容区（侧边栏、对话区、设置页）压在外框上的那条边：比普通分割线深，再配一道向上的淡阴影（--sheet-shadow） */
+  --sheet-edge: color-mix(in srgb, var(--border) 80%, var(--text));
+  --sheet-shadow: 0 -1px 4px -1px rgb(0 0 0 / 0.08);
   /* 最左边的图标栏：介于标题栏和侧边栏之间，和标题栏分开，不连成一片 */
   --rail: color-mix(in srgb, var(--panel) 97%, var(--text));
   color-scheme: light;
@@ -32,6 +46,16 @@
     --code-bg: #2c2b28;
     --warn: #e0a84a;
     --skill: #84b4f0;
+    --ic-home: #7aa7f5;
+    --ic-settings: #a5a8fb;
+    --ic-compose: #e38b6a;
+    --ic-project: #f2a33a;
+    --ic-folder: #f0c040;
+    --ic-chat: #3cc8b8;
+    --ic-skill: #c084fc;
+    --ic-plugin: #79a6ff;
+    --ic-tab: #34d399;
+    --ic-mcp: #f472b6;
     color-scheme: dark;
   }
 }
@@ -77,8 +101,8 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .window-btn:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
 .window-close:hover { background: #e81123; color: #fff; }
 .sidebar {
-  width: var(--sidebar-width, 260px); flex-shrink: 0; background: var(--panel); border: solid var(--border); border-width: 1px 0 0 1px;
-  border-top-left-radius: 12px; padding: 0 12px 12px; overflow-y: auto;
+  width: var(--sidebar-width, 260px); flex-shrink: 0; background: var(--panel); border: solid var(--sheet-edge); border-width: 1px 0 0 1px;
+  border-top-left-radius: 12px; padding: 0 12px 12px; overflow-y: auto; box-shadow: var(--sheet-shadow);
 }
 /* 侧边栏和对话区之间的分割线：拖动调宽度。本身不占宽度，两边各伸出 4px 方便抓 */
 .sidebar-resizer { position: relative; z-index: 5; flex: none; width: 0; cursor: col-resize; touch-action: none; outline: none; }
@@ -165,12 +189,12 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .session-item:hover .session-row, .session-item.menu-open .session-row { padding-right: 36px; }
 .session-item:hover .session-spinner, .session-item.menu-open .session-spinner { opacity: 0; }
 
-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); border-top: 1px solid var(--border); }
+main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); border-top: 1px solid var(--sheet-edge); box-shadow: var(--sheet-shadow); }
 /* 侧边栏收起时对话区直接嵌在图标栏旁边，圆角和边线由它自己画 */
-.app-rail + main { border-left: 1px solid var(--border); border-top-left-radius: 12px; }
+.app-rail + main { border-left: 1px solid var(--sheet-edge); border-top-left-radius: 12px; }
 
 /* 设置页：左边分组导航，右边列表（同 codex-app-server 的设置页） */
-.settings { flex: 1; min-width: 0; display: flex; background: var(--bg); border: solid var(--border); border-width: 1px 0 0 1px; border-top-left-radius: 12px; overflow: hidden; }
+.settings { flex: 1; min-width: 0; display: flex; background: var(--bg); border: solid var(--sheet-edge); border-width: 1px 0 0 1px; box-shadow: var(--sheet-shadow); border-top-left-radius: 12px; overflow: hidden; }
 .settings-nav { flex: none; width: 220px; display: flex; flex-direction: column; gap: 2px; padding: 14px 10px; background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto; }
 .settings-nav[hidden] { display: none; }
 .settings-nav h2 { margin: 0 6px 12px; font-size: 16px; }
@@ -880,3 +904,15 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; background:
 .tab-picker-hint { flex: none; margin-left: auto; color: var(--muted); font-size: 12px; }
 .tab-picker-tab { padding-left: 40px; }
 .tab-picker-empty { padding: 4px 8px 8px 40px; font-size: 12px; }
+
+/* 彩色图标（写在最后，盖过 .new-chat-chip svg、.settings-nav-item svg 这类把图标设成灰色的规则） */
+svg.ic-home { color: var(--ic-home); }
+svg.ic-settings { color: var(--ic-settings); }
+svg.ic-compose { color: var(--ic-compose); }
+svg.ic-project { color: var(--ic-project); }
+svg.ic-folder { color: var(--ic-folder); }
+svg.ic-chat { color: var(--ic-chat); }
+svg.ic-skill { color: var(--ic-skill); }
+svg.ic-plugin { color: var(--ic-plugin); }
+svg.ic-tab { color: var(--ic-tab); }
+svg.ic-mcp { color: var(--ic-mcp); }
