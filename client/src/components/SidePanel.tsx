@@ -19,8 +19,11 @@ export type PanelTab =
   | { id: string; kind: "new" }
   | { id: string; kind: "files"; path: string | null; transient: boolean }
   | { id: string; kind: "terminal"; terminalId: string; label: string }
-  /** 内置浏览器（只有桌面版有）：标签页属于对话会话，面板里只显示当前会话的 */
-  | { id: string; kind: "browser"; browserId: string; sessionId: string };
+  /**
+   * 内置浏览器（只有桌面版有）：标签页属于对话会话，面板里只显示当前会话的。
+   * key 是外壳给的、不随重启变的编号：桌面版重启后标签页恢复了但 browserId 是新的，按 key 对回来
+   */
+  | { id: string; kind: "browser"; browserId: string; sessionId: string; key?: string };
 
 /** 一个项目文件夹的面板：标签页和当前选中的 */
 export interface PanelState {
@@ -123,20 +126,26 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
   // 和网关上这个项目的终端对齐（每 2 秒）：刷新页面后还开着的、模型用 run_in_terminal 开的补成标签页（不抢当前标签），
   // 模型关掉的去掉，标题跟着网关的（模型开的终端有标题）
   const seen = useRef(new Set<string>());
+  // 第一次对齐之前不接终端：上次保存的终端标签可能在网关上已经没有了
+  const [terminalsChecked, setTerminalsChecked] = useState(false);
   useEffect(() => {
     let stale = false;
+    let first = true;
     const sync = () =>
       api.terminals(cwd).then((list) => {
         if (stale) return;
         const ids = new Set(list.map((t) => t.id));
-        // 之前见过、现在没了的才算被关掉（刚开的终端可能还没出现在这次的列表里）
+        // 之前见过、现在没了的才算被关掉（刚开的终端可能还没出现在这次的列表里）；
+        // 第一次对齐时，从上次保存的面板状态里恢复的终端标签，网关上已经没有的（网关重启过）也去掉
         const gone = new Set([...seen.current].filter((id) => !ids.has(id)));
+        const initial = first;
+        first = false;
         seen.current = ids;
         onChange((s) => {
           let changed = false;
           let tabs = s.tabs.flatMap((tab): PanelTab[] => {
             if (tab.kind !== "terminal") return [tab];
-            if (gone.has(tab.terminalId)) {
+            if (gone.has(tab.terminalId) || (initial && !ids.has(tab.terminalId))) {
               changed = true;
               return [];
             }
@@ -163,7 +172,8 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
           if (!tabs.some((t) => t.id === active)) active = tabs[0]!.id;
           return { tabs, active };
         });
-      }, () => undefined);
+        if (initial) setTerminalsChecked(true);
+      }, () => !stale && setTerminalsChecked(true));
     void sync();
     const timer = setInterval(() => void sync(), 2000);
     return () => {
@@ -172,9 +182,10 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
     };
   }, [cwd]);
 
-  // 内置浏览器：外壳推来全部标签页。当前会话的、面板里还没有的（AI 开的、刷新页面前开的）补成标签页（不抢当前标签），关掉的去掉
+  // 内置浏览器：外壳推来全部标签页。当前会话的、面板里还没有的（AI 开的、刷新页面前开的）补成标签页（不抢当前标签），关掉的去掉。
+  // null 是还没从外壳拿到列表
   const browserApi = desktop?.browser;
-  const [browserTabs, setBrowserTabs] = useState<Map<string, BrowserTabInfo>>(new Map());
+  const [browserTabs, setBrowserTabs] = useState<Map<string, BrowserTabInfo> | null>(null);
   useEffect(() => {
     if (!browserApi) return;
     const apply = (list: BrowserTabInfo[]) => setBrowserTabs(new Map(list.map((t) => [t.id, t])));
@@ -193,32 +204,33 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
       offActivate();
     };
   }, [browserApi]);
-  const browserLoaded = useRef(false);
   /** AI 要切过去、但面板里还没有的标签页（外壳的 browserId） */
   const pendingActivate = useRef<string | null>(null);
   useEffect(() => {
-    if (!browserApi) return;
-    // 第一次推来之前是空表，不能据此删标签页
-    if (!browserLoaded.current) {
-      browserLoaded.current = browserTabs.size > 0;
-      if (!browserLoaded.current) return;
-    }
+    // 拿到外壳的列表之前不能据此删标签页
+    if (!browserApi || !browserTabs) return;
+    const byKey = new Map([...browserTabs.values()].map((b) => [b.key, b]));
     onChange((s) => {
       let changed = false;
       let tabs = s.tabs.flatMap((t): PanelTab[] => {
         if (t.kind !== "browser") return [t];
-        if (!browserTabs.has(t.browserId)) {
+        if (browserTabs.has(t.browserId)) {
+          if (t.key) return [t];
+          // 旧的面板状态没记 key：补上
           changed = true;
-          return [];
+          return [{ ...t, key: browserTabs.get(t.browserId)!.key }];
         }
-        return [t];
+        // 桌面版重启后恢复的标签页：id 换了，按 key 对回来
+        const restored = t.key ? byKey.get(t.key) : undefined;
+        changed = true;
+        return restored ? [{ ...t, browserId: restored.id, sessionId: restored.sessionId }] : [];
       });
       if (sessionId) {
         const have = new Set(tabs.flatMap((t) => (t.kind === "browser" ? [t.browserId] : [])));
         const missing = [...browserTabs.values()].filter((b) => b.sessionId === sessionId && !have.has(b.id));
         if (missing.length) {
           changed = true;
-          const added = missing.map((b): PanelTab => ({ id: crypto.randomUUID(), kind: "browser", browserId: b.id, sessionId: b.sessionId }));
+          const added = missing.map((b): PanelTab => ({ id: crypto.randomUUID(), kind: "browser", browserId: b.id, sessionId: b.sessionId, key: b.key }));
           // AI 已经要切过去的那个（切换通知比标签页列表先到）
           const wanted = added.find((t) => t.kind === "browser" && t.browserId === pendingActivate.current);
           if (wanted) pendingActivate.current = null;
@@ -343,12 +355,12 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
       return;
     }
     if (!info) return;
-    setBrowserTabs((all) => new Map(all).set(info.id, info));
+    setBrowserTabs((all) => new Map(all ?? []).set(info.id, info));
     onChange((s) => {
       // 外壳推来的列表可能先到，已经补成了标签页：去掉这个新标签页，切过去
       const existing = s.tabs.find((t) => t.kind === "browser" && t.browserId === info.id);
       if (existing) return { tabs: s.tabs.filter((t) => t.id !== id), active: existing.id };
-      const tab: PanelTab = { id, kind: "browser", browserId: info.id, sessionId: info.sessionId };
+      const tab: PanelTab = { id, kind: "browser", browserId: info.id, sessionId: info.sessionId, key: info.key };
       return { tabs: s.tabs.map((t) => (t.id === id ? tab : t)), active: id };
     });
   };
@@ -390,7 +402,7 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
               key={tab.id}
               cwd={cwd}
               tab={tab}
-              browserInfo={tab.kind === "browser" ? browserTabs.get(tab.browserId) : undefined}
+              browserInfo={tab.kind === "browser" ? browserTabs?.get(tab.browserId) : undefined}
               active={tab.id === activeId}
               onSelect={() => select(tab.id)}
               onPin={() => pin(tab.id)}
@@ -418,7 +430,7 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
               />
             )}
             {tab.kind === "browser" && browserApi && (
-              <BrowserTab api={browserApi} id={tab.browserId} info={browserTabs.get(tab.browserId)} active={tab.id === activeId} />
+              <BrowserTab api={browserApi} id={tab.browserId} info={browserTabs?.get(tab.browserId)} active={tab.id === activeId} />
             )}
             {tab.kind === "files" && (
               <FileBrowser
@@ -431,7 +443,8 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
                 onDeleted={fileDeleted}
               />
             )}
-            {tab.kind === "terminal" && (
+            {tab.kind === "terminal" && !terminalsChecked && <div className="panel-empty">正在连接终端…</div>}
+            {tab.kind === "terminal" && terminalsChecked && (
               <Suspense fallback={<div className="panel-empty">正在加载终端…</div>}>
                 <TerminalView terminalId={tab.terminalId} active={tab.id === activeId} />
               </Suspense>

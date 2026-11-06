@@ -15,8 +15,10 @@ export interface DesktopApi {
 
 /** 内置浏览器的一个标签页，和 desktop/src/browser/views.ts 的 TabInfo 一致 */
 export interface BrowserTabInfo {
-  /** CDP 的 targetId */
+  /** CDP 的 targetId（桌面版重启后恢复的标签页是新的） */
   id: string;
+  /** 不随重启变的编号，重启后按它把面板里的标签对回恢复的标签页 */
+  key: string;
   /** 所属的对话会话 */
   sessionId: string;
   url: string;

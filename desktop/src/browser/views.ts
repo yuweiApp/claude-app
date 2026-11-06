@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
@@ -12,8 +13,10 @@ import { BrowserHistory } from "./history.js";
  */
 
 export interface TabInfo {
-  /** 就是 CDP 的 targetId */
+  /** 就是 CDP 的 targetId（重启后恢复的标签页是新的） */
   id: string;
+  /** 不随重启变的编号：标签页存在 browser-tabs.json 里，重启后恢复，界面按它把面板里的标签对回来 */
+  key: string;
   /** 所属的对话会话 */
   sessionId: string;
   url: string;
@@ -64,6 +67,16 @@ export interface TabEvent {
   openerId?: string;
   /** navigated 的方式 */
   action?: "address" | "back" | "forward" | "reload";
+}
+
+/** browser-tabs.json 里的一个标签页 */
+interface SavedTab {
+  key: string;
+  sessionId: string;
+  url: string;
+  title: string;
+  openedBy: "user" | "agent";
+  kept: boolean;
 }
 
 /** 网页图标的协议：界面的 <img> 用 favicon://icon/<编号> 加载（main.ts 注册，faviconResponse 返回图片） */
@@ -150,9 +163,17 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   /** 正在为截图保持渲染的标签页 → 计数 */
   private rendering = new Map<string, number>();
   readonly history = new BrowserHistory(path.join(app.getPath("userData"), "browser-history.json"));
+  /** 开着的标签页（会话、网址、标题、是不是留下的），重启后恢复 */
+  private readonly tabsFile = path.join(app.getPath("userData"), "browser-tabs.json");
+  private saveTimer: NodeJS.Timeout | undefined;
+  /** 正在恢复上次的标签页：恢复完再存，免得存下一半 */
+  private restoring = false;
+  /** 退出中：窗口关掉时视图跟着销毁，这些关闭不算，不再存 */
+  private frozen = false;
 
   constructor(private readonly mainWindow: () => BrowserWindow | undefined) {
     super();
+    for (const event of ["created", "changed", "closed"] as const) this.on(event, () => this.scheduleSave());
   }
 
   /** app ready 之后调用一次 */
@@ -173,6 +194,70 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     });
     await this.park.loadURL("about:blank");
     if (!isMac) this.park.showInactive();
+    await this.restore();
+  }
+
+  /** 退出前调用（主窗口关闭、应用退出）：先存一次，之后视图销毁引起的关闭不再改动记录 */
+  freeze(): void {
+    if (this.frozen) return;
+    clearTimeout(this.saveTimer);
+    this.save();
+    this.frozen = true;
+  }
+
+  /** 恢复上次开着的标签页：同一个会话、网址，留没留下也照旧；CDP 的 id 是新的，key 不变 */
+  private async restore(): Promise<void> {
+    let saved: SavedTab[];
+    try {
+      saved = JSON.parse(fs.readFileSync(this.tabsFile, "utf8")) as SavedTab[];
+    } catch {
+      return;
+    }
+    this.restoring = true;
+    try {
+      for (const s of saved) {
+        if (!s || typeof s.sessionId !== "string" || typeof s.key !== "string") continue;
+        try {
+          const view = this.newView();
+          await view.webContents.loadURL("about:blank");
+          const tab = await this.register(view, s.sessionId, s.openedBy === "agent" ? "agent" : "user", undefined, { key: s.key, kept: s.kept !== false });
+          tab.title = s.title ?? "";
+          if (s.url && s.url !== "about:blank") void this.load(tab, s.url);
+        } catch {
+          // 恢复不了的跳过
+        }
+      }
+    } finally {
+      this.restoring = false;
+    }
+    this.save();
+  }
+
+  private scheduleSave(): void {
+    if (this.frozen || this.restoring) return;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => this.save(), 1000);
+  }
+
+  private save(): void {
+    if (this.frozen) return;
+    const list: SavedTab[] = [...this.tabs.values()].map((t) => ({ key: t.key, sessionId: t.sessionId, url: t.url, title: t.title, openedBy: t.openedBy, kept: t.kept }));
+    try {
+      const tmp = `${this.tabsFile}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(list));
+      fs.renameSync(tmp, this.tabsFile);
+    } catch {
+      // 写不了就算了，下次变化再写
+    }
+  }
+
+  private newView(): WebContentsView {
+    const view = new WebContentsView({
+      webPreferences: { partition: PARTITION, backgroundThrottling: false, sandbox: true, contextIsolation: true },
+    });
+    this.park!.contentView.addChildView(view);
+    view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+    return view;
   }
 
   list(sessionId?: string): Tab[] {
@@ -185,11 +270,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
 
   /** 新建标签页；created 事件在返回之前发出（CDP 代理靠这个顺序先报标签页、再回 createTarget） */
   async create(sessionId: string, url: string | undefined, openedBy: "user" | "agent"): Promise<Tab> {
-    const view = new WebContentsView({
-      webPreferences: { partition: PARTITION, backgroundThrottling: false, sandbox: true, contextIsolation: true },
-    });
-    this.park!.contentView.addChildView(view);
-    view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+    const view = this.newView();
     await view.webContents.loadURL("about:blank");
     const tab = await this.register(view, sessionId, openedBy);
     this.emitTabEvent(tab, "opened", openedBy, url);
@@ -334,14 +415,21 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     if (this.shown === tab) this.shown = null;
   }
 
-  /** 挂上调试接口、登记标签页、接上各种事件 */
-  private async register(view: WebContentsView, sessionId: string, openedBy: "user" | "agent", openerId?: string): Promise<Tab> {
+  /** 挂上调试接口、登记标签页、接上各种事件；restored：重启后恢复的，沿用原来的 key 和留没留下 */
+  private async register(
+    view: WebContentsView,
+    sessionId: string,
+    openedBy: "user" | "agent",
+    openerId?: string,
+    restored?: { key: string; kept: boolean },
+  ): Promise<Tab> {
     const wc = view.webContents;
     const dbg = wc.debugger;
     if (!dbg.isAttached()) dbg.attach("1.3");
     const { targetInfo } = (await dbg.sendCommand("Target.getTargetInfo")) as { targetInfo: { targetId: string } };
     const tab: Tab = {
       id: targetInfo.targetId,
+      key: restored?.key ?? randomUUID(),
       sessionId,
       url: wc.getURL(),
       title: wc.getTitle(),
@@ -350,7 +438,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
       canGoForward: false,
       openedBy,
       ...(openerId ? { openerId } : {}),
-      kept: openedBy === "user",
+      kept: restored?.kept ?? openedBy === "user",
       view,
       lastAgentUse: 0,
       lastAgentInput: 0,

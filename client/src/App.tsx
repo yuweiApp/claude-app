@@ -69,7 +69,18 @@ export function App() {
   // 旧的普通会话工作目录就是 workspace 本身，文件树列的就是整个 workspace。开着还是收起全局记住，标签页按文件夹分开
   const panelCwd = config && current ? current.cwd || config.workspaceDir : null;
   const [panelOpen, setPanelOpen] = useState(initialPanelOpen);
-  const [panels, setPanels] = useState<Record<string, PanelState>>({});
+  // 标签页按文件夹存在 localStorage，重启、刷新后恢复（浏览器标签按 key 对回桌面版恢复的标签页，终端标签按网关上还在不在）
+  const [panels, setPanels] = useState<Record<string, PanelState>>(initialPanels);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(PANELS_KEY, JSON.stringify(panels));
+      } catch {
+        // 忽略
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [panels]);
   // 还没改过的项目用同一个默认状态（每次渲染新建的话标签页 id 会变）
   const defaultPanels = useRef<Record<string, PanelState>>({});
   const panelOf = (all: Record<string, PanelState>, cwd: string) => all[cwd] ?? (defaultPanels.current[cwd] ??= newPanelState());
@@ -238,6 +249,17 @@ export function App() {
 
 const COLLAPSED_KEY = "sidebarCollapsed";
 const PANEL_OPEN_KEY = "sidePanelOpen";
+const PANELS_KEY = "sidePanelStates";
+
+function initialPanels(): Record<string, PanelState> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PANELS_KEY) ?? "{}") as Record<string, PanelState>;
+    const valid = Object.entries(saved).filter(([, p]) => Array.isArray(p?.tabs) && p.tabs.length > 0 && typeof p.active === "string");
+    return Object.fromEntries(valid);
+  } catch {
+    return {};
+  }
+}
 
 function initialPanelOpen(): boolean {
   try {

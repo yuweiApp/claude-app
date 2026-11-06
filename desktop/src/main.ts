@@ -185,6 +185,8 @@ if (!app.requestSingleInstanceLock()) {
   });
   // 停放窗口不算：主窗口关了就退出
   app.on("window-all-closed", () => app.quit());
+  // 退出时先存下开着的标签页，之后视图跟着窗口销毁不算关闭
+  app.on("before-quit", () => browserViews.freeze());
   app.on("will-quit", () => {
     bridge?.stop();
     browserViews.history.flush();
@@ -202,6 +204,7 @@ if (!app.requestSingleInstanceLock()) {
       await browserViews.init();
       session.defaultSession.protocol.handle(FAVICON_SCHEME, (request) => browserViews.faviconResponse(request.url));
       mainWindow = createWindow();
+      mainWindow.on("close", () => browserViews.freeze());
       mainWindow.on("closed", () => app.quit());
       const ws = new URL("/browser/host", gatewayUrl.replace(/^http/, "ws"));
       if (gatewayToken) ws.searchParams.set("token", gatewayToken);
