@@ -12,6 +12,8 @@ interface TaskRecord extends BackgroundTask {
 }
 
 const MAX_REMEMBERED = 200;
+/** 记下的工具结果最多这么多字，免得截图之外的大段页面结构把记录文件撑大 */
+const MAX_RESULT_CHARS = 20_000;
 
 /**
  * 一个会话的后台任务（Bash 后台命令、后台子代理等），从 SDK 的 task_* 消息整理出来。
@@ -24,6 +26,8 @@ export class TaskList {
   private saveTimer?: NodeJS.Timeout;
   /** Bash 工具调用的命令：task_started 只带 tool_use_id */
   private readonly commands = new Map<string, string>();
+  /** browser_run_code 调用的代码（input.code）：转到后台后 task_started 只带 tool_use_id */
+  private readonly codes = new Map<string, string>();
   /** 工具调用发出的时间：跑久了才转到后台的（MCP 调用跑满 20 秒），开始时间按调用发出时算，不按转后台的时候 */
   private readonly toolStarts = new Map<string, number>();
   /**
@@ -56,6 +60,15 @@ export class TaskList {
     return this.changed(this.ingestMessage(message));
   }
 
+  /** 转到后台的网关工具调用结束：记下结果原文（SDK 的通知里只有工具名） */
+  setResult(taskId: string, text: string, isError: boolean): boolean {
+    const task = this.tasks.get(taskId);
+    if (!task) return false;
+    task.result = text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}\n…（后面还有 ${text.length - MAX_RESULT_CHARS} 字）` : text;
+    task.resultIsError = isError;
+    return this.changed(true);
+  }
+
   /** 会话删除时删掉记录文件 */
   dispose(): void {
     clearTimeout(this.saveTimer);
@@ -78,7 +91,11 @@ export class TaskList {
     switch (message.type) {
       case "assistant":
         for (const block of message.message.content) {
-          if (block.type === "tool_use") remember(this.toolStarts, block.id, Date.now());
+          if (block.type === "tool_use") {
+            remember(this.toolStarts, block.id, Date.now());
+            const code = (block.input as { code?: unknown } | null)?.code;
+            if (typeof code === "string") remember(this.codes, block.id, code);
+          }
           if (block.type === "tool_use" && block.name === "Bash") {
             const command = (block.input as { command?: unknown }).command;
             if (typeof command === "string") remember(this.commands, block.id, command);
@@ -138,6 +155,7 @@ export class TaskList {
           type: message.task_type,
           description: message.description,
           command: message.tool_use_id ? this.commands.get(message.tool_use_id) : undefined,
+          code: message.tool_use_id ? this.codes.get(message.tool_use_id) : undefined,
           status: "running",
           startedAt: (message.tool_use_id && this.toolStarts.get(message.tool_use_id)) || Date.now(),
           hasOutput: false,

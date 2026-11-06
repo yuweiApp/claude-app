@@ -236,13 +236,14 @@ export class AgentSession {
           this.setState("running");
         }
         this.trackTools(message);
-        const tasksChanged = this.tasks.ingest(message);
+        let tasksChanged = this.tasks.ingest(message);
         this.publish({ type: "sdk", message });
         // 转到后台的浏览器工具调用结束了：把结果原文补发给网页（通知里只有工具名），失败时显示原因
         if (message.type === "system" && message.subtype === "task_notification" && message.tool_use_id) {
           const result = takeToolResult(message.tool_use_id);
           if (result) {
             this.publish({ type: "task_result", taskId: message.task_id, text: result.text, isError: result.isError });
+            tasksChanged = this.tasks.setResult(message.task_id, result.text, result.isError) || tasksChanged;
             this.browserTaskEnded = true;
           }
         }

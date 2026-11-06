@@ -97,7 +97,8 @@ function TaskRow({ sessionId, task, onError }: { sessionId: string; task: Backgr
   const stop = () => api.stopTask(sessionId, task.taskId).catch((e: Error) => onError(`停止任务失败：${e.message}`));
   // 退出码不是 0 只写在输出最后（[exited with code N]），不标红；没有退出码的失败才标红
   const failed = task.status === "failed" && task.exitCode === undefined;
-  const preview = task.command ?? task.summary;
+  // 转到后台的 browser_run_code：说明和通知的 summary 都是工具名，第二行显示代码的第一行
+  const preview = task.command ?? firstLine(task.code) ?? (task.summary !== task.description ? task.summary : undefined);
 
   return (
     <div className="task-item">
@@ -121,12 +122,19 @@ function TaskRow({ sessionId, task, onError }: { sessionId: string; task: Backgr
       {open && (
         <pre className="task-output" ref={outputRef}>
           {task.command && <span className="task-command">{`$ ${task.command}\n`}</span>}
-          {task.hasOutput ? (output ?? "") : (task.summary ?? (running ? "运行中…" : statusText(task)))}
+          {task.code !== undefined && <span className="task-command">{`${task.code}\n\n`}</span>}
+          {task.hasOutput ? (output ?? "") : task.result !== undefined ? (
+            <span className={task.resultIsError ? "task-error" : undefined}>{task.result || "（没有输出）"}</span>
+          ) : running ? "运行中…" : (task.summary && task.summary !== task.description ? task.summary : statusText(task))}
           {!running && task.hasOutput && output === "" && statusText(task)}
         </pre>
       )}
     </div>
   );
+}
+
+function firstLine(text: string | undefined): string | undefined {
+  return text?.split("\n").find((line) => line.trim())?.trim();
 }
 
 function statusText(task: BackgroundTask): string {

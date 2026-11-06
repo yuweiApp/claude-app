@@ -656,6 +656,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; background:
   color: var(--muted); white-space: pre-wrap; word-break: break-all;
 }
 .task-command { color: var(--text); }
+.task-error { color: var(--err); }
 
 /* 右侧面板（参照 codex-app-server 的 .side-panel）：对话区右边，左边缘拖动调宽度 */
 .main-split { flex: 1; min-height: 0; display: flex; }

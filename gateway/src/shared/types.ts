@@ -43,6 +43,11 @@ export interface BackgroundTask {
   description: string;
   /** Bash 任务的命令 */
   command?: string;
+  /** 转到后台的 browser_run_code 的代码 */
+  code?: string;
+  /** 转到后台的网关工具调用（browser_run_code 等）的结果原文，太长时只留开头 */
+  result?: string;
+  resultIsError?: boolean;
   status: "running" | "completed" | "failed" | "stopped";
   /** 网关收到开始、结束消息的时间（毫秒） */
   startedAt: number;
