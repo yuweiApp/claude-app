@@ -1,52 +1,56 @@
-import { createRequire } from "node:module";
-import path from "node:path";
-import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
-import { chromium, type Browser, type BrowserContext } from "playwright-core";
-import { config } from "../config.js";
+import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { z } from "zod";
+import { MCP_AUTO_BACKGROUND_MS } from "../config.js";
 import { ALWAYS_LOAD_META, externalBrowserEnabled, isAlwaysLoad } from "../config-file.js";
 import type { BrowserHost } from "./host.js";
+import { BrowserRepl, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS } from "./repl.js";
 
 /**
- * MCP 服务器名：工具全名是 mcp__inapp__browser_navigate 这样。inapp 指应用内（in-app）的浏览器，
+ * MCP 服务器名：工具全名是 mcp__inapp__browser_run_code 这样。inapp 指应用内（in-app）的浏览器，
  * 和外部浏览器（用户的 Chrome，chrome.ts）的 mcp__chrome__ 一眼能分开。
- * 不叫 browser：Playwright 的工具名自带 browser_ 前缀，叫 browser 就成了 mcp__browser__browser_navigate，又长又重复
+ * 不叫 browser：工具名自带 browser_ 前缀，叫 browser 就成了 mcp__browser__browser_snapshot，又长又重复
  */
 export const BROWSER_SERVER = "inapp";
 
-/** 只读的 Playwright MCP 工具，内置浏览器和外部 Chrome（chrome.ts）共用 */
-export const READ_TOOL_NAMES = [
-  "browser_snapshot",
-  "browser_take_screenshot",
-  "browser_find",
-  "browser_console_messages",
-  "browser_network_requests",
-  "browser_network_request",
-  "browser_wait_for",
-];
+/**
+ * 只读的工具，内置浏览器和外部 Chrome（chrome.ts）共用，不用确认（options.allowedTools）。
+ * browser_run_code 不在里面：它在网关进程里跑任意代码，等同于 Bash，非「完全访问权限」时走权限卡片
+ */
+export const READ_TOOL_NAMES = ["browser_snapshot", "browser_take_screenshot", "browser_tabs"];
 
-/** 只读的工具不用确认（options.allowedTools）；打开网址、点击、输入等走权限卡片（「完全访问权限」下直接执行） */
 export const BROWSER_READ_TOOLS = ["browser_keep_tab", ...READ_TOOL_NAMES].map((name) => `mcp__${BROWSER_SERVER}__${name}`);
 
 /**
- * 去掉的工具：
- * - browser_resize：改视口会改掉面板里原生视图的网页大小（视口由面板决定）
- * - browser_close：会关掉整个浏览器上下文；关标签页用 browser_tabs
- *
- * browser_run_code_unsafe 留着：拿 Playwright 的 page 跑一段脚本（多步操作一次做完、等网络请求、拦截请求、上传文件等）。
- * 它在网关进程里执行（Node 的 vm 不是安全边界，能碰到网关的文件和环境变量），等同于 Bash，
- * 所以不放进 allowedTools，每次走权限卡片（「完全访问权限」下和 Bash 一样直接执行）
+ * 怎么用 browser_run_code（参照 Codex 的 js 工具），两个浏览器的说明都带上。
+ * 后半段是等结果：网页要等一会儿才出结果时，模型常回一句「等结果出来再告诉你」就结束这一轮，
+ * 但网页的变化不会叫醒它，所以要它把等待写在代码里。调用跑久了 Claude Code 会把它转到后台（config.ts 的 agentEnv），
+ * 模型可以先回复，代码跑完后结果以 task_notification 送回来、开始新的一轮
  */
-export const HIDDEN_TOOLS = new Set(["browser_resize", "browser_close"]);
+/** MCP 调用跑多久后自动转到后台（config.ts 的 agentEnv 传给子进程的 CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS） */
+const BACKGROUND_SECONDS = (Number(process.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS) || MCP_AUTO_BACKGROUND_MS) / 1000;
 
-// 常驻哪些工具（第一轮就给完整定义、不藏在 ToolSearch 后面）在 gateway/config.yml 的 tools.alwaysLoad 里配，
-// 默认是 snapshot、navigate、click、type、tabs、keep_tab；为什么要常驻见那里的说明和 docs/README.md 第 12 节
+export const CODE_GUIDE =
+  "操作网页用 browser_run_code：写 JavaScript（Playwright 的 API），在一个常驻的 REPL 里跑，支持顶层 await，" +
+  "最后一个表达式的值和 console.log 的输出会返回给你。可以直接用的变量：page（当前标签页，Playwright 的 Page）、context（BrowserContext，context.pages() 是所有标签页）。" +
+  "顶层的 const / let / function 在之后的调用里还在（可以重新声明），常用的 locator、辅助函数可以存下来接着用。" +
+  "给 page 赋值就是切换当前标签页（browser_snapshot、browser_take_screenshot 跟着它走）：新开标签页 page = await context.newPage()；" +
+  "点链接弹出的新标签页不会自动切过去，用 const [p] = await Promise.all([context.waitForEvent('page'), locator.click()]); page = p。" +
+  "先用 browser_snapshot 读页面结构（带 [ref=e12] 的无障碍树），代码里用 page.locator('aria-ref=e12') 引用其中的元素，也可以用 getByRole、getByText 等；" +
+  "截图（browser_take_screenshot，或代码里 emitImage(await page.screenshot())）只在要看样式、图片时用。" +
+  "多步操作（填表、点击、等待、读结果）尽量写在一次调用里。" +
+  `一次调用默认最多跑 ${DEFAULT_TIMEOUT_MS / 1000} 秒，timeout_ms 最大 ${MAX_TIMEOUT_MS}（${MAX_TIMEOUT_MS / 60_000} 分钟）；Playwright 单个动作默认 30 秒超时，等更久要自己传 timeout。` +
+  "提交查询、让网页里的 AI 回答或生成之后，结果要一段时间才出来：在同一次调用里等到它再读出来" +
+  "（比如 await page.getByText('结果里会出现的字').waitFor({ timeout: 600000 })，或者循环检查页面内容、没好就 await page.waitForTimeout(5000)），" +
+  "timeout_ms 设得比要等的时间长一些。" +
+  `调用跑超过约 ${BACKGROUND_SECONDS} 秒会自动转到后台：你会先收到「在后台运行」的结果，这时可以先告诉用户在等什么、结束这一轮或做别的事，` +
+  "代码跑完后结果会以通知送回来，到时再读结果回复用户。不要因为转到了后台就重新提交同一个操作；后台的代码还在操作页面时，别的调用不要动同一个标签页。" +
+  "网页自己的变化不会通知你：没写在代码里等的结果，这一轮结束后就没人告诉你了，所以要等的东西一定写在代码里等。";
 
 const INSTRUCTIONS =
   "这些工具操作的是用户界面右侧面板里的内置浏览器（桌面版里的真实网页，用户能看到、也能自己操作），" +
   "只能看到和操作这个会话自己的标签页。用户说「浏览器」「内置浏览器」「打开网页」时指的就是它。" +
-  "先用 browser_snapshot 读页面结构（无障碍树），再按里面的 ref 点击、输入；截图只在需要看样式、图片时用。" +
-  "只是在网页里执行 JS 用 browser_evaluate；browser_run_code_unsafe 拿 Playwright 的 page 跑脚本（多步操作、等请求、拦截请求等），" +
-  "每次要用户确认，单个工具能做到的不要用它。" +
+  CODE_GUIDE +
   "你新开的标签页是临时的，这一轮结束时会自动关掉；用户要看的页面（比如让你打开、找到某个网页），在结束前对它调用 browser_keep_tab 留下。" +
   "用户消息里的 @[标题](网址) 指内置浏览器里的一个标签页：用 browser_tabs 列出标签页，按网址找到它再切过去。";
 
@@ -54,112 +58,227 @@ const INSTRUCTIONS =
 const CHROME_NOTE =
   "用户说「我的 Chrome」「外部浏览器」，或者要用到用户自己的登录状态时，用 mcp__chrome__ 开头的工具（用户自己的 Chrome），不是这里的工具。";
 
-/** 打开网页后提醒模型：临时标签页这一轮结束会关，要留给用户就 browser_keep_tab（模型常忘） */
-const KEEP_HINT = "\n\n（这是你开的临时标签页，这一轮结束会自动关闭；如果是给用户看的页面，结束前调用 browser_keep_tab 留下。）";
-const KEEP_TOOL = {
-  name: "browser_keep_tab",
-  description: "把你最近操作的那个标签页留给用户：不在这一轮结束时关闭。用户要看的页面（让你打开、找到的网页）在回复前调用。",
-  inputSchema: { type: "object", properties: {}, additionalProperties: false },
-  annotations: { title: "Keep tab for the user", readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-};
+/** browser_run_code 打开了网页后提醒模型：临时标签页这一轮结束会关，要留给用户就 browser_keep_tab（模型常忘） */
+const KEEP_HINT = "（这是你开的临时标签页，这一轮结束会自动关闭；如果是给用户看的页面，结束前调用 browser_keep_tab 留下。）";
 
-// MCP 服务器的实现在 playwright-core 里（@playwright/mcp 也只是转出这个函数），用同一个包、同一个版本
-export type McpServerLike = {
-  connect(transport: unknown): Promise<void>;
-  _requestHandlers: Map<string, (request: unknown, extra: unknown) => Promise<unknown>>;
-  _instructions?: string;
-};
-type CreateConnection = (config: object, contextGetter: () => Promise<BrowserContext>) => Promise<McpServerLike>;
-export const playwrightTools = createRequire(import.meta.url)("playwright-core/lib/coreBundle").tools as {
-  createConnection: CreateConnection;
-  /** 外部 Chrome 用：按 Playwright MCP 的配置建浏览器（扩展模式是起中转、等扩展连上） */
-  createBrowserWithInfo(config: object, clientInfo: { clientName: string; cwd: string }, cliOptions: object, bindOptions: { title: string; workspaceDir: string }): Promise<{ browser: Browser }>;
-  /** 把 CLI 参数和 PLAYWRIGHT_MCP_* 环境变量合成完整的配置 */
-  resolveCLIConfigForMCP(cliOptions: object, env: NodeJS.ProcessEnv): Promise<object>;
-};
+const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
+const error = (t: string) => ({ ...text(t), isError: true });
 
-/** 把 Playwright MCP 服务器包成 SDK 的 MCP 服务器（SDK 只调用 instance.connect；createConnection 是异步的，等它建好再接） */
-export function sdkServer(name: string, server: Promise<McpServerLike>): McpSdkServerConfigWithInstance {
-  const instance = { connect: async (transport: unknown) => (await server).connect(transport) };
-  return { type: "sdk", name, instance: instance as unknown as McpSdkServerConfigWithInstance["instance"] };
+/**
+ * 每个会话在每个浏览器里一个 REPL，放在模块里而不是跟着 query() 走：
+ * 会话空闲关掉子进程、下次发消息 resume 时，变量和当前标签页还在（网关重启才清空）
+ */
+const repls = new Map<string, BrowserRepl>();
+
+export function replFor(key: string, getContext: () => Promise<BrowserContext>): BrowserRepl {
+  let repl = repls.get(key);
+  if (!repl) {
+    repl = new BrowserRepl(getContext);
+    repls.set(key, repl);
+  }
+  return repl;
 }
 
 /**
- * 给模型用的浏览器工具（Playwright MCP），每个会话一个。浏览器经 BrowserHost 连到桌面版外壳，
- * 第一次调用工具时才连（connectOverCDP 走外壳的这个会话的 CDP 代理）；桌面版没开时工具返回错误，开了之后再调用就能用
+ * 这个会话在内置浏览器里还有代码在跑（转到后台的 browser_run_code）：一轮结束时先不关临时标签页，
+ * 不然模型先回复、这一轮结束，代码正在操作的标签页就被关了。代码跑完后结果作为通知开始新的一轮，那一轮结束时再关
  */
-export function browserServer(host: BrowserHost, sessionId: string): McpSdkServerConfigWithInstance {
-  const server = playwrightTools
-    .createConnection(
+export function inappBusy(sessionId: string): boolean {
+  return repls.get(`${BROWSER_SERVER}:${sessionId}`)?.busy ?? false;
+}
+
+/** 删会话时一起删掉它的 REPL（两个浏览器的都删） */
+export function disposeRepls(sessionId: string): void {
+  for (const [key, repl] of repls) {
+    if (!key.endsWith(`:${sessionId}`)) continue;
+    repl.dispose();
+    repls.delete(key);
+  }
+}
+
+/** 标签页的一行描述：[序号] 标题 — 网址；后台冻结的标签页 title() 可能迟迟不回，最多等 1 秒 */
+async function describe(pages: Page[], current: Page | undefined): Promise<string> {
+  const title = (page: Page) =>
+    Promise.race([page.title().catch(() => ""), new Promise<string>((resolve) => setTimeout(() => resolve(""), 1000))]);
+  const lines = await Promise.all(pages.map(async (p, i) => `[${i}]${p === current ? "（当前）" : ""} ${(await title(p)) || "（无标题）"} — ${p.url()}`));
+  return lines.join("\n");
+}
+
+const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+export interface ServerOptions {
+  name: string;
+  instructions: string;
+  repl: BrowserRepl;
+  /** 内置浏览器的 browser_keep_tab：返回结果文字，null 表示没有可以留下的标签页 */
+  keep?: () => Promise<string | null>;
+}
+
+/**
+ * 给模型用的浏览器工具，内置浏览器和外部 Chrome 共用：browser_run_code 为主（同 Codex 的 js 工具），
+ * 加上读页面结构、截图、列出 / 切换标签页三个只读的，和内置浏览器的 browser_keep_tab。
+ * 以前挂的是 playwright-core 自带的 Playwright MCP（二十多个工具），点击、输入、等待这些现在都写在代码里
+ */
+export function browserMcpServer({ name, instructions, repl, keep }: ServerOptions): McpSdkServerConfigWithInstance {
+  const noPage = "现在没有标签页：用 browser_run_code 执行 page = await context.newPage(); await page.goto('网址') 打开一个。";
+
+  const tools = [
+    tool(
+      "browser_run_code",
+      "在常驻的 REPL 里跑一段 JavaScript 操作浏览器（Playwright API），支持顶层 await。可以直接用 page（当前标签页）、context（所有标签页），" +
+        "顶层的 const / let / function 在之后的调用里还在；最后一个表达式的值和 console.log 的输出作为结果返回，emitImage(buffer) 返回图片。" +
+        `默认最多跑 ${DEFAULT_TIMEOUT_MS / 1000} 秒，要等网页里的长任务时调大 timeout_ms。`,
       {
-        browser: { isolated: false },
-        // 截图等文件存到工作区下，不写进用户的项目文件夹
-        outputDir: path.join(config.workspaceDir, ".playwright-mcp", sessionId),
+        code: z.string().describe("要执行的 JavaScript，例如 await page.goto('https://example.com'); await page.title()"),
+        timeout_ms: z
+          .number()
+          .int()
+          .min(1000)
+          .max(MAX_TIMEOUT_MS)
+          .optional()
+          .describe(`这次调用最多跑多久（毫秒），默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}`),
       },
+      async ({ code, timeout_ms }, extra) => {
+        try {
+          const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
+          const result = await repl.run(code, timeout_ms ?? DEFAULT_TIMEOUT_MS, signal);
+          const body = keep && result.opened && !result.isError ? `${result.text}\n\n${KEEP_HINT}` : result.text;
+          return {
+            content: [{ type: "text" as const, text: body }, ...result.images.map((img) => ({ type: "image" as const, ...img }))],
+            ...(result.isError ? { isError: true } : {}),
+          };
+        } catch (err) {
+          return error(errorMessage(err));
+        }
+      },
+      { annotations: { title: "Run browser code", readOnlyHint: false, destructiveHint: true, openWorldHint: true } },
+    ),
+    tool(
+      "browser_snapshot",
+      "读当前标签页的页面结构（无障碍树，元素带 [ref=e12]，代码里用 page.locator('aria-ref=e12') 引用），前面列出所有标签页。不改动页面。",
+      {},
       async () => {
-        const browser = await chromium.connectOverCDP(host.transport(sessionId));
-        const context = browser.contexts()[0];
-        if (!context) throw new Error("内置浏览器没有可用的浏览器上下文");
-        return context;
+        try {
+          const { context, page } = await repl.current();
+          if (!page) return error(noPage);
+          const snapshot = await page.ariaSnapshot({ mode: "ai", timeout: 15_000 });
+          return text(`标签页：\n${await describe(context.pages(), page)}\n\n当前标签页 ${page.url()} 的结构：\n${snapshot}`);
+        } catch (err) {
+          return error(errorMessage(err));
+        }
       },
-    )
-    .then((s) => {
-      s._instructions = INSTRUCTIONS + (externalBrowserEnabled ? CHROME_NOTE : "");
-      patchTools(s, BROWSER_SERVER, {
-        extra: {
-          tool: KEEP_TOOL,
-          call: async () => {
-            const tab = await host.keep(sessionId);
-            return tab ? `已留下标签页「${tab.title || tab.url}」（${tab.url}），这一轮结束后不会关闭。` : null;
-          },
-          empty: "没有你操作过的标签页可以留下。",
-        },
-        openedHint: KEEP_HINT.trim(),
-      });
-      return s;
-    });
-  return sdkServer(BROWSER_SERVER, server);
-}
+      { annotations: { title: "Page snapshot", readOnlyHint: true, openWorldHint: false } },
+    ),
+    tool(
+      "browser_take_screenshot",
+      "给当前标签页截图（默认只截可见区域，full_page 截整页）。只在要看样式、图片时用，读文字和结构用 browser_snapshot。",
+      { full_page: z.boolean().optional().describe("截整个页面，默认只截可见区域") },
+      async ({ full_page }) => {
+        try {
+          const { page } = await repl.current();
+          if (!page) return error(noPage);
+          // 整页可能很长，用 JPEG 压一下
+          const data = full_page
+            ? await page.screenshot({ fullPage: true, type: "jpeg", quality: 80, timeout: 15_000 })
+            : await page.screenshot({ type: "png", timeout: 15_000 });
+          return { content: [{ type: "image" as const, data: data.toString("base64"), mimeType: full_page ? "image/jpeg" : "image/png" }] };
+        } catch (err) {
+          return error(errorMessage(err));
+        }
+      },
+      { annotations: { title: "Screenshot", readOnlyHint: true, openWorldHint: false } },
+    ),
+    tool(
+      "browser_tabs",
+      "列出标签页（action: list），或把第 index 个设为当前标签页（action: select，代码里的 page 跟着换）。新开、关闭标签页用 browser_run_code。",
+      {
+        action: z.enum(["list", "select"]),
+        index: z.number().int().min(0).optional().describe("action 为 select 时：标签页序号（list 结果里的 [序号]）"),
+      },
+      async ({ action, index }) => {
+        try {
+          const { context, page } = await repl.current();
+          const pages = context.pages();
+          if (action === "select") {
+            const target = index === undefined ? undefined : pages[index];
+            if (!target) return error(`没有序号为 ${index ?? "（未指定）"} 的标签页。`);
+            repl.setPage(target);
+            await target.bringToFront().catch(() => undefined);
+            return text(`已切换到：\n${await describe(pages, target)}`);
+          }
+          return text(pages.length ? await describe(pages, page) : "没有标签页。");
+        } catch (err) {
+          return error(errorMessage(err));
+        }
+      },
+      { annotations: { title: "Tabs", readOnlyHint: true, openWorldHint: false } },
+    ),
+    ...(keep
+      ? [
+          tool(
+            "browser_keep_tab",
+            "把你最近操作的那个标签页留给用户：不在这一轮结束时关闭。用户要看的页面（让你打开、找到的网页）在回复前调用。",
+            {},
+            async () => {
+              try {
+                const result = await keep();
+                return result === null ? error("没有你操作过的标签页可以留下。") : text(result);
+              } catch (err) {
+                return error(errorMessage(err));
+              }
+            },
+            { annotations: { title: "Keep tab for the user", readOnlyHint: false, destructiveHint: false, openWorldHint: false } },
+          ),
+        ]
+      : []),
+  ];
 
-export interface PatchOptions {
-  /** 加上的工具（内置浏览器的 browser_keep_tab）：call 返回结果文字，null 时返回 empty 作为错误 */
-  extra?: { tool: { name: string }; call: () => Promise<string | null>; empty: string };
-  /** 打开网页（browser_navigate、browser_tabs new）的结果后面附的一句 */
-  openedHint?: string;
+  return createSdkMcpServer({
+    name,
+    version: "1.0.0",
+    instructions,
+    // config.yml 里配了常驻的：第一轮就给完整定义，其余的用到时 ToolSearch
+    tools: tools.map((t) => (isAlwaysLoad(`mcp__${name}__${t.name}`) ? { ...t, _meta: { ...t._meta, [ALWAYS_LOAD_META]: true } } : t)),
+  });
 }
 
 /**
- * 改写 Playwright MCP 的工具：去掉 HIDDEN_TOOLS（它的配置关不掉核心工具）；加上 extra；
- * config.yml 里配了常驻的标上 _meta；打开网页的结果后面附 openedHint
+ * 内置浏览器到桌面版外壳的连接，每个会话一条（connectOverCDP 走外壳的这个会话的 CDP 代理），第一次用到时才连；
+ * 桌面版没开时报错，开了之后再调用就能用，断了下次用到再连
  */
-export function patchTools(server: McpServerLike, serverName: string, options: PatchOptions = {}): void {
-  const handlers = server._requestHandlers;
-  const list = handlers.get("tools/list");
-  const call = handlers.get("tools/call");
-  if (!list || !call) throw new Error("Playwright MCP 的接口变了：找不到 tools/list、tools/call");
-  const { extra, openedHint } = options;
-  handlers.set("tools/list", async (request, extraArgs) => {
-    const result = (await list(request, extraArgs)) as { tools: { name: string; _meta?: Record<string, unknown> }[] };
-    const all: { name: string; _meta?: Record<string, unknown> }[] = [...result.tools.filter((t) => !HIDDEN_TOOLS.has(t.name)), ...(extra ? [extra.tool] : [])];
-    const tools = all.map((t) => (isAlwaysLoad(`mcp__${serverName}__${t.name}`) ? { ...t, _meta: { ...t._meta, [ALWAYS_LOAD_META]: true } } : t));
-    return { ...result, tools };
-  });
-  handlers.set("tools/call", async (request, extraArgs) => {
-    const params = (request as { params?: { name?: string; arguments?: { action?: string } } }).params;
-    const name = params?.name ?? "";
-    const text = (t: string, isError = false) => ({ content: [{ type: "text", text: t }], ...(isError ? { isError } : {}) });
-    if (HIDDEN_TOOLS.has(name)) return text(`工具 ${name} 在这里不可用`, true);
-    if (extra && name === extra.tool.name) {
-      try {
-        const result = await extra.call();
-        return result === null ? text(extra.empty, true) : text(result);
-      } catch (err) {
-        return text((err as Error).message, true);
-      }
+function inappContext(host: BrowserHost, sessionId: string): () => Promise<BrowserContext> {
+  let connecting: Promise<Browser> | null = null;
+  return async () => {
+    if (!connecting) {
+      const attempt: Promise<Browser> = chromium.connectOverCDP(host.transport(sessionId)).then(
+        (browser) => {
+          browser.once("disconnected", () => {
+            if (connecting === attempt) connecting = null;
+          });
+          return browser;
+        },
+        (err: unknown) => {
+          if (connecting === attempt) connecting = null;
+          throw err;
+        },
+      );
+      connecting = attempt;
     }
-    const result = (await call(request, extraArgs)) as { content?: { type: string; text?: string }[]; isError?: boolean };
-    const opened = name === "browser_navigate" || (name === "browser_tabs" && params?.arguments?.action === "new");
-    if (openedHint && opened && !result.isError && result.content) result.content = [...result.content, { type: "text", text: openedHint }];
-    return result;
+    const context = (await connecting).contexts()[0];
+    if (!context) throw new Error("内置浏览器没有可用的浏览器上下文");
+    return context;
+  };
+}
+
+/** 给模型用的内置浏览器工具，每个会话一个 MCP 服务器；REPL 和连接按会话保留（replFor） */
+export function browserServer(host: BrowserHost, sessionId: string): McpSdkServerConfigWithInstance {
+  return browserMcpServer({
+    name: BROWSER_SERVER,
+    instructions: INSTRUCTIONS + (externalBrowserEnabled ? CHROME_NOTE : ""),
+    repl: replFor(`${BROWSER_SERVER}:${sessionId}`, inappContext(host, sessionId)),
+    keep: async () => {
+      const tab = await host.keep(sessionId);
+      return tab ? `已留下标签页「${tab.title || tab.url}」（${tab.url}），这一轮结束后不会关闭。` : null;
+    },
   });
 }

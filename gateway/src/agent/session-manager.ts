@@ -26,6 +26,7 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { BrowserHost } from "../browser/host.js";
 import { generateTitle } from "./title.js";
 import { readOutputTail, TaskList } from "./tasks.js";
+import { disposeRepls } from "../browser/tool.js";
 import { createScratchDir, isChatCwd, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
@@ -41,7 +42,7 @@ export class SessionManager {
     private readonly conversationLog: ConversationLog,
     /** 右侧面板的终端，给模型用（读终端、往终端里写命令） */
     private readonly terminals?: TerminalManager,
-    /** 桌面版的内置浏览器，给模型用（Playwright MCP） */
+    /** 桌面版的内置浏览器，给模型用（browser/tool.ts 的浏览器工具） */
     private readonly browser?: BrowserHost,
   ) {
     mkdirSync(config.workspaceDir, { recursive: true });
@@ -144,6 +145,8 @@ export class SessionManager {
     }
     this.hub.remove(sessionId);
     this.tasks.delete(sessionId);
+    // 浏览器工具的 REPL（browser_run_code 的变量、当前标签页）按会话留在网关里，删会话时一起删
+    disposeRepls(sessionId);
     await removeScratchDirIfEmpty(cwd, recordDir);
   }
 

@@ -7,6 +7,7 @@ import {
   type PermissionResult,
   type PermissionUpdate,
   type Query,
+  type SDKMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
@@ -18,6 +19,7 @@ import { InputQueue } from "./input-queue.js";
 import { listModels } from "./models.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { BrowserHost } from "../browser/host.js";
+import { inappBusy } from "../browser/tool.js";
 import { buildOptions } from "./options.js";
 import type { TaskList } from "./tasks.js";
 
@@ -48,6 +50,8 @@ export class AgentSession {
   private readonly abortController = new AbortController();
   private readonly query: Query;
   private readonly pending = new Map<string, PendingPermission>();
+  /** 主线程里已经发出、还没拿到结果的工具调用（tool_use 的 id），决定插话用不用 priority now（见 send） */
+  private readonly toolsInFlight = new Set<string>();
   private readonly done: Promise<void>;
   private closing = false;
 
@@ -94,6 +98,12 @@ export class AgentSession {
       uuid,
       message: { role: "user", content },
       parent_tool_use_id: null,
+      // 用户在网页里输入的：不标时 Claude Code 当作来源不明，严格的 isHuman() 检查会拒绝
+      origin: { kind: "human" },
+      // 有工具调用正在跑时插话用 now：调用（如等网页结果的 browser_run_code）提前转到后台、不打断，消息马上送到模型，
+      // 调用跑完后结果以通知送回来。模型正在生成文字时 now 会打断它（实测写到一半的回答直接丢了），
+      // 等权限确认时也不用，这两种情况不带，按 later：等这一轮结束才送到。空闲时消息本来就立刻开始新的一轮
+      ...(this.state === "running" && this.toolsInFlight.size > 0 && this.pending.size === 0 ? { priority: "now" as const } : {}),
     });
     this.publish({ type: "user_message", uuid, content });
     this.setState("running");
@@ -190,6 +200,21 @@ export class AgentSession {
     this.publish({ type: "permission_resolved", requestId, behavior: result.behavior });
   }
 
+  /** 记主线程里在跑的工具调用：assistant 消息里的 tool_use 加进来，对应的 tool_result 回来（含转后台的占位结果）或一轮结束时去掉 */
+  private trackTools(message: SDKMessage): void {
+    if (message.type === "result") {
+      this.toolsInFlight.clear();
+      return;
+    }
+    if ((message.type !== "assistant" && message.type !== "user") || message.parent_tool_use_id !== null) return;
+    const content = message.message.content;
+    if (!Array.isArray(content)) return;
+    for (const block of content) {
+      if (message.type === "assistant" && block.type === "tool_use") this.toolsInFlight.add(block.id);
+      if (message.type === "user" && block.type === "tool_result") this.toolsInFlight.delete(block.tool_use_id);
+    }
+  }
+
   private async consume(): Promise<void> {
     try {
       for await (const message of this.query) {
@@ -204,13 +229,14 @@ export class AgentSession {
         if ((message.type === "assistant" || message.type === "stream_event") && this.state === "idle") {
           this.setState("running");
         }
+        this.trackTools(message);
         const tasksChanged = this.tasks.ingest(message);
         this.publish({ type: "sdk", message });
         if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });
         if (message.type === "result") {
           this.setState("idle");
-          // 一轮结束：内置浏览器关掉 AI 这一轮开的、没留下的临时标签页
-          this.browser?.turnEnded(this.id);
+          // 一轮结束：内置浏览器关掉 AI 开的、没留下的临时标签页；还有转到后台的代码在跑时先不关（见 inappBusy）
+          if (!inappBusy(this.id)) this.browser?.turnEnded(this.id);
         }
       }
     } catch (err) {

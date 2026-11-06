@@ -107,6 +107,9 @@ export const config = {
 // listSessions() / getSessionMessages() 在网关进程里读会话文件，也按 CLAUDE_CONFIG_DIR 找目录
 process.env.CLAUDE_CONFIG_DIR = config.claudeConfigDir;
 
+/** MCP 工具调用跑多久后自动转到后台（见 agentEnv），浏览器工具的说明里也用到 */
+export const MCP_AUTO_BACKGROUND_MS = 20_000;
+
 /**
  * 传给 claude 子进程的环境变量：继承网关的环境（ANTHROPIC_BASE_URL、ANTHROPIC_AUTH_TOKEN 等原样透传），
  * 再固定配置目录、关掉非必要的外发流量。
@@ -129,5 +132,11 @@ export function agentEnv(): Record<string, string | undefined> {
     CLAUDE_CONFIG_DIR: config.claudeConfigDir,
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ?? "1",
     CLAUDE_AGENT_SDK_CLIENT_APP: "claude-app-gateway/0.1.0",
+    // 跑得久的工具调用自动转到后台（同 Claude Code 终端里的 Ctrl+B）：工具先返回「在后台运行」，这一轮接着走，
+    // 模型可以先回复用户；跑完后结果以 task_notification 送回来，会话空闲时会自动开始新的一轮。
+    // Claude Code 在非交互会话（SDK）里默认不自动转，要设 CLAUDE_AUTO_BACKGROUND_TASKS；它也管 Bash 和子代理。
+    // MCP 调用（浏览器的 browser_run_code 等）多久后转由 CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS 定，默认 120 秒，这里改成 20 秒
+    CLAUDE_AUTO_BACKGROUND_TASKS: env.CLAUDE_AUTO_BACKGROUND_TASKS ?? "1",
+    CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS ?? String(MCP_AUTO_BACKGROUND_MS),
   };
 }

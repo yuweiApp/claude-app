@@ -24,7 +24,7 @@ export interface SessionLaunch {
   canUseTool: CanUseTool;
   /** 右侧面板的终端：给模型加上读终端、往终端里写命令的工具（终端开在会话的工作目录） */
   terminals?: TerminalManager;
-  /** 桌面版的内置浏览器：给模型加上 Playwright MCP，只能操作这个会话自己的标签页 */
+  /** 桌面版的内置浏览器：给模型加上浏览器工具（browser_run_code 等），只能操作这个会话自己的标签页 */
   browser?: BrowserHost;
   abortController: AbortController;
   stderr: (data: string) => void;
