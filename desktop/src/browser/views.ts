@@ -23,35 +23,30 @@ export interface TabInfo {
   canGoForward: boolean;
   openedBy: "user" | "agent";
   openerId?: string;
-  /**
-   * 一轮结束时留着：用户开的一直留着；AI 开的是临时标签页，这一轮结束时关掉，
-   * 除非 AI 用 browser_keep_tab 留给用户、用户在地址栏里自己跳转过、或者用户正在面板里看着它
-   */
-  kept: boolean;
 }
 
 export interface Tab extends TabInfo {
   view: WebContentsView;
-  /** AI 最近一次操作它的时间（CdpProxy 记），browser_keep_tab 留的是这个会话里最近操作过的 */
-  lastAgentUse: number;
   /** AI 最近一次经 CDP 发点击、按键（Input.*）的时间（CdpProxy 记），判断弹出窗口是不是 AI 的操作触发的 */
   lastAgentInput: number;
   /** 用户最近一次在网页里点击、按键的时间：网页收到的输入事件里，AI 刚发过输入命令的那些不算 */
   lastUserInput: number;
   /** 是谁关的（close 时记下）；没经过 close 就没了的是网页自己关的（window.close）或崩溃 */
-  closeReason?: "agent" | "user" | "turn-end";
+  closeReason?: "agent" | "user";
 }
 
 /**
  * 标签页的变化和是谁做的，发给网关（bridge.ts），模型下一次调用浏览器工具时告诉它：
  * - opened：agent（AI 用 newPage 开的）、user（用户点面板的「+」、右键「新标签页打开」）、
  *   agent-input / user-input（网页弹出的，弹出前 AI / 用户刚在原标签页上点击或按键）、page（网页自己弹出的，前面没有点击按键）
- * - closed：agent（AI 用 page.close）、user（用户点标签上的 ×）、turn-end（一轮结束自动关的临时标签页）、page（网页 window.close 或崩溃）
+ * - closed：agent（AI 用 page.close）、user（用户点标签上的 ×）、page（网页 window.close 或崩溃）
+ * 标签页不会自动关闭：AI 开的和用户开的一样，由 AI 或用户关（以前 AI 开的是临时标签页，一轮结束时关掉，
+ * 要 AI 调 browser_keep_tab 才留下；模型常忘，用户让它打开的网页一轮结束就没了）
  * - navigated：user（用户在地址栏跳转、点后退、前进、刷新）
  */
 export interface TabEvent {
   kind: "opened" | "closed" | "navigated";
-  by: "agent" | "user" | "agent-input" | "user-input" | "page" | "turn-end";
+  by: "agent" | "user" | "agent-input" | "user-input" | "page";
   tabId: string;
   url: string;
   title: string;
@@ -138,7 +133,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   }
 
   /** reason：谁关的，标签页没了时作为 closed 事件的 by 发给网关 */
-  close(id: string, reason: "agent" | "user" | "turn-end"): boolean {
+  close(id: string, reason: "agent" | "user"): boolean {
     const tab = this.tabs.get(id);
     if (!tab) return false;
     tab.closeReason ??= reason;
@@ -147,42 +142,21 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     return true;
   }
 
-  /** 用户在地址栏里跳转：AI 开的临时标签页从此算用户的，一轮结束时不关 */
+  /** 会话删除了：关掉它的所有标签页（标签页不会自动关闭，不关会一直留在后台） */
+  closeSession(sessionId: string): void {
+    for (const tab of this.list(sessionId)) this.close(tab.id, "user");
+  }
+
+  /** 用户在地址栏里跳转 */
   async navigate(id: string, url: string): Promise<void> {
     const tab = this.tabs.get(id);
     if (!tab) return;
-    this.keep(tab);
     this.emitTabEvent(tab, "navigated", "user", url, "address");
     await this.load(tab, url);
   }
 
   private async load(tab: Tab, url: string): Promise<void> {
     await tab.view.webContents.loadURL(url).catch(() => undefined);
-  }
-
-  private keep(tab: Tab): void {
-    if (tab.kept) return;
-    tab.kept = true;
-    this.emit("changed", tab);
-  }
-
-  /** AI 的 browser_keep_tab：把这个会话里 AI 最近操作过的标签页留给用户 */
-  keepLatest(sessionId: string): Tab | null {
-    const latest = this.list(sessionId)
-      .filter((t) => t.lastAgentUse > 0)
-      .sort((a, b) => b.lastAgentUse - a.lastAgentUse)[0];
-    if (!latest) return null;
-    this.keep(latest);
-    return latest;
-  }
-
-  /** 一轮结束：关掉这个会话里 AI 开的、没留下的临时标签页（用户正在面板里看着的不关） */
-  turnEnded(sessionId: string): void {
-    for (const tab of this.list(sessionId)) {
-      if (tab.kept) continue;
-      if (this.shown === tab) this.keep(tab);
-      else this.close(tab.id, "turn-end");
-    }
   }
 
   /** 面板被界面的菜单、对话框盖住时，先给显示中的网页拍一张快照贴在原位 */
@@ -285,9 +259,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
       canGoForward: false,
       openedBy,
       ...(openerId ? { openerId } : {}),
-      kept: openedBy === "user",
       view,
-      lastAgentUse: 0,
       lastAgentInput: 0,
       lastUserInput: 0,
     };
@@ -492,6 +464,6 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
 }
 
 export function tabInfo(tab: Tab): TabInfo {
-  const { view: _view, lastAgentUse: _use, ...info } = tab;
+  const { view: _view, lastAgentInput: _agentInput, lastUserInput: _userInput, closeReason: _reason, ...info } = tab;
   return info;
 }

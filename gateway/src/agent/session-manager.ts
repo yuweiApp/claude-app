@@ -147,6 +147,8 @@ export class SessionManager {
     this.tasks.delete(sessionId);
     // 浏览器工具的 REPL（browser_run_code 的变量、当前标签页）按会话留在网关里，删会话时一起删
     disposeRepls(sessionId);
+    // 内置浏览器里这个会话的标签页也关掉：标签页不会自动关闭，不关的话会一直留在桌面版后台（会话没了，面板里也看不到）
+    this.browser?.closeSession(sessionId);
     await removeScratchDirIfEmpty(cwd, recordDir);
   }
 

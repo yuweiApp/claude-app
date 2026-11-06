@@ -223,8 +223,6 @@ export interface RunResult {
   text: string;
   images: { data: string; mimeType: string }[];
   isError: boolean;
-  /** 这次调用前后的标签页和当前页网址，判断有没有打开新网页（内置浏览器用它提醒 browser_keep_tab） */
-  opened: boolean;
 }
 
 /**
@@ -363,11 +361,6 @@ export class BrowserRepl {
     registry.set(this.id, this);
   }
 
-  /** 有调用还在跑（包括转到后台的）：一轮结束时先不关内置浏览器的临时标签页，代码可能还在用 */
-  get busy(): boolean {
-    return this.sinks.length > 0;
-  }
-
   /** 删会话时调用：不再认领它的错误 */
   dispose(): void {
     registry.delete(this.id);
@@ -460,7 +453,6 @@ export class BrowserRepl {
    */
   private async describeChanges(header: string): Promise<string | undefined> {
     const lines: string[] = [];
-    let turnEnd = false;
     const page = this.currentPage as Page | undefined;
     // 代码自己等到弹出的标签页、赋给了 page 的，它知道，不说（内置浏览器的事件里没有 Page 对象，按「page 是新出现的、网址一样」认）
     const isOwnPopup = (url: string) => !!page && !page.isClosed() && !this.known.has(page) && page.url() === url;
@@ -468,7 +460,6 @@ export class BrowserRepl {
       if (event.kind === "opened" && isOwnPopup(event.url)) continue;
       const line = describeEvent(event);
       if (line) lines.push(`- ${line}`);
-      if (event.kind === "closed" && event.by === "turn-end") turnEnd = true;
     }
     for (const change of this.localChanges) {
       if (change.page && change.page === page) continue;
@@ -491,7 +482,6 @@ export class BrowserRepl {
       const list = await Promise.all(fresh.map(async (p) => `[${pages.indexOf(p)}] ${(await titleOf(p)) || "（无标题）"} — ${p.url()}`));
       out.push(`不是你开的新标签页（序号是在 context.pages() 里的位置）：${list.join("；")}。page 仍指向 ${page && !page.isClosed() ? page.url() : "undefined"}。`);
     }
-    if (turnEnd) out.push("你开的标签页在一轮结束时会自动关闭，除非调用过 browser_keep_tab。");
     return `（${out.join("\n")}）`;
   }
 
@@ -505,12 +495,11 @@ export class BrowserRepl {
     try {
       script = transform(code);
     } catch (err) {
-      return { text: `语法错误：${(err as Error).message}`, images: [], isError: true, opened: false };
+      return { text: `语法错误：${(err as Error).message}`, images: [], isError: true };
     }
-    const { context } = await this.current();
+    await this.current();
     // 上次调用以来被关掉的标签页：放在这次结果的最前面（在跑代码之前取，代码自己关的不算）
     const notice = await this.takeNotice();
-    const before = snapshotPages(context, this.currentPage as Page | undefined);
     const sink: Sink = { lines: [], images: [] };
     this.sinks.push(sink);
 
@@ -566,13 +555,12 @@ export class BrowserRepl {
       parts.push(outcome.stop);
     }
     // 跑完后 page 可能被代码换掉或关掉了，按新的状态比较
-    const after = snapshotPages(context, (await this.sync(false).catch(() => null))?.page);
-    const opened = after.pages.some((p) => !before.pages.includes(p)) || (after.current !== undefined && after.current === before.current && after.url !== before.url);
+    await this.sync(false).catch(() => null);
     this.lastRunEnd = Date.now();
     // 这次调用期间标签页的变化（网页弹出的、用户这时关掉的……；AI 自己开、关的不说）
     const changes = await this.describeChanges("这次调用期间，标签页有这些变化：");
     if (changes) parts.push(changes);
-    return { text: truncate(parts.join("\n") || "（没有输出）"), images: sink.images, isError, opened };
+    return { text: truncate(parts.join("\n") || "（没有输出）"), images: sink.images, isError };
   }
 }
 
@@ -650,7 +638,6 @@ function describeEvent(e: TabEvent): string | null {
   if (e.kind === "closed") {
     if (e.by === "agent") return null;
     if (e.by === "user") return `用户关闭了标签页：${target}`;
-    if (e.by === "turn-end") return `上一轮结束时自动关闭了你开的临时标签页：${target}`;
     return `网页自己关闭了标签页（window.close 或崩溃）：${target}`;
   }
   const name = `「${e.title && e.title !== "about:blank" ? e.title : e.url || "新标签页"}」`;
@@ -660,6 +647,3 @@ function describeEvent(e: TabEvent): string | null {
   return `用户在标签页${name}的地址栏里跳转到了 ${e.url}`;
 }
 
-function snapshotPages(context: BrowserContext, page: Page | undefined) {
-  return { pages: context.pages(), current: page, url: page && !page.isClosed() ? page.url() : undefined };
-}
