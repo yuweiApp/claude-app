@@ -225,12 +225,14 @@ export function SidePanel({ cwd, sessionId, files = true, state, onChange, onClo
         if (missing.length) {
           changed = true;
           const added = missing.map((b): PanelTab => ({ id: crypto.randomUUID(), kind: "browser", browserId: b.id, sessionId: b.sessionId }));
-          // 当前会话只有一个空的新标签页时直接换掉
+          // 当前会话正看着的是空的新标签页：就地换成第一个，切过去（同渲染时的 activeId：当前标签看不见就算第一个看得见的）
           const visible = tabs.filter((t) => t.kind !== "browser" || t.sessionId === sessionId);
-          const onlyNew = visible.length === 1 && visible[0]!.kind === "new";
-          if (onlyNew) tabs = tabs.filter((t) => t !== visible[0]);
+          const current = visible.find((t) => t.id === s.active) ?? visible[0];
+          if (current?.kind === "new") {
+            const [first, ...rest] = added;
+            return { tabs: [...tabs.map((t) => (t === current ? first! : t)), ...rest], active: first!.id };
+          }
           tabs = [...tabs, ...added];
-          if (onlyNew) return { tabs, active: added[0]!.id };
         }
       }
       if (!changed) return s;
@@ -244,9 +246,13 @@ export function SidePanel({ cwd, sessionId, files = true, state, onChange, onClo
   const activeId = visibleTabs.some((t) => t.id === state.active) ? state.active : visibleTabs[0]?.id;
   useEffect(() => {
     if (visibleTabs.length) return;
-    const tab: PanelTab = { id: crypto.randomUUID(), kind: "new" };
-    onChange((s) => ({ tabs: [...s.tabs, tab], active: tab.id }));
-  }, [visibleTabs.length]);
+    // 按最新状态再判断一次：开发模式（StrictMode）挂载时 effect 跑两次，两次看到的都是旧的 visibleTabs，不能各补一个
+    onChange((s) => {
+      if (s.tabs.some((t) => t.kind !== "browser" || t.sessionId === sessionId)) return s;
+      const tab: PanelTab = { id: crypto.randomUUID(), kind: "new" };
+      return { tabs: [...s.tabs, tab], active: tab.id };
+    });
+  }, [visibleTabs.length, sessionId]);
 
   const select = (id: string) => onChange((s) => ({ ...s, active: id }));
   const addTab = () => {
