@@ -34,7 +34,36 @@ export interface Tab extends TabInfo {
   view: WebContentsView;
   /** AI 最近一次操作它的时间（CdpProxy 记），browser_keep_tab 留的是这个会话里最近操作过的 */
   lastAgentUse: number;
+  /** AI 最近一次经 CDP 发点击、按键（Input.*）的时间（CdpProxy 记），判断弹出窗口是不是 AI 的操作触发的 */
+  lastAgentInput: number;
+  /** 用户最近一次在网页里点击、按键的时间：网页收到的输入事件里，AI 刚发过输入命令的那些不算 */
+  lastUserInput: number;
+  /** 是谁关的（close 时记下）；没经过 close 就没了的是网页自己关的（window.close）或崩溃 */
+  closeReason?: "agent" | "user" | "turn-end";
 }
+
+/**
+ * 标签页的变化和是谁做的，发给网关（bridge.ts），模型下一次调用浏览器工具时告诉它：
+ * - opened：agent（AI 用 newPage 开的）、user（用户点面板的「+」、右键「新标签页打开」）、
+ *   agent-input / user-input（网页弹出的，弹出前 AI / 用户刚在原标签页上点击或按键）、page（网页自己弹出的，前面没有点击按键）
+ * - closed：agent（AI 用 page.close）、user（用户点标签上的 ×）、turn-end（一轮结束自动关的临时标签页）、page（网页 window.close 或崩溃）
+ * - navigated：user（用户在地址栏跳转、点后退、前进、刷新）
+ */
+export interface TabEvent {
+  kind: "opened" | "closed" | "navigated";
+  by: "agent" | "user" | "agent-input" | "user-input" | "page" | "turn-end";
+  tabId: string;
+  url: string;
+  title: string;
+  openerId?: string;
+  /** navigated 的方式 */
+  action?: "address" | "back" | "forward" | "reload";
+}
+
+/** 弹出窗口出现前多久之内的点击、按键算触发了它 */
+const POPUP_TRIGGER_MS = 2000;
+/** 网页收到的输入事件，离 AI 上一次经 CDP 发输入命令不到这么久的，是 AI 的（CDP 发的输入也会触发 input-event） */
+const AGENT_INPUT_ECHO_MS = 300;
 
 export interface BrowserViewsEvents {
   created: [tab: Tab];
@@ -44,6 +73,8 @@ export interface BrowserViewsEvents {
   activate: [tab: Tab];
   /** 调试接口发来的 CDP 事件；sessionId 是 iframe、Worker 等子会话，网页本身为空 */
   cdp: [tab: Tab, method: string, params: unknown, sessionId: string];
+  /** 标签页的变化和是谁做的，发给网关 */
+  tabEvent: [sessionId: string, event: TabEvent];
 }
 
 const PARTITION = "persist:claude-browser";
@@ -101,13 +132,16 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
     await view.webContents.loadURL("about:blank");
     const tab = await this.register(view, sessionId, openedBy);
+    this.emitTabEvent(tab, "opened", openedBy, url);
     if (url) void this.load(tab, url);
     return tab;
   }
 
-  close(id: string): boolean {
+  /** reason：谁关的，标签页没了时作为 closed 事件的 by 发给网关 */
+  close(id: string, reason: "agent" | "user" | "turn-end"): boolean {
     const tab = this.tabs.get(id);
     if (!tab) return false;
+    tab.closeReason ??= reason;
     if (tab.view.webContents.isDevToolsOpened()) tab.view.webContents.closeDevTools();
     tab.view.webContents.close();
     return true;
@@ -118,6 +152,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     const tab = this.tabs.get(id);
     if (!tab) return;
     this.keep(tab);
+    this.emitTabEvent(tab, "navigated", "user", url, "address");
     await this.load(tab, url);
   }
 
@@ -146,7 +181,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     for (const tab of this.list(sessionId)) {
       if (tab.kept) continue;
       if (this.shown === tab) this.keep(tab);
-      else this.close(tab.id);
+      else this.close(tab.id, "turn-end");
     }
   }
 
@@ -163,8 +198,10 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   }
 
   go(id: string, action: "back" | "forward" | "reload" | "stop"): void {
-    const wc = this.tabs.get(id)?.view.webContents;
-    if (!wc) return;
+    const tab = this.tabs.get(id);
+    const wc = tab?.view.webContents;
+    if (!tab || !wc) return;
+    if (action !== "stop") this.emitTabEvent(tab, "navigated", "user", undefined, action);
     if (action === "back" && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
     else if (action === "forward" && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
     else if (action === "reload") wc.reload();
@@ -251,6 +288,8 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
       kept: openedBy === "user",
       view,
       lastAgentUse: 0,
+      lastAgentInput: 0,
+      lastUserInput: 0,
     };
     this.tabs.set(tab.id, tab);
     view.setBackgroundColor("#ffffff");
@@ -273,7 +312,14 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     wc.on("page-title-updated", (_e, title) => this.history.title(wc.getURL(), title));
     wc.on("context-menu", (_e, params) => this.contextMenu(tab, params));
     dbg.on("message", (_e, method, params, childSession) => this.emit("cdp", tab, method, params, childSession ?? ""));
+    // 用户在网页里的点击、按键（弹出窗口算谁触发的要用）。AI 经 CDP 发的输入也会触发这个事件，刚发过的不算
+    wc.on("input-event", (_e, input) => {
+      if (input.type !== "mouseDown" && input.type !== "keyDown" && input.type !== "rawKeyDown") return;
+      const now = Date.now();
+      if (now - tab.lastAgentInput > AGENT_INPUT_ECHO_MS) tab.lastUserInput = now;
+    });
     wc.once("destroyed", () => {
+      this.emitTabEvent(tab, "closed", tab.closeReason ?? "page");
       this.tabs.delete(tab.id);
       this.rendering.delete(tab.id);
       const win = this.mainWindow();
@@ -284,7 +330,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     });
 
     // target=_blank、window.open：装进新的网页视图，归到同一个会话，成为新标签页
-    wc.setWindowOpenHandler(() => ({
+    wc.setWindowOpenHandler((details) => ({
       action: "allow",
       outlivesOpener: true,
       // 运行时 options 带着 Chromium 建好的 webContents（类型声明里没写）
@@ -293,7 +339,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
         const child = new WebContentsView({ webContents, webPreferences });
         this.park!.contentView.addChildView(child);
         child.setBounds(view.getBounds());
-        void this.registerPopup(child, tab);
+        void this.registerPopup(child, tab, details.url);
         return child.webContents;
       },
     }));
@@ -382,11 +428,37 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     if (win && !win.isDestroyed()) Menu.buildFromTemplate(items).popup({ window: win });
   }
 
+  /** 发出标签页的变化（bridge 转给网关）；url 不给时用标签页现在的网址 */
+  private emitTabEvent(tab: Tab, kind: TabEvent["kind"], by: TabEvent["by"], url?: string, action?: TabEvent["action"]): void {
+    this.emit("tabEvent", tab.sessionId, {
+      kind,
+      by,
+      tabId: tab.id,
+      url: url ?? tab.url,
+      title: tab.title,
+      ...(tab.openerId ? { openerId: tab.openerId } : {}),
+      ...(action ? { action } : {}),
+    });
+  }
+
+  /** 网页弹出的窗口是谁触发的：弹出前不久原标签页上最近的一次点击按键是 AI 的还是用户的，都没有就是网页自己弹的 */
+  private popupCause(opener: Tab): TabEvent["by"] {
+    const now = Date.now();
+    const agent = now - opener.lastAgentInput <= POPUP_TRIGGER_MS ? opener.lastAgentInput : 0;
+    const user = now - opener.lastUserInput <= POPUP_TRIGGER_MS ? opener.lastUserInput : 0;
+    if (!agent && !user) return "page";
+    return agent >= user ? "agent-input" : "user-input";
+  }
+
   /** 网页另开的新页面：刚创建时调试接口可能还挂不上，稍等重试 */
-  private async registerPopup(view: WebContentsView, opener: Tab): Promise<void> {
+  private async registerPopup(view: WebContentsView, opener: Tab, url: string): Promise<void> {
+    // 在重试之前算：弹出窗口刚出现时离触发它的点击最近
+    const cause = this.popupCause(opener);
     for (let i = 0; i < 50 && !view.webContents.isDestroyed(); i++) {
       try {
-        await this.register(view, opener.sessionId, opener.openedBy, opener.id);
+        const tab = await this.register(view, opener.sessionId, opener.openedBy, opener.id);
+        // 刚登记时还没开始加载，网址是空的，用 window.open / 链接的目标网址
+        this.emitTabEvent(tab, "opened", cause, tab.url || url);
         return;
       } catch {
         await new Promise((r) => setTimeout(r, 100));

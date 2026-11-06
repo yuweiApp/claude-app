@@ -146,7 +146,7 @@ ipcMain.handle("browser:create", async (e, sessionId: unknown, url: unknown) => 
   if (!fromUi(e.sender) || typeof sessionId !== "string") return null;
   return tabInfo(await browserViews.create(sessionId, typeof url === "string" && url ? url : undefined, "user"));
 });
-ipcMain.on("browser:close", (e, id: unknown) => fromUi(e.sender) && typeof id === "string" && browserViews.close(id));
+ipcMain.on("browser:close", (e, id: unknown) => fromUi(e.sender) && typeof id === "string" && browserViews.close(id, "user"));
 ipcMain.on("browser:navigate", (e, id: unknown, url: unknown) => {
   if (fromUi(e.sender) && typeof id === "string" && typeof url === "string") void browserViews.navigate(id, url);
 });

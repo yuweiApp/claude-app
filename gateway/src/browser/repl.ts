@@ -2,6 +2,7 @@ import { format, inspect } from "node:util";
 import vm from "node:vm";
 import { parse, type Pattern } from "acorn";
 import type { BrowserContext, Page } from "playwright-core";
+import type { TabEvent } from "./host.js";
 
 /**
  * browser_run_code 的执行环境（参照 Codex 的 node_repl）：每个会话一个常驻的 vm 上下文，
@@ -285,15 +286,16 @@ export class BrowserRepl {
   /** 后台出的错（见 registry 上面的说明），下次调用的结果里带上 */
   private background: string[] = [];
   /**
-   * 两次调用之间被关掉的标签页（网址）：内置浏览器一轮结束时自动关的临时标签页、用户自己关的。
-   * 模型下一次调用浏览器工具时在结果开头告诉它（takeNotice），免得它照旧用存着的 page、出错了才知道。
-   * 只记上次调用结束时还开着的（模型可能知道的）；调用进行中关掉的（多半是代码自己 page.close()）不记
+   * Chrome 那边标签页的变化（内置浏览器的由桌面版发来，见 tabEvents）：不是 AI 开的、不是 AI 关的。
+   * 模型下一次调用浏览器工具时告诉它（describeChanges），免得它照旧用存着的 page、出错了才知道
    */
-  private closedUrls: string[] = [];
+  private localChanges: LocalChange[] = [];
+  /** 上一次 browser_run_code 结束的时间：结束后不久网页才弹出的，是那次调用里的点击按键触发的（同桌面版的 POPUP_TRIGGER_MS） */
+  private lastRunEnd = 0;
   /** page 原来指向的标签页被关了，已经换成了别的（最后一个标签页，或者 undefined） */
   private pageReplaced = false;
-  /** 上次调用结束时开着的标签页 */
-  private seen = new Set<Page>();
+  /** 模型已经知道的标签页：上次告诉它变化时开着的，和它自己开的。不在里面的是新出现、它还不知道的 */
+  private readonly known = new WeakSet<Page>();
   /**
    * 代码里的 page（当前标签页）。vm 里的 page 是全局对象上的访问器（见构造函数）：模型给它赋了另一个标签页时
    * 调用 bringToFront，内置浏览器的面板跟着切过去。网关这边换 page（标签页被关、browser_tabs select）直接改这个字段，不经访问器
@@ -303,11 +305,12 @@ export class BrowserRepl {
   private watched: BrowserContext | null = null;
 
   /**
-   * @param closedHint 告诉模型标签页为什么会被关（内置浏览器：一轮结束时自动关；Chrome：用户关的）
+   * @param tabEvents 内置浏览器：取走桌面版发来的标签页变化（带着是谁做的，见 host.ts 的 TabEvent）；
+   *   Chrome 没有，在这里自己记（Playwright 的事件里看不出是用户还是网页，只能分出是不是 AI）
    */
   constructor(
     private readonly getContext: () => Promise<BrowserContext>,
-    private readonly closedHint = "",
+    private readonly tabEvents?: () => TabEvent[],
   ) {
     const capture =
       (prefix: string) =>
@@ -397,36 +400,99 @@ export class BrowserRepl {
       if (note && page && typeof page.isClosed === "function" && page.isClosed()) this.pageReplaced = true;
       this.currentPage = context.pages().at(-1);
     }
-    this.seen = new Set(context.pages());
     return { context, page: this.currentPage as Page | undefined };
   }
 
-  /** 给浏览器上下文里的标签页挂上关闭事件（新开的也挂），记下两次调用之间被关掉的 */
+  /**
+   * 记下 AI 自己开、关的标签页（trackAgent），Chrome 再挂上新开、关闭的事件，记下不是 AI 做的那些。
+   * 内置浏览器不挂：桌面版知道每一次是谁做的，发来的事件更准
+   */
   private watch(context: BrowserContext): void {
     if (this.watched === context) return;
     this.watched = context;
-    const onPage = (page: Page) =>
+    trackAgent(context);
+    if (this.tabEvents) return;
+    const push = (change: LocalChange) => {
+      if (this.localChanges.length < 30) this.localChanges.push(change);
+    };
+    const onClose = (page: Page) => {
+      // 关掉之后取不到标题，先记着
+      void titleOf(page).then((title) => titles.set(page, title));
       page.once("close", () => {
-        if (this.sinks.length > 0 || !this.seen.has(page)) return;
-        if (this.closedUrls.length < 20) this.closedUrls.push(page.url());
+        if (agentClosed.has(page)) return;
+        push({ who: "不是你关的标签页被关闭了（用户在 Chrome 里关的，或网页自己关的）", url: page.url(), title: titles.get(page) ?? "" });
       });
-    context.pages().forEach(onPage);
-    context.on("page", onPage);
+    };
+    context.pages().forEach(onClose);
+    context.on("page", (page) => {
+      trackPage(page);
+      onClose(page);
+      // newPage 返回之前就会发 page 事件：正在 newPage 的是 AI 开的
+      if ((creating.get(context) ?? 0) > 0) return;
+      const running = this.sinks.length > 0;
+      const sinceRun = Date.now() - this.lastRunEnd;
+      void page.opener().then(
+        (opener) =>
+          push({
+            who: !opener
+              ? "用户新开了标签页"
+              : running
+                ? "在你的代码运行期间，网页弹出了新标签页"
+                : sinceRun <= POPUP_TRIGGER_MS
+                  ? `你上一次调用里的操作让网页弹出了新标签页（在调用结束 ${(sinceRun / 1000).toFixed(1)} 秒后才弹出）`
+                  : "在你的代码没有运行时，网页弹出了新标签页（是用户在网页里点击，或网页自己弹出的）",
+            page,
+          }),
+        () => undefined,
+      );
+    });
   }
 
-  /** 自上次调用以来被关掉的标签页的说明（放在这次结果的开头），说过就清掉；没有返回 undefined */
-  takeNotice(): string | undefined {
-    if (!this.closedUrls.length && !this.pageReplaced) return undefined;
+  /** 自上次调用以来标签页的变化，放在这次结果的开头（浏览器工具调用开头都取一次）；说过就清掉 */
+  takeNotice(): Promise<string | undefined> {
+    return this.describeChanges("自上次调用以来，标签页有这些变化：");
+  }
+
+  /**
+   * 标签页的变化和是谁做的（AI 自己开、关的不说），说过就清掉；没有返回 undefined。
+   * 内置浏览器用桌面版发来的事件（tabEvents），Chrome 用这里记的（localChanges）；
+   * 再加上 page 是不是被换掉了、新出现的（不是 AI 开的）标签页在 context.pages() 里的序号
+   */
+  private async describeChanges(header: string): Promise<string | undefined> {
+    const lines: string[] = [];
+    let turnEnd = false;
     const page = this.currentPage as Page | undefined;
-    const now = page ? `现在 page 指向 ${page.url()}` : "现在没有标签页，page 是 undefined，要用就 page = await context.newPage() 重新打开";
-    const lines = [
-      this.closedUrls.length ? `自上次调用以来，这些标签页被关掉了：\n${this.closedUrls.map((url) => `- ${url}`).join("\n")}` : "page 原来指向的标签页被关掉了。",
-      this.pageReplaced ? `page 原来指向的标签页也在其中，${now}。` : "",
-      this.closedHint,
-    ].filter(Boolean);
-    this.closedUrls = [];
-    this.pageReplaced = false;
-    return `（${lines.join("\n")}）`;
+    // 代码自己等到弹出的标签页、赋给了 page 的，它知道，不说（内置浏览器的事件里没有 Page 对象，按「page 是新出现的、网址一样」认）
+    const isOwnPopup = (url: string) => !!page && !page.isClosed() && !this.known.has(page) && page.url() === url;
+    for (const event of this.tabEvents?.() ?? []) {
+      if (event.kind === "opened" && isOwnPopup(event.url)) continue;
+      const line = describeEvent(event);
+      if (line) lines.push(`- ${line}`);
+      if (event.kind === "closed" && event.by === "turn-end") turnEnd = true;
+    }
+    for (const change of this.localChanges) {
+      if (change.page && change.page === page) continue;
+      const target = change.page ? `${(await titleOf(change.page)) || "（无标题）"} — ${change.page.url()}` : `${change.title ? `${change.title} — ` : ""}${change.url}`;
+      lines.push(`- ${change.who}：${target}`);
+    }
+    this.localChanges = [];
+    if (this.pageReplaced) {
+      lines.push(`- page 原来指向的标签页已经关闭，${page ? `现在 page 指向 ${page.url()}` : "现在没有标签页，page 是 undefined，要用就 page = await context.newPage() 重新打开"}`);
+      this.pageReplaced = false;
+    }
+    const pages = this.watched?.pages() ?? [];
+    // 刷新记着的标题（关掉之后取不到）：标签页刚出现时多半还没加载，那时记的是空的
+    if (!this.tabEvents) for (const p of pages) void titleOf(p).then((t) => t && titles.set(p, t));
+    const fresh = pages.filter((p) => !this.known.has(p) && !agentCreated.has(p) && p !== page && !p.isClosed());
+    pages.forEach((p) => this.known.add(p));
+    if (!lines.length && !fresh.length) return undefined;
+    const out = [header, ...lines];
+    if (fresh.length) {
+      const list = await Promise.all(fresh.map(async (p) => `[${pages.indexOf(p)}] ${(await titleOf(p)) || "（无标题）"} — ${p.url()}`));
+      out.push(`不是你开的新标签页：${list.join("；")}。page 没有跟过去，要操作就 page = context.pages()[序号]。`);
+    }
+    if (turnEnd) out.push("你开的标签页在一轮结束时会自动关闭，要在之后的轮次接着用，就在一轮结束前调用 browser_keep_tab。");
+    return `（${out.join("\n")}）`;
   }
 
   /** 切换当前标签页（browser_tabs select） */
@@ -443,7 +509,7 @@ export class BrowserRepl {
     }
     const { context } = await this.current();
     // 上次调用以来被关掉的标签页：放在这次结果的最前面（在跑代码之前取，代码自己关的不算）
-    const notice = this.takeNotice();
+    const notice = await this.takeNotice();
     const before = snapshotPages(context, this.currentPage as Page | undefined);
     const sink: Sink = { lines: [], images: [] };
     this.sinks.push(sink);
@@ -497,11 +563,99 @@ export class BrowserRepl {
       isError = true;
       parts.push(outcome.stop);
     }
-        // 跑完后 page 可能被代码换掉或关掉了，按新的状态比较
+    // 跑完后 page 可能被代码换掉或关掉了，按新的状态比较
     const after = snapshotPages(context, (await this.sync(false).catch(() => null))?.page);
     const opened = after.pages.some((p) => !before.pages.includes(p)) || (after.current !== undefined && after.current === before.current && after.url !== before.url);
+    this.lastRunEnd = Date.now();
+    // 这次调用期间标签页的变化（网页弹出的、用户这时关掉的……；AI 自己开、关的不说）
+    const changes = await this.describeChanges("这次调用期间，标签页有这些变化：");
+    if (changes) parts.push(changes);
     return { text: truncate(parts.join("\n") || "（没有输出）"), images: sink.images, isError, opened };
   }
+}
+
+/** 标题：后台冻结的标签页 title() 可能迟迟不回，最多等 1 秒 */
+function titleOf(page: Page): Promise<string> {
+  return Promise.race([page.title().catch(() => ""), new Promise<string>((resolve) => setTimeout(() => resolve(""), 1000))]);
+}
+
+/** 弹出窗口出现前多久之内结束的调用，算是那次调用里的操作触发了它（同桌面版 views.ts 的 POPUP_TRIGGER_MS） */
+const POPUP_TRIGGER_MS = 2000;
+
+/** Chrome 那边记下的一条标签页变化：新开的记标签页本身（说的时候取最新的标题、网址），关掉的记当时的网址、标题 */
+interface LocalChange {
+  who: string;
+  page?: Page;
+  url?: string;
+  title?: string;
+}
+
+/**
+ * AI 自己开、关的标签页：给 Playwright 的 BrowserContext.newPage、Page.close 加一层记录（改的是原型，所有会话共用，只改一次）。
+ * 网关里调用这两个方法的只有模型的代码（浏览器工具自己不开不关标签页），所以记下的就是 AI 做的
+ */
+const agentCreated = new WeakSet<Page>();
+const agentClosed = new WeakSet<Page>();
+/** 正在 newPage 的次数：newPage 返回之前就会发 page 事件，这时出现的标签页是 AI 开的 */
+const creating = new WeakMap<BrowserContext, number>();
+/** 标签页的标题，关掉之后取不到，先记着 */
+const titles = new WeakMap<Page, string>();
+const TRACKED = Symbol.for("claude-app.trackAgent");
+
+function trackAgent(context: BrowserContext): void {
+  const proto = Object.getPrototypeOf(context) as BrowserContext & { [TRACKED]?: boolean };
+  if (!proto[TRACKED]) {
+    proto[TRACKED] = true;
+    const newPage = proto.newPage;
+    proto.newPage = async function (this: BrowserContext, ...args: Parameters<BrowserContext["newPage"]>) {
+      creating.set(this, (creating.get(this) ?? 0) + 1);
+      try {
+        const page = await newPage.apply(this, args);
+        agentCreated.add(page);
+        trackPage(page);
+        return page;
+      } finally {
+        creating.set(this, (creating.get(this) ?? 1) - 1);
+      }
+    };
+  }
+  context.pages().forEach(trackPage);
+}
+
+function trackPage(page: Page): void {
+  const proto = Object.getPrototypeOf(page) as Page & { [TRACKED]?: boolean };
+  if (proto[TRACKED]) return;
+  proto[TRACKED] = true;
+  const close = proto.close;
+  proto.close = function (this: Page, ...args: Parameters<Page["close"]>) {
+    agentClosed.add(this);
+    return close.apply(this, args);
+  };
+}
+
+/** 内置浏览器桌面版发来的一条变化，写成给模型看的一句；AI 自己开、关的返回 null（它知道） */
+function describeEvent(e: TabEvent): string | null {
+  // 还没加载出来时标题是空的或 about:blank，不显示
+  const title = e.title && e.title !== e.url && e.title !== "about:blank" ? e.title : "";
+  const target = `${title ? `${title} — ` : ""}${e.url || "（网址还没加载出来）"}`;
+  if (e.kind === "opened") {
+    if (e.by === "agent") return null;
+    if (e.by === "user") return `用户在面板里新开了标签页：${target}`;
+    if (e.by === "agent-input") return `你的点击或按键让网页弹出了新标签页：${target}`;
+    if (e.by === "user-input") return `用户在网页里点击或按键，网页弹出了新标签页：${target}`;
+    return `网页自己弹出了新标签页（之前没有点击或按键）：${target}`;
+  }
+  if (e.kind === "closed") {
+    if (e.by === "agent") return null;
+    if (e.by === "user") return `用户关闭了标签页：${target}`;
+    if (e.by === "turn-end") return `上一轮结束时自动关闭了你开的临时标签页：${target}`;
+    return `网页自己关闭了标签页（window.close 或崩溃）：${target}`;
+  }
+  const name = `「${e.title && e.title !== "about:blank" ? e.title : e.url || "新标签页"}」`;
+  if (e.action === "back" || e.action === "forward" || e.action === "reload") {
+    return `用户在标签页${name}上点了${e.action === "back" ? "后退" : e.action === "forward" ? "前进" : "刷新"}`;
+  }
+  return `用户在标签页${name}的地址栏里跳转到了 ${e.url}`;
 }
 
 function snapshotPages(context: BrowserContext, page: Page | undefined) {

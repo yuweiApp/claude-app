@@ -3,7 +3,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { z } from "zod";
 import { MCP_AUTO_BACKGROUND_MS } from "../config.js";
 import { ALWAYS_LOAD_META, externalBrowserEnabled, isAlwaysLoad } from "../config-file.js";
-import type { BrowserHost } from "./host.js";
+import type { BrowserHost, TabEvent } from "./host.js";
 import { BrowserRepl, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS } from "./repl.js";
 
 /**
@@ -58,10 +58,6 @@ const INSTRUCTIONS =
 const CHROME_NOTE =
   "用户说「我的 Chrome」「外部浏览器」，或者要用到用户自己的登录状态时，用 mcp__chrome__ 开头的工具（用户自己的 Chrome），不是这里的工具。";
 
-/** 告诉模型标签页为什么被关（REPL 在下一次调用时说明哪些标签页被关了，见 BrowserRepl.takeNotice） */
-const INAPP_CLOSED_HINT =
-  "内置浏览器里你开的标签页在一轮结束时会自动关掉（用户也可能自己关），要在之后的轮次接着用，就在一轮结束前调用 browser_keep_tab。";
-
 /** browser_run_code 打开了网页后提醒模型：临时标签页这一轮结束会关，要留给用户就 browser_keep_tab（模型常忘） */
 const KEEP_HINT = "（这是你开的临时标签页，这一轮结束会自动关闭；如果是给用户看的页面，结束前调用 browser_keep_tab 留下。）";
 
@@ -74,10 +70,11 @@ const error = (t: string) => ({ ...text(t), isError: true });
  */
 const repls = new Map<string, BrowserRepl>();
 
-export function replFor(key: string, getContext: () => Promise<BrowserContext>, closedHint = ""): BrowserRepl {
+/** tabEvents：内置浏览器取走桌面版发来的标签页变化（带着是谁做的），Chrome 不给 */
+export function replFor(key: string, getContext: () => Promise<BrowserContext>, tabEvents?: () => TabEvent[]): BrowserRepl {
   let repl = repls.get(key);
   if (!repl) {
-    repl = new BrowserRepl(getContext, closedHint);
+    repl = new BrowserRepl(getContext, tabEvents);
     repls.set(key, repl);
   }
   return repl;
@@ -191,7 +188,7 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
       async () => {
         try {
           const { context, page } = await repl.current();
-          const notice = repl.takeNotice();
+          const notice = await repl.takeNotice();
           if (!page) return error(withNotice(notice, noPage));
           const snapshot = await page.ariaSnapshot({ mode: "ai", timeout: 15_000 });
           return text(withNotice(notice, `标签页：\n${await describe(context.pages(), page)}\n\n当前标签页 ${page.url()} 的结构：\n${snapshot}`));
@@ -208,7 +205,7 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
       async ({ full_page }) => {
         try {
           const { page } = await repl.current();
-          const notice = repl.takeNotice();
+          const notice = await repl.takeNotice();
           if (!page) return error(withNotice(notice, noPage));
           // 整页可能很长，用 JPEG 压一下
           const data = full_page
@@ -236,7 +233,7 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
       async ({ action, index }) => {
         try {
           const { context, page } = await repl.current();
-          const notice = repl.takeNotice();
+          const notice = await repl.takeNotice();
           const pages = context.pages();
           if (action === "select") {
             const target = index === undefined ? undefined : pages[index];
@@ -314,7 +311,7 @@ export function browserServer(host: BrowserHost, sessionId: string): McpSdkServe
   return browserMcpServer({
     name: BROWSER_SERVER,
     instructions: INSTRUCTIONS + (externalBrowserEnabled ? CHROME_NOTE : ""),
-    repl: replFor(`${BROWSER_SERVER}:${sessionId}`, inappContext(host, sessionId), INAPP_CLOSED_HINT),
+    repl: replFor(`${BROWSER_SERVER}:${sessionId}`, inappContext(host, sessionId), () => host.takeTabEvents(sessionId)),
     keep: async () => {
       const tab = await host.keep(sessionId);
       return tab ? `已留下标签页「${tab.title || tab.url}」（${tab.url}），这一轮结束后不会关闭。` : null;
