@@ -123,7 +123,8 @@ interface TreeCache {
 const treeCaches = new Map<string, TreeCache>();
 const treeCache = (cwd: string) => {
   let c = treeCaches.get(cwd);
-  if (!c) treeCaches.set(cwd, (c = { expanded: new Set(), dirs: {}, scrollTop: 0 }));
+  // 根目录（""）默认展开
+  if (!c) treeCaches.set(cwd, (c = { expanded: new Set([""]), dirs: {}, scrollTop: 0 }));
   return c;
 };
 
@@ -167,12 +168,14 @@ function FileTree({ cwd, activePath, autoFocus, onSelect }: { cwd: string; activ
   useEffect(() => {
     if (!activePath) return;
     let changed = false;
-    for (let dir = parentOf(activePath); dir; dir = parentOf(dir)) {
+    for (let dir = parentOf(activePath); ; dir = parentOf(dir)) {
       if (!cache.expanded.has(dir)) {
         cache.expanded.add(dir);
         changed = true;
       }
       if (!cache.dirs[dir]) void load(dir);
+      // 一直展开到根目录（""）为止
+      if (!dir) break;
     }
     if (changed) update();
   }, [activePath]);
@@ -230,6 +233,7 @@ function FileTree({ cwd, activePath, autoFocus, onSelect }: { cwd: string; activ
         cache.expanded.add(dir);
         if (!cache.dirs[dir]) void load(dir);
       }
+      cache.expanded.add("");
       setQuery("");
       requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-path="${CSS.escape(hit.path)}"]`)?.scrollIntoView({ block: "nearest" }));
     } else onSelect(hit.path, pin);
@@ -294,7 +298,6 @@ function FileTree({ cwd, activePath, autoFocus, onSelect }: { cwd: string; activ
       rows.push(<div key={`${dir}:error`} className="files-note files-error" style={{ paddingLeft: pad + 18 }}>{list.error}</div>);
       return;
     }
-    // 根目录空着（比如普通会话刚建的 scratch 目录）也写一句，不然面板一片空白
     if (!list.length) rows.push(<div key={`${dir}:empty`} className="files-note" style={{ paddingLeft: pad + 18 }}>空文件夹</div>);
     for (const entry of list) {
       const name = basename(entry.path);
@@ -317,7 +320,19 @@ function FileTree({ cwd, activePath, autoFocus, onSelect }: { cwd: string; activ
       if (open) renderDir(entry.path, depth + 1);
     }
   };
-  if (hits === null) renderDir("", 0);
+  // 第一行是工作目录本身（项目文件夹，或者普通会话的 scratch-… 目录），点了收起、展开，悬停看完整路径
+  if (hits === null) {
+    const rootName = basename(cwd);
+    const rootOpen = cache.expanded.has("");
+    rows.push(
+      <button key=":root" className="files-row files-root" style={{ paddingLeft: 10 }} title={cwd} onClick={() => toggle("")}>
+        <span className="files-caret"><Chevron open={rootOpen} /></span>
+        <span className="files-icon"><FolderTypeIcon open={rootOpen} name={rootName} /></span>
+        <span className="files-name">{rootName}</span>
+      </button>,
+    );
+    if (rootOpen) renderDir("", 1);
+  }
 
   return (
     <div className="file-tree" ref={treeRef} style={width ? { flexBasis: width } : undefined}>

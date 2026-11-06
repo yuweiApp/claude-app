@@ -718,6 +718,8 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; background:
 .files-hit { padding-left: 8px; gap: 6px; }
 .files-row:hover, .files-hit.active { background: var(--panel); }
 .files-row.selected, .files-hit.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* 文件树第一行：工作目录本身 */
+.files-root .files-name { font-weight: 600; }
 .files-caret { width: 12px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
 .files-caret svg { transition: transform 0.1s; }
 .files-icon { display: inline-flex; flex-shrink: 0; color: var(--muted); }

@@ -64,15 +64,13 @@ interface Props {
   cwd: string;
   /** 当前会话（新会话页没有右侧面板，发出第一条消息、会话建好后才有） */
   sessionId: string;
-  /** 旧的普通会话（工作目录就是 workspace 本身）没有项目文件，只给终端 */
-  files?: boolean;
   state: PanelState;
   onChange: (update: (state: PanelState) => PanelState) => void;
   onClose: () => void;
 }
 
 /** 对话区右边的面板（参照 codex-app-server 的 SidePanel）：标签页，新标签页里选「文件」「终端」 */
-export function SidePanel({ cwd, sessionId, files = true, state, onChange, onClose }: Props) {
+export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
   const [width, setWidth] = useState(initialWidth);
   const drag = useRef<{ x: number; width: number; latest: number } | null>(null);
   const asideRef = useRef<HTMLElement>(null);
@@ -378,7 +376,7 @@ export function SidePanel({ cwd, sessionId, files = true, state, onChange, onClo
           <div key={tab.id} className="panel-page" hidden={tab.id !== activeId}>
             {tab.kind === "new" && (
               <NewTab
-                onFiles={files ? () => replaceTab(tab.id, { id: tab.id, kind: "files", path: null, transient: false }) : undefined}
+                onFiles={() => replaceTab(tab.id, { id: tab.id, kind: "files", path: null, transient: false })}
                 onTerminal={() => void openTerminal(tab.id)}
                 // 只有桌面版有内置浏览器
                 browser={browserApi ? (url) => void openBrowser(tab.id, url) : undefined}

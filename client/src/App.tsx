@@ -66,9 +66,8 @@ export function App() {
   const chatCwd = currentId ? (current?.cwd ?? null) : newCwd;
   // 右侧面板（文件、终端、浏览器）开在会话的工作目录：项目文件夹，或者普通会话自己的 scratch 目录。
   // 发出第一条消息、会话建好（列表里有了）之后才能用：新会话页还没有工作目录（普通会话的 scratch 目录是建会话时才有的），按钮置灰。
-  // 旧的普通会话工作目录就是 workspace 本身，只给终端。开着还是收起全局记住，标签页按文件夹分开
+  // 旧的普通会话工作目录就是 workspace 本身，文件树列的就是整个 workspace。开着还是收起全局记住，标签页按文件夹分开
   const panelCwd = config && current ? current.cwd || config.workspaceDir : null;
-  const isProject = !!panelCwd && panelCwd !== config?.workspaceDir;
   const [panelOpen, setPanelOpen] = useState(initialPanelOpen);
   const [panels, setPanels] = useState<Record<string, PanelState>>({});
   // 还没改过的项目用同一个默认状态（每次渲染新建的话标签页 id 会变）
@@ -201,7 +200,7 @@ export function App() {
                       disabled={!panelCwd}
                       title={
                         panelCwd
-                          ? `打开右侧面板（${[isProject && "文件", "终端", desktop && "浏览器"].filter(Boolean).join("、")}）`
+                          ? `打开右侧面板（${["文件", "终端", desktop && "浏览器"].filter(Boolean).join("、")}）`
                           : `发出第一条消息后才能使用右侧面板（文件、终端${desktop ? "、浏览器" : ""}）`
                       }
                       aria-label="打开右侧面板"
@@ -217,7 +216,6 @@ export function App() {
                 key={panelCwd}
                 cwd={panelCwd}
                 sessionId={current.sessionId}
-                files={isProject}
                 state={panelOf(panels, panelCwd)}
                 onChange={(update) =>
                   setPanels((all) => {
