@@ -1,4 +1,6 @@
-import { open } from "node:fs/promises";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { open, writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { BackgroundTask } from "../shared/types.js";
 
@@ -14,10 +16,12 @@ const MAX_REMEMBERED = 200;
 /**
  * 一个会话的后台任务（Bash 后台命令、后台子代理等），从 SDK 的 task_* 消息整理出来。
  * SDK 消息里没有时间，开始、结束时间按网关收到的时间记。
- * 跟会话走，不跟子进程走：子进程空闲回收后再 resume，之前的任务记录还在；会话删除时一起丢掉
+ * 跟会话走，不跟子进程走：子进程空闲回收后再 resume，之前的任务记录还在；会话删除时一起丢掉。
+ * 记录写在 file 里（有变化时），网关重启后读回来：重启前还在跑的任务跟着旧子进程结束了，记成已停止，记录不删
  */
 export class TaskList {
   private readonly tasks = new Map<string, TaskRecord>();
+  private saveTimer?: NodeJS.Timeout;
   /** Bash 工具调用的命令：task_started 只带 tool_use_id */
   private readonly commands = new Map<string, string>();
   /** 工具调用发出的时间：跑久了才转到后台的（MCP 调用跑满 20 秒），开始时间按调用发出时算，不按转后台的时候 */
@@ -29,8 +33,48 @@ export class TaskList {
    */
   private liveBackground = new Set<string>();
 
+  constructor(private readonly file?: string) {
+    if (!file) return;
+    let saved: TaskRecord[] = [];
+    try {
+      saved = JSON.parse(readFileSync(file, "utf8")) as TaskRecord[];
+    } catch {
+      return;
+    }
+    const now = Date.now();
+    for (const task of saved) {
+      if (task.status === "running") {
+        task.status = "stopped";
+        task.endedAt = now;
+      }
+      this.tasks.set(task.taskId, task);
+    }
+  }
+
   /** 处理一条 SDK 消息，任务列表有变化时返回 true */
   ingest(message: SDKMessage): boolean {
+    return this.changed(this.ingestMessage(message));
+  }
+
+  /** 会话删除时删掉记录文件 */
+  dispose(): void {
+    clearTimeout(this.saveTimer);
+    if (this.file) rmSync(this.file, { force: true });
+  }
+
+  private changed(changed: boolean): boolean {
+    if (changed && this.file && !this.saveTimer) {
+      this.saveTimer = setTimeout(() => {
+        this.saveTimer = undefined;
+        const file = this.file!;
+        mkdirSync(path.dirname(file), { recursive: true });
+        void writeFile(file, JSON.stringify([...this.tasks.values()])).catch(() => undefined);
+      }, 300);
+    }
+    return changed;
+  }
+
+  private ingestMessage(message: SDKMessage): boolean {
     switch (message.type) {
       case "assistant":
         for (const block of message.message.content) {
@@ -67,7 +111,7 @@ export class TaskList {
     for (const [id, task] of this.tasks) {
       if (task.status !== "running") changed = this.tasks.delete(id) || changed;
     }
-    return changed;
+    return this.changed(changed);
   }
 
   /** 子进程退出时它拉起的后台任务也跟着结束 */
@@ -79,7 +123,7 @@ export class TaskList {
       task.endedAt = Date.now();
       changed = true;
     }
-    return changed;
+    return this.changed(changed);
   }
 
   private ingestSystem(message: Extract<SDKMessage, { type: "system" }>): boolean {

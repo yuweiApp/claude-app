@@ -32,7 +32,7 @@ import { createScratchDir, isChatCwd, removeScratchDirIfEmpty, sessionRecordDir 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
 export class SessionManager {
   private readonly active = new Map<string, AgentSession>();
-  /** 每个会话的后台任务，子进程回收后还留着（网关重启前） */
+  /** 每个会话的后台任务，子进程回收后还留着；记录写在 claude-home/gateway-tasks/<会话 id>.json，网关重启后读回来 */
   private readonly tasks = new Map<string, TaskList>();
   private readonly sweeper: NodeJS.Timeout;
 
@@ -144,6 +144,7 @@ export class SessionManager {
       }
     }
     this.hub.remove(sessionId);
+    this.taskList(sessionId).dispose();
     this.tasks.delete(sessionId);
     // 浏览器工具的 REPL（browser_run_code 的变量、当前标签页）按会话留在网关里，删会话时一起删
     disposeRepls(sessionId);
@@ -153,12 +154,12 @@ export class SessionManager {
   }
 
   listTasks(sessionId: string): BackgroundTask[] {
-    return this.tasks.get(sessionId)?.list() ?? [];
+    return this.taskList(sessionId).list();
   }
 
   /** 任务输出的最后一段；只能读这个会话自己记下的任务的输出文件 */
   async taskOutput(sessionId: string, taskId: string): Promise<{ text: string; truncated: boolean }> {
-    const file = this.tasks.get(sessionId)?.outputFile(taskId);
+    const file = this.taskList(sessionId).outputFile(taskId);
     if (!file) throw new NotFoundError("这个任务没有输出");
     return readOutputTail(file).catch(() => ({ text: "", truncated: false }));
   }
@@ -171,14 +172,16 @@ export class SessionManager {
 
   /** 清掉已经结束的后台任务 */
   clearFinishedTasks(sessionId: string): void {
-    const list = this.tasks.get(sessionId);
-    if (list?.clearFinished()) this.hub.publish(sessionId, { type: "tasks", tasks: list.list() });
+    const list = this.taskList(sessionId);
+    if (list.clearFinished()) this.hub.publish(sessionId, { type: "tasks", tasks: list.list() });
   }
 
   private taskList(sessionId: string): TaskList {
     let list = this.tasks.get(sessionId);
     if (!list) {
-      list = new TaskList();
+      // 会话 id 来自请求路径，只收 uuid 形式的，免得拼出别的路径
+      const file = /^[\w-]+$/.test(sessionId) ? path.join(config.claudeConfigDir, "gateway-tasks", `${sessionId}.json`) : undefined;
+      list = new TaskList(file);
       this.tasks.set(sessionId, list);
     }
     return list;
