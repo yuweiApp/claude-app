@@ -26,6 +26,7 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { BrowserHost } from "../browser/host.js";
 import { generateTitle } from "./title.js";
 import { readOutputTail, TaskList } from "./tasks.js";
+import { createScratchDir, isChatCwd, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
 export class SessionManager {
@@ -59,7 +60,8 @@ export class SessionManager {
     opts: { cwd?: string; model?: string; effort?: EffortLevel; permissionMode?: PermissionMode; attachments?: string[] },
   ): Promise<AgentSession> {
     rejectDisabledSkill(text);
-    const cwd = opts.cwd ? await resolveDir(opts.cwd) : config.workspaceDir;
+    // 没选文件夹：给这个会话新建一个工作目录（同 Claude 桌面版），不和别的普通会话共用
+    const cwd = opts.cwd ? await resolveDir(opts.cwd) : await createScratchDir();
     const attachments = await loadAttachments(opts.attachments ?? []);
     const session = await this.launch(randomUUID(), false, { ...opts, cwd });
     await session.send(text, attachments);
@@ -101,11 +103,11 @@ export class SessionManager {
 
   async list(): Promise<SessionListItem[]> {
     // 不传 dir：所有工作目录（项目）的会话
-    const stored: SessionListItem[] = (await listSessions()).map((info) => ({ ...info, state: this.active.get(info.sessionId)?.state }));
+    const stored: SessionListItem[] = (await listSessions()).map((info) => ({ ...info, chat: isChatCwd(info.cwd), state: this.active.get(info.sessionId)?.state }));
     // 刚建的会话第一轮还没落盘时也要出现在列表里，字段按 SDKSessionInfo 补
     for (const session of this.active.values()) {
       if (!stored.some((s) => s.sessionId === session.id)) {
-        stored.push({ sessionId: session.id, summary: "", lastModified: session.lastActiveAt, cwd: session.cwd, state: session.state });
+        stored.push({ sessionId: session.id, summary: "", lastModified: session.lastActiveAt, cwd: session.cwd, chat: isChatCwd(session.cwd), state: session.state });
       }
     }
     return stored.sort((a, b) => b.lastModified - a.lastModified);
@@ -127,8 +129,11 @@ export class SessionManager {
   async delete(sessionId: string): Promise<void> {
     const session = this.active.get(sessionId);
     await session?.close();
+    const info = await getSessionInfo(sessionId);
+    const cwd = session?.cwd ?? info?.cwd;
+    const recordDir = info ? await sessionRecordDir(sessionId) : undefined;
     // 刚建的会话第一轮还没落盘时只有子进程，没有文件可删
-    if (await getSessionInfo(sessionId)) await deleteSession(sessionId);
+    if (info) await deleteSession(sessionId);
     else if (!session) throw new NotFoundError(`会话不存在：${sessionId}`);
     // close() 只等到消息流结束，子进程退出时还会往 jsonl 写最后几条记录，把删掉的文件又建出来，所以再查几次
     if (session) {
@@ -139,6 +144,7 @@ export class SessionManager {
     }
     this.hub.remove(sessionId);
     this.tasks.delete(sessionId);
+    await removeScratchDirIfEmpty(cwd, recordDir);
   }
 
   listTasks(sessionId: string): BackgroundTask[] {

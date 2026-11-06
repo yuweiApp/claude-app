@@ -62,9 +62,9 @@ function saveWidth(width: number) {
 
 interface Props {
   cwd: string;
-  /** 当前会话；新会话页是草稿名（draft:…），那里开的浏览器标签页在会话建好后转给它 */
+  /** 当前会话（新会话页没有右侧面板，发出第一条消息、会话建好后才有） */
   sessionId: string;
-  /** 普通会话（工作区）没有项目文件，只给终端 */
+  /** 旧的普通会话（工作目录就是 workspace 本身）没有项目文件，只给终端 */
   files?: boolean;
   state: PanelState;
   onChange: (update: (state: PanelState) => PanelState) => void;
@@ -206,16 +206,9 @@ export function SidePanel({ cwd, sessionId, files = true, state, onChange, onClo
       let changed = false;
       let tabs = s.tabs.flatMap((t): PanelTab[] => {
         if (t.kind !== "browser") return [t];
-        const info = browserTabs.get(t.browserId);
-        if (!info) {
+        if (!browserTabs.has(t.browserId)) {
           changed = true;
           return [];
-        }
-        // 新会话页开的标签页，会话建好后转给了新会话。只从草稿改成正式会话、不改回去：
-        // 会话刚建好时面板已经先改了（App 的 onCreated），外壳推来的列表可能还是旧的（还在草稿名下）
-        if (info.sessionId !== t.sessionId && t.sessionId.startsWith("draft:") && !info.sessionId.startsWith("draft:")) {
-          changed = true;
-          return [{ ...t, sessionId: info.sessionId }];
         }
         return [t];
       });

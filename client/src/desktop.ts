@@ -46,8 +46,6 @@ export interface DesktopBrowserApi {
   /** 把标签页叠放到这个位置（界面的 CSS 像素，相对窗口左上角）；同时只显示一个 */
   show(id: string, bounds: { x: number; y: number; width: number; height: number }): void;
   hide(): void;
-  /** 新会话页（草稿名下）开的标签页转给建好的会话 */
-  reassign(from: string, to: string): void;
   /** 显示中的网页拍一张快照（data URL），界面盖住面板时贴在原位 */
   snapshot(id: string): Promise<string | null>;
   /** 地址栏的建议：浏览历史里网址或标题包含输入的 */

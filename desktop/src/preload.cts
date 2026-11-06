@@ -25,7 +25,6 @@ contextBridge.exposeInMainWorld("desktop", {
     go: (id: string, action: string) => ipcRenderer.send("browser:go", id, action),
     show: (id: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.send("browser:show", id, bounds),
     hide: () => ipcRenderer.send("browser:hide"),
-    reassign: (from: string, to: string) => ipcRenderer.send("browser:reassign", from, to),
     snapshot: (id: string): Promise<string | null> => ipcRenderer.invoke("browser:snapshot", id),
     suggest: (query: string): Promise<unknown[]> => ipcRenderer.invoke("browser:suggest", query),
     onTabs: (callback: (tabs: unknown[]) => void) => {

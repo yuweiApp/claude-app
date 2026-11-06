@@ -155,9 +155,6 @@ ipcMain.on("browser:go", (e, id: unknown, action: unknown) => {
 });
 ipcMain.on("browser:show", (e, id: unknown, bounds: Rectangle) => fromUi(e.sender) && typeof id === "string" && browserViews.show(id, bounds));
 ipcMain.on("browser:hide", (e) => fromUi(e.sender) && browserViews.hide());
-ipcMain.on("browser:reassign", (e, from: unknown, to: unknown) => {
-  if (fromUi(e.sender) && typeof from === "string" && typeof to === "string") browserViews.reassign(from, to);
-});
 ipcMain.handle("browser:snapshot", (e, id: unknown) => (fromUi(e.sender) && typeof id === "string" ? browserViews.snapshot(id) : null));
 ipcMain.handle("browser:suggest", (e, query: unknown) => (fromUi(e.sender) && typeof query === "string" ? browserViews.history.suggest(query) : []));
 

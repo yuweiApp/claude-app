@@ -41,11 +41,7 @@ export class CdpProxy {
     };
     const onChanged = (tab: Tab) => {
       if (!mine(tab)) return;
-      // 新会话页开的标签页转给了这个会话（views.reassign）：当作新来的报给 Playwright
-      if (this.autoAttach && !this.attached.has(tab.id)) {
-        if (this.discover) this.event("Target.targetCreated", { targetInfo: this.info(tab) });
-        this.attach(tab);
-      } else if (this.discover) this.event("Target.targetInfoChanged", { targetInfo: this.info(tab) });
+      if (this.discover) this.event("Target.targetInfoChanged", { targetInfo: this.info(tab) });
     };
     const onCdp = (tab: Tab, method: string, params: unknown, child: string) => {
       if (!mine(tab) || !this.attached.has(tab.id)) return;

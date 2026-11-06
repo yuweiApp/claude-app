@@ -638,7 +638,9 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; background:
 .main-split { flex: 1; min-height: 0; display: flex; }
 .chat-header-end { margin-left: auto; display: flex; align-items: center; }
 .panel-toggle { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
-.panel-toggle.active, .panel-toggle:hover { color: var(--text); }
+.panel-toggle.active, .panel-toggle:hover:not(:disabled) { color: var(--text); }
+/* 新会话页：发出第一条消息之前右侧面板不能用 */
+.panel-toggle:disabled { opacity: 0.35; cursor: default; }
 .side-panel { position: relative; flex: none; min-width: 320px; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg); }
 /* 左边缘的分割线，和侧边栏的 .sidebar-resizer 一样：两边各伸出 4px 方便抓，平时只看到边框线，悬停时中间显示一小段圆角竖条 */
 .side-panel-resizer { position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; z-index: 6; cursor: col-resize; touch-action: none; outline: none; }

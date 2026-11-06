@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { desktop, type BrowserTabInfo } from "../desktop";
 
-/** 桌面版内置浏览器里这个会话（新会话页是草稿名）的标签页，输入框 @ 引用用；网页版是空的 */
-export function useBrowserTabs(sessionId: string): BrowserTabInfo[] {
+/** 桌面版内置浏览器里这个会话的标签页，输入框「标签页」按钮引用用；网页版和新会话页（sessionId 为 null）是空的 */
+export function useBrowserTabs(sessionId: string | null): BrowserTabInfo[] {
   const [tabs, setTabs] = useState<BrowserTabInfo[]>([]);
   useEffect(() => {
     const browser = desktop?.browser;
-    if (!browser) {
+    if (!browser || !sessionId) {
       setTabs([]);
       return;
     }

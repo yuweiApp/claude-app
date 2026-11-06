@@ -43,7 +43,7 @@ export function groupByFolder(sessions: SessionListItem[], workspaceDir: string)
 
 interface Props {
   sessions: SessionListItem[];
-  /** 默认工作目录：没选文件夹的会话在这里跑，列在「会话」里；其他工作目录各是一个「项目」 */
+  /** 默认工作目录：没有 cwd 的会话按它分组（普通会话看 SessionListItem.chat，不看这个） */
   workspaceDir: string;
   currentId: string | null;
   onSelect: (id: string) => void;
@@ -70,9 +70,9 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
       return next;
     });
 
-  // 同 codex-app-server 的侧边栏：「项目」是选了文件夹的会话，按文件夹分组；「会话」是没选文件夹（默认工作目录）的
-  const projects = groupByFolder(sessions, workspaceDir).filter((g) => g.cwd !== workspaceDir);
-  const chats = sessions.filter((s) => !s.cwd || s.cwd === workspaceDir);
+  // 同 codex-app-server 的侧边栏：「项目」是选了文件夹的会话，按文件夹分组；「会话」是没选文件夹的（各有网关建的 scratch 目录）
+  const projects = groupByFolder(sessions.filter((s) => !s.chat), workspaceDir);
+  const chats = sessions.filter((s) => s.chat);
   const projectsOpen = !collapsed.has(SECTION_PROJECTS);
   const chatsOpen = !collapsed.has(SECTION_CHATS);
 

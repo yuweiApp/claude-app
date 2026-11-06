@@ -22,7 +22,7 @@ export interface SessionLaunch {
   /** 启用的技能，不传是 Claude Code 的默认（全部） */
   skills?: string[];
   canUseTool: CanUseTool;
-  /** 右侧面板的终端：给模型加上读终端、往终端里写命令的工具（普通会话的终端开在工作区） */
+  /** 右侧面板的终端：给模型加上读终端、往终端里写命令的工具（终端开在会话的工作目录） */
   terminals?: TerminalManager;
   /** 桌面版的内置浏览器：给模型加上 Playwright MCP，只能操作这个会话自己的标签页 */
   browser?: BrowserHost;
@@ -32,7 +32,7 @@ export interface SessionLaunch {
 
 /** 拼 query() 的 Options，见 docs/README.md「会话模型」「模型接入」 */
 export function buildOptions(launch: SessionLaunch): Options {
-  // 网页上每个会话都有右侧面板的终端：项目会话按项目文件夹，普通会话共用工作区那一组
+  // 网页上每个会话都有右侧面板的终端，按工作目录分组：项目会话按项目文件夹，普通会话各有自己的 scratch 目录
   const terminal = launch.terminals ? terminalServer(launch.terminals, launch.cwd) : null;
   // 网页版没有内置浏览器，但会话启动时不知道之后是不是在桌面版里打开，所以都挂上；桌面版没开时调用工具返回错误
   const browser = launch.browser ? browserServer(launch.browser, launch.sessionId) : null;
@@ -41,7 +41,7 @@ export function buildOptions(launch: SessionLaunch): Options {
   const allowedTools = [...(terminal ? TERMINAL_READ_TOOLS : []), ...(browser ? BROWSER_READ_TOOLS : []), ...(chrome ? CHROME_READ_TOOLS : [])];
   return {
     cwd: launch.cwd,
-    // 附件存在默认工作目录下，项目里的会话也要能不经确认读到
+    // 附件存在 workspace/.attachments，工作目录不是 workspace 本身的会话（项目会话、普通会话的 scratch 目录）也要能不经确认读到
     ...(launch.cwd !== config.workspaceDir ? { additionalDirectories: [attachmentsDir] } : {}),
     env: agentEnv(),
     ...(launch.resume ? { resume: launch.sessionId } : { sessionId: launch.sessionId }),

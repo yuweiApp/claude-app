@@ -131,14 +131,6 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     this.emit("changed", tab);
   }
 
-  /** 新会话页（草稿名下）开的标签页，会话建好后转给它 */
-  reassign(from: string, to: string): void {
-    for (const tab of this.list(from)) {
-      tab.sessionId = to;
-      this.emit("changed", tab);
-    }
-  }
-
   /** AI 的 browser_keep_tab：把这个会话里 AI 最近操作过的标签页留给用户 */
   keepLatest(sessionId: string): Tab | null {
     const latest = this.list(sessionId)
