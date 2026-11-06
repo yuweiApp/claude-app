@@ -284,8 +284,26 @@ export class BrowserRepl {
   private readonly vmPromise: PromiseConstructor;
   /** 后台出的错（见 registry 上面的说明），下次调用的结果里带上 */
   private background: string[] = [];
+  /**
+   * 两次调用之间被关掉的标签页（网址）：内置浏览器一轮结束时自动关的临时标签页、用户自己关的。
+   * 模型下一次调用浏览器工具时在结果开头告诉它（takeNotice），免得它照旧用存着的 page、出错了才知道。
+   * 只记上次调用结束时还开着的（模型可能知道的）；调用进行中关掉的（多半是代码自己 page.close()）不记
+   */
+  private closedUrls: string[] = [];
+  /** page 原来指向的标签页被关了，已经换成了别的（最后一个标签页，或者 undefined） */
+  private pageReplaced = false;
+  /** 上次调用结束时开着的标签页 */
+  private seen = new Set<Page>();
+  /** 已经挂上关闭事件的浏览器上下文（断开重连后是新的） */
+  private watched: BrowserContext | null = null;
 
-  constructor(private readonly getContext: () => Promise<BrowserContext>) {
+  /**
+   * @param closedHint 告诉模型标签页为什么会被关（内置浏览器：一轮结束时自动关；Chrome：用户关的）
+   */
+  constructor(
+    private readonly getContext: () => Promise<BrowserContext>,
+    private readonly closedHint = "",
+  ) {
     const capture =
       (prefix: string) =>
       (...args: unknown[]) => {
@@ -346,12 +364,53 @@ export class BrowserRepl {
 
   /** 准备好 context 和 page（browser_snapshot 等工具也走这里，和代码里的 page 是同一个） */
   async current(): Promise<{ context: BrowserContext; page: Page | undefined }> {
+    return this.sync(true);
+  }
+
+  /**
+   * 取 context，page 指向已关闭或旧连接里的标签页时换成最后一个标签页；记下现在开着的标签页（seen）。
+   * note：page 被换掉要不要告诉模型（调用开头要；调用结束时是代码自己关的，不用）
+   */
+  private async sync(note: boolean): Promise<{ context: BrowserContext; page: Page | undefined }> {
     const context = await this.getContext();
+    this.watch(context);
     this.sandbox.context = context;
     const page = this.sandbox.page as Page | undefined;
     const usable = page && typeof page.isClosed === "function" && !page.isClosed() && page.context() === context;
-    if (!usable) this.sandbox.page = context.pages().at(-1);
+    if (!usable) {
+      if (note && page && typeof page.isClosed === "function" && page.isClosed()) this.pageReplaced = true;
+      this.sandbox.page = context.pages().at(-1);
+    }
+    this.seen = new Set(context.pages());
     return { context, page: this.sandbox.page as Page | undefined };
+  }
+
+  /** 给浏览器上下文里的标签页挂上关闭事件（新开的也挂），记下两次调用之间被关掉的 */
+  private watch(context: BrowserContext): void {
+    if (this.watched === context) return;
+    this.watched = context;
+    const onPage = (page: Page) =>
+      page.once("close", () => {
+        if (this.sinks.length > 0 || !this.seen.has(page)) return;
+        if (this.closedUrls.length < 20) this.closedUrls.push(page.url());
+      });
+    context.pages().forEach(onPage);
+    context.on("page", onPage);
+  }
+
+  /** 自上次调用以来被关掉的标签页的说明（放在这次结果的开头），说过就清掉；没有返回 undefined */
+  takeNotice(): string | undefined {
+    if (!this.closedUrls.length && !this.pageReplaced) return undefined;
+    const page = this.sandbox.page as Page | undefined;
+    const now = page ? `现在 page 指向 ${page.url()}` : "现在没有标签页，page 是 undefined，要用就 page = await context.newPage() 重新打开";
+    const lines = [
+      this.closedUrls.length ? `自上次调用以来，这些标签页被关掉了：\n${this.closedUrls.map((url) => `- ${url}`).join("\n")}` : "page 原来指向的标签页被关掉了。",
+      this.pageReplaced ? `page 原来指向的标签页也在其中，${now}。` : "",
+      this.closedHint,
+    ].filter(Boolean);
+    this.closedUrls = [];
+    this.pageReplaced = false;
+    return `（${lines.join("\n")}）`;
   }
 
   /** 切换当前标签页（browser_tabs select） */
@@ -367,6 +426,8 @@ export class BrowserRepl {
       return { text: `语法错误：${(err as Error).message}`, images: [], isError: true, opened: false };
     }
     const { context } = await this.current();
+    // 上次调用以来被关掉的标签页：放在这次结果的最前面（在跑代码之前取，代码自己关的不算）
+    const notice = this.takeNotice();
     const before = snapshotPages(context, this.sandbox.page as Page | undefined);
     const sink: Sink = { lines: [], images: [] };
     this.sinks.push(sink);
@@ -407,6 +468,7 @@ export class BrowserRepl {
       parts.unshift(`后台代码出错（定时器或事件回调里抛的错、没有 await 的调用失败等）：\n${this.background.join("\n")}\n`);
       this.background = [];
     }
+    if (notice) parts.unshift(notice);
     let isError = false;
     if ("value" in outcome) {
       if (outcome.value !== undefined) parts.push(show(outcome.value));
@@ -419,8 +481,8 @@ export class BrowserRepl {
       isError = true;
       parts.push(outcome.stop);
     }
-    // 跑完后 page 可能被代码换掉或关掉了，按新的状态比较
-    const after = snapshotPages(context, (await this.current().catch(() => null))?.page);
+        // 跑完后 page 可能被代码换掉或关掉了，按新的状态比较
+    const after = snapshotPages(context, (await this.sync(false).catch(() => null))?.page);
     const opened = after.pages.some((p) => !before.pages.includes(p)) || (after.current !== undefined && after.current === before.current && after.url !== before.url);
     return { text: truncate(parts.join("\n") || "（没有输出）"), images: sink.images, isError, opened };
   }

@@ -52,6 +52,12 @@ export class AgentSession {
   private readonly pending = new Map<string, PendingPermission>();
   /** 主线程里已经发出、还没拿到结果的工具调用（tool_use 的 id），决定插话用不用 priority now（见 send） */
   private readonly toolsInFlight = new Set<string>();
+  /**
+   * 这一轮里有转到后台的浏览器工具调用结束了：它的结果会在下一轮交给模型，模型多半还要接着用那个标签页，
+   * 所以这一轮结束时先不关内置浏览器的临时标签页，等下一轮结束再关（实测：任务在这一轮结束前 3 秒失败，标签页被关，
+   * 下一轮模型接着用 page 时它已经是 undefined）
+   */
+  private browserTaskEnded = false;
   private readonly done: Promise<void>;
   private closing = false;
 
@@ -235,13 +241,19 @@ export class AgentSession {
         // 转到后台的浏览器工具调用结束了：把结果原文补发给网页（通知里只有工具名），失败时显示原因
         if (message.type === "system" && message.subtype === "task_notification" && message.tool_use_id) {
           const result = takeToolResult(message.tool_use_id);
-          if (result) this.publish({ type: "task_result", taskId: message.task_id, text: result.text, isError: result.isError });
+          if (result) {
+            this.publish({ type: "task_result", taskId: message.task_id, text: result.text, isError: result.isError });
+            this.browserTaskEnded = true;
+          }
         }
         if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });
         if (message.type === "result") {
           this.setState("idle");
-          // 一轮结束：内置浏览器关掉 AI 开的、没留下的临时标签页；还有转到后台的代码在跑时先不关（见 inappBusy）
-          if (!inappBusy(this.id)) this.browser?.turnEnded(this.id);
+          // 一轮结束：内置浏览器关掉 AI 开的、没留下的临时标签页。还有转到后台的代码在跑（inappBusy），
+          // 或者这一轮里有后台浏览器任务结束了（browserTaskEnded），先不关
+          const deferred = inappBusy(this.id) || this.browserTaskEnded;
+          this.browserTaskEnded = false;
+          if (!deferred) this.browser?.turnEnded(this.id);
         }
       }
     } catch (err) {

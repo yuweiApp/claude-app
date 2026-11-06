@@ -94,6 +94,6 @@ export function chromeServer(sessionId: string): McpSdkServerConfigWithInstance 
   return browserMcpServer({
     name: CHROME_SERVER,
     instructions: INSTRUCTIONS,
-    repl: replFor(`${CHROME_SERVER}:${sessionId}`, () => chromeBridge.context()),
+    repl: replFor(`${CHROME_SERVER}:${sessionId}`, () => chromeBridge.context(), "可能是用户在 Chrome 里关掉的，或者是别的会话关的。"),
   });
 }

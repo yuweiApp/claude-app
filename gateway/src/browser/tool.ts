@@ -58,6 +58,10 @@ const INSTRUCTIONS =
 const CHROME_NOTE =
   "用户说「我的 Chrome」「外部浏览器」，或者要用到用户自己的登录状态时，用 mcp__chrome__ 开头的工具（用户自己的 Chrome），不是这里的工具。";
 
+/** 告诉模型标签页为什么被关（REPL 在下一次调用时说明哪些标签页被关了，见 BrowserRepl.takeNotice） */
+const INAPP_CLOSED_HINT =
+  "内置浏览器里你开的标签页在一轮结束时会自动关掉（用户也可能自己关），要在之后的轮次接着用，就在一轮结束前调用 browser_keep_tab。";
+
 /** browser_run_code 打开了网页后提醒模型：临时标签页这一轮结束会关，要留给用户就 browser_keep_tab（模型常忘） */
 const KEEP_HINT = "（这是你开的临时标签页，这一轮结束会自动关闭；如果是给用户看的页面，结束前调用 browser_keep_tab 留下。）";
 
@@ -70,10 +74,10 @@ const error = (t: string) => ({ ...text(t), isError: true });
  */
 const repls = new Map<string, BrowserRepl>();
 
-export function replFor(key: string, getContext: () => Promise<BrowserContext>): BrowserRepl {
+export function replFor(key: string, getContext: () => Promise<BrowserContext>, closedHint = ""): BrowserRepl {
   let repl = repls.get(key);
   if (!repl) {
-    repl = new BrowserRepl(getContext);
+    repl = new BrowserRepl(getContext, closedHint);
     repls.set(key, repl);
   }
   return repl;
@@ -125,6 +129,9 @@ async function describe(pages: Page[], current: Page | undefined): Promise<strin
   const lines = await Promise.all(pages.map(async (p, i) => `[${i}]${p === current ? "（当前）" : ""} ${(await title(p)) || "（无标题）"} — ${p.url()}`));
   return lines.join("\n");
 }
+
+/** 结果前面加上「上次调用以来被关掉的标签页」的说明 */
+const withNotice = (notice: string | undefined, body: string) => (notice ? `${notice}\n\n${body}` : body);
 
 const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -184,9 +191,10 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
       async () => {
         try {
           const { context, page } = await repl.current();
-          if (!page) return error(noPage);
+          const notice = repl.takeNotice();
+          if (!page) return error(withNotice(notice, noPage));
           const snapshot = await page.ariaSnapshot({ mode: "ai", timeout: 15_000 });
-          return text(`标签页：\n${await describe(context.pages(), page)}\n\n当前标签页 ${page.url()} 的结构：\n${snapshot}`);
+          return text(withNotice(notice, `标签页：\n${await describe(context.pages(), page)}\n\n当前标签页 ${page.url()} 的结构：\n${snapshot}`));
         } catch (err) {
           return error(errorMessage(err));
         }
@@ -200,12 +208,18 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
       async ({ full_page }) => {
         try {
           const { page } = await repl.current();
-          if (!page) return error(noPage);
+          const notice = repl.takeNotice();
+          if (!page) return error(withNotice(notice, noPage));
           // 整页可能很长，用 JPEG 压一下
           const data = full_page
             ? await page.screenshot({ fullPage: true, type: "jpeg", quality: 80, timeout: 15_000 })
             : await page.screenshot({ type: "png", timeout: 15_000 });
-          return { content: [{ type: "image" as const, data: data.toString("base64"), mimeType: full_page ? "image/jpeg" : "image/png" }] };
+          return {
+            content: [
+              ...(notice ? [{ type: "text" as const, text: notice }] : []),
+              { type: "image" as const, data: data.toString("base64"), mimeType: full_page ? "image/jpeg" : "image/png" },
+            ],
+          };
         } catch (err) {
           return error(errorMessage(err));
         }
@@ -222,15 +236,16 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
       async ({ action, index }) => {
         try {
           const { context, page } = await repl.current();
+          const notice = repl.takeNotice();
           const pages = context.pages();
           if (action === "select") {
             const target = index === undefined ? undefined : pages[index];
-            if (!target) return error(`没有序号为 ${index ?? "（未指定）"} 的标签页。`);
+            if (!target) return error(withNotice(notice, `没有序号为 ${index ?? "（未指定）"} 的标签页。`));
             repl.setPage(target);
             await target.bringToFront().catch(() => undefined);
-            return text(`已切换到：\n${await describe(pages, target)}`);
+            return text(withNotice(notice, `已切换到：\n${await describe(pages, target)}`));
           }
-          return text(pages.length ? await describe(pages, page) : "没有标签页。");
+          return text(withNotice(notice, pages.length ? await describe(pages, page) : "没有标签页。"));
         } catch (err) {
           return error(errorMessage(err));
         }
@@ -299,7 +314,7 @@ export function browserServer(host: BrowserHost, sessionId: string): McpSdkServe
   return browserMcpServer({
     name: BROWSER_SERVER,
     instructions: INSTRUCTIONS + (externalBrowserEnabled ? CHROME_NOTE : ""),
-    repl: replFor(`${BROWSER_SERVER}:${sessionId}`, inappContext(host, sessionId)),
+    repl: replFor(`${BROWSER_SERVER}:${sessionId}`, inappContext(host, sessionId), INAPP_CLOSED_HINT),
     keep: async () => {
       const tab = await host.keep(sessionId);
       return tab ? `已留下标签页「${tab.title || tab.url}」（${tab.url}），这一轮结束后不会关闭。` : null;
