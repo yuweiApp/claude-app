@@ -293,6 +293,34 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
       tabs.splice(index < 0 ? tabs.length : index + 1, 0, tab);
       return { tabs, active: tab.id };
     });
+  /** 目录树里重命名、拖动了（文件夹的路径以 / 结尾）：开着的文件标签跟着换路径，没保存的修改也跟过去 */
+  const fileRenamed = (from: string, to: string) => {
+    const remap = (p: string) => (p === from ? to : from.endsWith("/") && p.startsWith(from) ? to + p.slice(from.length) : null);
+    for (const t of state.tabs) {
+      if (t.kind !== "files" || t.path === null) continue;
+      const next = remap(t.path);
+      const draft = getDraft(cwd, t.path);
+      if (next === null || draft === undefined) continue;
+      setDraft(cwd, t.path, undefined);
+      setDraft(cwd, next, draft);
+    }
+    onChange((s) => ({
+      ...s,
+      tabs: s.tabs.map((t) => {
+        const next = t.kind === "files" && t.path !== null ? remap(t.path) : null;
+        return next === null ? t : { ...t, path: next };
+      }),
+    }));
+  };
+  /** 目录树里删了：开着的文件标签关掉，当前看着的那个变回「打开文件」（目录树还在） */
+  const fileDeleted = (path: string) => {
+    const gone = (t: PanelTab) => t.kind === "files" && t.path !== null && (t.path === path || (path.endsWith("/") && t.path.startsWith(path)));
+    for (const t of state.tabs) if (t.kind === "files" && t.path !== null && gone(t)) setDraft(cwd, t.path, undefined);
+    onChange((s) => {
+      const tabs = s.tabs.flatMap((t): PanelTab[] => (!gone(t) ? [t] : t.id === s.active ? [{ id: t.id, kind: "files", path: null, transient: false }] : []));
+      return { tabs, active: s.active };
+    });
+  };
   /** 固定预览打开的文件标签 */
   const pin = (id: string) =>
     onChange((s) => ({ ...s, tabs: s.tabs.map((t) => (t.id === id && t.kind === "files" && t.transient ? { ...t, transient: false } : t)) }));
@@ -392,6 +420,8 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
                 active={tab.id === activeId}
                 onSelectFile={(path, pinned) => openFile(tab.id, path, pinned)}
                 onEdited={() => pin(tab.id)}
+                onRenamed={fileRenamed}
+                onDeleted={fileDeleted}
               />
             )}
             {tab.kind === "terminal" && (

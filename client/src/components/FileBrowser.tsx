@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { api, RequestError, type FileContent, type ProjectEntry } from "../api";
 import { getDraft, setDraft, useHasDraft } from "../state/fileDrafts";
 import { useDismiss } from "./ComposerPickers";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { FileTypeIcon, FolderTypeIcon } from "./FileTypeIcon";
 import { MarkdownLiveEditor } from "./MarkdownLiveEditor";
 
@@ -17,6 +18,8 @@ export function FileBrowser({
   active,
   onSelectFile,
   onEdited,
+  onRenamed,
+  onDeleted,
 }: {
   cwd: string;
   /** 打开的文件（相对项目文件夹）；null 是「打开文件」 */
@@ -27,6 +30,10 @@ export function FileBrowser({
   onSelectFile: (path: string, pin: boolean) => void;
   /** 改了内容：预览打开的标签要固定下来 */
   onEdited: () => void;
+  /** 目录树里重命名、拖动了文件或文件夹（文件夹的路径以 / 结尾）：开着的标签跟着换路径 */
+  onRenamed: (from: string, to: string) => void;
+  /** 目录树里删了文件或文件夹：开着的标签要关掉 */
+  onDeleted: (path: string) => void;
 }) {
   const [treeOpen, toggleTree] = useTreeOpen();
   const treeToggle = (
@@ -40,7 +47,7 @@ export function FileBrowser({
       <FoldersIcon />
     </button>
   );
-  const tree = treeOpen ? <FileTree cwd={cwd} activePath={path} autoFocus={path === null} onSelect={onSelectFile} /> : null;
+  const tree = treeOpen ? <FileTree cwd={cwd} activePath={path} autoFocus={path === null} onSelect={onSelectFile} onRenamed={onRenamed} onDeleted={onDeleted} /> : null;
 
   if (path === null) {
     return (
@@ -135,11 +142,40 @@ const parentOf = (p: string) => {
   return i < 0 ? "" : trimmed.slice(0, i + 1);
 };
 
+const trimSlash = (p: string) => (p.endsWith("/") ? p.slice(0, -1) : p);
+/** 同一个项目开着好几个文件标签时各有一棵树（共用 treeCache），一棵改了文件，通知别的也重画 */
+const TREE_CHANGED = "files-tree-changed";
+/**
+ * 要把焦点放到哪一行（F2、Delete 才接得上）：点了别的文件（FileViewer 按路径重新挂载，树跟着重建、焦点丢了）、
+ * 重命名或新建完（输入框换回按钮）。看得见的树画完后找到这一行就聚焦；只认 1 秒内的，免得以后别的时候抢焦点
+ */
+let refocus: { cwd: string; path: string; at: number } | null = null;
+/** 新建、重命名时正在输入名字的那一行 */
+type Editing = { kind: "new"; dir: string; isDir: boolean } | { kind: "rename"; path: string };
+/** 文件名里不能有的：路径分隔符；也不能是 . 和 .. */
+const nameError = (name: string) => (name === "." || name === ".." || /[\\/\0]/.test(name) ? "名称不能是 . 或 ..，也不能含有 / 或 \\" : null);
+
 /**
  * 目录树（同 codex-app-server 的 FileTree）：顶部「筛选文件…」（在整个项目里按名字搜），没在筛选时是刷新按钮；
- * 单击文件预览打开，双击固定打开，点文件夹展开、收起；右边缘拖动调宽度
+ * 单击文件预览打开，双击固定打开，点文件夹展开、收起；右边缘拖动调宽度。
+ * 右键：空白处和第一行（工作目录）新建文件、文件夹，文件夹还能在里面新建；文件、文件夹能重命名（F2）、删除（Delete）。
+ * 拖动文件、文件夹到别的文件夹（拖到文件上是放进它所在的文件夹，拖到空白处或第一行是放到根目录），悬停在收起的文件夹上一会儿自动展开
  */
-function FileTree({ cwd, activePath, autoFocus, onSelect }: { cwd: string; activePath: string | null; autoFocus: boolean; onSelect: (path: string, pin: boolean) => void }) {
+function FileTree({
+  cwd,
+  activePath,
+  autoFocus,
+  onSelect,
+  onRenamed,
+  onDeleted,
+}: {
+  cwd: string;
+  activePath: string | null;
+  autoFocus: boolean;
+  onSelect: (path: string, pin: boolean) => void;
+  onRenamed: (from: string, to: string) => void;
+  onDeleted: (path: string) => void;
+}) {
   const cache = treeCache(cwd);
   const [, rerender] = useState(0);
   const update = () => rerender((n) => n + 1);
@@ -186,6 +222,20 @@ function FileTree({ cwd, activePath, autoFocus, onSelect }: { cwd: string; activ
   useLayoutEffect(() => {
     if (listRef.current) listRef.current.scrollTop = cache.scrollTop;
   }, []);
+  useEffect(() => {
+    const r = refocus;
+    if (!r || r.cwd !== cwd) return;
+    if (Date.now() - r.at > 1000) {
+      refocus = null;
+      return;
+    }
+    const row = listRef.current?.querySelector<HTMLElement>(`[data-path="${CSS.escape(r.path)}"]`);
+    // 别的文件标签里藏着的树不算
+    if (row && row.offsetParent !== null) {
+      refocus = null;
+      row.focus({ preventScroll: true });
+    }
+  });
 
   const toggle = (dir: string) => {
     if (cache.expanded.has(dir)) cache.expanded.delete(dir);
@@ -254,6 +304,206 @@ function FileTree({ cwd, activePath, autoFocus, onSelect }: { cwd: string; activ
     }
   };
 
+  // ---------- 新建、重命名、删除、拖动 ----------
+  useEffect(() => {
+    const onChanged = (e: Event) => (e as CustomEvent<string>).detail === cwd && update();
+    window.addEventListener(TREE_CHANGED, onChanged);
+    return () => window.removeEventListener(TREE_CHANGED, onChanged);
+  }, [cwd]);
+  /** 改了文件之后重新读这些文件夹，读完通知同一个项目的别的树 */
+  const reload = (dirs: string[]) =>
+    Promise.all([...new Set(dirs)].map(load)).then(() => window.dispatchEvent(new CustomEvent(TREE_CHANGED, { detail: cwd })));
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const [opError, setOpError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<ProjectEntry | null>(null);
+  const fail = (e: unknown) => setOpError((e as Error).message);
+
+  /** 展开到这个文件夹（新建时输入框要看得见） */
+  const expandTo = (dir: string) => {
+    for (let d = dir; ; d = parentOf(d)) {
+      cache.expanded.add(d);
+      if (!cache.dirs[d]) void load(d);
+      if (!d) break;
+    }
+  };
+  /** 输入框收起后焦点回到那一行，接着能按 F2、Delete */
+  const focusRow = (path: string) => {
+    refocus = { cwd, path, at: Date.now() };
+    update();
+  };
+  const startNew = (dir: string, isDir: boolean) => {
+    setOpError(null);
+    expandTo(dir);
+    setEditing({ kind: "new", dir, isDir });
+  };
+  const startRename = (entry: ProjectEntry) => {
+    setOpError(null);
+    setEditing({ kind: "rename", path: entry.path });
+  };
+  /** 新建时的默认名字：同 Windows 资源管理器，重名了加 (2)、(3)… */
+  const defaultName = (dir: string, isDir: boolean) => {
+    const list = cache.dirs[dir];
+    const taken = new Set(Array.isArray(list) ? list.map((e) => basename(e.path).toLowerCase()) : []);
+    const [base, ext] = isDir ? ["新建文件夹", ""] : ["新建文本文档", ".txt"];
+    for (let i = 1; ; i++) {
+      const name = i === 1 ? `${base}${ext}` : `${base} (${i})${ext}`;
+      if (!taken.has(name.toLowerCase())) return name;
+    }
+  };
+  const commitNew = async (dir: string, isDir: boolean, raw: string | null) => {
+    setEditing(null);
+    const name = raw?.trim();
+    if (!name) return;
+    const bad = nameError(name);
+    if (bad) return setOpError(bad);
+    const path = dir + name;
+    try {
+      await api.createFile(cwd, path, isDir);
+    } catch (e) {
+      return fail(e);
+    }
+    await reload([dir]);
+    // 新建的文件直接打开，文件夹滚到看得见
+    focusRow(isDir ? path + "/" : path);
+    if (!isDir) onSelect(path, true);
+    else listRef.current?.querySelector<HTMLElement>(`[data-path="${CSS.escape(path + "/")}"]`)?.scrollIntoView({ block: "nearest" });
+  };
+  /** 改路径（重命名、拖动）；文件夹的路径以 / 结尾 */
+  const move = async (from: string, to: string) => {
+    if (from === to) return;
+    setOpError(null);
+    try {
+      await api.renameFile(cwd, trimSlash(from), trimSlash(to));
+    } catch (e) {
+      fail(e);
+      focusRow(from);
+      return;
+    }
+    if (from.endsWith("/")) {
+      // 文件夹里展开着的跟着换路径，读过的内容作废
+      cache.expanded = new Set([...cache.expanded].map((k) => (k.startsWith(from) ? to + k.slice(from.length) : k)));
+      for (const k of Object.keys(cache.dirs)) if (k.startsWith(from)) delete cache.dirs[k];
+    }
+    // 先记下要聚焦的行：开着的文件改了路径树会重建，读完之后重画时再聚焦
+    focusRow(to);
+    onRenamed(from, to);
+    await reload([parentOf(from), parentOf(to), ...[...cache.expanded].filter((k) => k.startsWith(to))]);
+  };
+  const commitRename = (entry: ProjectEntry, raw: string | null) => {
+    setEditing(null);
+    const name = raw?.trim();
+    if (!name || name === basename(entry.path)) return focusRow(entry.path);
+    const bad = nameError(name);
+    if (bad) {
+      setOpError(bad);
+      return focusRow(entry.path);
+    }
+    void move(entry.path, parentOf(entry.path) + name + (entry.dir ? "/" : ""));
+  };
+  const remove = async (entry: ProjectEntry) => {
+    setConfirmDelete(null);
+    setOpError(null);
+    try {
+      await api.deleteFile(cwd, trimSlash(entry.path));
+    } catch (e) {
+      return fail(e);
+    }
+    if (entry.dir) {
+      for (const k of [...cache.expanded]) if (k.startsWith(entry.path)) cache.expanded.delete(k);
+      for (const k of Object.keys(cache.dirs)) if (k.startsWith(entry.path)) delete cache.dirs[k];
+    }
+    onDeleted(entry.path);
+    await reload([parentOf(entry.path)]);
+  };
+
+  // 右键菜单：entry 为 null 是空白处或第一行（工作目录）
+  const [menu, setMenu] = useState<{ x: number; y: number; entry: ProjectEntry | null } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  useDismiss(menuRef, menu !== null, closeMenu);
+  const openMenu = (e: MouseEvent, entry: ProjectEntry | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // 筛选结果里没有目录结构，新建的输入框没地方放
+    if (hits !== null || editing) return;
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - 170), y: Math.min(e.clientY, window.innerHeight - 170), entry });
+  };
+  const menuItems = (entry: ProjectEntry | null) => {
+    const dir = entry ? (entry.dir ? entry.path : null) : "";
+    const groups: { label: string; danger?: boolean; onClick: () => void }[][] = [];
+    if (dir !== null)
+      groups.push([
+        { label: "新建文件", onClick: () => startNew(dir, false) },
+        { label: "新建文件夹", onClick: () => startNew(dir, true) },
+      ]);
+    if (entry)
+      groups.push([
+        { label: "重命名", onClick: () => startRename(entry) },
+        { label: "删除", danger: true, onClick: () => setConfirmDelete(entry) },
+      ]);
+    return groups;
+  };
+  const onRowKey = (e: KeyboardEvent<HTMLButtonElement>, entry: ProjectEntry) => {
+    if (e.key === "F2") {
+      e.preventDefault();
+      startRename(entry);
+    } else if (e.key === "Delete") {
+      e.preventDefault();
+      setConfirmDelete(entry);
+    }
+  };
+
+  // 拖动：dir 是放进去的文件夹（"" 是根目录）；不能放回原来的文件夹，文件夹不能放进自己里面
+  const dragging = useRef<string | null>(null);
+  const [dropDir, setDropDir] = useState<string | null>(null);
+  const expandTimer = useRef<{ dir: string; timer: number } | null>(null);
+  const clearExpandTimer = () => {
+    if (expandTimer.current) window.clearTimeout(expandTimer.current.timer);
+    expandTimer.current = null;
+  };
+  const canDrop = (from: string, dir: string) => parentOf(from) !== dir && !(from.endsWith("/") && dir.startsWith(from));
+  const endDrag = () => {
+    dragging.current = null;
+    setDropDir(null);
+    clearExpandTimer();
+  };
+  const onDragStart = (e: DragEvent, entry: ProjectEntry) => {
+    dragging.current = entry.path;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", entry.path);
+  };
+  const onDragOver = (e: DragEvent, dir: string) => {
+    const from = dragging.current;
+    if (!from) return;
+    e.stopPropagation();
+    // 悬停在收起的文件夹上 600ms 自动展开
+    if (dir && !cache.expanded.has(dir)) {
+      if (expandTimer.current?.dir !== dir) {
+        clearExpandTimer();
+        const timer = window.setTimeout(() => {
+          expandTimer.current = null;
+          if (!cache.expanded.has(dir)) toggle(dir);
+        }, 600);
+        expandTimer.current = { dir, timer };
+      }
+    } else clearExpandTimer();
+    if (!canDrop(from, dir)) {
+      setDropDir(null);
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDropDir(dir);
+  };
+  const onDrop = (e: DragEvent, dir: string) => {
+    const from = dragging.current;
+    if (!from) return;
+    e.preventDefault();
+    e.stopPropagation();
+    endDrag();
+    if (canDrop(from, dir)) void move(from, dir + basename(from) + (from.endsWith("/") ? "/" : ""));
+  };
+
   // 宽度：拖右边缘调整，记在本地
   const [width, setWidth] = useState<number | null>(() => {
     try {
@@ -298,19 +548,58 @@ function FileTree({ cwd, activePath, autoFocus, onSelect }: { cwd: string; activ
       rows.push(<div key={`${dir}:error`} className="files-note files-error" style={{ paddingLeft: pad + 18 }}>{list.error}</div>);
       return;
     }
-    if (!list.length) rows.push(<div key={`${dir}:empty`} className="files-note" style={{ paddingLeft: pad + 18 }}>空文件夹</div>);
+    const adding = editing?.kind === "new" && editing.dir === dir ? editing : null;
+    if (adding) {
+      const initial = defaultName(dir, adding.isDir);
+      rows.push(
+        <div key={`${dir}:new`} className="files-row editing" style={{ paddingLeft: pad }}>
+          <span className="files-caret" />
+          <span className="files-icon">{adding.isDir ? <FolderTypeIcon open={false} name={initial} /> : <FileTypeIcon name={initial} />}</span>
+          <NameInput initial={initial} selectExt={!adding.isDir} onDone={(name) => void commitNew(dir, adding.isDir, name)} />
+        </div>,
+      );
+    } else if (!list.length) rows.push(<div key={`${dir}:empty`} className="files-note" style={{ paddingLeft: pad + 18 }}>空文件夹</div>);
     for (const entry of list) {
       const name = basename(entry.path);
       const open = entry.dir && cache.expanded.has(entry.path);
+      // 放进哪个文件夹：文件夹就是它自己，文件是它所在的文件夹
+      const target = entry.dir ? entry.path : dir;
+      if (editing?.kind === "rename" && editing.path === entry.path) {
+        rows.push(
+          <div key={entry.path} data-path={entry.path} className="files-row editing" style={{ paddingLeft: pad }}>
+            <span className="files-caret">{entry.dir && <Chevron open={open} />}</span>
+            <span className="files-icon">{entry.dir ? <FolderTypeIcon open={open} name={name} /> : <FileTypeIcon name={name} />}</span>
+            <NameInput initial={name} selectExt={!entry.dir} onDone={(next) => commitRename(entry, next)} />
+          </div>,
+        );
+        if (open) renderDir(entry.path, depth + 1);
+        continue;
+      }
+      const classes = ["files-row"];
+      if (entry.path === activePath) classes.push("selected");
+      if (entry.dir && dropDir === entry.path) classes.push("drop-target");
+      if (menu?.entry?.path === entry.path) classes.push("menu-open");
       rows.push(
         <button
           key={entry.path}
           data-path={entry.path}
-          className={`files-row${entry.path === activePath ? " selected" : ""}`}
+          className={classes.join(" ")}
           style={{ paddingLeft: pad }}
           title={entry.path}
-          onClick={() => (entry.dir ? toggle(entry.path) : onSelect(entry.path, false))}
+          draggable
+          onClick={() => {
+            if (entry.dir) return toggle(entry.path);
+            // 换了文件树会重建，焦点要还回来
+            if (entry.path !== activePath) refocus = { cwd, path: entry.path, at: Date.now() };
+            onSelect(entry.path, false);
+          }}
           onDoubleClick={() => !entry.dir && onSelect(entry.path, true)}
+          onContextMenu={(e) => openMenu(e, entry)}
+          onKeyDown={(e) => onRowKey(e, entry)}
+          onDragStart={(e) => onDragStart(e, entry)}
+          onDragEnd={endDrag}
+          onDragOver={(e) => onDragOver(e, target)}
+          onDrop={(e) => onDrop(e, target)}
         >
           <span className="files-caret">{entry.dir && <Chevron open={open} />}</span>
           <span className="files-icon">{entry.dir ? <FolderTypeIcon open={open} name={name} /> : <TreeFileIcon key={entry.mtimeMs} cwd={cwd} entry={entry} />}</span>
@@ -325,7 +614,16 @@ function FileTree({ cwd, activePath, autoFocus, onSelect }: { cwd: string; activ
     const rootName = basename(cwd);
     const rootOpen = cache.expanded.has("");
     rows.push(
-      <button key=":root" className="files-row files-root" style={{ paddingLeft: 10 }} title={cwd} onClick={() => toggle("")}>
+      <button
+        key=":root"
+        className={`files-row files-root${dropDir === "" ? " drop-target" : ""}${menu && !menu.entry ? " menu-open" : ""}`}
+        style={{ paddingLeft: 10 }}
+        title={cwd}
+        onClick={() => toggle("")}
+        onContextMenu={(e) => openMenu(e, null)}
+        onDragOver={(e) => onDragOver(e, "")}
+        onDrop={(e) => onDrop(e, "")}
+      >
         <span className="files-caret"><Chevron open={rootOpen} /></span>
         <span className="files-icon"><FolderTypeIcon open={rootOpen} name={rootName} /></span>
         <span className="files-name">{rootName}</span>
@@ -367,7 +665,20 @@ function FileTree({ cwd, activePath, autoFocus, onSelect }: { cwd: string; activ
           </button>
         )}
       </div>
-      <div className="file-tree-list" ref={listRef} onScroll={(e) => hits === null && (cache.scrollTop = e.currentTarget.scrollTop)}>
+      {opError && (
+        <div className="files-note files-error file-tree-error" role="alert" title="点击关闭" onClick={() => setOpError(null)}>
+          {opError}
+        </div>
+      )}
+      <div
+        className="file-tree-list"
+        ref={listRef}
+        onScroll={(e) => hits === null && (cache.scrollTop = e.currentTarget.scrollTop)}
+        onContextMenu={(e) => openMenu(e, null)}
+        onDragOver={(e) => onDragOver(e, "")}
+        onDrop={(e) => onDrop(e, "")}
+        onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setDropDir(null)}
+      >
         {hits === null
           ? rows
           : hits.length === 0
@@ -390,7 +701,81 @@ function FileTree({ cwd, activePath, autoFocus, onSelect }: { cwd: string; activ
                 );
               })}
       </div>
+      {menu && (
+        <div ref={menuRef} className="menu context-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
+          {menuItems(menu.entry).map((group, i) => (
+            <div key={i}>
+              {i > 0 && <div className="menu-divider" />}
+              {group.map((item) => (
+                <button
+                  key={item.label}
+                  role="menuitem"
+                  className={`menu-item${item.danger ? " danger" : ""}`}
+                  onClick={() => {
+                    setMenu(null);
+                    item.onClick();
+                  }}
+                >
+                  <span className="menu-item-name">{item.label}</span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+      {confirmDelete && (
+        <ConfirmDialog
+          title={confirmDelete.dir ? "删除文件夹？" : "删除文件？"}
+          message={
+            confirmDelete.dir
+              ? `将永久删除文件夹「${basename(confirmDelete.path)}」及其中的所有内容，无法恢复。`
+              : `将永久删除「${basename(confirmDelete.path)}」，无法恢复。`
+          }
+          confirmLabel="删除"
+          onConfirm={() => void remove(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
     </div>
+  );
+}
+
+/** 目录树里新建、重命名时输入名字：回车或点别处确定，Esc 取消；文件先选中扩展名前面的部分 */
+function NameInput({ initial, selectExt, onDone }: { initial: string; selectExt: boolean; onDone: (name: string | null) => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  useLayoutEffect(() => {
+    const input = ref.current;
+    if (!input) return;
+    input.focus();
+    const dot = selectExt ? initial.lastIndexOf(".") : -1;
+    input.setSelectionRange(0, dot > 0 ? dot : initial.length);
+  }, []);
+  // 回车之后输入框卸掉还会触发一次 blur，只算第一次
+  const finish = (name: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(name);
+  };
+  return (
+    <input
+      ref={ref}
+      className="files-name-input"
+      aria-label="名称"
+      defaultValue={initial}
+      spellCheck={false}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          finish(e.currentTarget.value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          finish(null);
+        }
+      }}
+      onBlur={(e) => finish(e.currentTarget.value)}
+    />
   );
 }
 

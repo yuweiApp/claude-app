@@ -89,6 +89,11 @@ export const api = {
   writeFile: (cwd: string, path: string, text: string, mtimeMs: number, force = false) =>
     request<{ mtimeMs: number }>("POST", "/files/write", { cwd, path, text, mtimeMs, force }),
   /** 图片原文件；v（修改时间）变了地址就变，浏览器不会用缓存里的旧图 */
+  /** 文件树：新建文件（空的）或文件夹 */
+  createFile: (cwd: string, path: string, dir: boolean) => request<object>("POST", "/files/create", { cwd, path, dir }),
+  deleteFile: (cwd: string, path: string) => request<object>("POST", "/files/delete", { cwd, path }),
+  /** 文件树：重命名、拖到别的文件夹 */
+  renameFile: (cwd: string, from: string, to: string) => request<object>("POST", "/files/rename", { cwd, from, to }),
   rawFileUrl: (cwd: string, path: string, v?: number) => withToken(`/files/raw?${q({ cwd, path, ...(v ? { v: String(Math.round(v)) } : {}) })}`),
   /** 右侧面板的终端 */
   terminals: (cwd: string) => request<{ terminals: TerminalInfo[] }>("GET", `/terminals?${q({ cwd })}`).then((r) => r.terminals),

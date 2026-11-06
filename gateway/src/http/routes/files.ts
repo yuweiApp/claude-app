@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { open, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { FastifyInstance } from "fastify";
@@ -88,6 +88,43 @@ export function fileRoutes(app: FastifyInstance): void {
     return { mtimeMs: (await stat(abs)).mtimeMs };
   });
 
+  // 文件树右键「新建文件」「新建文件夹」：已经有同名的不覆盖
+  app.post<{ Body: { cwd?: string; path?: string; dir?: boolean } }>("/files/create", async (req) => {
+    const { cwd, abs } = resolveChild(req.body?.cwd, req.body?.path);
+    if (await exists(abs)) throw new BadRequestError("已经有同名的文件或文件夹");
+    if (!(await stat(path.dirname(abs)).catch(() => null))?.isDirectory()) throw new BadRequestError("所在的文件夹不存在");
+    if (req.body.dir) await mkdir(abs);
+    else await writeFile(abs, "", { flag: "wx" });
+    cache.delete(cwd);
+    return {};
+  });
+
+  // 文件树右键「删除」：直接删掉（文件夹连同里面的东西），网页上先确认
+  app.post<{ Body: { cwd?: string; path?: string } }>("/files/delete", async (req) => {
+    const { cwd, abs } = resolveChild(req.body?.cwd, req.body?.path);
+    if (!(await exists(abs))) throw new BadRequestError("文件不存在");
+    await rm(abs, { recursive: true, force: true });
+    cache.delete(cwd);
+    return {};
+  });
+
+  // 文件树右键「重命名」、拖到别的文件夹：都是改路径；目标已经存在的不覆盖，文件夹不能挪进自己里面
+  app.post<{ Body: { cwd?: string; from?: string; to?: string } }>("/files/rename", async (req) => {
+    const { cwd, abs: from } = resolveChild(req.body?.cwd, req.body?.from);
+    const { abs: to } = resolveChild(req.body?.cwd, req.body?.to);
+    if (from === to) return {};
+    const src = await stat(from).catch(() => null);
+    if (!src) throw new BadRequestError("文件不存在");
+    if (to.startsWith(from + path.sep)) throw new BadRequestError("不能把文件夹移到它自己里面");
+    // 目标存在就不改；但大小写不敏感的文件系统上只改大小写时，目标就是它自己，照样改
+    const dst = await stat(to).catch(() => null);
+    if (dst && !(dst.ino === src.ino && dst.dev === src.dev)) throw new BadRequestError("目标位置已经有同名的文件或文件夹");
+    if (!(await stat(path.dirname(to)).catch(() => null))?.isDirectory()) throw new BadRequestError("目标文件夹不存在");
+    await rename(from, to);
+    cache.delete(cwd);
+    return {};
+  });
+
   app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/raw", async (req, reply) => {
     const { abs } = resolveInProject(req.query.cwd, req.query.path);
     const info = await stat(abs).catch(() => null);
@@ -107,6 +144,16 @@ function resolveInProject(cwd: string | undefined, rel: string | undefined): { c
   if (abs !== root && !abs.startsWith(root + path.sep)) throw new BadRequestError("路径不在项目里");
   return { cwd: root, abs };
 }
+
+/** 同 resolveInProject，但不能是项目文件夹本身（新建、删除、改名用），名字里不能有 \0 */
+function resolveChild(cwd: string | undefined, rel: string | undefined): { cwd: string; abs: string } {
+  if (!rel || rel.includes("\0")) throw new BadRequestError("缺少路径");
+  const resolved = resolveInProject(cwd, rel);
+  if (resolved.abs === resolved.cwd) throw new BadRequestError("不能操作项目文件夹本身");
+  return resolved;
+}
+
+const exists = (abs: string) => stat(abs).then(() => true, () => false);
 
 /** 一个文件夹的直接子项，文件夹在前；不是文件夹时返回 null。withImageInfo：图片文件带上大小和修改时间（目录树的缩略图用） */
 async function listDir(cwd: string, dir: string, withImageInfo = false): Promise<ProjectEntry[] | null> {
