@@ -17,7 +17,7 @@ export type Item =
   /** messageId：模型 API 那一次响应的 id。一次响应里的多个内容块会拆成多条消息，id 相同；同一个 id 下的多个工具调用是并行的 */
   | { kind: "assistant"; uuid: string; at?: number; messageId?: string; blocks: Block[] }
   /** userMessageUuid：SDKResultMessage.user_message_uuid，这一轮开头那条用户消息 */
-  | { kind: "result"; uuid: string; userMessageUuid?: string; isError: boolean; text: string; durationMs: number; costUsd: number }
+  | { kind: "result"; uuid: string; at?: number; userMessageUuid?: string; isError: boolean; text: string; durationMs: number; costUsd: number }
   | { kind: "error"; uuid: string; text: string }
   /** 本地命令的输出（setModel 等会发一条 <local-command-stdout> 的 user 消息），显示成一行灰字，不算用户消息 */
   | { kind: "notice"; uuid: string; text: string }
@@ -156,7 +156,8 @@ export function reduce(view: SessionView, action: Action): SessionView {
   switch (event.type) {
     case "user_message":
       // content 和会话历史里的格式一样，按同一套规则归并
-      ingestMessage(next, "user", event.uuid, { content: event.content }, null);
+      // 实时消息没有时间戳，按收到的时间记（算一轮的用时要用）
+      ingestMessage(next, "user", event.uuid, { content: event.content }, null, Date.now());
       next.turnEnded = false;
       next.pendingTasks = [];
       break;
@@ -216,10 +217,10 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
     }
     case "assistant":
       if (!message.parent_tool_use_id) view.streaming = { text: "" };
-      ingestMessage(view, "assistant", message.uuid, message.message, message.parent_tool_use_id);
+      ingestMessage(view, "assistant", message.uuid, message.message, message.parent_tool_use_id, Date.now());
       return;
     case "user":
-      if (message.uuid) ingestMessage(view, "user", message.uuid, message.message, message.parent_tool_use_id);
+      if (message.uuid) ingestMessage(view, "user", message.uuid, message.message, message.parent_tool_use_id, Date.now());
       return;
     case "system":
       if (message.subtype === "task_notification" && !message.skip_transcript) {
@@ -235,6 +236,7 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       pushItem(view, null, {
         kind: "result",
         uuid: message.uuid,
+        at: Date.now(),
         userMessageUuid: message.user_message_uuid,
         isError: message.is_error && !interrupted,
         text: message.subtype === "success" ? "" : message.errors.join("\n") || message.subtype,

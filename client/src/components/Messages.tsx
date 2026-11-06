@@ -77,14 +77,17 @@ function splitTurns(items: Item[]): Turn[] {
   return turns;
 }
 
-/** 这一轮的用时：有 result 用它的；历史里没有 result（网关重启过），按这一轮第一条和最后一条消息的时间算 */
+/**
+ * 这一轮的用时：有 result 用它的；插入过消息的最后一段和历史里没有 result 的（网关重启过、这一轮没跑完），
+ * 按这一段开头那条消息到下一段开始、result 到达或最后一条消息的时间算
+ */
 function turnDuration(turn: Turn): number | null {
   if (turn.result) {
     // 插入过消息的一轮，result 的用时是整轮的，最后一段只算它自己那部分
     if (!turn.continued) return turn.result.durationMs;
   }
   const start = (turn.user ?? turn.task)?.at;
-  const end = turn.nextAt ?? turn.body.findLast((item) => item.kind === "assistant")?.at;
+  const end = turn.nextAt ?? turn.result?.at ?? turn.body.findLast((item) => item.kind === "assistant")?.at;
   return start && end && end > start ? end - start : null;
 }
 
