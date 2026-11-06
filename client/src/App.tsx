@@ -138,7 +138,8 @@ export function App() {
             </svg>
           </button>
         </nav>
-        {settingsOpen && <SettingsPage />}
+        {/* 桌面版标题栏上的收起按钮在设置页里收起左边的导航；网页版设置页里没有这个按钮，导航一直显示 */}
+        {settingsOpen && <SettingsPage navCollapsed={!!desktop && collapsed} />}
         {!settingsOpen && !collapsed && (
           <>
             {config && (

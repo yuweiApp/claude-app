@@ -16,8 +16,8 @@ const SECTIONS: { key: Section; label: string; icon: ReactNode }[] = [
   { key: "mcp", label: "MCP", icon: <McpIcon /> },
 ];
 
-/** 设置页（同 codex-app-server 的设置页）：左边分组导航，右边是列表 */
-export function SettingsPage() {
+/** 设置页（同 codex-app-server 的设置页）：左边分组导航，右边是列表；navCollapsed 时收起左边的导航（跟着侧边栏的收起状态） */
+export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean }) {
   const [section, setSection] = useState<Section>("plugins");
   const [data, setData] = useState<Capabilities | null>(null);
   const [loading, setLoading] = useState(false);
@@ -50,7 +50,7 @@ export function SettingsPage() {
 
   return (
     <div className="settings">
-      <nav className="settings-nav" aria-label="设置">
+      <nav className="settings-nav" aria-label="设置" hidden={navCollapsed}>
         <h2>设置</h2>
         <div className="settings-group">集成</div>
         {SECTIONS.map((s) => (
