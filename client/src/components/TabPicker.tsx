@@ -1,12 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { desktop } from "../desktop";
-import { GlobeIcon } from "./BrowserTab";
+import { GlobeIcon, SiteIcon } from "./BrowserTab";
 import { useDismiss } from "./ComposerPickers";
 
 interface Tab {
   title: string;
   url: string;
+  /** 网页的图标：内置浏览器的由桌面版给；Chrome 的拿不到，用网站根目录的 /favicon.ico 试，加载失败时显示地球 */
+  favicon?: string;
+}
+
+/** 网站根目录的 /favicon.ico（大多数网站都有） */
+function rootFavicon(url: string): string | undefined {
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" || u.protocol === "https:" ? `${u.origin}/favicon.ico` : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 interface Props {
@@ -80,6 +92,7 @@ export function TabPicker({ inapp, onPick }: Props) {
                 tabs={chromeTabs ? filter(chromeTabs) : []}
                 empty={chromeTabs === null ? "加载中…" : chromeTabs.length ? "没有匹配的标签页" : "还没连上，或者没有交给 AI 的标签页"}
                 onPick={(t) => pick(t, true)}
+                guessIcon
               />
             )}
           </div>
@@ -89,14 +102,14 @@ export function TabPicker({ inapp, onPick }: Props) {
   );
 }
 
-function Group({ label, tabs, empty, onPick }: { label: string; tabs: Tab[]; empty: string; onPick: (tab: Tab) => void }) {
+function Group({ label, tabs, empty, onPick, guessIcon }: { label: string; tabs: Tab[]; empty: string; onPick: (tab: Tab) => void; guessIcon?: boolean }) {
   return (
     <>
       <div className="menu-label">{label}</div>
       {tabs.map((tab) => (
         <button key={tab.url} className="capability-item" role="menuitem" title={tab.url} onClick={() => onPick(tab)}>
           <span className="tab-picker-icon">
-            <GlobeIcon />
+            <SiteIcon src={tab.favicon ?? (guessIcon ? rootFavicon(tab.url) : undefined)} />
           </span>
           {/* 像浏览器的标签栏一样只显示标题，网址悬停时看（title），没有标题的才显示网址 */}
           <span className="capability-name">{tab.title || tab.url.replace(/^https?:\/\//, "")}</span>

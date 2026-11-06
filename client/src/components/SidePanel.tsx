@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { api } from "../api";
 import { desktop, type BrowserTabInfo } from "../desktop";
-import { BrowserTab, BrowserToolbar, GlobeIcon } from "./BrowserTab";
+import { BrowserTab, BrowserToolbar, GlobeIcon, SiteIcon } from "./BrowserTab";
 import { getDraft, setDraft, useHasDraft } from "../state/fileDrafts";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FileBrowser } from "./FileBrowser";
@@ -514,7 +514,7 @@ function TabButton({ cwd, tab, browserInfo, active, onSelect, onPin, onClose }: 
       onDoubleClick={onPin}
       onAuxClick={(e) => e.button === 1 && onClose()}
     >
-      <span className="panel-tab-icon">{tabIcon(tab)}</span>
+      <span className="panel-tab-icon">{tab.kind === "browser" ? <SiteIcon src={browserInfo?.favicon} /> : tabIcon(tab)}</span>
       <span className="panel-tab-label">{(tab.kind === "browser" && (browserInfo?.title || browserInfo?.url)) || tabLabel(tab)}</span>
       <button
         className={`panel-tab-close${unsaved ? " unsaved" : ""}`}

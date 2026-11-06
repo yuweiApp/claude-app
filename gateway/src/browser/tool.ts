@@ -19,7 +19,7 @@ export const BROWSER_SERVER = "inapp";
  */
 export const READ_TOOL_NAMES = ["browser_snapshot", "browser_take_screenshot", "browser_tabs"];
 
-export const BROWSER_READ_TOOLS = READ_TOOL_NAMES.map((name) => `mcp__${BROWSER_SERVER}__${name}`);
+export const BROWSER_READ_TOOLS = ["browser_keep_tab", ...READ_TOOL_NAMES].map((name) => `mcp__${BROWSER_SERVER}__${name}`);
 
 /** MCP 调用跑多久后自动转到后台（config.ts 的 agentEnv 传给子进程的 CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS） */
 const BACKGROUND_SECONDS = (Number(process.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS) || MCP_AUTO_BACKGROUND_MS) / 1000;
@@ -45,12 +45,16 @@ export const RUNTIME_FACTS = [
 const INSTRUCTIONS = [
   "内置浏览器：用户界面右侧面板里的真实网页，用户能看到，也能自己操作。这些工具只能看到这个会话自己的标签页。",
   RUNTIME_FACTS,
-  "标签页不会自动关闭，你开的和用户开的都一样，只会被你、用户或网页自己关掉。标签页被新开、关闭、跳转时，下一次工具结果里会列出变化和是谁做的（你、用户、网页自己）。",
+  "标签页：用 context.newPage() 开的是临时标签页，一轮结束时自动关闭（用户当时正在面板里看着的除外），browser_keep_tab 能把你最近操作的那个留下；用户开的不会自动关。" +
+    "标签页被新开、关闭、跳转时，下一次工具结果里会列出变化和是谁做的（你、用户、网页自己、一轮结束）。",
   "用户消息里的 @[标题](网址) 指这里的一个标签页。",
 ].join("\n");
 
 /** 开了外部浏览器（config.yml 的 externalBrowser.enabled）时补一句：另一个浏览器是什么 */
 const CHROME_NOTE = "\n另有 mcp__chrome__ 开头的工具，操作的是用户自己的 Chrome，带着用户的登录状态。";
+
+/** browser_run_code 打开了网页后附上：这是临时标签页（事实，不教怎么做） */
+const KEEP_HINT = "（这是你开的临时标签页，这一轮结束时会自动关闭，除非调用 browser_keep_tab。）";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const error = (t: string) => ({ ...text(t), isError: true });
@@ -69,6 +73,14 @@ export function replFor(key: string, getContext: () => Promise<BrowserContext>, 
     repls.set(key, repl);
   }
   return repl;
+}
+
+/**
+ * 这个会话在内置浏览器里还有代码在跑（转到后台的 browser_run_code）：一轮结束时先不关临时标签页，
+ * 不然模型先回复、这一轮结束，代码正在操作的标签页就被关了。代码跑完后结果作为通知开始新的一轮，那一轮结束时再关
+ */
+export function inappBusy(sessionId: string): boolean {
+  return repls.get(`${BROWSER_SERVER}:${sessionId}`)?.busy ?? false;
 }
 
 /** 删会话时一起删掉它的 REPL（两个浏览器的都删） */
@@ -119,14 +131,16 @@ export interface ServerOptions {
   name: string;
   instructions: string;
   repl: BrowserRepl;
+  /** 内置浏览器的 browser_keep_tab：返回结果文字，null 表示没有可以留下的标签页 */
+  keep?: () => Promise<string | null>;
 }
 
 /**
  * 给模型用的浏览器工具，内置浏览器和外部 Chrome 共用：browser_run_code 为主（同 Codex 的 js 工具），
- * 加上读页面结构、截图、列出 / 切换标签页三个只读的。
+ * 加上读页面结构、截图、列出 / 切换标签页三个只读的，和内置浏览器的 browser_keep_tab。
  * 以前挂的是 playwright-core 自带的 Playwright MCP（二十多个工具），点击、输入、等待这些现在都写在代码里
  */
-export function browserMcpServer({ name, instructions, repl }: ServerOptions): McpSdkServerConfigWithInstance {
+export function browserMcpServer({ name, instructions, repl, keep }: ServerOptions): McpSdkServerConfigWithInstance {
   const noPage = "现在没有标签页（page 是 undefined）。";
 
   const tools = [
@@ -149,9 +163,10 @@ export function browserMcpServer({ name, instructions, repl }: ServerOptions): M
         try {
           const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
           const result = await repl.run(code, timeout_ms ?? DEFAULT_TIMEOUT_MS, signal);
+          const body = keep && result.opened && !result.isError ? `${result.text}\n\n${KEEP_HINT}` : result.text;
           rememberResult(extra, result.text, result.isError);
           return {
-            content: [{ type: "text" as const, text: result.text }, ...result.images.map((img) => ({ type: "image" as const, ...img }))],
+            content: [{ type: "text" as const, text: body }, ...result.images.map((img) => ({ type: "image" as const, ...img }))],
             ...(result.isError ? { isError: true } : {}),
           };
         } catch (err) {
@@ -229,6 +244,24 @@ export function browserMcpServer({ name, instructions, repl }: ServerOptions): M
       },
       { annotations: { title: "Tabs", readOnlyHint: true, openWorldHint: false } },
     ),
+    ...(keep
+      ? [
+          tool(
+            "browser_keep_tab",
+            "把你最近操作的那个标签页标记为保留：这一轮结束时不关闭。",
+            {},
+            async () => {
+              try {
+                const result = await keep();
+                return result === null ? error("没有你操作过的标签页可以留下。") : text(result);
+              } catch (err) {
+                return error(errorMessage(err));
+              }
+            },
+            { annotations: { title: "Keep tab for the user", readOnlyHint: false, destructiveHint: false, openWorldHint: false } },
+          ),
+        ]
+      : []),
   ];
 
   return createSdkMcpServer({
@@ -274,5 +307,9 @@ export function browserServer(host: BrowserHost, sessionId: string): McpSdkServe
     name: BROWSER_SERVER,
     instructions: INSTRUCTIONS + (externalBrowserEnabled ? CHROME_NOTE : ""),
     repl: replFor(`${BROWSER_SERVER}:${sessionId}`, inappContext(host, sessionId), () => host.takeTabEvents(sessionId)),
+    keep: async () => {
+      const tab = await host.keep(sessionId);
+      return tab ? `已留下标签页「${tab.title || tab.url}」（${tab.url}），这一轮结束后不会关闭。` : null;
+    },
   });
 }

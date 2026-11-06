@@ -89,9 +89,12 @@ export class CdpProxy {
     // 切到这个标签页（Playwright 的 page.bringToFront()，网关在模型给 page 换了标签页时调用）：面板跟着切。
     // 不转给网页：Electron 的网页视图收到它会去抢窗口焦点
     if (method === "Page.bringToFront") {
+      tab.lastAgentUse = Date.now();
       this.activate(tab, true);
       return {};
     }
+    // 记下 AI 实际在操作哪个标签页（Playwright 连上时给每个标签页发的初始化命令不算），browser_keep_tab 留的是最近这个
+    if (AGENT_ACTIONS.test(method)) tab.lastAgentUse = Date.now();
     // AI 的点击、按键：判断弹出窗口是谁触发的，也用来把网页收到的输入事件里 AI 的排除掉（views.ts 的 input-event）
     if (method.startsWith("Input.")) tab.lastAgentInput = Date.now();
     // AI 在这个标签页上跳转、输入：面板切过去，用户能看到它在操作哪个（模型可能用 page 以外的变量操作别的标签页）
@@ -147,6 +150,7 @@ export class CdpProxy {
       case "Target.closeTarget":
         return { success: this.views.close(tabOf(params.targetId).id, "agent") };
       case "Target.activateTarget":
+        tabOf(params.targetId).lastAgentUse = Date.now();
         this.activate(tabOf(params.targetId), true);
         return {};
       case "Target.attachToTarget": {
@@ -193,6 +197,7 @@ export class CdpProxy {
 
 const pageSession = (targetId: string) => `S${targetId}`;
 /** 算作 AI 在操作这个标签页的命令：跳转、输入、读页面、截图 */
+const AGENT_ACTIONS = /^(Input\.|DOM\.|Page\.(navigate|reload|captureScreenshot)|Runtime\.(evaluate|callFunctionOn))/;
 /**
  * AI 在标签页上做的、用户应该看到的操作：跳转、输入。读页面（Runtime.evaluate 等）不算：
  * Playwright 等元素、读内容时一直在发，算进去模型读别的标签页时面板会来回闪

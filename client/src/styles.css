@@ -660,6 +660,8 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; background:
 .panel-tab:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
 .panel-tab.active { background: var(--panel); color: var(--text); }
 .panel-tab-icon { flex: none; display: flex; }
+/* 网页的图标（favicon），和地球图标一样大 */
+.site-icon { width: 16px; height: 16px; object-fit: contain; border-radius: 2px; }
 .panel-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel-tab-close { flex: none; width: 18px; height: 18px; padding: 0; border: none; border-radius: 4px; background: none; color: var(--muted); line-height: 18px; opacity: 0; }
 .panel-tab:hover .panel-tab-close, .panel-tab.active .panel-tab-close, .panel-tab-close:focus-visible { opacity: 1; }

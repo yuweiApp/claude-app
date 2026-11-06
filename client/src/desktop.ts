@@ -26,6 +26,10 @@ export interface BrowserTabInfo {
   canGoForward: boolean;
   openedBy: "user" | "agent";
   openerId?: string;
+  /** 一轮结束时留着（AI 开的临时标签页在一轮结束时关掉） */
+  kept: boolean;
+  /** 网页的图标（favicon）地址 */
+  favicon?: string;
 }
 
 /** 地址栏的建议（浏览历史） */

@@ -1,8 +1,8 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import path from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions, type Rectangle } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell, type OpenDialogOptions, type Rectangle } from "electron";
 import { GatewayBridge } from "./browser/bridge.js";
-import { BrowserViews, tabInfo } from "./browser/views.js";
+import { BrowserViews, FAVICON_SCHEME, tabInfo } from "./browser/views.js";
 
 // 桌面版：拉起网关和网页（Vite），在窗口里打开网页。已经在跑的（比如 VS Code 里先启动了「启动网页」）直接复用
 const root = path.resolve(import.meta.dirname, "..", "..");
@@ -131,6 +131,8 @@ ipcMain.handle("window:is-maximized", (e) => BrowserWindow.fromWebContents(e.sen
 // 标签页有变化时把整个列表推给界面（browser:tabs），AI 切标签页时让面板跟着切（browser:activate）
 let mainWindow: BrowserWindow | undefined;
 const browserViews = new BrowserViews(() => mainWindow);
+// 内置浏览器标签页的图标（views.ts 的 fetchFavicon 取下来的）：界面的 <img> 用 favicon://icon/<编号> 加载。要在 ready 之前注册
+protocol.registerSchemesAsPrivileged([{ scheme: FAVICON_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const fromUi = (sender: Electron.WebContents) => !!mainWindow && !mainWindow.isDestroyed() && sender === mainWindow.webContents;
 let tabsPush: NodeJS.Timeout | undefined;
 const pushTabs = () => {
@@ -198,6 +200,7 @@ if (!app.requestSingleInstanceLock()) {
       );
       await ensure(clientUrl, () => start("网页", path.join(root, "client"), ["node_modules/vite/bin/vite.js"]));
       await browserViews.init();
+      session.defaultSession.protocol.handle(FAVICON_SCHEME, (request) => browserViews.faviconResponse(request.url));
       mainWindow = createWindow();
       mainWindow.on("closed", () => app.quit());
       const ws = new URL("/browser/host", gatewayUrl.replace(/^http/, "ws"));

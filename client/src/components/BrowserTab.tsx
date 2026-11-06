@@ -302,6 +302,13 @@ function StopIcon() {
   );
 }
 
+/** 网页的图标（favicon）：没有、或者加载失败时用地球 */
+export function SiteIcon({ src }: { src?: string }) {
+  const [failed, setFailed] = useState<string | null>(null);
+  if (!src || failed === src) return <GlobeIcon />;
+  return <img className="site-icon" src={src} width={16} height={16} alt="" referrerPolicy="no-referrer" onError={() => setFailed(src)} />;
+}
+
 export function GlobeIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

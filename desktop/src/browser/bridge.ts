@@ -5,8 +5,10 @@ import type { BrowserViews } from "./views.js";
  * 外壳和网关之间的连接（WebSocket，外壳连网关的 /browser/host）。AI 的浏览器工具（Playwright MCP）在网关里，
  * 每个对话会话一条 Playwright 连接，经这里转给这个会话的 CDP 代理。消息：
  * - 网关 → 外壳：{ type: "open", session }（新的 Playwright 连接）、{ type: "cdp", session, message }、{ type: "close", session }、
+ *   { type: "turnEnded", session }（一轮结束，关掉 AI 的临时标签页）、{ type: "keep", session, id }（browser_keep_tab）、
  *   { type: "closeSession", session }（会话删除了，关掉它的所有标签页）
- * - 外壳 → 网关：{ type: "cdp", session, message }、{ type: "tabEvent", session, event }（标签页新开、关闭、用户跳转，带上是谁做的，见 views.ts 的 TabEvent）
+ * - 外壳 → 网关：{ type: "cdp", session, message }、{ type: "kept", id, tab }（tab 是留下的标签页的标题和网址，没有可留的是 null）、
+ *   { type: "tabEvent", session, event }（标签页新开、关闭、用户跳转，带上是谁做的，见 views.ts 的 TabEvent）
  * 网关重启、还没起来时每 2 秒重连
  */
 export class GatewayBridge {
@@ -64,6 +66,11 @@ export class GatewayBridge {
       this.proxies.get(session)?.handle(msg.message);
     } else if (msg.type === "closeSession") {
       this.views.closeSession(session);
+    } else if (msg.type === "turnEnded") {
+      this.views.turnEnded(session);
+    } else if (msg.type === "keep") {
+      const tab = this.views.keepLatest(session);
+      this.post({ type: "kept", id: msg.id, tab: tab && { title: tab.title, url: tab.url } });
     }
   }
 

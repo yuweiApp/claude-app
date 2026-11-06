@@ -9,13 +9,14 @@ tools:
   #
   # 常驻越多上下文越大。也不要都不常驻：GPT 类模型常在 ToolSearch 的 select: 里把工具名列了又列，
   # 写满输出上限才停，界面「思考中」两分多钟。
-  # 浏览器只有 browser_run_code（主力，同 Codex 的 js 工具）、browser_snapshot、browser_take_screenshot、browser_tabs，
-  # 两个浏览器全部常驻（以前的 Playwright MCP 二十多个工具全部常驻约 5200 token）。
+  # 浏览器只剩 browser_run_code（主力，同 Codex 的 js 工具）、browser_snapshot、browser_take_screenshot、browser_tabs，
+  # 内置浏览器多一个 browser_keep_tab，两个浏览器全部常驻，工具定义一共约 5000 字符（以前的 Playwright MCP 二十多个工具全部常驻约 5200 token）。
   alwaysLoad:
     - mcp__inapp__browser_run_code
     - mcp__inapp__browser_snapshot
     - mcp__inapp__browser_take_screenshot
     - mcp__inapp__browser_tabs
+    - mcp__inapp__browser_keep_tab
     - mcp__chrome__browser_run_code
     - mcp__chrome__browser_snapshot
     - mcp__chrome__browser_take_screenshot
