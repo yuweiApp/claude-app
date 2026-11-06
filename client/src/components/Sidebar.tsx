@@ -1,7 +1,6 @@
 import { useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { SessionListItem } from "../api";
 import { useDismiss } from "./ComposerPickers";
-import { ConfirmDialog } from "./ConfirmDialog";
 import { SidebarToggle } from "./SidebarToggle";
 
 /** 会话标题：网关在第一条消息时生成的 customTitle；没有时用第一条提问。不用 summary，它没有自定义标题时跟着最新一条提问变 */
@@ -50,7 +49,7 @@ interface Props {
   onSelect: (id: string) => void;
   /** 新会话；cwd 是在哪个文件夹里，不传是无文件夹 */
   onNew: (cwd?: string) => void;
-  /** 删除这些会话（单个会话、单个项目不确认，「全部删除」已经确认过） */
+  /** 删除这些会话（不弹确认） */
   onDelete: (ids: string[]) => void;
   /** 收起侧边栏；不传时不显示按钮（桌面版的在标题栏上） */
   onCollapse?: () => void;
@@ -59,8 +58,6 @@ interface Props {
 
 export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, onDelete, onCollapse, width }: Props) {
   const [collapsed, setCollapsed] = useState(loadCollapsed);
-  /** 等用户确认的删除 */
-  const [pendingDelete, setPendingDelete] = useState<{ title: string; message: string; confirmLabel: string; ids: string[] } | null>(null);
   const toggle = (key: string) =>
     setCollapsed((cur) => {
       const next = new Set(cur);
@@ -79,7 +76,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
   const projectsOpen = !collapsed.has(SECTION_PROJECTS);
   const chatsOpen = !collapsed.has(SECTION_CHATS);
 
-  // 单个会话和单个项目直接删，不弹确认；「全部删除」影响面大，仍要确认
+  // 删除都不弹确认，点了直接删
   const deleteSession = (s: SessionListItem) => onDelete([s.sessionId]);
   const deleteProject = (g: FolderGroup) => onDelete(g.sessions.map((s) => s.sessionId));
 
@@ -101,15 +98,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
             label: "全部删除",
             danger: true,
             disabled: projects.length === 0,
-            onClick: () => {
-              const ids = projects.flatMap((g) => g.sessions.map((s) => s.sessionId));
-              setPendingDelete({
-                title: "删除全部项目的会话",
-                message: `将删除 ${projects.length} 个项目下的 ${ids.length} 个会话，会话记录一起删除，不能恢复。文件夹里的文件不受影响。`,
-                confirmLabel: "全部删除",
-                ids,
-              });
-            },
+            onClick: () => onDelete(projects.flatMap((g) => g.sessions.map((s) => s.sessionId))),
           },
         ]}
       >
@@ -129,14 +118,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
             label: "全部删除",
             danger: true,
             disabled: chats.length === 0,
-            onClick: () => {
-              setPendingDelete({
-                title: "删除全部会话",
-                message: `将删除「会话」里的 ${chats.length} 个会话，会话记录一起删除，不能恢复。`,
-                confirmLabel: "全部删除",
-                ids: chats.map((s) => s.sessionId),
-              });
-            },
+            onClick: () => onDelete(chats.map((s) => s.sessionId)),
           },
         ]}
       >
@@ -144,18 +126,6 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
       </SectionHead>
       {chatsOpen && chats.length === 0 && <div className="group-empty">暂无会话</div>}
       {chatsOpen && <ul>{chats.map(row)}</ul>}
-      {pendingDelete && (
-        <ConfirmDialog
-          title={pendingDelete.title}
-          message={pendingDelete.message}
-          confirmLabel={pendingDelete.confirmLabel}
-          onConfirm={() => {
-            onDelete(pendingDelete.ids);
-            setPendingDelete(null);
-          }}
-          onCancel={() => setPendingDelete(null)}
-        />
-      )}
     </aside>
   );
 }
