@@ -491,7 +491,7 @@ export class BrowserRepl {
       const list = await Promise.all(fresh.map(async (p) => `[${pages.indexOf(p)}] ${(await titleOf(p)) || "（无标题）"} — ${p.url()}`));
       out.push(`不是你开的新标签页（序号是在 context.pages() 里的位置）：${list.join("；")}。page 仍指向 ${page && !page.isClosed() ? page.url() : "undefined"}。`);
     }
-    if (turnEnd) out.push("你开的标签页在一轮结束时会自动关闭，除非调用过 browser_keep_tab。");
+    if (turnEnd) out.push("你开的标签页在一轮结束时会自动关闭，除非调用过 browser_keep_tab；调用过的会一直留在用户的面板里，下一轮也还在。");
     return `（${out.join("\n")}）`;
   }
 

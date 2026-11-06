@@ -45,7 +45,8 @@ export const RUNTIME_FACTS = [
 const INSTRUCTIONS = [
   "内置浏览器：用户界面右侧面板里的真实网页，用户能看到，也能自己操作。这些工具只能看到这个会话自己的标签页。",
   RUNTIME_FACTS,
-  "标签页：用 context.newPage() 开的是临时标签页，一轮结束时自动关闭（用户当时正在面板里看着的除外），browser_keep_tab 能把你最近操作的那个留下；用户开的不会自动关。" +
+  "标签页：用 context.newPage() 开的是临时标签页，一轮结束时自动关闭（用户当时正在面板里看着的除外）；关掉后用户在面板里看不到它，下一轮它也不在 context.pages() 里，page 换成剩下的最后一个标签页，没有就是 undefined。" +
+    "browser_keep_tab 把你最近操作的那个标签页留下：之后不再自动关闭，用户在面板里能看到、能操作，下一轮还在 context.pages() 里，直到用户关掉或会话被删除。用户开的不会自动关。" +
     "标签页被新开、关闭、跳转时，下一次工具结果里会列出变化和是谁做的（你、用户、网页自己、一轮结束）。",
   "用户消息里的 @[标题](网址) 指这里的一个标签页。",
 ].join("\n");
@@ -54,7 +55,7 @@ const INSTRUCTIONS = [
 const CHROME_NOTE = "\n另有 mcp__chrome__ 开头的工具，操作的是用户自己的 Chrome，带着用户的登录状态。";
 
 /** browser_run_code 打开了网页后附上：这是临时标签页（事实，不教怎么做） */
-const KEEP_HINT = "（这是你开的临时标签页，这一轮结束时会自动关闭，除非调用 browser_keep_tab。）";
+const KEEP_HINT = "（这是你开的临时标签页，这一轮结束时会自动关闭：之后用户在面板里看不到它，下一轮也不在了。调用 browser_keep_tab 会留下它，用户能看到，下一轮还能接着用。）";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const error = (t: string) => ({ ...text(t), isError: true });
@@ -248,7 +249,7 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
       ? [
           tool(
             "browser_keep_tab",
-            "把你最近操作的那个标签页标记为保留：这一轮结束时不关闭。",
+            "把你最近操作的那个标签页标记为保留：这一轮结束时不关闭，之后也不再自动关闭。留下的标签页用户在右侧面板里能看到、能操作，下一轮还在，直到用户关掉或会话被删除。",
             {},
             async () => {
               try {
