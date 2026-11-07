@@ -98,14 +98,21 @@ function loopGuard(): void {
 type AnyNode = { type: string; start: number; end: number; [key: string]: unknown };
 const LOOPS = new Set(["WhileStatement", "DoWhileStatement", "ForStatement", "ForInStatement", "ForOfStatement"]);
 
-/** 在每个循环体开头插入 LOOP_GUARD()；循环体不是代码块时补上花括号。返回插好的代码 */
+/**
+ * 插在循环体开头的检查。先看 LOOP_GUARD 有没有定义：传给 evaluate、evaluateAll、waitForFunction 这些的函数
+ * 会被 Playwright 转成字符串放到网页里跑，网页里没有 LOOP_GUARD，直接调用会报 ReferenceError；
+ * 用 typeof 判断，在网页里什么都不做（网页卡住不影响网关，也不需要检查）
+ */
+const GUARD_CALL = `typeof ${LOOP_GUARD} === "function" && ${LOOP_GUARD}();`;
+
+/** 在每个循环体开头插入 GUARD_CALL；循环体不是代码块时补上花括号。返回插好的代码 */
 function guardLoops(code: string, program: AnyNode): string {
   const inserts: { pos: number; text: string }[] = [];
   const visit = (node: AnyNode) => {
     if (LOOPS.has(node.type)) {
       const body = node.body as AnyNode;
-      if (body.type === "BlockStatement") inserts.push({ pos: body.start + 1, text: `${LOOP_GUARD}();` });
-      else inserts.push({ pos: body.start, text: `{${LOOP_GUARD}();` }, { pos: body.end, text: "}" });
+      if (body.type === "BlockStatement") inserts.push({ pos: body.start + 1, text: GUARD_CALL });
+      else inserts.push({ pos: body.start, text: `{${GUARD_CALL}` }, { pos: body.end, text: "}" });
     }
     for (const value of Object.values(node)) {
       if (Array.isArray(value)) for (const child of value) if (child && typeof child === "object" && typeof child.type === "string") visit(child as AnyNode);
@@ -132,7 +139,7 @@ const PARSE_OPTIONS = {
  * - 顶层的 const / let / var / class 改成给全局变量赋值，function 声明提到最前面赋值，变量名在外面用 var 声明，
  *   所以下一次调用还能用，再写一遍 const 同名变量也不会报「已声明」
  * - 整段包进 async 函数，顶层可以 await；最后一条是表达式时 return 它的值
- * - 循环体开头插入 LOOP_GUARD（见上面）
+ * - 循环体开头插入 LOOP_GUARD 检查（见上面）
  * 语法错误时抛 SyntaxError（acorn 的，行列号对应模型写的原文）
  */
 export function transform(original: string): string {
