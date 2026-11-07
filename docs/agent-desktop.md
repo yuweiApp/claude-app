@@ -8,7 +8,7 @@
 
 让模型操作**网关所在那台电脑**上的原生应用（记事本、Finder / 资源管理器、系统对话框、Office、各种 Electron 应用的原生部分）。[vercel-labs/agent-desktop](https://github.com/vercel-labs/agent-desktop) 读系统的无障碍树（macOS 是 AX API，Windows 是 UI Automation，Linux 是 AT-SPI），给出带 ref 的元素，按 ref 操作，不靠截图识别。
 
-- 网页还是第 12 节（内置浏览器）、第 13 节（用户的 Chrome）的事。agent-desktop 自己也不操作网页内容（它对 Chromium 应用的办法是 `launch --cdp` 后交给别的工具），第一版不开放 `--cdp`。
+- 网页还是第 12 节（内置浏览器）、第 13 节（用户的 Chrome）的事。agent-desktop 自己也不操作网页内容（它对 Chromium 应用的办法是 `launch --cdp` 后交给别的工具）；网关把这一步接上了，见第 14 节「CDP 接管」，默认关。
 - 不做：桌面画面的实时面板、录屏、多台电脑。
 
 ## 2. 为什么不直接挂 `agent-desktop mcp`
@@ -91,7 +91,7 @@ snapshot s191jb6hk0gciz（mousepad，窗口 w-1.1895-…）
   - 命令：`mcp`、`session`、`trace`、`batch`（第一版：要逐条检查里面的命令，以后再开）。
   - 全局参数：`--session`、`--agent-id`、`--trace`、`--trace-strict`、`--screenshot`、`--debug`（受管或会写文件），`--headed` 只能经 `headed` 参数（卡片上要单独显示）。
   - `--force`：上游拿它放行 `alt+f4`、`win+l`、`cmd+q` 这类快捷键和强制结束进程，第一版拒绝。
-  - `launch --cdp`。
+  - `--cdp`：`config.yml` 的 `desktop.cdp` 打开时只接受 `launch` 带它（第 14 节），其余情况拒绝。
 
 ### 返回给模型的内容
 
@@ -268,6 +268,33 @@ desktop:
   - GPT 把截图的可选参数都填上（`app`、`window_id` 和 `screen: 0` 一起给），agent-desktop 不接受，连错 4 次：现在给了窗口就不传 `--screen`。
   - 拒绝提示一律写「--app、--window-id 或 ref」，模型给只认 `--app` 的 `list-surfaces` 加了 `--window-id`，给 `click` 也加了 `--app`：现在按命令列出它接受的目标参数。
 - agent-desktop 自己的规则：紫鸟（Chromium）里没名字的 `group` 不唯一，按 ref 点击返回 `AMBIGUOUS_TARGET`（`identity_not_unique`）；说明里补上了这条，以及这台电脑是什么系统。`find` 读 Chromium 应用时报过一次「树还很薄」。
+- 第二轮（紫鸟提交插件）：
+  - `snapshot` 读紫鸟 3 秒超时（`walk_root_unread`，模型照说明填了默认值 3000）：网关的默认期限改成 15000，读完就返回。
+  - `mouse-click` 被判为落在本应用窗口里：紫鸟挪到主屏后盖住了 Claude App，以前不看叠放次序。现在前台窗口不是本应用、又盖住这个坐标时放行（点击落在前台窗口上）。
+  - 截图结果附上屏幕 / 窗口在桌面坐标里的范围、缩放和图片像素大小：两块屏 125%、150%，副屏从 x=1920 开始，模型拿到的图还被 Claude Code 缩小过。
+  - `find` 报「Chromium 的树还很薄」：agent-desktop 的 Windows 说明里写，Chromium 窗口被完全挡住时树会一直停在第一次读到的那一小部分。模型因此改用坐标点击（真实鼠标，要把紫鸟切到前台），挡住了用户的窗口。
 - 快照渲染改成不认识的字段也原样带上（节点行尾、快照头的「其他：」），Windows 上快照节点有没有额外字段还没看到原始 JSON。
 
 **拦不住的**：模型用 Bash 直接跑 `gateway/node_modules/agent-desktop/bin/agent-desktop`（或 xdotool、AppleScript 这类）就绕过了网关。这和 Bash 本身能做任何事一样，边界是 Bash 的权限卡片；「完全访问权限」下没有这道边界。
+
+## 14. CDP 接管（`desktop.cdp`）
+
+Windows 上紫鸟（Electron）实测：窗口被挡住时无障碍树停在第一次读到的一小部分，没名字的 `group` 按 ref 点不了，模型只好把紫鸟切到前台、用真实鼠标点，挡住用户的窗口。CDP 接管绕开无障碍接口：
+
+```
+模型 ──mcp__desktop__run launch <应用> --cdp──▶ agent-desktop 以本机调试端口重新启动应用，返回 data.cdp（port、websocket_url、product）
+     ──mcp__cdp__browser_run_code 等──▶ 网关 Playwright connectOverCDP(websocket_url) ──▶ 应用的网页内容
+```
+
+- **开关**：`config.yml` 的 `desktop.cdp`，默认 `false`，`desktop.enabled` 也要是 `true`（`config-file.ts` 的 `desktopCdpEnabled`）。打开后：`run` 接受 `launch … --cdp`（别的命令带 `--cdp` 照样拒绝），说明里多一句 `--cdp` 是什么、端口开着时本机任何程序都能控制这个应用；每个会话多一个 MCP 服务器 `cdp`。
+- **工具**（`desktop/cdp.ts`）：复用浏览器那一套（`browserMcpServer` + `BrowserRepl`，同第 13 节外部 Chrome，REPL 在网关主线程）：`mcp__cdp__browser_run_code`、`browser_snapshot`、`browser_take_screenshot`、`browser_tabs`。只读的三个不用确认，`browser_run_code` 走权限卡片。应用里的每个网页视图是一个标签页。
+- **连哪个应用**：这个会话最近一次 `launch --cdp` 启动的；这个会话没启动过时，用所有会话里最近启动的那个。`launch --cdp` 成功时结果末尾说明「X 的网页内容现在可以用 mcp__cdp__ 的工具操作：调试端口 …」。
+- **记录**：应用名、pid、端口、`websocket_url` 存在状态目录的 `cdp-apps.json`（权限 600）。网关重启后接着连（实测）；连不上（应用退出了）报错并删掉这条记录（实测）。同名应用重新 `--cdp` 启动时旧连接作废。
+- **限制**：
+  - 只能用于新启动的进程：应用已经在运行时 agent-desktop 返回 `cdp_requires_fresh_launch`，它不会替你关掉，关掉（`close-app`）会丢掉用户在应用里的状态，走权限卡片。
+  - 实测 Linux 上拿项目里的 Electron 启动会被当成「已在运行」（桌面版自己就是同一个 electron 可执行文件），拷一份改名才行；紫鸟这类独立安装的应用没有这个问题。
+  - 原生菜单、文件对话框、窗口管理不在网页里，还是 `mcp__desktop__` 的事。
+  - 有的应用打包时关掉了远程调试，这时 agent-desktop 报 `cdp_endpoint_unavailable`，应用照常运行。紫鸟能不能用还没在 Windows 上测。
+- **安全**：本应用自己不能这样启动（guard 拦 `launch` 本应用的名字）。端口只听本机，但本机任何程序都能连上去控制这个应用；用 CDP 能在应用的网页里执行任意脚本，Electron 应用开了 `nodeIntegration` 的话等于在本机执行代码。
+- **成功结果里的建议也去掉**：`launch --cdp` 成功时 agent-desktop 在 `data` 里带一段 `suggestion`（「Next: run agent-browser connect …」），和错误里的一样去掉，`renderer`、`cdp` 这些事实留着。
+- 本机实测（Linux，拷出来的 Electron 加一个最小页面）：`launch --cdp` → 登记 → `browser_tabs`、`browser_snapshot` 列出页面，`browser_run_code` 填输入框、点按钮、读到结果，`browser_take_screenshot` 返回图片。

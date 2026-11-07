@@ -39,7 +39,7 @@ const DENIED_FLAGS: Record<string, string> = {
   "--debug": "网关不接受 --debug",
   "--force": "网关不接受 --force（它放行 alt+f4、win+l、cmd+q 这类快捷键和强制结束进程）",
   "--headed": "--headed 由 run 的 headed 参数设置",
-  "--cdp": "网关不接受 --cdp",
+  "--cdp": "网关不接受 --cdp（config.yml 的 desktop.cdp 没有打开）",
   "--stdin": "网关不接受 --stdin（没有标准输入）",
 };
 
@@ -87,17 +87,22 @@ export function isReadOnly(args: string[]): boolean {
   return READ_ONLY.has(command);
 }
 
-/** 网关拒绝的原因，没问题返回 null */
-export function deniedReason(args: string[]): string | null {
+/** 网关拒绝的原因，没问题返回 null。cdp：config.yml 的 desktop.cdp 打开了，launch 可以带 --cdp */
+export function deniedReason(args: string[], opts: { cdp?: boolean } = {}): string | null {
   const command = args[0] ?? "";
   if (!command || command.startsWith("-")) return "args 的第一项是命令名";
   if (DENIED_COMMANDS[command]) return DENIED_COMMANDS[command];
   for (const arg of args.slice(1)) {
-    const reason = DENIED_FLAGS[flagName(arg)];
+    const flag = flagName(arg);
+    if (flag === "--cdp" && opts.cdp && command === "launch") continue;
+    const reason = DENIED_FLAGS[flag];
     if (reason) return reason;
   }
   return null;
 }
+
+/** 这次 run 是 launch --cdp */
+export const isCdpLaunch = (args: string[]) => args[0] === "launch" && args.some((a) => flagName(a) === "--cdp");
 
 /** 取参数的值：--name value 或 --name=value，可能出现多次 */
 export function flagValues(args: string[], name: string): string[] {

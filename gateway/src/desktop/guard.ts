@@ -22,18 +22,35 @@ export function setOwnPids(pids: number[]): void {
 
 const OWN_APP = "这是本应用（claude-app）的窗口，桌面工具不能读取或操作它";
 
+interface Bounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface WindowInfo {
   id: string;
   app_name?: string;
   pid?: number;
   title?: string;
-  bounds?: { x: number; y: number; width: number; height: number };
+  is_focused?: boolean;
+  bounds?: Bounds;
 }
 
-async function listWindows(): Promise<WindowInfo[]> {
+/** 所有窗口（含本应用的，给 guard 和截图的坐标说明用，不交给模型） */
+export async function listWindows(): Promise<WindowInfo[]> {
   const { envelope } = await runCli(["list-windows"], { timeoutMs: 10_000 });
   return envelope?.ok && Array.isArray(envelope.data) ? (envelope.data as WindowInfo[]) : [];
 }
+
+/** 屏幕，顺序同 --screen 的序号 */
+export async function listDisplays(): Promise<{ bounds?: Bounds; is_primary?: boolean; scale?: number }[]> {
+  const { envelope } = await runCli(["list-displays"], { timeoutMs: 10_000 });
+  return envelope?.ok && Array.isArray(envelope.data) ? (envelope.data as { bounds?: Bounds }[]) : [];
+}
+
+const contains = (b: Bounds, p: { x: number; y: number }) => p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height;
 
 async function listApps(): Promise<{ name: string; pid: number }[]> {
   const { envelope } = await runCli(["list-apps"], { timeoutMs: 10_000 });
@@ -141,9 +158,12 @@ export async function checkTarget(session: string, args: string[]): Promise<stri
       if (ownPids.has(windows.find((w) => w.id === id)?.pid ?? -1)) return OWN_APP;
     }
     const own = windows.filter((w) => ownPids.has(w.pid ?? -1) && w.bounds);
+    // 前台窗口在最上面：它不是本应用、又盖住了这个坐标时，点击落在它上面（实测紫鸟挪到主屏后盖住了 Claude App，
+    // 以前不看叠放次序，点紫鸟也被拦）。前台是本应用、或前台窗口没盖住这个坐标时，下面可能是本应用，照样拦
+    const front = windows.find((w) => w.is_focused && w.bounds && !ownPids.has(w.pid ?? -1));
     for (const p of points) {
-      if (own.some(({ bounds: b }) => p.x >= b!.x && p.x < b!.x + b!.width && p.y >= b!.y && p.y < b!.y + b!.height)) {
-        return `坐标 ${p.x},${p.y} 落在本应用（claude-app）的窗口里，桌面工具不能操作它`;
+      if (own.some((w) => contains(w.bounds!, p)) && !(front && contains(front.bounds!, p))) {
+        return `坐标 ${p.x},${p.y} 落在本应用（claude-app）的窗口范围里，而前台窗口不是盖住这个坐标的其他窗口，桌面工具不能点这里`;
       }
     }
   }

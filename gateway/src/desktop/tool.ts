@@ -5,11 +5,12 @@ import path from "node:path";
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { MCP_AUTO_BACKGROUND_MS } from "../config.js";
-import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
+import { ALWAYS_LOAD_META, desktopCdpEnabled, isAlwaysLoad } from "../config-file.js";
 import { rememberResult } from "../browser/tool.js";
 import { runCli, type CliResult, type Envelope } from "./cli.js";
-import { deniedReason, flagValues, isReadOnly } from "./commands.js";
-import { beginWrite, checkTarget, describeRefs, othersSince, recordOperation, registerRefsIn, registerSnapshot, stripOwn } from "./guard.js";
+import { registerCdpLaunch } from "./cdp.js";
+import { deniedReason, flagValues, isCdpLaunch, isReadOnly } from "./commands.js";
+import { beginWrite, checkTarget, describeRefs, listDisplays, listWindows, othersSince, recordOperation, registerRefsIn, registerSnapshot, stripOwn } from "./guard.js";
 import { renderSnapshot, type SnapshotData } from "./render.js";
 
 /**
@@ -27,6 +28,11 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_TIMEOUT_MS = 10 * 60_000;
 /** 截图原始大小上限：模型接口的单张图片上限是 base64 后 5MB */
 const MAX_IMAGE_BYTES = 3_750_000;
+/**
+ * snapshot 的读取期限默认值。agent-desktop 自己的默认是 3000：Windows 上紫鸟（Chromium）在 3 秒内没读到窗口的根就报 TIMEOUT
+ * （walk_root_unread）；它的 Windows 说明里写 Chromium、Electron 应用第一次读要 10–25 秒才完整。期限是上限，读完就返回
+ */
+const SNAPSHOT_TIMEOUT_MS = 15_000;
 const BACKGROUND_SECONDS = (Number(process.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS) || MCP_AUTO_BACKGROUND_MS) / 1000;
 
 const version = (() => {
@@ -64,7 +70,12 @@ const INSTRUCTIONS = [
   "  通知：dismiss-notification、dismiss-all-notifications、notification-action；剪贴板：clipboard-get、clipboard-set、clipboard-clear；其他：cursor-overlay",
   "- 默认经无障碍接口操作，不移动鼠标、不切换前台窗口。run 的 headed 为 true 时用真实的鼠标键盘，会移动鼠标、切换前台窗口；一部分命令只在 headed 下可用（它们的 --help 里写着 requires --headed）。",
   "- 网关的规则：本应用（claude-app）自己的窗口不在结果里，也不能读取或操作；ref 只认这个会话经 snapshot 或 find 拿到的；find、press、list-surfaces 和窗口命令（focus-window、restore 等）不指定目标时作用于前台窗口，网关要求指定目标（每条命令接受哪些目标参数见它的 --help）；" +
-    "run 不执行 snapshot、screenshot（用对应的工具）、mcp、session、trace、batch，不接受参数 --session、--agent-id、--trace、--trace-strict、--screenshot、--debug、--force、--cdp、--stdin、--headed（用 headed 参数）。",
+    `run 不执行 snapshot、screenshot（用对应的工具）、mcp、session、trace、batch，不接受参数 --session、--agent-id、--trace、--trace-strict、--screenshot、--debug、--force、--stdin、--headed（用 headed 参数）${desktopCdpEnabled ? "；--cdp 只能用在 launch 上" : "、--cdp"}。`,
+  ...(desktopCdpEnabled
+    ? [
+        "- launch 带 --cdp：agent-desktop 以本机调试端口重新启动 Chromium / Electron 应用（应用已经在运行时返回 cdp_requires_fresh_launch，它不会替你关掉正在运行的应用）。启动成功后，这个应用的网页内容可以用 mcp__cdp__ 的工具（Playwright）操作，不经无障碍接口。调试端口开着时，本机任何程序都能控制这个应用。",
+      ]
+    : []),
   `- 调用超过约 ${BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，结束后结果作为通知送达。屏幕上的变化不会通知你。`,
   "- 别的会话也可能在操作这个桌面：自你上次调用以来它们执行过的操作，列在下一次结果的开头。",
   `- 截图原始大小超过 ${(MAX_IMAGE_BYTES / 1e6).toFixed(2)}MB 时不返回图片。`,
@@ -80,6 +91,16 @@ function formatError(err: NonNullable<Envelope["error"]>): string {
   return JSON.stringify({ code, message, ...(details !== undefined ? { details: stripOwn(details) } : {}), ...(disposition ? { disposition } : {}) });
 }
 
+/**
+ * 成功结果里也可能带它建议的做法（launch --cdp 成功时的 suggestion：「Next: run agent-browser connect …」），同错误一样去掉，
+ * 事实（renderer: "chromium"、cdp 的端口和地址）留着
+ */
+function withoutAdvice(data: unknown): unknown {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const { suggestion: _s, recovery: _r, ...rest } = data as Record<string, unknown>;
+  return rest;
+}
+
 /** 没有拿到 agent-desktop 的 JSON 结果时的说明（被终止、输出不是 JSON），有 JSON 结果返回 null */
 function failure(result: CliResult, timeoutMs: number): string | null {
   if (result.killed === "timeout") return `命令超过 timeout_ms（${timeoutMs} 毫秒）被网关终止，动作可能已经生效`;
@@ -92,6 +113,30 @@ const signalOf = (extra: unknown) => (extra as { signal?: AbortSignal } | undefi
 
 /** 只有在 app、window_id 等目标参数都没给时报错 */
 const needOne = (names: string[]) => `${names.join("、")} 至少给一个`;
+
+/** PNG 的宽高（IHDR） */
+const pngSize = (png: Buffer) => (png.length >= 24 ? { width: png.readUInt32BE(16), height: png.readUInt32BE(20) } : null);
+
+/**
+ * 截图对应桌面上的哪一块：屏幕或窗口在桌面坐标里的范围、屏幕的缩放，和图片的像素大小。
+ * 坐标命令（mouse-click --xy 等）用的是桌面坐标；实测 Windows 两块屏（125%、150%）都是按像素算，副屏从 x=1920 开始，
+ * 模型拿到的截图还可能被 Claude Code 缩小过（它会另外说明缩放比例）
+ */
+async function screenshotGeometry(png: Buffer, target: { app?: string; windowId?: string; screen?: number }): Promise<string | null> {
+  const size = pngSize(png);
+  const pixels = size ? `；图片 ${size.width}×${size.height} 像素` : "";
+  const range = (b: { x: number; y: number; width: number; height: number }) => `x ${b.x}–${b.x + b.width}、y ${b.y}–${b.y + b.height}`;
+  if (target.screen !== undefined) {
+    const display = (await listDisplays())[target.screen];
+    if (!display?.bounds) return null;
+    return `截的是屏幕 ${target.screen}${display.is_primary ? "（主屏幕）" : ""}：桌面坐标 ${range(display.bounds)}${display.scale ? `，缩放 ${Math.round(display.scale * 100)}%` : ""}${pixels}`;
+  }
+  const windows = await listWindows();
+  const matches = target.windowId ? windows.filter((w) => w.id === target.windowId) : windows.filter((w) => w.app_name?.toLowerCase() === target.app?.toLowerCase());
+  const win = matches.length === 1 ? matches[0] : undefined;
+  if (!win?.bounds) return null;
+  return `截的是窗口 ${win.id}${win.title ? `「${win.title}」` : ""}：桌面坐标 ${range(win.bounds)}${pixels}`;
+}
 
 export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance {
   const tools = [
@@ -106,7 +151,13 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
         skeleton: z.boolean().optional().describe("只读浅层结构，截断的容器带子元素数"),
         max_depth: z.number().int().min(1).max(50).optional().describe("最大深度，默认 10"),
         include_bounds: z.boolean().optional().describe("带上元素的位置和大小"),
-        timeout_ms: z.number().int().min(500).max(120_000).optional().describe("读取期限（毫秒），默认 3000"),
+        timeout_ms: z
+          .number()
+          .int()
+          .min(500)
+          .max(120_000)
+          .optional()
+          .describe(`读取期限（毫秒），默认 ${SNAPSHOT_TIMEOUT_MS}，读完就返回。Windows 上 Chromium、Electron 应用第一次读要 10–25 秒才完整`),
       },
       async (input, extra) => {
         const notice = othersSince(sessionId);
@@ -121,11 +172,12 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
           ...(input.skeleton ? ["--skeleton"] : []),
           ...(input.max_depth ? ["--max-depth", String(input.max_depth)] : []),
           ...(input.include_bounds ? ["--include-bounds"] : []),
-          ...(input.timeout_ms ? ["--timeout-ms", String(input.timeout_ms)] : []),
+          "--timeout-ms",
+          String(input.timeout_ms ?? SNAPSHOT_TIMEOUT_MS),
         ];
         const denied = await checkTarget(sessionId, args);
         if (denied) return error(prefixed(notice, denied));
-        const timeoutMs = (input.timeout_ms ?? 3000) + 30_000;
+        const timeoutMs = (input.timeout_ms ?? SNAPSHOT_TIMEOUT_MS) + 30_000;
         const result = await runCli(args, { session: sessionId, timeoutMs, signal: signalOf(extra) });
         const failed = failure(result, timeoutMs);
         if (failed) return error(prefixed(notice, failed));
@@ -167,12 +219,13 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
           if (failed) return error(prefixed(notice, failed));
           if (!result.envelope!.ok) return error(prefixed(notice, formatError(result.envelope!.error!)));
           const png = await readFile(file);
+          const geometry = await screenshotGeometry(png, { app: input.app, windowId: input.window_id, screen }).catch(() => null);
           if (png.length > MAX_IMAGE_BYTES) {
             return error(prefixed(notice, `截图有 ${(png.length / 1e6).toFixed(1)}MB，超过 ${(MAX_IMAGE_BYTES / 1e6).toFixed(2)}MB 的上限，没有返回图片`));
           }
           return {
             content: [
-              ...(notice ? [{ type: "text" as const, text: notice }] : []),
+              ...(notice || geometry ? [{ type: "text" as const, text: [notice, geometry].filter(Boolean).join("\n\n") }] : []),
               { type: "image" as const, data: png.toString("base64"), mimeType: "image/png" },
             ],
           };
@@ -197,7 +250,7 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
           rememberResult(extra, out, isError);
           return isError ? error(out) : text(out);
         };
-        const denied = deniedReason(args) ?? (await checkTarget(sessionId, args));
+        const denied = deniedReason(args, { cdp: desktopCdpEnabled }) ?? (await checkTarget(sessionId, args));
         if (denied) return done(denied, true);
         const readOnly = isReadOnly(args);
         const endWrite = readOnly ? null : beginWrite();
@@ -215,7 +268,10 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
         const envelope = result.envelope!;
         if (!envelope.ok) return done(formatError(envelope.error!), true);
         registerRefsIn(sessionId, result.stdout, flagValues(args, "--app")[0]);
-        return done(JSON.stringify(stripOwn(envelope.data) ?? null), false);
+        const body = JSON.stringify(withoutAdvice(stripOwn(envelope.data)) ?? null);
+        // launch --cdp 成功：记下调试地址，mcp__cdp__ 的工具连它
+        const cdpNote = desktopCdpEnabled && isCdpLaunch(args) ? registerCdpLaunch(sessionId, envelope.data) : null;
+        return done(cdpNote ? `${body}\n\n${cdpNote}` : body, false);
       },
       { annotations: { title: "Desktop command", readOnlyHint: false, destructiveHint: true, openWorldHint: true } },
     ),

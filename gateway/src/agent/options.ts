@@ -8,7 +8,8 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { BROWSER_READ_TOOLS, BROWSER_SERVER, browserServer } from "../browser/tool.js";
 import type { BrowserHost } from "../browser/host.js";
 import { CHROME_READ_TOOLS, CHROME_SERVER, chromeServer } from "../browser/chrome.js";
-import { desktopEnabled, externalBrowserEnabled } from "../config-file.js";
+import { desktopCdpEnabled, desktopEnabled, externalBrowserEnabled } from "../config-file.js";
+import { CDP_READ_TOOLS, CDP_SERVER, cdpServer } from "../desktop/cdp.js";
 import { DESKTOP_READ_TOOLS, DESKTOP_SERVER, desktopServer } from "../desktop/tool.js";
 
 export interface SessionLaunch {
@@ -41,11 +42,14 @@ export function buildOptions(launch: SessionLaunch): Options {
   const chrome = externalBrowserEnabled ? chromeServer(launch.sessionId, launch.resume) : null;
   // 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 里开了才挂，默认关
   const desktop = desktopEnabled ? desktopServer(launch.sessionId) : null;
+  // CDP 接管（launch --cdp 启动的 Chromium / Electron 应用，Playwright 操作它的网页内容）：desktop.cdp 也打开了才挂
+  const cdp = desktopCdpEnabled ? cdpServer(launch.sessionId, launch.resume) : null;
   const allowedTools = [
     ...(terminal ? TERMINAL_READ_TOOLS : []),
     ...(browser ? BROWSER_READ_TOOLS : []),
     ...(chrome ? CHROME_READ_TOOLS : []),
     ...(desktop ? DESKTOP_READ_TOOLS : []),
+    ...(cdp ? CDP_READ_TOOLS : []),
   ];
   return {
     cwd: launch.cwd,
@@ -68,6 +72,7 @@ export function buildOptions(launch: SessionLaunch): Options {
       ...(browser ? { [BROWSER_SERVER]: browser } : {}),
       ...(chrome ? { [CHROME_SERVER]: chrome } : {}),
       ...(desktop ? { [DESKTOP_SERVER]: desktop } : {}),
+      ...(cdp ? { [CDP_SERVER]: cdp } : {}),
     },
     plugins: importedPlugins(),
     ...(launch.skills ? { skills: launch.skills } : {}),
