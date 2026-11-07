@@ -310,17 +310,19 @@ export function SiteIcon({ src }: { src?: string }) {
 }
 
 /**
- * 引用整个浏览器（@内置浏览器、@Chrome）的图标。
- * 内置浏览器：左边对话、右边面板的窗口（就是这个应用的样子），跟着文字颜色；Chrome：彩色的 Chrome 标志（CSS 画的，见 .chrome-logo）
+ * 引用整个浏览器（@内置浏览器、@Chrome）的图标，「标签页」菜单、输入框、消息里都用这一个。
+ * 内置浏览器：品牌色圆角方块里白色的「左边对话、右边面板」窗口（就是这个应用的样子，见 .inapp-logo）；Chrome：彩色的 Chrome 标志（见 .chrome-logo）
  */
 export function BrowserIcon({ chrome }: { chrome?: boolean }) {
   if (chrome) return <span className="chrome-logo" aria-hidden="true" />;
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9.5 2.5h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3z" fill="currentColor" fillOpacity="0.3" stroke="none" />
-      <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
-      <path d="M9.5 2.5v11M4 6h3M4 8.5h2" />
-    </svg>
+    <span className="inapp-logo" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9.5 2.5h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3z" fill="currentColor" fillOpacity="0.35" stroke="none" />
+        <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+        <path d="M9.5 2.5v11M4 6h3M4 8.5h2" />
+      </svg>
+    </span>
   );
 }
 
