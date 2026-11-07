@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { Block, Item, SessionView, ToolResult } from "../state/session";
 import { ImageThumb } from "./ImageThumb";
-import { formatDuration } from "./TasksPopover";
+import { formatShortDuration } from "./TasksPopover";
 
 export type ToolUse = Extract<Block, { type: "tool_use" }>;
 
@@ -74,7 +74,7 @@ function CopyButton({ getText }: { getText: () => string }) {
   );
 }
 
-function ToolIcon({ icon, running }: { icon: string; running: boolean }) {
+export function ToolIcon({ icon, running }: { icon: string; running: boolean }) {
   return (
     <span className={`step-icon${running ? " step-icon-running" : ""}`}>
       <span className="step-icon-glyph">{icon}</span>
@@ -133,9 +133,9 @@ function ToolDetail({ block, result, children }: { block: ToolUse; result?: Tool
   );
 }
 
-/** 工具耗时：一分钟内保留一位小数（0.7秒），更长的同一轮的用时 */
+/** 工具耗时：一分钟内保留一位小数（0.7s），更长的同一轮的用时 */
 function toolDuration(ms: number): string {
-  return ms < 60_000 ? `${(ms / 1000).toFixed(1)}秒` : formatDuration(ms);
+  return ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : formatShortDuration(ms);
 }
 
 /** 一次工具调用：一行摘要，点击展开详情，鼠标移上去出现复制按钮 */

@@ -152,6 +152,15 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(s / 3600)}小时 ${pad(Math.floor((s % 3600) / 60))}分钟`;
 }
 
+/** 对话里的用时（「用时 13s」「1m 05s」），同 codex-app-server 的 TurnView */
+export function formatShortDuration(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  if (s < 3600) return `${Math.floor(s / 60)}m ${pad(s % 60)}s`;
+  return `${Math.floor(s / 3600)}h ${pad(Math.floor((s % 3600) / 60))}m`;
+}
+
 /** 当前时间，ticking 时每秒刷新 */
 function useNow(ticking: boolean): number {
   const [now, setNow] = useState(Date.now);

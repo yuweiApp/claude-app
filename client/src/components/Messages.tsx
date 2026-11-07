@@ -5,8 +5,8 @@ import type { Item, SessionView, TaskItem } from "../state/session";
 import { Attachments } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { CopyAction, MessageActions } from "./MessageActions";
-import { StepGroup, ToolStep, type ToolUse } from "./Steps";
-import { formatDuration } from "./TasksPopover";
+import { StepGroup, ToolIcon, ToolStep, type ToolUse } from "./Steps";
+import { formatShortDuration } from "./TasksPopover";
 import { MentionText } from "./MentionText";
 
 type UserItem = Extract<Item, { kind: "user" }>;
@@ -151,7 +151,7 @@ function Elapsed() {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  return <>{formatDuration(now - start)}</>;
+  return <>{formatShortDuration(now - start)}</>;
 }
 
 /**
@@ -192,8 +192,7 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
         </div>
       )}
       {(hasProcess || live || duration !== null) && (
-        // 下面有最终回复，或这一轮被中断（下面是「已中断」）时，「用时」下面画分割线
-        <div className={`process-wrap${final || (!live && turn.body.some((item) => item.kind === "interrupted")) ? " has-final" : ""}`}>
+        <div className="process-wrap">
           <button
             className="process-toggle"
             onClick={() => (live ? setLiveCollapsed((c) => !c) : setOpen((o) => !o))}
@@ -204,7 +203,7 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
                 已处理 <Elapsed />
               </>
             ) : duration !== null ? (
-              `用时 ${formatDuration(duration)}`
+              `用时 ${formatShortDuration(duration)}`
             ) : (
               "处理过程"
             )}
@@ -217,7 +216,12 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
               ))}
             </div>
           )}
-          {live && !streaming && !(expanded && toolRunning) && <div className="working">思考中…</div>}
+          {live && !streaming && !(expanded && toolRunning) && (
+            <div className="working">
+              <ToolIcon icon="✳" running />
+              <span className="working-label">思考中…</span>
+            </div>
+          )}
         </div>
       )}
       {final && (
