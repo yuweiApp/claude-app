@@ -5,11 +5,22 @@ import type { BrowserHost, CdpTransport } from "./host.js";
 import type { Repl, RunResult, ToolOutput } from "./repl.js";
 import type { ReplCall, ToMain, ToWorker } from "./worker-protocol.js";
 
+/** 开发时（tsx 直接跑源码）本文件是 .ts，构建后是 .js；worker 的入口跟着用同一个扩展名 */
+const EXT = extname(fileURLToPath(import.meta.url));
+const WORKER_URL = new URL(`./worker${EXT}`, import.meta.url);
+
 /**
- * worker 的入口：开发时（tsx）是 worker.ts，构建后是 worker.js，和本文件同一个扩展名。
- * tsx 下 worker 会继承主线程的 execArgv（tsx 的加载器），能直接跑 .ts
+ * 起 worker。构建后直接跑 worker.js。
+ * 开发时 worker.ts 里 import 的是 ./repl.js 这样的写法，要靠 tsx 的加载钩子映射到 .ts。worker 不一定继承得到主线程的钩子：
+ * Linux 上的 Node 22.23 继承得到，Windows 上的 Node 22.22 继承不到（只有 Node 自带的类型擦除，能读 .ts，但不会把 .js 映射到 .ts，
+ * 报 Cannot find module …repl.js）。所以在 worker 里先用 tsx/esm/api 注册一次钩子，再加载 worker.ts
  */
-const WORKER_URL = new URL(`./worker${extname(fileURLToPath(import.meta.url))}`, import.meta.url);
+function spawnWorker(name: string): Worker {
+  if (EXT !== ".ts") return new Worker(WORKER_URL, { name });
+  const tsxApi = import.meta.resolve("tsx/esm/api");
+  const bootstrap = `import(${JSON.stringify(tsxApi)}).then((tsx) => { tsx.register(); return import(${JSON.stringify(WORKER_URL.href)}); });`;
+  return new Worker(bootstrap, { eval: true, name });
+}
 
 interface PendingCall {
   resolve: (output: ToolOutput) => void;
@@ -95,7 +106,7 @@ export class WorkerRepl implements Repl {
 
   private start(): Worker {
     if (this.worker) return this.worker;
-    const worker = new Worker(WORKER_URL, { name: `inapp-browser-${this.sessionId}` });
+    const worker = spawnWorker(`inapp-browser-${this.sessionId}`);
     let error: Error | undefined;
     worker.on("message", (msg: ToMain) => this.onMessage(worker, msg));
     worker.on("error", (err: unknown) => {
