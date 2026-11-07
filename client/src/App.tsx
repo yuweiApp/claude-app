@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
+import { GearGlyph, HomeGlyph, IosIcon } from "./components/IosIcon";
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { api, subscribe, type Capabilities, type GatewayConfig, type SessionListItem } from "./api";
 import { CapabilityPicker } from "./components/CapabilityPicker";
@@ -60,9 +61,9 @@ export function App() {
   };
   const current = sessions.find((s) => s.sessionId === currentId);
   // 会话标题和工作目录，显示在对话上方那一行（右边是会话栏按钮）；新会话页没有。
-  // 项目会话是项目文件夹，普通会话是它的 scratch-… 目录（旧会话是 workspace 本身），悬停看完整路径
+  // 项目会话显示项目文件夹名，悬停看完整路径；普通会话（侧栏「会话」里的）的 scratch-… 目录是网关建的，不显示
   const title = currentId ? (current ? sessionTitle(current) : "新会话") : null;
-  const folder = current?.cwd ? folderName(current.cwd) : null;
+  const folder = current?.cwd && !current.chat ? folderName(current.cwd) : null;
   const chatCwd = currentId ? (current?.cwd ?? null) : newCwd;
   // 右侧面板（文件、终端、浏览器）开在会话的工作目录：项目文件夹，或者普通会话自己的 scratch 目录。
   // 发出第一条消息、会话建好（列表里有了）之后才能用：新会话页还没有工作目录（普通会话的 scratch 目录是建会话时才有的），按钮置灰。
@@ -132,9 +133,9 @@ export function App() {
             aria-current={settingsOpen ? undefined : "page"}
             onClick={() => (settingsOpen ? setSettingsOpen(false) : startNew())}
           >
-            <svg className="ic ic-home" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path fill="currentColor" fillOpacity="0.15" d="M3.5 8.75 10 3.5l6.5 5.25V15.5a1 1 0 0 1-1 1h-3.25v-4.25h-4.5v4.25H4.5a1 1 0 0 1-1-1z" />
-            </svg>
+            <IosIcon tone="orange" size={28}>
+              <HomeGlyph />
+            </IosIcon>
           </button>
           <button
             className={`rail-btn rail-bottom${settingsOpen ? " active" : ""}`}
@@ -143,10 +144,9 @@ export function App() {
             aria-current={settingsOpen ? "page" : undefined}
             onClick={() => setSettingsOpen(true)}
           >
-            <svg className="ic ic-settings" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path fill="currentColor" fillOpacity="0.15" d="M9.49 5.25L10.30 2.55L13.70 2.55L14.51 5.25L16.59 6.45L19.33 5.80L21.03 8.75L19.10 10.80L19.10 13.20L21.03 15.25L19.33 18.20L16.59 17.55L14.51 18.75L13.70 21.45L10.30 21.45L9.49 18.75L7.41 17.55L4.67 18.20L2.97 15.25L4.90 13.20L4.90 10.80L2.97 8.75L4.67 5.80L7.41 6.45Z" />
-              <circle cx="12" cy="12" r="3.1" />
-            </svg>
+            <IosIcon tone="gray" size={28}>
+              <GearGlyph />
+            </IosIcon>
           </button>
         </nav>
         {/* 桌面版标题栏上的收起按钮在设置页里收起左边的导航；网页版设置页里没有这个按钮，导航一直显示 */}
@@ -475,7 +475,7 @@ function Chat({
             </span>
           )}
           {folder && (
-            <span className="muted" title={cwd ?? undefined}>
+            <span className="chat-folder" title={cwd ?? undefined}>
               {folder}
             </span>
           )}
