@@ -123,11 +123,11 @@ pre { white-space: pre-wrap; word-break: break-word; }
   position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 4px; min-height: 49px;
   margin: 0 -10px 12px -2px; padding: 0 10px 0 2px; background: var(--frame); border-bottom: 1px solid var(--divider);
 }
-/* 新会话：外框上浮起来的一个按钮 */
+/* 新会话：平时不画底色（免得和选中的会话一样是白底），悬停才变色 */
 .sidebar .sidebar-top .nav-item {
-  flex: 1; height: 36px; padding: 0 12px; border-radius: 10px; background: var(--bg); box-shadow: var(--raised-shadow); font-size: 14px; font-weight: 500;
+  flex: 1; height: 36px; padding: 0 12px; border-radius: 10px; font-size: 14px; font-weight: 500;
 }
-.sidebar .sidebar-top .nav-item:hover { background: color-mix(in srgb, var(--bg) 96%, var(--text)); }
+.sidebar .sidebar-top .nav-item:hover { background: var(--frame-hover); }
 .icon-btn {
   flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
   width: 30px; height: 30px; padding: 0; border: none; border-radius: 8px; color: var(--muted);
@@ -406,13 +406,15 @@ main {
 
 .turn { display: flex; flex-direction: column; gap: 14px; }
 .process-wrap { display: flex; flex-direction: column; gap: 6px; }
-/* 「用时 …」：一个小胶囊，点开看处理过程 */
+/* 下面有最终回复（或「已中断」）时，过程和回复之间一条分割线（同 codex-app-server 的 .process-wrap） */
+.process-wrap.has-final { padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+/* 「用时 …」：一行灰字，点开看处理过程 */
 .process-toggle {
-  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px;
-  background: transparent; color: var(--muted); font-size: 12.5px; cursor: pointer;
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 2px 0; border: none;
+  background: transparent; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; cursor: pointer;
 }
-.process-toggle:hover { background: var(--panel); color: var(--text); }
-.process-toggle:disabled { opacity: 1; cursor: default; color: var(--muted); background: transparent; }
+.process-toggle:hover { color: var(--text); }
+.process-toggle:disabled { opacity: 1; cursor: default; color: var(--muted); }
 .process { display: flex; flex-direction: column; gap: 8px; padding-left: 12px; border-left: 2px solid var(--border); }
 .result { color: var(--muted); font-size: 12px; text-align: center; }
 
