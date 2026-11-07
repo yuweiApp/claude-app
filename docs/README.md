@@ -90,7 +90,7 @@ Claude Code 默认读写 `~/.claude`。gateway 通过 `env.CLAUDE_CONFIG_DIR` �
 | type | 数据 | 说明 |
 | --- | --- | --- |
 | `sdk` | `SDKMessage` 原样 | assistant / user（工具结果）/ stream_event（增量）/ result / system 等，客户端自己归并 |
-| `user_message` | `{ uuid, content, queued? }` | 用户发的消息（gateway 推进队列时发出，SDK 默认不回显用户输入）；`queued`：这一轮还在进行、消息按 `next` 交给 SDK，Claude Code 放进队列，下一次工具结果之后或这一轮结束后才交给模型 |
+| `user_message` | `{ uuid, content, queued? }` | 用户发的消息（gateway 推进队列时发出，SDK 默认不回显用户输入）；`queued`：这一轮还在进行时发的（有工具在跑时按 `now`，否则按 `next`），Claude Code 放进队列，交给模型时发 `command_lifecycle` 的 `started` |
 | `state` | `{ state, model?, permissionMode? }` | 会话状态变化 |
 | `permission_request` | `{ requestId, toolName, input, title?, description?, decisionReason? }` | `canUseTool` 挂起的权限请求 |
 | `permission_resolved` | `{ requestId, behavior }` | 已回复或超时、取消 |
@@ -104,7 +104,7 @@ SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类
 ### 3.3 客户端归并规则
 
 - 打开会话：先连 SSE，再拉 `GET /sessions/:id/messages` 的历史，两边按 `uuid` 去重合并。
-- 排队的用户消息（`user_message` 带 `queued`）：模型在写文字、或在等权限确认时发的消息不能用 `now`（会打断写到一半的回答），用 `next`（同 Claude 桌面版：实测不打断，写到一半的 952 字回答照常写完）。Claude Code 先放进队列，下一次工具结果之后并进这一轮（同一个 result），这一轮不再调用工具的话等它结束、作为下一轮的开头；有工具在跑时用 `now`，不排队（见第 12 节「跑久了自动转后台」）。以前用 `later`，要等整轮结束才送到。交给模型时 SDK 发 `command_lifecycle`（SDK 的类型定义里没有）：`command_uuid` 是消息的 uuid，`state` 依次是 `queued`、`started`（交给模型了）、`completed`。网页收到排队的消息时不放进消息列表，先像普通消息一样显示在对话最后，这一轮剩下的回复排在它上面；收到它的 `started` 再放进消息列表，位置就固定了（并进这一轮的，显示上在那个工具结果后面分段，同进行中插入的消息）；`result`、状态变成 `idle` / `closed` 时还没放的也放进去，兜底。以前收到就放进去，这一轮剩下的回复排在它后面、被算进它那一轮，「用时」也从发消息时算起。并进这一轮的消息在会话文件里存成 `queued_command` 附件，`getSessionMessages` 读回来是同一个 uuid 的普通用户消息，位置和实时的一样；拉历史时已经在历史里的不再排队。
+- 排队的用户消息（`user_message` 带 `queued`）：模型在写文字、或在等权限确认时发的消息不能用 `now`（会打断写到一半的回答），用 `next`（同 Claude 桌面版：实测不打断，写到一半的 952 字回答照常写完）。Claude Code 先放进队列，下一次工具结果之后并进这一轮（同一个 result），这一轮不再调用工具的话等它结束、作为下一轮的开头；有工具在跑时用 `now`，不排队（见第 12 节「跑久了自动转后台」）。以前用 `later`，要等整轮结束才送到。交给模型时 SDK 发 `command_lifecycle`（SDK 的类型定义里没有）：`command_uuid` 是消息的 uuid，`state` 依次是 `queued`、`started`（交给模型了）、`completed`。有工具在跑时用 `now` 发的也一样等 `started`（网关这时也标 `queued`）：`now` 有时并进这一轮，有时先结束这一轮（`result` 的 `stop_reason` 是 `tool_use`）再用它开新的一轮，实测两种都有；以前当它一定并进这一轮，结果上一轮的 `result` 挂到了它这一段上（显示「用时 0s」），之后并进来的后台任务通知被当成新一轮的开头，它自己那一轮的用时也没了。分轮时 `result` 的 `user_message_uuid` 指向的用户消息算一轮的开头，不算插入的一段（历史里它也紧跟在工具结果后面，光看位置分不出来）。网页收到排队的消息时不放进消息列表，先像普通消息一样显示在对话最后，这一轮剩下的回复排在它上面；收到它的 `started` 再放进消息列表，位置就固定了（并进这一轮的，显示上在那个工具结果后面分段，同进行中插入的消息）；`result`、状态变成 `idle` / `closed` 时还没放的也放进去，兜底。以前收到就放进去，这一轮剩下的回复排在它后面、被算进它那一轮，「用时」也从发消息时算起。并进这一轮的消息在会话文件里存成 `queued_command` 附件，`getSessionMessages` 读回来是同一个 uuid 的普通用户消息，位置和实时的一样；拉历史时已经在历史里的不再排队。
 - `stream_event` 只用来拼"正在生成"的那段文字；收到对应的完整 `assistant` 消息后丢掉临时内容。模型的思考（`thinking` 块）不显示。
 - 工具调用：`assistant` 里的 `tool_use` 块和随后 `user` 消息里同 `tool_use_id` 的 `tool_result` 配对显示。
 - `parent_tool_use_id` 不为空的是子代理里的消息，折叠在对应的 Agent 工具调用下面。

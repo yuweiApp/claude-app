@@ -33,6 +33,9 @@ interface Turn {
 function splitTurns(items: Item[]): Turn[] {
   const turns: Turn[] = [];
   const results: ResultItem[] = [];
+  // result 的 user_message_uuid 指向的用户消息开始了自己的一轮，不是插进上一轮的：有工具在跑时发的消息（now），
+  // Claude Code 有时先结束这一轮（result 的 stop_reason 是 tool_use）再用它开新的一轮。历史里它也紧跟在工具结果后面，光看位置分不出来
+  const turnStarts = new Set(items.flatMap((item) => (item.kind === "result" && item.userMessageUuid ? [item.userMessageUuid] : [])));
   // 这一轮是不是停在工具调用上（还没结束）：此时来的用户消息是中途插入的。
   // 历史记录里插入的消息排在它被读到的那个工具结果后面，实时发的也是在工具执行时发出，两边都是跟在以工具调用结尾的 assistant 消息后面
   let midTool = false;
@@ -41,7 +44,7 @@ function splitTurns(items: Item[]): Turn[] {
       results.push(item);
       midTool = false;
     } else if (item.kind === "user" || item.kind === "task" || !turns.length) {
-      const continued = item.kind === "user" && midTool;
+      const continued = item.kind === "user" && midTool && !turnStarts.has(item.uuid);
       if (continued) turns.at(-1)!.nextAt = item.at;
       turns.push({
         key: item.uuid,

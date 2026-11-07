@@ -100,9 +100,10 @@ export class AgentSession {
     const uuid = randomUUID();
     const content = await buildUserContent(text, attachments);
     const now = this.state === "running" && this.toolsInFlight.size > 0 && this.pending.size === 0;
-    // 这一轮还在进行、又不能用 now（见下面）：用 next，Claude Code 先放进队列，下一次工具结果之后并进这一轮，
-    // 这一轮不再调用工具的话等它结束、作为下一轮的开头（同 Claude 桌面版）
-    const queued = this.state === "running" && !now;
+    // 这一轮还在进行时发的，不管 now 还是 next，都要等 Claude Code 交给模型（command_lifecycle started）才知道落在哪里：
+    // next 在下一次工具结果之后并进这一轮，或这一轮结束后开始下一轮；now 有时并进这一轮，有时先结束这一轮
+    // （result 的 stop_reason 是 tool_use）再用它开始新的一轮（实测两种都有）
+    const queued = this.state === "running";
     this.input.push({
       type: "user",
       uuid,
@@ -114,7 +115,7 @@ export class AgentSession {
       // 调用跑完后结果以通知送回来。模型正在生成文字时 now 会打断它（实测写到一半的回答直接丢了），等权限确认时也不用，
       // 这两种情况用 next：不打断（实测写到一半的 952 字回答照常写完），下一次工具结果之后送到，没有工具调用了就等这一轮结束。
       // 以前用 later，要等整轮结束才送到。空闲时消息本来就立刻开始新的一轮
-      ...(now ? { priority: "now" as const } : queued ? { priority: "next" as const } : {}),
+      ...(now ? { priority: "now" as const } : this.state === "running" ? { priority: "next" as const } : {}),
     });
     // 放进队列的：网页先把它显示在最后，这一轮剩下的回复排在它上面，SDK 的 command_lifecycle started（交给模型了）到了再固定位置
     this.publish({ type: "user_message", uuid, content, ...(queued ? { queued: true } : {}) });

@@ -107,9 +107,9 @@ export interface SessionView {
   /** 对话里已经体现的模型：最近一条主线程 assistant 消息的，或已经显示过的切换 */
   shownModel?: string;
   /**
-   * 这一轮进行中发出、Claude Code 放进了队列的用户消息（模型在写文字、或在等权限确认时发的，priority: next）：
+   * 这一轮进行中发出、Claude Code 放进了队列的用户消息（有工具在跑时 priority: now，否则 next）：
    * 先像普通消息一样显示在对话最后，这一轮剩下的回复排在它上面；交给模型时（command_lifecycle 的 started：
-   * 下一次工具结果之后并进这一轮，或者这一轮结束后开始下一轮）再放进消息列表，位置就固定了。
+   * 某个工具结果之后并进这一轮，或者这一轮结束后开始下一轮）再放进消息列表，位置就固定了。
    * 马上放进去的话，这一轮剩下的回复会排在它后面、被算进它那一轮
    */
   queued: QueuedMessage[];
