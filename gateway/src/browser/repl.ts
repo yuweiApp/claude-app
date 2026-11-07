@@ -12,8 +12,12 @@ import type { TabEvent } from "./host.js";
  * 所以 browser_run_code 等同于 Bash，不放进 allowedTools，非「完全访问权限」时走权限卡片
  */
 
-/** 不指定 timeout_ms 时等多久；上限见 MAX_TIMEOUT_MS */
-export const DEFAULT_TIMEOUT_MS = 30_000;
+/**
+ * 不指定 timeout_ms 时等多久；上限见 MAX_TIMEOUT_MS。
+ * 比 Playwright 单个动作的默认超时（30 秒）长：一样长时两者几乎同时到点，先返回的是笼统的「超过 timeout_ms」，
+ * Playwright 报的具体原因（哪个元素、不可见还是被挡住）就丢了
+ */
+export const DEFAULT_TIMEOUT_MS = 60_000;
 /** 单次调用最长等多久：网页里的 AI 生成、查询这类要几分钟的，一次调用就能等完 */
 export const MAX_TIMEOUT_MS = 15 * 60_000;
 /** 返回给模型的文字上限，超过只留开头 */
