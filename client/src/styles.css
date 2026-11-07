@@ -173,9 +173,10 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .group-list .session-row { padding-left: 34px; }
 /* 会话一行：标题，右边灰色的相对时间；悬停、选中时浅底，选中的像新会话按钮一样浮起来 */
 .session-row { justify-content: space-between; gap: 8px; min-height: 32px; padding: 6px 10px 6px 12px; font-size: 13.5px; }
-.session-row:hover { background: var(--frame-hover); }
+/* 悬停底色按整行算（和项目行一样）：鼠标移到右边的「…」上、菜单开着时也保持 */
+.session-item:hover .session-row, .session-item.menu-open .session-row { background: var(--frame-hover); }
 .session-meta { flex: none; font-size: 11.5px; color: var(--muted); }
-.session-row.active, .session-row.active:hover { background: var(--bg); box-shadow: var(--raised-shadow); font-weight: 500; }
+.session-row.active, .session-item:hover .session-row.active, .session-item.menu-open .session-row.active { background: var(--bg); box-shadow: var(--raised-shadow); font-weight: 500; }
 .session-item:hover .session-meta, .session-item.menu-open .session-meta, .session-row.running .session-meta { visibility: hidden; }
 .session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 分区标题行：悬停整行变色，右边出现「…」（点开或右键是菜单） */
