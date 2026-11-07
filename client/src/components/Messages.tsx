@@ -138,6 +138,17 @@ export function Messages({ view }: { view: SessionView }) {
       {turns.map((turn, i) => (
         <TurnView key={turn.key} turn={turn} view={view} live={busy && i === turns.length - 1 && !turn.result} />
       ))}
+      {/* 这一轮进行中发的、还没交给模型的消息：和普通消息一样显示，保持在最后，交给模型时才固定位置（见 SessionView.queued） */}
+      {view.queued.map(
+        (q) =>
+          q.preview && (
+            <section key={q.uuid} className="turn">
+              <div className="msg-group msg-group-user">
+                <ItemView item={q.preview} />
+              </div>
+            </section>
+          ),
+      )}
       {/* 换了模型还没发消息：先临时显示，新模型回复后由那条消息补出正式的一行 */}
       {!busy && view.model && view.shownModel && view.model !== view.shownModel && <ModelLine from={view.shownModel} to={view.model} />}
     </div>

@@ -7,8 +7,13 @@ export type SessionState = "starting" | "idle" | "running" | "closed";
 /** 发给客户端的事件，见 docs/README.md「事件类型」 */
 export type GatewayEvent =
   | { type: "sdk"; message: SDKMessage }
-  /** 用户发的消息：content 就是交给 SDK 的 user 消息内容（文字，或 image / text 块），和会话历史里的格式一样 */
-  | { type: "user_message"; uuid: string; content: SDKUserMessage["message"]["content"] }
+  /**
+   * 用户发的消息：content 就是交给 SDK 的 user 消息内容（文字，或 image / text 块），和会话历史里的格式一样。
+   * queued：这一轮还在进行（模型在写文字、或在等权限确认），消息按 next 交给 SDK，Claude Code 先放进队列，
+   * 下一次工具结果之后并进这一轮，或者这一轮结束后作为下一轮的开头；交给模型时 SDK 发 command_lifecycle（state: started，
+   * command_uuid 就是这里的 uuid）。在那之前这一轮剩下的回复会排在它前面
+   */
+  | { type: "user_message"; uuid: string; content: SDKUserMessage["message"]["content"]; queued?: boolean }
   | { type: "state"; state: SessionState; model?: string; effort?: EffortLevel; permissionMode?: string }
   | {
       type: "permission_request";

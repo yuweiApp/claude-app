@@ -99,6 +99,10 @@ export class AgentSession {
   async send(text: string, attachments: Attachment[] = []): Promise<string> {
     const uuid = randomUUID();
     const content = await buildUserContent(text, attachments);
+    const now = this.state === "running" && this.toolsInFlight.size > 0 && this.pending.size === 0;
+    // 这一轮还在进行、又不能用 now（见下面）：用 next，Claude Code 先放进队列，下一次工具结果之后并进这一轮，
+    // 这一轮不再调用工具的话等它结束、作为下一轮的开头（同 Claude 桌面版）
+    const queued = this.state === "running" && !now;
     this.input.push({
       type: "user",
       uuid,
@@ -107,11 +111,13 @@ export class AgentSession {
       // 用户在网页里输入的：不标时 Claude Code 当作来源不明，严格的 isHuman() 检查会拒绝
       origin: { kind: "human" },
       // 有工具调用正在跑时插话用 now：调用（如等网页结果的 browser_run_code）提前转到后台、不打断，消息马上送到模型，
-      // 调用跑完后结果以通知送回来。模型正在生成文字时 now 会打断它（实测写到一半的回答直接丢了），
-      // 等权限确认时也不用，这两种情况不带，按 later：等这一轮结束才送到。空闲时消息本来就立刻开始新的一轮
-      ...(this.state === "running" && this.toolsInFlight.size > 0 && this.pending.size === 0 ? { priority: "now" as const } : {}),
+      // 调用跑完后结果以通知送回来。模型正在生成文字时 now 会打断它（实测写到一半的回答直接丢了），等权限确认时也不用，
+      // 这两种情况用 next：不打断（实测写到一半的 952 字回答照常写完），下一次工具结果之后送到，没有工具调用了就等这一轮结束。
+      // 以前用 later，要等整轮结束才送到。空闲时消息本来就立刻开始新的一轮
+      ...(now ? { priority: "now" as const } : queued ? { priority: "next" as const } : {}),
     });
-    this.publish({ type: "user_message", uuid, content });
+    // 放进队列的：网页先把它显示在最后，这一轮剩下的回复排在它上面，SDK 的 command_lifecycle started（交给模型了）到了再固定位置
+    this.publish({ type: "user_message", uuid, content, ...(queued ? { queued: true } : {}) });
     this.setState("running");
     return uuid;
   }

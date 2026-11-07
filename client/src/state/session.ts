@@ -46,6 +46,14 @@ export type Item =
     };
 
 export type TaskItem = Extract<Item, { kind: "task" }>;
+export type UserItem = Extract<Item, { kind: "user" }>;
+
+/** 还没交给模型的用户消息（user_message 事件带 queued）：content 原样留着，交给模型时再归并进消息列表；preview 是显示用的 */
+export interface QueuedMessage {
+  uuid: string;
+  content: unknown;
+  preview?: UserItem;
+}
 
 export interface ToolResult {
   text: string;
@@ -98,6 +106,13 @@ export interface SessionView {
   backgroundTasksLive: boolean;
   /** 对话里已经体现的模型：最近一条主线程 assistant 消息的，或已经显示过的切换 */
   shownModel?: string;
+  /**
+   * 这一轮进行中发出、Claude Code 放进了队列的用户消息（模型在写文字、或在等权限确认时发的，priority: next）：
+   * 先像普通消息一样显示在对话最后，这一轮剩下的回复排在它上面；交给模型时（command_lifecycle 的 started：
+   * 下一次工具结果之后并进这一轮，或者这一轮结束后开始下一轮）再放进消息列表，位置就固定了。
+   * 马上放进去的话，这一轮剩下的回复会排在它后面、被算进它那一轮
+   */
+  queued: QueuedMessage[];
 }
 
 export function emptyView(): SessionView {
@@ -115,6 +130,7 @@ export function emptyView(): SessionView {
     pendingTasks: [],
     backgroundTasks: [],
     backgroundTasksLive: false,
+    queued: [],
   };
 }
 
@@ -150,6 +166,8 @@ export function reduce(view: SessionView, action: Action): SessionView {
     next.pendingTasks = view.pendingTasks;
     next.backgroundTasks = view.backgroundTasks;
     next.backgroundTasksLive = view.backgroundTasksLive;
+    // 历史里已经有的（Claude Code 已经交给模型、写进了会话文件），不再排队
+    next.queued = view.queued.filter((q) => !next.seen.has(q.uuid));
     return next;
   }
 
@@ -157,11 +175,13 @@ export function reduce(view: SessionView, action: Action): SessionView {
   const next: SessionView = { ...view, items: [...view.items], children: { ...view.children } };
   switch (event.type) {
     case "user_message":
-      // content 和会话历史里的格式一样，按同一套规则归并
-      // 实时消息没有时间戳，按收到的时间记（算一轮的用时要用）
-      ingestMessage(next, "user", event.uuid, { content: event.content }, null, Date.now());
-      next.turnEnded = false;
-      next.pendingTasks = [];
+      if (event.queued) {
+        if (!view.seen.has(event.uuid) && !view.queued.some((q) => q.uuid === event.uuid)) {
+          next.queued = [...view.queued, { uuid: event.uuid, content: event.content, preview: previewUser(event.uuid, event.content) }];
+        }
+        break;
+      }
+      ingestUserMessage(next, event.uuid, event.content);
       break;
     case "state":
       next.state = event.state;
@@ -169,6 +189,8 @@ export function reduce(view: SessionView, action: Action): SessionView {
       next.effort = event.effort;
       next.permissionMode = event.permissionMode;
       if (event.state !== "running") next.streaming = { text: "" };
+      // 兜底：没收到 started 就停了（子进程退出等），排队的消息不再一直挂在最后
+      if (event.state === "idle" || event.state === "closed") flushQueued(next);
       // 上一轮结束后没有用户消息就又开始运行：是后台任务的通知让 Claude Code 自动开了新的一轮（实时事件里没有这条 user 消息）
       if (event.state === "running" && view.turnEnded && view.pendingTasks.length) {
         view.pendingTasks.forEach((task) => pushItem(next, null, task));
@@ -209,6 +231,12 @@ export function reduce(view: SessionView, action: Action): SessionView {
 }
 
 function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sdk" }>["message"]): void {
+  // 用户消息的进度（SDK 的类型定义里没有）：started 是这条消息交给模型了，排队的消息这时放进消息列表
+  const lifecycle = message as unknown as { type: string; command_uuid?: string; state?: string };
+  if (lifecycle.type === "command_lifecycle") {
+    if (lifecycle.state === "started" && lifecycle.command_uuid) flushQueued(view, lifecycle.command_uuid);
+    return;
+  }
   switch (message.type) {
     case "stream_event": {
       if (message.parent_tool_use_id) return;
@@ -245,9 +273,37 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
         durationMs: message.duration_ms,
         costUsd: message.total_cost_usd,
       });
+      // 兜底：这一轮结束了，还排着的消息只会在下一轮开头交给模型（正常会先收到 started）
+      flushQueued(view);
       return;
     }
   }
+}
+
+/**
+ * 用户发的消息归并进视图：content 和会话历史里的格式一样，按同一套规则归并；
+ * 实时消息没有时间戳，按归并的时间记（算一轮的用时要用）
+ */
+function ingestUserMessage(view: SessionView, uuid: string, content: unknown): void {
+  ingestMessage(view, "user", uuid, { content }, null, Date.now());
+  view.turnEnded = false;
+  view.pendingTasks = [];
+}
+
+/** 排队的消息放进消息列表：给了 uuid 只放这一条，不给放全部（历史或事件里已经有的跳过） */
+function flushQueued(view: SessionView, uuid?: string): void {
+  const take = view.queued.filter((q) => uuid === undefined || q.uuid === uuid);
+  if (!take.length) return;
+  view.queued = view.queued.filter((q) => !take.includes(q));
+  for (const q of take) if (!view.seen.has(q.uuid)) ingestUserMessage(view, q.uuid, q.content);
+}
+
+/** 排队中的消息显示用：按归并用户消息的同一套规则转成 user 项，不碰真正的视图 */
+function previewUser(uuid: string, content: unknown): UserItem | undefined {
+  const scratch = emptyView();
+  ingestMessage(scratch, "user", uuid, { content }, null, Date.now());
+  const item = scratch.items[0];
+  return item?.kind === "user" ? item : undefined;
 }
 
 /** 把一条 user / assistant 消息（SDK 实时消息和 jsonl 历史格式相同）归并进视图 */
