@@ -77,15 +77,34 @@ const error = (t: string) => ({ ...text(t), isError: true });
  */
 const repls = new Map<string, Repl>();
 
-/** 取这个会话在这个浏览器里的 REPL，没有就用 create 建一个 */
-export function replFor(key: string, create: () => Repl): Repl {
+/**
+ * 会话恢复（resume）时这个会话的 REPL 却是新建的：网关重启过（会话空闲关掉子进程再恢复时 REPL 还在，不会新建），
+ * 之前调用里定义的变量都没了。第一次调用浏览器工具时在结果开头说明，不然模型照旧用存着的变量，撞上 ReferenceError 才知道
+ */
+const RESTART_NOTICE = "（这个会话的代码运行环境是新建的（应用重启过）：之前调用里定义的变量都已不在，page 指向现在最后一个标签页；标签页本身还在。）";
+const pendingNotices = new WeakMap<Repl, string>();
+
+/** 取这个会话在这个浏览器里的 REPL，没有就用 create 建一个；resumed：会话是恢复的（新建时记下 RESTART_NOTICE） */
+export function replFor(key: string, create: () => Repl, resumed = false): Repl {
   let repl = repls.get(key);
   if (!repl) {
     repl = create();
     repls.set(key, repl);
+    if (resumed) pendingNotices.set(repl, RESTART_NOTICE);
   }
   return repl;
 }
+
+/** 取走还没告诉模型的提示（只给一次） */
+function takeRestartNotice(repl: Repl): string | undefined {
+  const notice = pendingNotices.get(repl);
+  pendingNotices.delete(repl);
+  return notice;
+}
+
+/** 文字前面加上提示 */
+const prefixed = (notice: string | undefined, body: string) => (notice ? (body ? `${notice}\n\n${body}` : notice) : body);
+const withRestartNotice = <T extends ToolOutput>(notice: string | undefined, output: T): T => (notice ? { ...output, text: prefixed(notice, output.text) } : output);
 
 /**
  * 这个会话在内置浏览器里还有代码在跑（转到后台的 browser_run_code）：一轮结束时先不关临时标签页，
@@ -172,15 +191,17 @@ export function browserMcpServer({ name, instructions, repl, keep, temporaryTabs
           .describe(`这次调用最多跑多久（毫秒），默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}`),
       },
       async ({ code, timeout_ms }, extra) => {
+        let notice: string | undefined;
         try {
           const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
-          const result = await repl.run(code, timeout_ms ?? DEFAULT_TIMEOUT_MS, signal);
+          notice = takeRestartNotice(repl);
+          const result = withRestartNotice(notice, await repl.run(code, timeout_ms ?? DEFAULT_TIMEOUT_MS, signal));
           rememberResult(extra, result.text, result.isError);
           const temporary = temporaryTabs && result.opened && !result.isError ? await temporaryTabs().catch(() => null) : null;
           return toResult(temporary?.length ? { ...result, text: `${result.text}\n\n${temporaryNote(temporary)}` } : result);
         } catch (err) {
-          rememberResult(extra, errorMessage(err), true);
-          return error(errorMessage(err));
+          rememberResult(extra, prefixed(notice, errorMessage(err)), true);
+          return error(prefixed(notice, errorMessage(err)));
         }
       },
       { annotations: { title: "Run browser code", readOnlyHint: false, destructiveHint: true, openWorldHint: true } },
@@ -190,10 +211,11 @@ export function browserMcpServer({ name, instructions, repl, keep, temporaryTabs
       "当前标签页（page）的无障碍树，元素带 [ref=e12]（代码里 page.locator('aria-ref=e12') 指向同一个元素），前面列出所有标签页。不改动页面。",
       {},
       async () => {
+        const notice = takeRestartNotice(repl);
         try {
-          return toResult(await repl.snapshot());
+          return toResult(withRestartNotice(notice, await repl.snapshot()));
         } catch (err) {
-          return error(errorMessage(err));
+          return error(prefixed(notice, errorMessage(err)));
         }
       },
       { annotations: { title: "Page snapshot", readOnlyHint: true, openWorldHint: false } },
@@ -203,10 +225,11 @@ export function browserMcpServer({ name, instructions, repl, keep, temporaryTabs
       "当前标签页（page）的截图：默认可见区域，full_page 截整页。",
       { full_page: z.boolean().optional().describe("截整个页面，默认只截可见区域") },
       async ({ full_page }) => {
+        const notice = takeRestartNotice(repl);
         try {
-          return toResult(await repl.screenshot(full_page ?? false));
+          return toResult(withRestartNotice(notice, await repl.screenshot(full_page ?? false)));
         } catch (err) {
-          return error(errorMessage(err));
+          return error(prefixed(notice, errorMessage(err)));
         }
       },
       { annotations: { title: "Screenshot", readOnlyHint: true, openWorldHint: false } },
@@ -219,10 +242,11 @@ export function browserMcpServer({ name, instructions, repl, keep, temporaryTabs
         index: z.number().int().min(0).optional().describe("action 为 select 时：标签页序号（list 结果里的 [序号]）"),
       },
       async ({ action, index }) => {
+        const notice = takeRestartNotice(repl);
         try {
-          return toResult(await repl.tabs(action, index));
+          return toResult(withRestartNotice(notice, await repl.tabs(action, index)));
         } catch (err) {
-          return error(errorMessage(err));
+          return error(prefixed(notice, errorMessage(err)));
         }
       },
       { annotations: { title: "Tabs", readOnlyHint: true, openWorldHint: false } },
@@ -257,11 +281,11 @@ export function browserMcpServer({ name, instructions, repl, keep, temporaryTabs
 }
 
 /** 给模型用的内置浏览器工具，每个会话一个 MCP 服务器；REPL 和连接按会话保留（replFor），在这个会话自己的 worker 线程里 */
-export function browserServer(host: BrowserHost, sessionId: string): McpSdkServerConfigWithInstance {
+export function browserServer(host: BrowserHost, sessionId: string, resumed = false): McpSdkServerConfigWithInstance {
   return browserMcpServer({
     name: BROWSER_SERVER,
     instructions: INSTRUCTIONS + (externalBrowserEnabled ? CHROME_NOTE : ""),
-    repl: replFor(`${BROWSER_SERVER}:${sessionId}`, () => new WorkerRepl(host, sessionId)),
+    repl: replFor(`${BROWSER_SERVER}:${sessionId}`, () => new WorkerRepl(host, sessionId), resumed),
     keep: async () => {
       const tab = await host.keep(sessionId);
       return tab ? `已留下标签页「${tab.title || tab.url}」（${tab.url}），这一轮结束后不会关闭。` : null;

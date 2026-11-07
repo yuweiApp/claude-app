@@ -94,10 +94,10 @@ export const chromeBridge = new ChromeBridge();
  * 给模型用的外部 Chrome 工具，每个会话一个 MCP 服务器，共用 chromeBridge 的连接；REPL 按会话保留（replFor）。
  * 和内置浏览器不同，REPL 在网关主线程里：扩展同一时间只认一个客户端，所有会话共用一条连接，没法分到各自的 worker
  */
-export function chromeServer(sessionId: string): McpSdkServerConfigWithInstance {
+export function chromeServer(sessionId: string, resumed = false): McpSdkServerConfigWithInstance {
   return browserMcpServer({
     name: CHROME_SERVER,
     instructions: INSTRUCTIONS,
-    repl: replFor(`${CHROME_SERVER}:${sessionId}`, () => new BrowserRepl(() => chromeBridge.context())),
+    repl: replFor(`${CHROME_SERVER}:${sessionId}`, () => new BrowserRepl(() => chromeBridge.context()), resumed),
   });
 }
