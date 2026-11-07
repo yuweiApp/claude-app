@@ -167,6 +167,8 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .group-actions .icon-btn:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
 .group-head:hover .group-name, .group-head.menu-open .group-name { padding-right: 58px; }
 .group-toggle { flex: 1; padding: 6px 10px 6px 12px; font-size: 13.5px; }
+/* 文件夹行、分区标题行的按钮本身不画底色（盖过全局的 button:hover），悬停底色由外面一整行（.group-head、.section-head）画 */
+.sidebar .group-toggle, .sidebar .group-toggle:hover, .sidebar .section-toggle, .sidebar .section-toggle:hover { background: none; }
 .group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group-list .session-row { padding-left: 34px; }
 /* 会话一行：标题，右边灰色的相对时间；悬停、选中时浅底，选中的像新会话按钮一样浮起来 */
