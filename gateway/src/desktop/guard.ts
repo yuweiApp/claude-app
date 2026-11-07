@@ -128,8 +128,9 @@ export async function checkTarget(session: string, args: string[]): Promise<stri
   const windowIds = flagValues(args, "--window-id");
   const appArg = APP_ARGUMENT.has(command) && args[1] && !args[1].startsWith("-") ? [args[1]] : [];
   const apps = [...flagValues(args, "--app"), ...appArg];
-  if (NEEDS_TARGET.has(command) && refs.length === 0 && windowIds.length === 0 && apps.length === 0) {
-    return `${command} 不带 --app、--window-id 或 ref 时作用于前台窗口；网关要求指定目标`;
+  const targets = NEEDS_TARGET[command];
+  if (targets && refs.length === 0 && windowIds.length === 0 && apps.length === 0) {
+    return `${command} 不指定目标时作用于前台窗口，网关要求指定目标；${command} 接受的目标参数：${targets.join("、")}`;
   }
   if (ownPids.size === 0) return null;
 

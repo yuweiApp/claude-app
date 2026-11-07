@@ -261,4 +261,13 @@ desktop:
 4. 界面：权限卡片、工具调用的显示、设置页的状态和授权引导。
 5. 按第 11 节在 Windows、macOS 上实测，把结果写回本文档，再并进 README.md 第 14 节。
 
+**Windows 实测（home，2026-11-08，紫鸟浏览器、列应用和窗口）**：
+- 窗口报的进程号和桌面版主进程一致：`list-apps`、`list-windows` 的结果里没有漏出本应用。`restore`、`focus-window`、整屏截图（两块屏，3840×2160 的那块由 Claude Code 缩到 2000×1125 给模型）都能用。
+- 9 次报错，网关这边改了三处：
+  - `restore --help` 被目标检查拦下（c9c99f5）。
+  - GPT 把截图的可选参数都填上（`app`、`window_id` 和 `screen: 0` 一起给），agent-desktop 不接受，连错 4 次：现在给了窗口就不传 `--screen`。
+  - 拒绝提示一律写「--app、--window-id 或 ref」，模型给只认 `--app` 的 `list-surfaces` 加了 `--window-id`，给 `click` 也加了 `--app`：现在按命令列出它接受的目标参数。
+- agent-desktop 自己的规则：紫鸟（Chromium）里没名字的 `group` 不唯一，按 ref 点击返回 `AMBIGUOUS_TARGET`（`identity_not_unique`）；说明里补上了这条，以及这台电脑是什么系统。`find` 读 Chromium 应用时报过一次「树还很薄」。
+- 快照渲染改成不认识的字段也原样带上（节点行尾、快照头的「其他：」），Windows 上快照节点有没有额外字段还没看到原始 JSON。
+
 **拦不住的**：模型用 Bash 直接跑 `gateway/node_modules/agent-desktop/bin/agent-desktop`（或 xdotool、AppleScript 这类）就绕过了网关。这和 Bash 本身能做任何事一样，边界是 Bash 的权限卡片；「完全访问权限」下没有这道边界。

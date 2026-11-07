@@ -37,10 +37,23 @@ const version = (() => {
   }
 })();
 
+const PLATFORM = { win32: "Windows", darwin: "macOS", linux: "Linux" }[process.platform as string] ?? process.platform;
+const ACCESSIBILITY_API = { win32: "UI Automation", darwin: "AX API", linux: "AT-SPI" }[process.platform as string] ?? "无障碍接口";
+
+/**
+ * ref 能不能用的规则（agent-desktop 内置的平台说明）：Windows、Linux 按角色、名字、描述重新认元素，不唯一的 ref 用不了；
+ * macOS 的 ref 带着元素自己的地址，没有这条限制。实测 Windows 上紫鸟浏览器（Chromium）里没名字的 group 都是这样
+ */
+const REF_RULE =
+  process.platform === "darwin"
+    ? "ref 指向快照时的那个元素本身，几个一模一样的元素各有各的 ref。"
+    : "执行命令时按快照里记下的角色、原生 id、名字、描述重新找这个元素：拍快照时它在整个窗口里不唯一（比如几个没有名字的 group），这个 ref 用来操作时返回 AMBIGUOUS_TARGET（details.kind: identity_not_unique），重拍快照也一样。";
+
 /** 给模型的说明：只写事实（环境、接口、规则、机制），不写做法，见 CLAUDE.md */
 const INSTRUCTIONS = [
-  `桌面：运行网关的这台电脑上、当前登录用户的桌面（原生应用的窗口、菜单、对话框），经系统的无障碍接口（macOS AX、Windows UI Automation、Linux AT-SPI）读取和操作，工具是 agent-desktop ${version}。用户可能同时在用这台电脑。`,
+  `桌面：运行网关的这台电脑（${PLATFORM}）上、当前登录用户的桌面（原生应用的窗口、菜单、对话框），经系统的无障碍接口（${ACCESSIBILITY_API}）读取和操作，工具是 agent-desktop ${version}。用户可能同时在用这台电脑。`,
   "- snapshot 返回一个窗口的无障碍树，元素带 [ref=@快照编号:eN]。ref 只在产生它的快照里有效；界面变了，用旧 ref 的命令返回 STALE_REF 或 AMBIGUOUS_TARGET。",
+  `- ${REF_RULE}`,
   "- screenshot 返回一个窗口或一块屏幕的图片。",
   '- run 执行一条 agent-desktop 命令，args[0] 是命令名，返回它的 JSON 结果：成功时是 data；失败时是 error，其中 disposition.delivery 表示动作送到没有，disposition.retry 为 safe 表示重复执行不会重复生效。["<命令>", "--help"] 返回这条命令的参数说明。',
   "- run 的命令：",
@@ -50,7 +63,7 @@ const INSTRUCTIONS = [
   "  应用和窗口：launch、close-app、focus-window、resize-window、move-window、minimize、maximize、restore、open-system-surface",
   "  通知：dismiss-notification、dismiss-all-notifications、notification-action；剪贴板：clipboard-get、clipboard-set、clipboard-clear；其他：cursor-overlay",
   "- 默认经无障碍接口操作，不移动鼠标、不切换前台窗口。run 的 headed 为 true 时用真实的鼠标键盘，会移动鼠标、切换前台窗口；一部分命令只在 headed 下可用（它们的 --help 里写着 requires --headed）。",
-  "- 网关的规则：本应用（claude-app）自己的窗口不在结果里，也不能读取或操作；ref 只认这个会话经 snapshot 或 find 拿到的；find、press、list-surfaces 和窗口命令不带 --app、--window-id 或 ref 时作用于前台窗口，网关要求指定目标；" +
+  "- 网关的规则：本应用（claude-app）自己的窗口不在结果里，也不能读取或操作；ref 只认这个会话经 snapshot 或 find 拿到的；find、press、list-surfaces 和窗口命令（focus-window、restore 等）不指定目标时作用于前台窗口，网关要求指定目标（每条命令接受哪些目标参数见它的 --help）；" +
     "run 不执行 snapshot、screenshot（用对应的工具）、mcp、session、trace、batch，不接受参数 --session、--agent-id、--trace、--trace-strict、--screenshot、--debug、--force、--cdp、--stdin、--headed（用 headed 参数）。",
   `- 调用超过约 ${BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，结束后结果作为通知送达。屏幕上的变化不会通知你。`,
   "- 别的会话也可能在操作这个桌面：自你上次调用以来它们执行过的操作，列在下一次结果的开头。",
@@ -126,7 +139,7 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
     ),
     tool(
       "screenshot",
-      "一个窗口（app 或 window_id）或一块屏幕（screen）的 PNG 图片。窗口被别的窗口挡住时不截。",
+      "一个窗口（app 或 window_id）或一块屏幕（screen）的 PNG 图片。给了 app 或 window_id 时截窗口，screen 不起作用。窗口被别的窗口挡住时不截。",
       {
         app: z.string().optional().describe("应用名（list-apps 里的 name）"),
         window_id: z.string().optional().describe("窗口 id（list-windows 里的 id）"),
@@ -134,7 +147,9 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
       },
       async (input, extra) => {
         const notice = othersSince(sessionId);
-        if (!input.app && !input.window_id && input.screen === undefined) return error(prefixed(notice, needOne(["app", "window_id", "screen"])));
+        // 模型常把可选参数都填上（app: ""、screen: 0），agent-desktop 不接受 --screen 和 --app / --window-id 一起给：给了窗口就截窗口
+        const screen = input.app || input.window_id ? undefined : input.screen;
+        if (!input.app && !input.window_id && screen === undefined) return error(prefixed(notice, needOne(["app", "window_id", "screen"])));
         const dir = await mkdtemp(path.join(os.tmpdir(), "claude-app-desktop-"));
         const file = path.join(dir, "screenshot.png");
         try {
@@ -142,7 +157,7 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
             "screenshot",
             ...(input.app ? ["--app", input.app] : []),
             ...(input.window_id ? ["--window-id", input.window_id] : []),
-            ...(input.screen !== undefined ? ["--screen", String(input.screen)] : []),
+            ...(screen !== undefined ? ["--screen", String(screen)] : []),
             file,
           ];
           const denied = await checkTarget(sessionId, args);

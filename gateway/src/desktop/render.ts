@@ -24,6 +24,14 @@ export interface SnapshotData {
 
 const quote = (s: string) => JSON.stringify(s);
 
+/** 下面单独处理的字段；其余的（各平台可能多出来的）原样附在行尾，不丢 */
+const NODE_KEYS = new Set(["role", "name", "description", "value", "ref_id", "states", "available_actions", "bounds", "children_count", "children"]);
+const DATA_KEYS = new Set(["app", "complete", "ref_count", "snapshot_id", "tree", "window"]);
+const extra = (obj: object, known: Set<string>) => {
+  const rest = Object.fromEntries(Object.entries(obj).filter(([k, v]) => !known.has(k) && v !== undefined && v !== null));
+  return Object.keys(rest).length ? JSON.stringify(rest) : "";
+};
+
 function line(node: SnapshotNode): string {
   const name = node.name?.trim();
   // 没有名字时才带描述：有名字的菜单项、按钮多半还有一句描述（「Create a new document」），全带上快照大一截
@@ -37,12 +45,19 @@ function line(node: SnapshotNode): string {
   if (node.bounds) text += ` @${node.bounds.x},${node.bounds.y} ${node.bounds.width}×${node.bounds.height}`;
   if (node.value !== undefined && node.value !== null) text += `: ${typeof node.value === "string" ? quote(node.value) : JSON.stringify(node.value)}`;
   if (node.children_count && !node.children?.length) text += `（${node.children_count} 个子元素未展开）`;
+  const more = extra(node, NODE_KEYS);
+  if (more) text += ` ${more}`;
   return text;
 }
 
-/** 没有名字、没有 ref、没有值的 group：不单独占一行，子元素提上来（Chromium 应用里有很长一串这样的） */
+/** 没有名字、没有 ref、没有值、也没有别的字段的 group：不单独占一行，子元素提上来（Chromium 应用里有很长一串这样的） */
 const passThrough = (node: SnapshotNode) =>
-  node.role === "group" && !node.name?.trim() && !node.ref_id && (node.value === undefined || node.value === null) && !node.children_count;
+  node.role === "group" &&
+  !node.name?.trim() &&
+  !node.ref_id &&
+  (node.value === undefined || node.value === null) &&
+  !node.children_count &&
+  !extra(node, NODE_KEYS);
 
 export function renderSnapshot(data: SnapshotData): string {
   const lines: string[] = [];
@@ -64,5 +79,6 @@ export function renderSnapshot(data: SnapshotData): string {
   ]
     .filter(Boolean)
     .join("，");
-  return `${header}\n${lines.join("\n")}`;
+  const more = extra(data, DATA_KEYS);
+  return `${header}${more ? `\n其他：${more}` : ""}\n${lines.join("\n")}`;
 }

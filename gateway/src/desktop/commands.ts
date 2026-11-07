@@ -43,8 +43,22 @@ const DENIED_FLAGS: Record<string, string> = {
   "--stdin": "网关不接受 --stdin（没有标准输入）",
 };
 
-/** 不带 --app / --window-id / ref 时作用于前台窗口的命令：网关要求指定目标（前台窗口可能就是本应用） */
-export const NEEDS_TARGET = new Set(["find", "press", "list-surfaces", "focus-window", "resize-window", "move-window", "minimize", "maximize", "restore"]);
+/**
+ * 不指定目标时作用于前台窗口的命令，和它们各自接受的目标参数（1.2.0 的 --help）：网关要求指定目标（前台窗口可能就是本应用）。
+ * 拒绝时按命令列出能用的参数：以前一律写「--app、--window-id 或 ref」，模型给只认 --app 的 list-surfaces 加 --window-id，给 click 也加 --app
+ */
+const WINDOW_TARGETS = ["--app", "--window-id"];
+export const NEEDS_TARGET: Record<string, string[]> = {
+  find: [...WINDOW_TARGETS, "--root"],
+  press: WINDOW_TARGETS,
+  "list-surfaces": ["--app"],
+  "focus-window": WINDOW_TARGETS,
+  "resize-window": WINDOW_TARGETS,
+  "move-window": WINDOW_TARGETS,
+  minimize: WINDOW_TARGETS,
+  maximize: WINDOW_TARGETS,
+  restore: WINDOW_TARGETS,
+};
 
 /** 第一个位置参数是应用名的命令 */
 export const APP_ARGUMENT = new Set(["launch", "close-app"]);
