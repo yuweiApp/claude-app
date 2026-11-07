@@ -8,7 +8,8 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { BROWSER_READ_TOOLS, BROWSER_SERVER, browserServer } from "../browser/tool.js";
 import type { BrowserHost } from "../browser/host.js";
 import { CHROME_READ_TOOLS, CHROME_SERVER, chromeServer } from "../browser/chrome.js";
-import { externalBrowserEnabled } from "../config-file.js";
+import { desktopEnabled, externalBrowserEnabled } from "../config-file.js";
+import { DESKTOP_READ_TOOLS, DESKTOP_SERVER, desktopServer } from "../desktop/tool.js";
 
 export interface SessionLaunch {
   sessionId: string;
@@ -38,7 +39,14 @@ export function buildOptions(launch: SessionLaunch): Options {
   const browser = launch.browser ? browserServer(launch.browser, launch.sessionId, launch.resume) : null;
   // 外部浏览器（用户自己的 Chrome）：config.yml 里开了才挂，第一次调用工具时才连
   const chrome = externalBrowserEnabled ? chromeServer(launch.sessionId, launch.resume) : null;
-  const allowedTools = [...(terminal ? TERMINAL_READ_TOOLS : []), ...(browser ? BROWSER_READ_TOOLS : []), ...(chrome ? CHROME_READ_TOOLS : [])];
+  // 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 里开了才挂，默认关
+  const desktop = desktopEnabled ? desktopServer(launch.sessionId) : null;
+  const allowedTools = [
+    ...(terminal ? TERMINAL_READ_TOOLS : []),
+    ...(browser ? BROWSER_READ_TOOLS : []),
+    ...(chrome ? CHROME_READ_TOOLS : []),
+    ...(desktop ? DESKTOP_READ_TOOLS : []),
+  ];
   return {
     cwd: launch.cwd,
     // 附件存在 workspace/.attachments，工作目录不是 workspace 本身的会话（项目会话、普通会话的 scratch 目录）也要能不经确认读到
@@ -59,6 +67,7 @@ export function buildOptions(launch: SessionLaunch): Options {
       ...(terminal ? { [TERMINAL_SERVER]: terminal } : {}),
       ...(browser ? { [BROWSER_SERVER]: browser } : {}),
       ...(chrome ? { [CHROME_SERVER]: chrome } : {}),
+      ...(desktop ? { [DESKTOP_SERVER]: desktop } : {}),
     },
     plugins: importedPlugins(),
     ...(launch.skills ? { skills: launch.skills } : {}),

@@ -131,7 +131,7 @@ export function disposeRepls(sessionId: string): void {
 const toolResults = new Map<string, { text: string; isError: boolean }>();
 const MAX_TOOL_RESULTS = 50;
 
-function rememberResult(extra: unknown, text: string, isError: boolean): void {
+export function rememberResult(extra: unknown, text: string, isError: boolean): void {
   const id = (extra as { _meta?: Record<string, unknown> } | undefined)?._meta?.["claudecode/toolUseId"];
   if (typeof id !== "string") return;
   toolResults.set(id, { text, isError });

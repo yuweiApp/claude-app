@@ -74,6 +74,8 @@ export const config = {
   workspaceDir: path.resolve(env.WORKSPACE_DIR || path.join(gatewayRoot, ".data", "workspace")),
   /** Claude Code 的配置目录（会话记录、settings、skills、memory），和本机自己用的 ~/.claude 分开 */
   claudeConfigDir: path.resolve(env.CLAUDE_CONFIG_DIR || path.join(gatewayRoot, ".data", "claude-home")),
+  /** 桌面操作（agent-desktop）的状态目录（快照、ref），传给它的 AGENT_DESKTOP_HOME，不用本机的 ~/.agent-desktop */
+  agentDesktopHome: path.resolve(env.AGENT_DESKTOP_HOME || path.join(gatewayRoot, ".data", "agent-desktop")),
 
   /** 模型接口（newapi 等），不填是直连 Anthropic */
   baseUrl: env.ANTHROPIC_BASE_URL?.trim() || undefined,

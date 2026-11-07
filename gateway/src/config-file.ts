@@ -16,3 +16,6 @@ export const ALWAYS_LOAD_META = "anthropic/alwaysLoad";
 
 /** 外部浏览器（用户自己的 Chrome，经 Playwright 扩展连接）：config.yml 的 externalBrowser.enabled，默认开（只有写成 false 才关），见 browser/chrome.ts */
 export const externalBrowserEnabled: boolean = configFile?.externalBrowser?.enabled !== false;
+
+/** 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 的 desktop.enabled，默认关（只有写成 true 才开），见 desktop/tool.ts */
+export const desktopEnabled: boolean = configFile?.desktop?.enabled === true;

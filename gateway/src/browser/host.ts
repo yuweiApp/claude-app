@@ -1,4 +1,5 @@
 import type { WebSocket } from "ws";
+import { setOwnPids } from "../desktop/guard.js";
 
 /** playwright-core 的 ConnectOverCDPTransport：send / close 由这里实现，onmessage / onclose 由 Playwright 连接时挂上 */
 export interface CdpTransport {
@@ -68,6 +69,7 @@ export class BrowserHost {
         tab?: { title: string; url: string } | null;
         tabs?: TemporaryTab[];
         event?: TabEvent;
+        pids?: number[];
       };
       try {
         msg = JSON.parse(String(data));
@@ -75,6 +77,8 @@ export class BrowserHost {
         return;
       }
       if (msg.type === "cdp" && msg.session && msg.message) this.transports.get(msg.session)?.onmessage?.(msg.message);
+      // 桌面版的进程号：桌面工具（desktop/guard.ts）不能读取、操作这些进程的窗口
+      else if (msg.type === "hello" && Array.isArray(msg.pids)) setOwnPids(msg.pids.filter((pid) => Number.isInteger(pid)));
       else if (msg.type === "tabEvent" && msg.session && msg.event) {
         const listener = this.tabListeners.get(msg.session);
         if (listener) return listener(msg.event);
@@ -90,6 +94,7 @@ export class BrowserHost {
     socket.on("close", () => {
       if (this.socket !== socket) return;
       this.socket = null;
+      setOwnPids([]);
       this.dropAll("桌面版断开了");
       for (const resolve of this.waiting.values()) resolve(null);
       this.waiting.clear();

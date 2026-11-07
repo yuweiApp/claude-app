@@ -20,6 +20,8 @@ import { listModels } from "./models.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { BrowserHost } from "../browser/host.js";
 import { inappBusy, takeToolResult } from "../browser/tool.js";
+import { desktopWriteActive } from "../desktop/guard.js";
+import { DESKTOP_RUN_TOOL, describeRun, isReadOnlyRun } from "../desktop/tool.js";
 import { buildOptions } from "./options.js";
 import type { TaskList } from "./tasks.js";
 
@@ -156,6 +158,11 @@ export class AgentSession {
   replyPermission(requestId: string, reply: PermissionReply): boolean {
     const pending = this.pending.get(requestId);
     if (!pending) return false;
+    // 桌面工具正在操作（或刚操作完）时收到的「允许」不算数：可能是模型经无障碍接口点的，网页版开在用户自己的浏览器里时
+    // 按进程号拦不住（见 docs/agent-desktop.md 6.2）。卡片留着，用户再点一次；「拒绝」照常生效
+    if (reply.behavior === "allow" && desktopWriteActive()) {
+      throw Object.assign(new Error("这次确认发生在 AI 操作桌面期间，没有生效，请再点一次"), { statusCode: 409 });
+    }
     if (reply.behavior === "allow") {
       this.resolvePermission(requestId, {
         behavior: "allow",
@@ -178,6 +185,11 @@ export class AgentSession {
   }
 
   private canUseTool: CanUseTool = (toolName, input, options) => {
+    const desktopRun = toolName === DESKTOP_RUN_TOOL;
+    // 桌面工具 run 的只读命令（find、list-windows、--help 等）不用确认
+    if (desktopRun && Array.isArray(input.args) && isReadOnlyRun(input.args.map(String))) {
+      return Promise.resolve({ behavior: "allow", updatedInput: input });
+    }
     const requestId = randomUUID();
     return new Promise<PermissionResult>((resolve) => {
       const timer = setTimeout(
@@ -196,10 +208,12 @@ export class AgentSession {
         toolName,
         toolUseId: options.toolUseID,
         input,
-        title: options.title,
-        description: options.description,
+        title: desktopRun ? "允许执行这条桌面操作？" : options.title,
+        // 桌面操作：命令行、ref 指向哪个应用的哪个元素、headed 时会动鼠标
+        description: desktopRun ? describeRun(input) : options.description,
         decisionReason: options.decisionReason,
-        canAlways: Boolean(options.suggestions?.length) && !options.suppressAlwaysAllowRule,
+        // 桌面操作不给「总是允许」：规则按工具名放行，放行了就是这个会话以后的所有桌面操作
+        canAlways: Boolean(options.suggestions?.length) && !options.suppressAlwaysAllowRule && !desktopRun,
       });
     });
   };

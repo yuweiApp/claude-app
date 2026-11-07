@@ -255,7 +255,7 @@ client/
 
 1. **骨架（已完成）**：单工作目录、流式对话、工具调用展示、权限确认、打断、历史会话、附件。
 2. **对话体验**：Markdown 和代码高亮、diff 展示（Edit / Write 的入参）、思考块、AskUserQuestion 选择题、斜杠命令（`supportedCommands()`）、模型切换（`setModel()`）、上下文用量（`getContextUsage()`）。
-3. **自定义工具**（`createSdkMcpServer()` 进程内 MCP）：内置浏览器（已完成第一版，只有桌面版，见第 12 节）、外部浏览器（用户的 Chrome，原型，见第 13 节）、终端读取（已完成）、会话管理。
+3. **自定义工具**（`createSdkMcpServer()` 进程内 MCP）：内置浏览器（已完成第一版，只有桌面版，见第 12 节）、外部浏览器（用户的 Chrome，原型，见第 13 节）、终端读取（已完成）、会话管理、桌面操作（agent-desktop，设计中，见 [agent-desktop.md](agent-desktop.md)）。
 4. **多人部署**：沿用 codex-app-server 的 hub + 每用户一个容器，每个容器一个 `CLAUDE_CONFIG_DIR`。
 5. **桌面版**：Electron 外壳。
 

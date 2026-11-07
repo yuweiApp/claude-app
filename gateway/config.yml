@@ -1,10 +1,10 @@
 # 网关功能上的配置，启动时读一次，改完要重启网关。
 # 端口、密钥、目录、默认模型这些部署相关的仍在 .env.local（见 src/config.ts）。
 
-# 网关自带的 MCP 工具：内置浏览器 mcp__inapp__…、外部浏览器 mcp__chrome__…、终端 mcp__terminal__…
+# 网关自带的 MCP 工具：内置浏览器 mcp__inapp__…、外部浏览器 mcp__chrome__…、终端 mcp__terminal__…、桌面 mcp__desktop__…
 tools:
   # 常驻的工具：第一轮就把完整定义给模型，不藏在 ToolSearch 后面；没列的照旧延迟加载，用到时模型先 ToolSearch。
-  # 写工具全名。只对上面这三个服务器生效，
+  # 写工具全名。只对上面这几个服务器生效，
   # 设置页添加的 MCP 服务器和 Claude Code 自带的工具管不到。
   #
   # 常驻越多上下文越大。也不要都不常驻：GPT 类模型常在 ToolSearch 的 select: 里把工具名列了又列，
@@ -21,6 +21,10 @@ tools:
     - mcp__chrome__browser_snapshot
     - mcp__chrome__browser_take_screenshot
     - mcp__chrome__browser_tabs
+    # 桌面操作（下面 desktop.enabled 打开时才有）
+    - mcp__desktop__snapshot
+    - mcp__desktop__screenshot
+    - mcp__desktop__run
 
 # 外部浏览器：模型多一组 mcp__chrome__… 工具，操作用户自己的 Chrome（带着登录状态），见 docs/README.md 第 13 节。
 # 要先在 Chrome 里装 Playwright Extension；第一次调用工具时 Chrome 打开扩展的连接页，在里面允许。
@@ -29,3 +33,10 @@ tools:
 # 默认打开；不需要时改成 false。
 externalBrowser:
   enabled: true
+
+# 桌面操作：模型多一组 mcp__desktop__… 工具，经 agent-desktop 读系统的无障碍树、操作网关所在电脑上的原生应用，见 docs/agent-desktop.md。
+# 能操作这台电脑上当前登录用户的所有窗口：快照、截图会发给模型接口；网关对外开放（设了 API_TOKEN）时等于让远程的人操作这台电脑的桌面。
+# 本应用（桌面版）自己的窗口网关会拦掉。macOS 要给桌面版（或启动网关的终端）「辅助功能」权限，截图还要「屏幕录制」。
+# 默认关；要用时改成 true，重启网关。
+desktop:
+  enabled: false
