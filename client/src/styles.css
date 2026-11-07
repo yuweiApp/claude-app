@@ -189,9 +189,17 @@ pre { white-space: pre-wrap; word-break: break-word; }
 /* 会话运行中：行的右边转圈，标题给它让出位置 */
 .session-row { position: relative; }
 .session-row.running { padding-right: 32px; }
+/* 转圈：主题色的渐变弧，尾巴淡出（锥形渐变 + 径向遮罩挖成圆环） */
 .session-spinner {
-  position: absolute; top: 50%; right: 10px; width: 14px; height: 14px; margin-top: -7px; border-radius: 50%;
-  border: 2px solid color-mix(in srgb, var(--muted) 30%, transparent); border-top-color: var(--muted); animation: spin 0.8s linear infinite;
+  position: absolute; top: 50%; right: 10px; width: 15px; height: 15px; margin-top: -7.5px; border-radius: 50%;
+  background: conic-gradient(from 90deg, transparent 0 8%, color-mix(in srgb, #f2a65a 45%, transparent) 35%, #e8894e 70%, var(--accent));
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+  animation: spin 0.9s linear infinite;
+}
+/* 弧头一个圆点，看起来是圆润的笔头 */
+.session-spinner::after {
+  content: ""; position: absolute; top: 50%; right: 0; width: 2.5px; height: 2.5px; margin-top: -1.25px; border-radius: 50%; background: var(--accent);
 }
 @media (prefers-reduced-motion: reduce) { .session-spinner { animation: none; } }
 /* 会话行悬停或菜单开着：右边出现「…」，转圈让位，标题让出位置 */
