@@ -21,7 +21,6 @@
   --divider: color-mix(in srgb, var(--text) 13%, transparent);
   --raised-shadow: 0 0 0 1px rgb(0 0 0 / 0.05), 0 1px 2px rgb(0 0 0 / 0.06);
   /* 卡片：一圈细边，下面一层很淡的阴影 */
-  --card-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 16px -6px rgb(0 0 0 / 0.08);
   /* 用户消息气泡：带一点品牌色的暖底 */
   --user-bubble: color-mix(in srgb, var(--accent) 8%, var(--panel));
   /* 图标的颜色：同一个东西在侧栏、输入框上面、设置页里一个颜色 */
@@ -49,7 +48,6 @@
     --border: #383632;
     --code-bg: #2c2b28;
     --raised-shadow: 0 0 0 1px rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.4);
-    --card-shadow: 0 0 0 1px rgb(255 255 255 / 0.02), 0 4px 16px -6px rgb(0 0 0 / 0.5);
     --warn: #e0a84a;
     --skill: #84b4f0;
     --ic-settings: #a5a8fb;
@@ -79,11 +77,15 @@ button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accen
 pre { white-space: pre-wrap; word-break: break-word; }
 
 .app-shell { display: flex; flex-direction: column; height: 100vh; }
-/* 外框：标题栏、图标栏、侧边栏连成一片（--frame），对话区、设置页是浮在上面的圆角卡片，四周留 8px */
-.app { display: flex; flex: 1; min-height: 0; padding: 8px 8px 8px 0; background: var(--frame); }
+/* 外框：标题栏、图标栏连成一片（--frame）。图标栏右边的区域（侧边栏 + 对话区，或设置页）上沿一条线，最左边一条线、左上角圆角；
+   侧边栏和对话区之间一条竖线。侧边栏收起时圆角在对话区左上角 */
+.app { display: flex; flex: 1; min-height: 0; background: var(--frame); }
+.sidebar, main, .settings { border-top: 1px solid var(--divider); }
+.sidebar, .app-rail + main, .app-rail + .settings { border-left: 1px solid var(--divider); border-top-left-radius: 12px; }
+.sidebar-resizer + main, .sidebar-resizer + .settings { border-left: 1px solid var(--divider); }
 /* 最左边的功能图标栏（同 codex-app-server 的 .sidebar-rail / .rail-btn） */
-/* 各区之间一条分割线：标题栏下沿、功能栏右沿、侧边栏顶部一行的下沿（和对话区标题行的下沿对齐） */
-.app-rail { flex: none; width: 56px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 0 0; margin-right: 8px; border-right: 1px solid var(--divider); }
+/* 侧边栏顶部一行的下沿和对话区标题行的下沿对齐；标题栏下沿、图标栏右沿不画线，由右边区域的上沿、左沿接上 */
+.app-rail { flex: none; width: 56px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 0 0; }
 .rail-btn { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: none; border-radius: 10px; color: var(--muted); }
 .rail-btn:hover { background: var(--frame-hover); color: var(--text); }
 .rail-bottom { margin-top: auto; }
@@ -92,7 +94,7 @@ pre { white-space: pre-wrap; word-break: break-word; }
 /* 桌面版标题栏（窗口没有系统边框）：空白处拖动窗口，按钮不拖 */
 .titlebar {
   display: flex; align-items: center; flex-shrink: 0; height: 40px; padding-left: 12px;
-  background: var(--frame); border-bottom: 1px solid var(--divider); user-select: none; -webkit-app-region: drag;
+  background: var(--frame); user-select: none; -webkit-app-region: drag;
 }
 .titlebar-mac { padding-left: 78px; }
 .titlebar button { -webkit-app-region: no-drag; }
@@ -107,7 +109,7 @@ pre { white-space: pre-wrap; word-break: break-word; }
 }
 .window-btn:hover { background: var(--frame-hover); }
 .window-close:hover { background: #e81123; color: #fff; }
-.sidebar { width: var(--sidebar-width, 260px); flex-shrink: 0; padding: 0 10px 12px 2px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--divider) transparent; }
+.sidebar { width: var(--sidebar-width, 260px); flex-shrink: 0; padding: 0 10px 12px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--divider) transparent; }
 /* 侧边栏和对话区之间的分割线：拖动调宽度。本身不占宽度，两边各伸出 4px 方便抓 */
 .sidebar-resizer { position: relative; z-index: 5; flex: none; width: 0; cursor: col-resize; touch-action: none; outline: none; }
 .sidebar-resizer::before { content: ""; position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; }
@@ -120,8 +122,8 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .sidebar-resizer:active::after { opacity: 0.7; transition-delay: 0s; }
 /* 侧边栏顶部一行：和对话区的标题行（.chat-header）一样高，下面的分割线连成一条 */
 .sidebar-top {
-  position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 4px; min-height: 49px;
-  margin: 0 -10px 12px -2px; padding: 0 10px 0 2px; background: var(--frame); border-bottom: 1px solid var(--divider);
+  position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 4px; min-height: 48px;
+  margin: 0 -10px 12px; padding: 0 10px; background: var(--frame); border-bottom: 1px solid var(--divider);
 }
 /* 新会话：平时不画底色（免得和选中的会话一样是白底），悬停才变色 */
 .sidebar .sidebar-top .nav-item {
@@ -215,11 +217,11 @@ pre { white-space: pre-wrap; word-break: break-word; }
 
 main {
   flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
-  background: var(--bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--card-shadow);
+  background: var(--bg);
 }
 
 /* 设置页：左边分组导航，右边列表（同 codex-app-server 的设置页） */
-.settings { flex: 1; min-width: 0; display: flex; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--card-shadow); overflow: hidden; }
+.settings { flex: 1; min-width: 0; display: flex; background: var(--bg); overflow: hidden; }
 .settings-nav { flex: none; width: 220px; display: flex; flex-direction: column; gap: 2px; padding: 14px 10px; background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto; }
 .settings-nav[hidden] { display: none; }
 .settings-nav h2 { margin: 0 6px 12px; font-size: 16px; }
