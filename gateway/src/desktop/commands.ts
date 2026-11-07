@@ -49,7 +49,15 @@ export const NEEDS_TARGET = new Set(["find", "press", "list-surfaces", "focus-wi
 /** 第一个位置参数是应用名的命令 */
 export const APP_ARGUMENT = new Set(["launch", "close-app"]);
 
-const isHelp = (args: string[]) => args.includes("--help") || args.includes("-h") || args[0] === "help";
+/**
+ * 这次 run 只是看参数说明（--help / -h / help）：不碰任何窗口，跳过目标检查、不弹权限卡片。
+ * 只认 -- 之前的：-- 之后的 --help 是普通参数值，命令照样执行
+ */
+export function isHelp(args: string[]): boolean {
+  const end = args.indexOf("--");
+  const options = end === -1 ? args : args.slice(0, end);
+  return options.includes("--help") || options.includes("-h") || args[0] === "help";
+}
 
 /** 参数名（--foo=bar 取 --foo） */
 const flagName = (arg: string) => (arg.startsWith("--") ? (arg.split("=")[0] ?? arg) : arg);

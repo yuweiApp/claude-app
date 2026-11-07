@@ -1,5 +1,5 @@
 import { rmSync } from "node:fs";
-import { APP_ARGUMENT, flagValues, NEEDS_TARGET, pointsIn, refsIn, snapshotIdOf } from "./commands.js";
+import { APP_ARGUMENT, flagValues, isHelp, NEEDS_TARGET, pointsIn, refsIn, snapshotIdOf } from "./commands.js";
 import { runCli, sessionStateDir } from "./cli.js";
 import type { SnapshotData } from "./render.js";
 
@@ -118,6 +118,8 @@ export function describeRefs(args: string[]): string[] {
  */
 export async function checkTarget(session: string, args: string[]): Promise<string | null> {
   const command = args[0] ?? "";
+  // 只是看参数说明，不作用于任何窗口
+  if (isHelp(args)) return null;
   const refs = refsIn(args);
   for (const ref of refs) {
     const entry = snapshots.get(snapshotIdOf(ref));
