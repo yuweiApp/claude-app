@@ -70,9 +70,10 @@ function patternNames(pattern: Pattern, out: string[]): void {
 }
 
 /**
- * 防止模型的代码卡死网关：代码和网关在同一个进程里，同步的死循环（while (Date.now() < t) {} 这种忙等）会占住事件循环，
- * 所有会话、接口都没反应，超时的计时器也触发不了。Codex 的 node_repl 是单独的进程，没有这个问题；
- * 我们的浏览器连接（内置浏览器的 CDP、Chrome 扩展共用的那条）都在网关进程里，挪不出去，所以在代码里插检查：
+ * 防止模型的代码卡住它所在的线程：同步的死循环（while (Date.now() < t) {} 这种忙等）会占住事件循环，
+ * 这个线程上的一切都没反应，超时的计时器也触发不了。Chrome 的 REPL 在网关主线程里，卡住的是整个网关（所有会话、接口）；
+ * 内置浏览器的在这个会话自己的 worker 里（worker.ts），卡住的只是这个会话的浏览器工具。所以在代码里插检查，
+ * 中止的只是这次调用，变量和连接都还在：
  * - 每个循环体开头调用 LOOP_GUARD，事件循环超过 MAX_BLOCK_MS 没转过来就抛错（await 之后、定时器回调里的循环也管得到）。
  *   LOOP_GUARD 定义在 vm 里面，只数次数，每 1024 次才调一次网关这边的 loopGuard 看时间：
  *   每次都跨 vm 调用加读时间太慢，1e7 次的普通计算循环会被拖到 2 秒以上、被误杀
@@ -226,12 +227,47 @@ function errorText(err: unknown): string {
   return message.replace(/\u001b\[[0-9;]*m/g, "").trimEnd();
 }
 
-export interface RunResult {
+/** 浏览器工具的输出：文字（可以是空的）和图片。只有普通数据，能在 worker 和主线程之间传 */
+export interface ToolOutput {
   text: string;
   images: { data: string; mimeType: string }[];
   isError: boolean;
+}
+
+export interface RunResult extends ToolOutput {
   /** 这次调用前后的标签页和当前页网址，判断有没有打开新网页（内置浏览器用它提醒 browser_keep_tab） */
   opened: boolean;
+}
+
+/**
+ * 浏览器工具用到的 REPL。两种实现：BrowserRepl 在当前线程里跑（Chrome 用，在网关主线程），
+ * WorkerRepl 把调用转给这个会话自己的 worker 线程、worker 里再用 BrowserRepl（内置浏览器用，见 worker-repl.ts）
+ */
+export interface Repl {
+  /** 有 browser_run_code 还在跑（包括转到后台的）：一轮结束时先不关内置浏览器的临时标签页，代码可能还在用 */
+  readonly busy: boolean;
+  run(code: string, timeoutMs: number, signal?: AbortSignal): Promise<RunResult>;
+  /** browser_snapshot：标签页列表和当前标签页的无障碍树 */
+  snapshot(): Promise<ToolOutput>;
+  /** browser_take_screenshot */
+  screenshot(fullPage: boolean): Promise<ToolOutput>;
+  /** browser_tabs：列出标签页，或者把第 index 个设为 page */
+  tabs(action: "list" | "select", index?: number): Promise<ToolOutput>;
+  /** 删会话时调用 */
+  dispose(): void;
+}
+
+const NO_PAGE = "现在没有标签页（page 是 undefined）。";
+
+/** 结果前面加上「上次调用以来标签页的变化」 */
+const withNotice = (notice: string | undefined, body: string) => (notice ? `${notice}\n\n${body}` : body);
+
+const textOutput = (text: string, isError = false): ToolOutput => ({ text, images: [], isError });
+
+/** 标签页列表，每个一行：[序号] 标题 — 网址 */
+async function describeTabs(pages: Page[], current: Page | undefined): Promise<string> {
+  const lines = await Promise.all(pages.map(async (p, i) => `[${i}]${p === current ? "（当前）" : ""} ${(await titleOf(p)) || "（无标题）"} — ${p.url()}`));
+  return lines.join("\n");
 }
 
 /**
@@ -239,7 +275,8 @@ export interface RunResult {
  * 网关没有全局的异常处理，这些错误按 Node 的默认做法会让整个网关退出（以前挂着 Playwright MCP 时，
  * 它注册的 unhandledRejection 监听碰巧兜住了一部分）。这里挂上全局处理：调用栈里有某个 REPL 的文件名
  * （browser_run_code_<编号>.js），或者被拒绝的 Promise 是那个 REPL 里建的，就记到它那里、下次调用时告诉模型；
- * 认不出的照 Node 默认的做法打印出来、退出进程，网关别处的错误不受影响
+ * 认不出的照 Node 默认的做法打印出来、退出进程，网关别处的错误不受影响。
+ * 在内置浏览器的 worker 里（worker.ts）这些监听挂在 worker 自己的 process 上，退出的只是这个 worker
  */
 const registry = new Map<number, BrowserRepl>();
 let nextId = 1;
@@ -281,9 +318,10 @@ interface Sink {
 
 /**
  * 一个会话在一个浏览器（内置浏览器或用户的 Chrome）里的 REPL。getContext 每次调用前取一次：
- * 断开重连后 context 换成新的，page 指向已关闭或旧连接里的标签页时换成当前最后一个标签页
+ * 断开重连后 context 换成新的，page 指向已关闭或旧连接里的标签页时换成当前最后一个标签页。
+ * 在哪个线程建就在哪个线程跑：Chrome 的建在网关主线程，内置浏览器的建在这个会话的 worker 里（worker.ts）
  */
-export class BrowserRepl {
+export class BrowserRepl implements Repl {
   private readonly sandbox: Record<string, unknown>;
   private readonly vmContext: vm.Context;
   private readonly sinks: Sink[] = [];
@@ -389,7 +427,7 @@ export class BrowserRepl {
   }
 
   /** 准备好 context 和 page（browser_snapshot 等工具也走这里，和代码里的 page 是同一个） */
-  async current(): Promise<{ context: BrowserContext; page: Page | undefined }> {
+  private async current(): Promise<{ context: BrowserContext; page: Page | undefined }> {
     return this.sync(true);
   }
 
@@ -456,7 +494,7 @@ export class BrowserRepl {
   }
 
   /** 自上次调用以来标签页的变化，放在这次结果的开头（浏览器工具调用开头都取一次）；说过就清掉 */
-  takeNotice(): Promise<string | undefined> {
+  private takeNotice(): Promise<string | undefined> {
     return this.describeChanges("自上次调用以来，标签页有这些变化：");
   }
 
@@ -502,9 +540,38 @@ export class BrowserRepl {
     return `（${out.join("\n")}）`;
   }
 
-  /** 切换当前标签页（browser_tabs select） */
-  setPage(page: Page): void {
-    this.currentPage = page;
+  async snapshot(): Promise<ToolOutput> {
+    const { context, page } = await this.current();
+    const notice = await this.takeNotice();
+    if (!page) return textOutput(withNotice(notice, NO_PAGE), true);
+    const snapshot = await page.ariaSnapshot({ mode: "ai", timeout: 15_000 });
+    return textOutput(withNotice(notice, `标签页：\n${await describeTabs(context.pages(), page)}\n\n当前标签页 ${page.url()} 的结构：\n${snapshot}`));
+  }
+
+  async screenshot(fullPage: boolean): Promise<ToolOutput> {
+    const { page } = await this.current();
+    const notice = await this.takeNotice();
+    if (!page) return textOutput(withNotice(notice, NO_PAGE), true);
+    // 整页可能很长，用 JPEG 压一下
+    const data = fullPage
+      ? await page.screenshot({ fullPage: true, type: "jpeg", quality: 80, timeout: 15_000 })
+      : await page.screenshot({ type: "png", timeout: 15_000 });
+    return { text: notice ?? "", images: [{ data: data.toString("base64"), mimeType: fullPage ? "image/jpeg" : "image/png" }], isError: false };
+  }
+
+  async tabs(action: "list" | "select", index?: number): Promise<ToolOutput> {
+    const { context, page } = await this.current();
+    const notice = await this.takeNotice();
+    const pages = context.pages();
+    if (action === "select") {
+      const target = index === undefined ? undefined : pages[index];
+      if (!target) return textOutput(withNotice(notice, `没有序号为 ${index ?? "（未指定）"} 的标签页。`), true);
+      // 网关这边换 page，不经 vm 里 page 的访问器，自己切到前台
+      this.currentPage = target;
+      await target.bringToFront().catch(() => undefined);
+      return textOutput(withNotice(notice, `已切换到：\n${await describeTabs(pages, target)}`));
+    }
+    return textOutput(withNotice(notice, pages.length ? await describeTabs(pages, page) : "没有标签页。"));
   }
 
   async run(code: string, timeoutMs: number, signal?: AbortSignal): Promise<RunResult> {

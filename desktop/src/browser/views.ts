@@ -307,14 +307,27 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     this.emit("changed", tab);
   }
 
-  /** AI 的 browser_keep_tab：把这个会话里 AI 最近操作过的标签页留给用户 */
-  keepLatest(sessionId: string): Tab | null {
-    const latest = this.list(sessionId)
+  /** 这个会话里 AI 最近操作过的标签页（CdpProxy 记的 lastAgentUse），browser_keep_tab 留的就是它 */
+  private latestAgentTab(sessionId: string): Tab | undefined {
+    return this.list(sessionId)
       .filter((t) => t.lastAgentUse > 0)
       .sort((a, b) => b.lastAgentUse - a.lastAgentUse)[0];
+  }
+
+  /** AI 的 browser_keep_tab：把这个会话里 AI 最近操作过的标签页留给用户 */
+  keepLatest(sessionId: string): Tab | null {
+    const latest = this.latestAgentTab(sessionId);
     if (!latest) return null;
     this.keep(latest);
     return latest;
+  }
+
+  /** 这个会话里还没留下的临时标签页（一轮结束时会关）；latest 标出 AI 最近操作过的那个（browser_keep_tab 会留下它） */
+  temporaryTabs(sessionId: string): { title: string; url: string; latest: boolean }[] {
+    const latest = this.latestAgentTab(sessionId);
+    return this.list(sessionId)
+      .filter((t) => !t.kept)
+      .map((t) => ({ title: t.title, url: t.url, latest: t === latest }));
   }
 
   /** 会话删除了：关掉它的所有标签页（AI 留下的、用户开的不会自动关，不关会一直留在后台） */

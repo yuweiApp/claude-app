@@ -1,10 +1,10 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { z } from "zod";
 import { MCP_AUTO_BACKGROUND_MS } from "../config.js";
 import { ALWAYS_LOAD_META, externalBrowserEnabled, isAlwaysLoad } from "../config-file.js";
-import type { BrowserHost, TabEvent } from "./host.js";
-import { BrowserRepl, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS } from "./repl.js";
+import type { BrowserHost, TemporaryTab } from "./host.js";
+import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, type Repl, type ToolOutput } from "./repl.js";
+import { WorkerRepl } from "./worker-repl.js";
 
 /**
  * MCP 服务器名：工具全名是 mcp__inapp__browser_run_code 这样。inapp 指应用内（in-app）的浏览器，
@@ -54,23 +54,34 @@ const INSTRUCTIONS = [
 /** 开了外部浏览器（config.yml 的 externalBrowser.enabled）时补一句：另一个浏览器是什么 */
 const CHROME_NOTE = "\n另有 mcp__chrome__ 开头的工具，操作的是用户自己的 Chrome，带着用户的登录状态。";
 
-/** browser_run_code 打开了网页后附上：这是临时标签页（事实，不教怎么做） */
-const KEEP_HINT = "（这是你开的临时标签页，这一轮结束时会自动关闭：之后用户在面板里看不到它，下一轮也不在了。调用 browser_keep_tab 会留下它，用户能看到，下一轮还能接着用。）";
+/**
+ * browser_run_code 打开了新标签页或当前页跳转了，并且这个会话现在有临时标签页时附上：哪些是临时的、会怎样（事实，不教怎么做）。
+ * 是不是临时的问桌面版（host.temporaryTabs）：跳转的可能是用户开的、或者已经留下的标签页，不能只看「打开了网页」
+ */
+function temporaryNote(tabs: TemporaryTab[]): string {
+  const lines = tabs.map((t) => `- ${t.title || "（无标题）"} — ${t.url || "（网址还没加载出来）"}${t.latest ? "（你最近操作的）" : ""}`);
+  return [
+    "（这个会话现在的临时标签页（你开的，或从它们弹出的）：",
+    ...lines,
+    "临时标签页在这一轮结束时自动关闭（用户那时正在面板里看着的除外），关闭后用户在面板里看不到，下一轮也不在了。browser_keep_tab 会留下你最近操作的那个标签页，留下后用户能看到，下一轮还能接着用。）",
+  ].join("\n");
+}
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const error = (t: string) => ({ ...text(t), isError: true });
 
 /**
  * 每个会话在每个浏览器里一个 REPL，放在模块里而不是跟着 query() 走：
- * 会话空闲关掉子进程、下次发消息 resume 时，变量和当前标签页还在（网关重启才清空）
+ * 会话空闲关掉子进程、下次发消息 resume 时，变量和当前标签页还在（网关重启才清空）。
+ * 内置浏览器的是 WorkerRepl（每个会话一个 worker 线程），Chrome 的是主线程里的 BrowserRepl（chrome.ts）
  */
-const repls = new Map<string, BrowserRepl>();
+const repls = new Map<string, Repl>();
 
-/** tabEvents：内置浏览器取走桌面版发来的标签页变化（带着是谁做的），Chrome 不给 */
-export function replFor(key: string, getContext: () => Promise<BrowserContext>, tabEvents?: () => TabEvent[]): BrowserRepl {
+/** 取这个会话在这个浏览器里的 REPL，没有就用 create 建一个 */
+export function replFor(key: string, create: () => Repl): Repl {
   let repl = repls.get(key);
   if (!repl) {
-    repl = new BrowserRepl(getContext, tabEvents);
+    repl = create();
     repls.set(key, repl);
   }
   return repl;
@@ -115,25 +126,27 @@ export function takeToolResult(toolUseId: string): { text: string; isError: bool
   return result;
 }
 
-/** 标签页的一行描述：[序号] 标题 — 网址；后台冻结的标签页 title() 可能迟迟不回，最多等 1 秒 */
-async function describe(pages: Page[], current: Page | undefined): Promise<string> {
-  const title = (page: Page) =>
-    Promise.race([page.title().catch(() => ""), new Promise<string>((resolve) => setTimeout(() => resolve(""), 1000))]);
-  const lines = await Promise.all(pages.map(async (p, i) => `[${i}]${p === current ? "（当前）" : ""} ${(await title(p)) || "（无标题）"} — ${p.url()}`));
-  return lines.join("\n");
+/** 工具输出转成 MCP 的结果：文字（有的话）在前，图片在后 */
+function toResult(output: ToolOutput) {
+  return {
+    content: [
+      ...(output.text ? [{ type: "text" as const, text: output.text }] : []),
+      ...output.images.map((img) => ({ type: "image" as const, ...img })),
+    ],
+    ...(output.isError ? { isError: true } : {}),
+  };
 }
-
-/** 结果前面加上「上次调用以来被关掉的标签页」的说明 */
-const withNotice = (notice: string | undefined, body: string) => (notice ? `${notice}\n\n${body}` : body);
 
 const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export interface ServerOptions {
   name: string;
   instructions: string;
-  repl: BrowserRepl;
+  repl: Repl;
   /** 内置浏览器的 browser_keep_tab：返回结果文字，null 表示没有可以留下的标签页 */
   keep?: () => Promise<string | null>;
+  /** 内置浏览器：这个会话现在还没留下的临时标签页，问不到时是 null */
+  temporaryTabs?: () => Promise<TemporaryTab[] | null>;
 }
 
 /**
@@ -141,9 +154,7 @@ export interface ServerOptions {
  * 加上读页面结构、截图、列出 / 切换标签页三个只读的，和内置浏览器的 browser_keep_tab。
  * 以前挂的是 playwright-core 自带的 Playwright MCP（二十多个工具），点击、输入、等待这些现在都写在代码里
  */
-export function browserMcpServer({ name, instructions, repl, keep }: ServerOptions): McpSdkServerConfigWithInstance {
-  const noPage = "现在没有标签页（page 是 undefined）。";
-
+export function browserMcpServer({ name, instructions, repl, keep, temporaryTabs }: ServerOptions): McpSdkServerConfigWithInstance {
   const tools = [
     tool(
       "browser_run_code",
@@ -164,12 +175,9 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
         try {
           const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
           const result = await repl.run(code, timeout_ms ?? DEFAULT_TIMEOUT_MS, signal);
-          const body = keep && result.opened && !result.isError ? `${result.text}\n\n${KEEP_HINT}` : result.text;
           rememberResult(extra, result.text, result.isError);
-          return {
-            content: [{ type: "text" as const, text: body }, ...result.images.map((img) => ({ type: "image" as const, ...img }))],
-            ...(result.isError ? { isError: true } : {}),
-          };
+          const temporary = temporaryTabs && result.opened && !result.isError ? await temporaryTabs().catch(() => null) : null;
+          return toResult(temporary?.length ? { ...result, text: `${result.text}\n\n${temporaryNote(temporary)}` } : result);
         } catch (err) {
           rememberResult(extra, errorMessage(err), true);
           return error(errorMessage(err));
@@ -183,11 +191,7 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
       {},
       async () => {
         try {
-          const { context, page } = await repl.current();
-          const notice = await repl.takeNotice();
-          if (!page) return error(withNotice(notice, noPage));
-          const snapshot = await page.ariaSnapshot({ mode: "ai", timeout: 15_000 });
-          return text(withNotice(notice, `标签页：\n${await describe(context.pages(), page)}\n\n当前标签页 ${page.url()} 的结构：\n${snapshot}`));
+          return toResult(await repl.snapshot());
         } catch (err) {
           return error(errorMessage(err));
         }
@@ -200,19 +204,7 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
       { full_page: z.boolean().optional().describe("截整个页面，默认只截可见区域") },
       async ({ full_page }) => {
         try {
-          const { page } = await repl.current();
-          const notice = await repl.takeNotice();
-          if (!page) return error(withNotice(notice, noPage));
-          // 整页可能很长，用 JPEG 压一下
-          const data = full_page
-            ? await page.screenshot({ fullPage: true, type: "jpeg", quality: 80, timeout: 15_000 })
-            : await page.screenshot({ type: "png", timeout: 15_000 });
-          return {
-            content: [
-              ...(notice ? [{ type: "text" as const, text: notice }] : []),
-              { type: "image" as const, data: data.toString("base64"), mimeType: full_page ? "image/jpeg" : "image/png" },
-            ],
-          };
+          return toResult(await repl.screenshot(full_page ?? false));
         } catch (err) {
           return error(errorMessage(err));
         }
@@ -228,17 +220,7 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
       },
       async ({ action, index }) => {
         try {
-          const { context, page } = await repl.current();
-          const notice = await repl.takeNotice();
-          const pages = context.pages();
-          if (action === "select") {
-            const target = index === undefined ? undefined : pages[index];
-            if (!target) return error(withNotice(notice, `没有序号为 ${index ?? "（未指定）"} 的标签页。`));
-            repl.setPage(target);
-            await target.bringToFront().catch(() => undefined);
-            return text(withNotice(notice, `已切换到：\n${await describe(pages, target)}`));
-          }
-          return text(withNotice(notice, pages.length ? await describe(pages, page) : "没有标签页。"));
+          return toResult(await repl.tabs(action, index));
         } catch (err) {
           return error(errorMessage(err));
         }
@@ -274,43 +256,16 @@ export function browserMcpServer({ name, instructions, repl, keep }: ServerOptio
   });
 }
 
-/**
- * 内置浏览器到桌面版外壳的连接，每个会话一条（connectOverCDP 走外壳的这个会话的 CDP 代理），第一次用到时才连；
- * 桌面版没开时报错，开了之后再调用就能用，断了下次用到再连
- */
-function inappContext(host: BrowserHost, sessionId: string): () => Promise<BrowserContext> {
-  let connecting: Promise<Browser> | null = null;
-  return async () => {
-    if (!connecting) {
-      const attempt: Promise<Browser> = chromium.connectOverCDP(host.transport(sessionId)).then(
-        (browser) => {
-          browser.once("disconnected", () => {
-            if (connecting === attempt) connecting = null;
-          });
-          return browser;
-        },
-        (err: unknown) => {
-          if (connecting === attempt) connecting = null;
-          throw err;
-        },
-      );
-      connecting = attempt;
-    }
-    const context = (await connecting).contexts()[0];
-    if (!context) throw new Error("内置浏览器没有可用的浏览器上下文");
-    return context;
-  };
-}
-
-/** 给模型用的内置浏览器工具，每个会话一个 MCP 服务器；REPL 和连接按会话保留（replFor） */
+/** 给模型用的内置浏览器工具，每个会话一个 MCP 服务器；REPL 和连接按会话保留（replFor），在这个会话自己的 worker 线程里 */
 export function browserServer(host: BrowserHost, sessionId: string): McpSdkServerConfigWithInstance {
   return browserMcpServer({
     name: BROWSER_SERVER,
     instructions: INSTRUCTIONS + (externalBrowserEnabled ? CHROME_NOTE : ""),
-    repl: replFor(`${BROWSER_SERVER}:${sessionId}`, inappContext(host, sessionId), () => host.takeTabEvents(sessionId)),
+    repl: replFor(`${BROWSER_SERVER}:${sessionId}`, () => new WorkerRepl(host, sessionId)),
     keep: async () => {
       const tab = await host.keep(sessionId);
       return tab ? `已留下标签页「${tab.title || tab.url}」（${tab.url}），这一轮结束后不会关闭。` : null;
     },
+    temporaryTabs: () => host.temporaryTabs(sessionId),
   });
 }

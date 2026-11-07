@@ -25,6 +25,13 @@ export interface TabEvent {
   action?: "address" | "back" | "forward" | "reload";
 }
 
+/** 还没留下的临时标签页（desktop/src/browser/views.ts 的 temporaryTabs）；latest：AI 最近操作过的那个，browser_keep_tab 会留下它 */
+export interface TemporaryTab {
+  title: string;
+  url: string;
+  latest: boolean;
+}
+
 /** 每个会话最多攒多少条没告诉模型的标签页变化 */
 const MAX_TAB_EVENTS = 50;
 
@@ -36,9 +43,12 @@ export class BrowserHost {
   private socket: WebSocket | null = null;
   private readonly transports = new Map<string, CdpTransport>();
   private nextId = 1;
-  private readonly waiting = new Map<number, (tab: { title: string; url: string } | null) => void>();
+  /** 等外壳回复的请求（keep、temporaryTabs）：回复里的数据，断开或超时是 null */
+  private readonly waiting = new Map<number, (reply: unknown) => void>();
   /** 每个会话还没告诉模型的标签页变化（BrowserRepl 下一次调用时取走） */
   private readonly tabEvents = new Map<string, TabEvent[]>();
+  /** 这个会话的 worker 在运行时，标签页变化直接交给它（worker-repl.ts），不在这里攒 */
+  private readonly tabListeners = new Map<string, (event: TabEvent) => void>();
 
   get connected(): boolean {
     return this.socket !== null;
@@ -50,7 +60,15 @@ export class BrowserHost {
     this.dropAll("桌面版重新连接了");
     this.socket = socket;
     socket.on("message", (data) => {
-      let msg: { type?: string; session?: string; message?: object; id?: number; tab?: { title: string; url: string } | null; event?: TabEvent };
+      let msg: {
+        type?: string;
+        session?: string;
+        message?: object;
+        id?: number;
+        tab?: { title: string; url: string } | null;
+        tabs?: TemporaryTab[];
+        event?: TabEvent;
+      };
       try {
         msg = JSON.parse(String(data));
       } catch {
@@ -58,12 +76,14 @@ export class BrowserHost {
       }
       if (msg.type === "cdp" && msg.session && msg.message) this.transports.get(msg.session)?.onmessage?.(msg.message);
       else if (msg.type === "tabEvent" && msg.session && msg.event) {
+        const listener = this.tabListeners.get(msg.session);
+        if (listener) return listener(msg.event);
         const list = this.tabEvents.get(msg.session) ?? [];
         if (list.length < MAX_TAB_EVENTS) list.push(msg.event);
         this.tabEvents.set(msg.session, list);
       }
-      else if (msg.type === "kept" && typeof msg.id === "number") {
-        this.waiting.get(msg.id)?.(msg.tab ?? null);
+      else if ((msg.type === "kept" || msg.type === "temporary") && typeof msg.id === "number") {
+        this.waiting.get(msg.id)?.(msg.type === "kept" ? (msg.tab ?? null) : (msg.tabs ?? null));
         this.waiting.delete(msg.id);
       }
     });
@@ -83,9 +103,20 @@ export class BrowserHost {
     return list;
   }
 
+  /** 标签页变化改为直接交给 listener，先把攒着的给它；null 取消，之后的又攒在这里 */
+  listenTabEvents(sessionId: string, listener: ((event: TabEvent) => void) | null): void {
+    if (!listener) {
+      this.tabListeners.delete(sessionId);
+      return;
+    }
+    this.tabListeners.set(sessionId, listener);
+    this.takeTabEvents(sessionId).forEach(listener);
+  }
+
   /** 删会话：外壳关掉这个会话的所有标签页 */
   closeSession(sessionId: string): void {
     this.tabEvents.delete(sessionId);
+    this.tabListeners.delete(sessionId);
     this.post({ type: "closeSession", session: sessionId });
   }
 
@@ -97,13 +128,24 @@ export class BrowserHost {
   /** browser_keep_tab：把这个会话里 AI 最近操作过的标签页留给用户，返回它的标题和网址 */
   keep(sessionId: string): Promise<{ title: string; url: string } | null> {
     if (!this.socket) return Promise.reject(new Error("内置浏览器只在桌面版里有：桌面版没有运行"));
+    return this.request<{ title: string; url: string }>("keep", sessionId, 5000);
+  }
+
+  /** 这个会话现在还没留下的临时标签页（一轮结束时会关）；桌面版没在运行、没回复（旧版本的桌面版）时是 null */
+  temporaryTabs(sessionId: string): Promise<TemporaryTab[] | null> {
+    if (!this.socket) return Promise.resolve(null);
+    return this.request<TemporaryTab[]>("temporary", sessionId, 2000);
+  }
+
+  /** 发一个要外壳回复的请求，timeoutMs 内没回复是 null */
+  private request<T>(type: string, sessionId: string, timeoutMs: number): Promise<T | null> {
     const id = this.nextId++;
     return new Promise((resolve) => {
-      this.waiting.set(id, resolve);
-      this.post({ type: "keep", session: sessionId, id });
+      this.waiting.set(id, (reply) => resolve((reply as T | null) ?? null));
+      this.post({ type, session: sessionId, id });
       setTimeout(() => {
         if (this.waiting.delete(id)) resolve(null);
-      }, 5000);
+      }, timeoutMs);
     });
   }
 
