@@ -55,6 +55,15 @@ function effortLevel(name: string, fallback: EffortLevel): EffortLevel {
   return raw as EffortLevel;
 }
 
+/**
+ * 默认追加到 Claude Code 系统提示后面的说明。SDK 会话拿到的 Claude Code 提示词是精简版，没有完整版里
+ * 「调用工具前用一句话说明要做什么、做事过程中简短汇报」那段（截过实际请求）；Claude 模型不说也会边做边说，
+ * GPT 类模型（如 gpt-6-luna）不被要求就一句不说，工具调用之间没有任何文字（统计过 119 次带工具调用的响应，一次都没有）。
+ * 加上之后会先说一句再调用工具。Codex 的提示词里也有同样的要求（Preamble messages）
+ */
+const DEFAULT_APPEND_SYSTEM_PROMPT =
+  "用户看不到你的思考，只能看到你输出的文字和工具调用。调用工具前，用一句话说明你接下来要做什么；做事过程中，有重要发现或改变方向时，用一句话告诉用户。";
+
 export const config = {
   host: env.HOST || "127.0.0.1",
   port: int("PORT", 8788),
@@ -78,8 +87,11 @@ export const config = {
   defaultEffort: effortLevel("DEFAULT_EFFORT", "high"),
   /** 禁用的内置工具。WebSearch 是 Anthropic 服务端工具，第三方模型用不了 */
   disallowedTools: list("DISALLOWED_TOOLS", ["WebSearch"]),
-  /** 追加到 Claude Code 系统提示后面的说明 */
-  appendSystemPrompt: env.APPEND_SYSTEM_PROMPT?.trim() || undefined,
+  /**
+   * 追加到 Claude Code 系统提示后面的说明。没设 APPEND_SYSTEM_PROMPT 时用 DEFAULT_APPEND_SYSTEM_PROMPT，
+   * 设成空串就不追加
+   */
+  appendSystemPrompt: env.APPEND_SYSTEM_PROMPT === undefined ? DEFAULT_APPEND_SYSTEM_PROMPT : env.APPEND_SYSTEM_PROMPT.trim() || undefined,
 
   /** 活跃会话空闲多久后关闭子进程，下次发消息时 resume */
   sessionIdleMs: int("SESSION_IDLE_MS", 30 * 60_000),

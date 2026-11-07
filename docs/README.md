@@ -173,6 +173,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 
 - `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`：关掉遥测、错误上报、自动更新检查，不往 Anthropic 发东西。
 - `WebSearch` 是 Anthropic 服务端工具，第三方模型用不了，默认放进 `disallowedTools`。
+- 追加的系统提示（`APPEND_SYSTEM_PROMPT`，经 `systemPrompt.append` 接在 Claude Code 的提示词后面）：不设时用 `config.ts` 的 `DEFAULT_APPEND_SYSTEM_PROMPT`，设成空串就不追加。默认那句要求调用工具前用一句话说明要做什么、做事过程中有重要发现或改变方向时说一句：SDK 会话拿到的 Claude Code 提示词是精简版（截过实际请求，约 5800 字），没有完整版里「Before your first tool call, say in a sentence what you're about to do」那段；Claude 模型不说也会边做边说，GPT 类模型（`gpt-6-luna`）不被要求就一句不说，工具调用之间没有文字（两台机器统计 119 次带工具调用的响应，一次都没有）。加上后新会话里会先说一句再调用工具；老会话里前面几十轮都没说，模型多半照着历史继续不说。Codex 的提示词里也有同样的要求（Preamble messages）。
 - 兼容性需要实测：工具调用格式、`thinking` 块、prompt caching 字段、并行工具调用。不兼容时优先在 newapi 侧修，其次关掉对应特性（如 `MAX_THINKING_TOKENS=0`）。
 
 ## 7. HTTP 接口（第一版）
