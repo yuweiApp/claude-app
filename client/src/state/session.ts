@@ -1,5 +1,6 @@
 import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
 import type { BackgroundTask, GatewayEvent, HistoryMessage } from "../api";
+import { splitResponseAnnotations, type SentResponseAnnotation } from "./responseAnnotations";
 
 /** 消息里显示的附件（历史消息里只有路径，没有大小） */
 export interface AttachmentChip {
@@ -13,7 +14,8 @@ export type Block = { type: "text"; text: string } | { type: "tool_use"; id: str
 
 export type Item =
   /** images：用户消息里的 image 块（Claude 的结构，base64），转成 data: 地址直接显示 */
-  | { kind: "user"; uuid: string; at?: number; text: string; images: string[]; attachments: AttachmentChip[] }
+  /** annotations：消息末尾带的回复注释（见 responseAnnotations.ts），text 里已去掉 */
+  | { kind: "user"; uuid: string; at?: number; text: string; images: string[]; attachments: AttachmentChip[]; annotations?: SentResponseAnnotation[] }
   /** messageId：模型 API 那一次响应的 id。一次响应里的多个内容块会拆成多条消息，id 相同；同一个 id 下的多个工具调用是并行的 */
   | { kind: "assistant"; uuid: string; at?: number; messageId?: string; blocks: Block[] }
   /** userMessageUuid：SDKResultMessage.user_message_uuid，这一轮开头那条用户消息 */
@@ -296,7 +298,7 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
     // 用技能时 Claude Code 把消息存成命令标签，后面跟着技能内容（isMeta，不是用户写的）
     const command = typeof content === "string" ? skillCommand(content) : null;
     if (command) {
-      pushItem(view, parent, { kind: "user", uuid, at, text: command, images: [], attachments: [] });
+      pushItem(view, parent, userItem(uuid, at, command, [], []));
       if (!parent) view.turnEnded = false;
       return;
     }
@@ -319,7 +321,7 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       return;
     }
     if (typeof content === "string") {
-      pushItem(view, parent, { kind: "user", uuid, at, text: content, images: [], attachments: [] });
+      pushItem(view, parent, userItem(uuid, at, content, [], []));
       if (!parent) view.turnEnded = false;
       return;
     }
@@ -351,12 +353,20 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       }
     }
     if (texts.length || images.length || attachments.length) {
-      pushItem(view, parent, { kind: "user", uuid, at, text: texts.join("\n"), images, attachments });
+      pushItem(view, parent, userItem(uuid, at, texts.join("\n"), images, attachments));
       if (!parent) view.turnEnded = false;
     } else {
       view.seen = new Set(view.seen).add(uuid);
     }
   }
+}
+
+/** 用户消息：末尾带回复注释的拆出来 */
+function userItem(uuid: string, at: number | undefined, raw: string, images: string[], attachments: AttachmentChip[]): Item {
+  const split = splitResponseAnnotations(raw);
+  return split
+    ? { kind: "user", uuid, at, text: split.text, images, attachments, annotations: split.annotations }
+    : { kind: "user", uuid, at, text: raw, images, attachments };
 }
 
 /** 用户中断时 Claude Code 写进对话的 user 消息（字符串，或只有一个 text 块） */

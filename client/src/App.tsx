@@ -20,6 +20,8 @@ import { desktop } from "./desktop";
 import { useBrowserTabs } from "./state/browserTabs";
 import { TabPicker } from "./components/TabPicker";
 import { emptyView, reduce } from "./state/session";
+import { AnnotationEditor, AnnotationSelectionButton, AnnotationSessionContext, NotesChip } from "./components/ResponseAnnotations";
+import { ANNOTATION_SCOPE_ATTR, clearResponseAnnotations, useResponseAnnotations, withResponseAnnotations } from "./state/responseAnnotations";
 
 export function App() {
   const [config, setConfig] = useState<GatewayConfig | null>(null);
@@ -441,11 +443,16 @@ function Chat({
     return () => observer.disconnect();
   }, []);
 
+  // 在 Claude 的回复里选中文字写的回复，随下一条消息发出
+  const annotations = useResponseAnnotations(sessionId);
   const send = async (text: string, attachments: string[]) => {
     // 发消息直接跳到底部：平滑滚动途中新消息、回复接连进来，和贴底部的跳转打架
     scrollToBottom("auto");
     try {
-      if (sessionId) await api.send(sessionId, text, attachments);
+      if (sessionId) {
+        await api.send(sessionId, withResponseAnnotations(text, annotations), attachments);
+        if (annotations.length) clearResponseAnnotations(sessionId);
+      }
       else onCreated(await api.createSession(text, attachments, { permissionMode: newMode, cwd: cwd ?? undefined, model: newModel, effort: newEffort }));
     } catch (e) {
       onError((e as Error).message);
@@ -484,7 +491,7 @@ function Chat({
         </div>
       )}
       <div className="scroll-area">
-      <div className="scroll" ref={scrollRef} onScroll={onScroll}>
+      <div className="scroll" ref={scrollRef} onScroll={onScroll} {...(sessionId && { [ANNOTATION_SCOPE_ATTR]: sessionId })}>
         <div className="scroll-content" ref={contentRef}>
         {!sessionId && (
           <div className="empty">
@@ -492,7 +499,9 @@ function Chat({
             {cwd && <div className="empty-sub">新会话在 {cwd}</div>}
           </div>
         )}
-        <Messages view={view} />
+        <AnnotationSessionContext.Provider value={sessionId}>
+          <Messages view={view} />
+        </AnnotationSessionContext.Provider>
         {view.permissions.map((request) => (
           <PermissionCard
             key={request.requestId}
@@ -508,6 +517,8 @@ function Chat({
       </div>
       {!atBottom && <ScrollToBottom running={view.state === "running"} onClick={() => scrollToBottom("smooth")} />}
       </div>
+      <AnnotationSelectionButton scrollRef={scrollRef} />
+      <AnnotationEditor sessionId={sessionId} />
       <Composer
         running={view.state === "running"}
         maxUploadMb={config.maxUploadMb}
@@ -517,6 +528,8 @@ function Chat({
         left={<PermissionPicker value={permissionMode} onChange={changeMode} />}
         handle={composerRef}
         cwd={cwd}
+        notes={sessionId && <NotesChip sessionId={sessionId} annotations={annotations} />}
+        hasNotes={annotations.length > 0}
         top={
           <>
             {folderPicker}

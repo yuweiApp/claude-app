@@ -138,6 +138,20 @@ SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类
 
 模型要能看图；接纯文本模型（如 DeepSeek 文本模型）时不要发图片。
 
+**回复注释**（参照 codex-app-server，`client/src/components/ResponseAnnotations.tsx`）：在 Claude 的回复里选中文字，浮出「回复」，写一句回复（可以不写）后加进输入框里的「N 条注释」，原文末尾显示编号，点编号或列表里的「编辑」可以改、删。注释按会话存在 localStorage，随下一条消息发出后清空；发送时纯在网页拼进用户文字的末尾（放末尾是因为 `/技能` 要在消息开头），网关不感知：
+
+```
+用户输入的文字
+
+# Response annotations:
+（一句说明）
+<response-annotations>
+[{"text":"所选文本","annotation":"回复","source":{"messageId":"<消息 uuid>:<块序号>","startOffset":0,"endOffset":10}}]
+</response-annotations>
+```
+
+网页解析用户消息时把这一段拆出来，显示成消息上方的「N 条注释」，点开一条按 `source` 滚回原文并闪一下。
+
 附件目录不自动清理，跟着工作目录走。
 
 ## 6. 模型接入（newapi / DeepSeek）

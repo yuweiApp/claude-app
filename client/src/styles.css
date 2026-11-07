@@ -85,7 +85,7 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .sidebar-resizer + main, .sidebar-resizer + .settings { border-left: 1px solid var(--divider); }
 /* 最左边的功能图标栏（同 codex-app-server 的 .sidebar-rail / .rail-btn） */
 /* 侧边栏顶部一行的下沿和对话区标题行的下沿对齐；标题栏下沿、图标栏右沿不画线，由右边区域的上沿、左沿接上 */
-.app-rail { flex: none; width: 56px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 0 0; }
+.app-rail { flex: none; width: 56px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 0 12px; }
 .rail-btn { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: none; border-radius: 10px; color: var(--muted); }
 .rail-btn:hover { background: var(--frame-hover); color: var(--text); }
 .rail-bottom { margin-top: auto; }
@@ -343,7 +343,7 @@ main {
 .mention-sigil { color: var(--muted); }
 .assistant { line-height: 1.75; }
 .assistant p { margin: 0.5em 0; }
-.assistant > :first-child { margin-top: 0; }
+.assistant > :first-child, .annotatable > [data-response-annotation-target] > :first-child { margin-top: 0; }
 .assistant pre, .permission pre { background: var(--code-bg); padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--border) 60%, transparent); border-radius: 10px; font-size: 13px; line-height: 1.6; }
 .assistant code { font-size: 0.9em; }
 /* Markdown 表格：细边框、表头浅底；列多时表格自己横向滚动，不撑宽对话 */
@@ -1002,3 +1002,93 @@ svg.ic-mcp { color: var(--ic-mcp); }
 .rail-btn.active .ios-icon { box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 0 0 2px var(--frame), 0 0 0 3.5px var(--ring); }
 .ios-icon-gray { --ring: color-mix(in srgb, #8a8a90 70%, transparent); }
 .ios-icon-orange { --ring: color-mix(in srgb, #f2780c 60%, transparent); }
+
+/* 回复 Claude 的某段话（参照 codex-app-server）：选中文字后浮出的「回复」 */
+.annotation-toolbar {
+  position: fixed; z-index: 900; display: flex; align-items: center; height: 32px; padding: 0 3px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.14);
+}
+.annotation-toolbar button {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px;
+  border: none; border-radius: 7px; background: none; color: var(--text); font-size: 13px; white-space: nowrap;
+}
+.annotation-toolbar button:hover { background: var(--panel); }
+.annotation-toolbar svg { flex: none; }
+/* 写回复的小框：新的一条是一行输入加 ✓，改已有的下面是删除、取消、保存 */
+.annotation-editor {
+  position: fixed; z-index: 950; display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 8px;
+  border: 1px solid var(--border); border-radius: 18px; background: var(--bg);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.16);
+}
+.annotation-editor textarea {
+  flex: 1; min-width: 0; min-height: 32px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 10px; outline: none;
+  background: var(--panel); color: var(--text); font: inherit; font-size: 14px; line-height: 20px; resize: none;
+}
+.annotation-editor textarea:focus { border-color: color-mix(in srgb, var(--text) 25%, var(--border)); }
+.annotation-editor-ok {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0;
+  border: none; border-radius: 50%; background: var(--text); color: var(--bg);
+}
+.annotation-editor-ok:hover { background: color-mix(in srgb, var(--text) 85%, var(--bg)); }
+.annotation-editor-edit { flex-direction: column; align-items: stretch; padding: 12px; }
+.annotation-editor-actions { display: flex; align-items: center; gap: 6px; }
+.annotation-editor-actions .icon-btn { width: 28px; height: 28px; }
+.annotation-editor-spacer { flex: 1; }
+/* 写回复时选中的那段、跳回原文时闪一下（CSS Custom Highlight，不改 DOM） */
+::highlight(annotation-draft), ::highlight(annotation-flash) { background-color: rgb(18 141 255 / 0.28); }
+/* 待发送的注释在原文末尾的编号 */
+.annotatable { position: relative; }
+.annotation-marker {
+  position: absolute; z-index: 2; min-width: 20px; height: 20px; padding: 0 6px; border: none; border-radius: 10px 10px 10px 2px;
+  background: var(--accent); color: var(--accent-text); font-size: 12px; font-weight: 600; line-height: 20px;
+  transform: translate(-4px, -70%);
+}
+.annotation-marker:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+
+/* 输入框里的「N 条注释」，鼠标移上去展开列表 */
+.notes-chip-row { display: flex; margin: 0 2px 6px; }
+.notes-chip-wrap { position: relative; }
+.notes-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px 0 10px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg); font-size: 13px; cursor: default;
+}
+.notes-chip-clear {
+  width: 20px; height: 20px; padding: 0; border: none; border-radius: 50%; background: none; color: var(--muted); font-size: 14px; line-height: 1;
+}
+.notes-chip-clear:hover { background: var(--border); color: var(--text); }
+/* 和标签之间留的空隙也算在弹层里，鼠标移过去不会收起 */
+.notes-pop { position: absolute; left: 0; bottom: 100%; z-index: 20; display: none; padding-bottom: 6px; }
+.notes-chip-wrap:hover .notes-pop, .notes-pop:focus-within { display: block; }
+.notes-chip-wrap.pop-hidden .notes-pop { display: none; }
+.notes-list {
+  width: min(460px, calc(100vw - 48px)); max-height: 320px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 14px; background: var(--bg); box-shadow: 0 8px 28px rgb(0 0 0 / 0.16);
+}
+.notes-item { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; }
+.notes-item + .notes-item { border-top: 1px solid var(--border); }
+.notes-item-num { flex: none; color: var(--muted); font-size: 13px; line-height: 20px; }
+.notes-item-body { flex: 1; min-width: 0; }
+.notes-item-label { color: var(--muted); font-size: 12px; }
+.notes-item-text { margin: 4px 0 6px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.notes-item-actions { display: flex; flex: none; gap: 2px; }
+.notes-item-actions .icon-btn { width: 26px; height: 26px; }
+
+/* 发出去的消息里的注释 */
+.sent-notes { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 80%; }
+.sent-notes-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg); color: var(--text); font-size: 13px;
+}
+.sent-notes-chip:hover { background: var(--panel); }
+.sent-notes-list {
+  margin: 0; padding: 8px 12px 8px 30px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); font-size: 13px;
+}
+.sent-notes-list li + li { margin-top: 6px; }
+.sent-note {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; padding: 0;
+  border: none; background: none; color: inherit; font: inherit; text-align: start;
+}
+.sent-note:hover:not(:disabled) { background: none; }
+.sent-note:disabled { cursor: default; opacity: 1; }
+.sent-note-text { white-space: pre-wrap; overflow-wrap: anywhere; }

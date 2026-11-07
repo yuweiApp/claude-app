@@ -8,6 +8,7 @@ import { CopyAction, MessageActions } from "./MessageActions";
 import { StepGroup, ToolIcon, ToolStep, type ToolUse } from "./Steps";
 import { formatShortDuration } from "./TasksPopover";
 import { MentionText } from "./MentionText";
+import { AnnotatableText, SentNotesChip } from "./ResponseAnnotations";
 
 type UserItem = Extract<Item, { kind: "user" }>;
 type ResultItem = Extract<Item, { kind: "result" }>;
@@ -183,7 +184,8 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
       {turn.task && <TaskLine task={turn.task} />}
       {turn.user && (
         <div className="msg-group msg-group-user">
-          <ItemView item={turn.user} />
+          {turn.user.annotations && <SentNotesChip annotations={turn.user.annotations} />}
+          {(turn.user.text || turn.user.images.length > 0 || turn.user.attachments.length > 0 || !turn.user.annotations) && <ItemView item={turn.user} />}
           {turn.user.text && (
             <MessageActions align="end">
               <CopyAction text={turn.user.text} title="复制消息" />
@@ -294,9 +296,9 @@ function UnitView({ unit, view }: { unit: Unit; view: SessionView }) {
       return <ItemView item={unit.item} />;
     case "text":
       return (
-        <div className="assistant">
+        <AnnotatableText messageId={unit.key}>
           <Markdown remarkPlugins={[remarkGfm]}>{unit.text}</Markdown>
-        </div>
+        </AnnotatableText>
       );
     case "steps":
       return unit.tools.length === 1 ? (

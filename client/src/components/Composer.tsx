@@ -46,10 +46,14 @@ interface Props {
   cwd?: string | null;
   /** 上一轮被中断了：输入框空着时发送按钮变成「继续」 */
   onContinue?: () => void;
+  /** 输入框里、文字上方：待发送的回复注释（「N 条注释」） */
+  notes?: ReactNode;
+  /** 有待发送的注释：没写文字也能发送 */
+  hasNotes?: boolean;
 }
 
 /** 输入框，样式同 codex-app-server：一个圆角框，上面输入，下面一行「+」、权限、模型、发送 */
-export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, onContinue }: Props) {
+export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, onContinue, notes, hasNotes = false }: Props) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
@@ -155,7 +159,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
 
   const uploading = files.some((f) => f.status === "uploading");
   const ready = files.filter((f) => f.status === "done");
-  const canSend = (text.trim() || ready.length > 0) && !uploading && !sending;
+  const canSend = (text.trim() || ready.length > 0 || hasNotes) && !uploading && !sending;
 
   const addFiles = (list: File[]) => {
     for (const file of list) {
@@ -286,6 +290,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
       onDrop={onDrop}
     >
       {menuOpen && <MentionMenu options={options} active={activeOption} onHover={setActiveOption} onPick={pickOption} />}
+      {notes}
       {files.length > 0 && (
         <div className="chips">
           {files.map((f) => {
@@ -362,13 +367,13 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
         {left}
         <div className="spacer" />
         {right}
-        {running && !text.trim() && ready.length === 0 ? (
+        {running && !text.trim() && ready.length === 0 && !hasNotes ? (
           <button className="send-btn send-stop" onClick={onInterrupt} title="停止" aria-label="停止">
             <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
               <rect width="12" height="12" rx="2" fill="currentColor" />
             </svg>
           </button>
-        ) : onContinue && !running && !text.trim() && files.length === 0 ? (
+        ) : onContinue && !running && !text.trim() && files.length === 0 && !hasNotes ? (
           <button className="send-btn" disabled={sending} onClick={onContinue} title="继续" aria-label="继续">
             <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M5 3.2v9.6a.6.6 0 0 0 .9.5l7.6-4.8a.6.6 0 0 0 0-1L5.9 2.7a.6.6 0 0 0-.9.5z" fill="currentColor" />
