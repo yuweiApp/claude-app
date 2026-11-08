@@ -43,6 +43,7 @@ systemd-run --user --pty --same-dir --collect --unit=claude-app-gateway --setenv
   - 不写策略、步骤、做法示例和时机判断：「先用 snapshot」「多步操作写在一次调用里」「循环检查、没好就等 5 秒」「用户要看的页面就调用 browser_keep_tab」都不写。写过的例子模型会照搬（照着等待示例写出固定等满 3 分钟的循环）。
   - 判断一句话：描述的是事实，还是希望它怎么做？「临时标签页一轮结束时会自动关闭，除非调用 browser_keep_tab」是事实；「用户要看的页面，结束前调用 browser_keep_tab」是希望它怎么做。
   - 用模型看得到的东西描述，不提它接触不到的内部实现：写「连续同步执行超过 2 秒会被中止」，不写「REPL 和网关在同一个进程里」。
+  - 例外：桌面工具（agent-desktop）的说明里让模型先读它自带的 skill 并照着做（skill 本来就是写做法和步骤的），见 [docs/agent-desktop.md](docs/agent-desktop.md)「说明（instructions）」。
 
 ## Git
 

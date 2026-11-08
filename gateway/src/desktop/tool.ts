@@ -55,9 +55,14 @@ const REF_RULE =
     ? "ref 指向快照时的那个元素本身，几个一模一样的元素各有各的 ref。"
     : "执行命令时按快照里记下的角色、原生 id、名字、描述重新找这个元素：拍快照时它在整个窗口里不唯一（比如几个没有名字的 group），这个 ref 用来操作时返回 AMBIGUOUS_TARGET（details.kind: identity_not_unique），重拍快照也一样。";
 
-/** 给模型的说明：只写事实（环境、接口、规则、机制），不写做法，见 CLAUDE.md */
+/**
+ * 给模型的说明。例外于 CLAUDE.md 的「只写事实」：让模型先读 agent-desktop 自带的 skill（编进二进制、和版本对应，里面是做法和步骤）并照着做，
+ * 和上游 README 给 agent 的那句一样；其余只写事实
+ */
 const INSTRUCTIONS = [
   `桌面：运行网关的这台电脑（${PLATFORM}）上、当前登录用户的桌面（原生应用的窗口、菜单、对话框），经系统的无障碍接口（${ACCESSIBILITY_API}）读取和操作，工具是 agent-desktop ${version}。用户可能同时在用这台电脑。`,
+  '- 第一次使用前，先用 run 执行 ["skills", "get", "desktop"] 和 ["skills", "get", "platform"]，读 agent-desktop 自带的使用说明（和这个版本对应），按里面的做法操作；说明里提到的参考文档用 ["skills", "get", "desktop", "<文件名>"] 读。',
+  "- 使用说明里的命令行写法 `agent-desktop <命令> <参数…>` 在这里对应：snapshot、screenshot 用同名工具（参数见工具定义），其余命令用 run，args 是数组、直接交给程序，不经过 shell（说明里 PowerShell、POSIX shell 的引号转义用不上）。这里没有 agent-desktop 命令行，Bash 里也没有。",
   "- snapshot 返回一个窗口的无障碍树，元素带 [ref=@快照编号:eN]。ref 只在产生它的快照里有效；界面变了，用旧 ref 的命令返回 STALE_REF 或 AMBIGUOUS_TARGET。",
   `- ${REF_RULE}`,
   "- screenshot 返回一个窗口或一块屏幕的图片。",

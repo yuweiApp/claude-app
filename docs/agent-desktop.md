@@ -19,7 +19,7 @@
 |---|---|---|
 | 工具数 / 定义大小 | 67 个，约 41000 字符（两个浏览器现在一共约 5000） | 3 个，可常驻 |
 | 只读标记 | 一个都没有，读和写分不开，只能全部弹卡片或全部放行 | 只读的放行，有副作用的走卡片 |
-| 说明 | 第一句是「先读 desktop_skills_get」，skill 里是做法和步骤 | 只写事实（CLAUDE.md 的约定） |
+| 说明 | 第一句是「先读 desktop_skills_get」，skill 里是做法和步骤 | 也让模型先读 skill 照着做（`run ["skills", "get", …]`），其余只写事实 |
 | `--headed`、`--session` | 启动时定死，所有调用共用 | 每次调用单独定 |
 | 截图 | base64 放在 JSON 文字里，模型看到的是一长串字符 | 转成 MCP 图片 |
 | 本应用的窗口 | 能读能点（见 6.1） | 网关拦掉 |
@@ -99,7 +99,9 @@ snapshot s191jb6hk0gciz（mousepad，窗口 w-1.1895-…）
 - 失败：留 `code`、`message`、`details`、`disposition`（`delivery` 送没送到、`retry` 能不能重试，都是事实），去掉上游的 `suggestion`、`recovery`（「先 focus-window 再重试」这类是做法，同 CLAUDE.md 的约定）。
 - 网关自己的错误（被拦、超时）写清楚是谁、因为什么：「这是本应用（claude-app）的窗口，桌面工具不能读取或操作它」「命令超过 timeout_ms 被网关终止，动作可能已经生效」。
 
-### 说明（instructions）只写事实
+### 说明（instructions）
+
+例外于 CLAUDE.md 的「只写事实」：开头让模型第一次使用前用 `run` 读 agent-desktop 自带的 skill（`skills get desktop`、`skills get platform`，编进二进制、和版本对应）并按里面的做法操作，和上游 README 给 agent 的那句一样；再说明 skill 里的命令行写法怎么对应到这里的工具（snapshot、screenshot 用同名工具，其余用 `run` 的 args 数组，不经过 shell）。以前只列出有 `skills` 命令、读不读由模型定，实测 Windows 上模型从来不读，开始菜单、重名 ref 这些 skill 里写了的坑一个个踩。其余只写事实：
 
 - 操作的是运行网关的这台电脑上、当前登录用户的桌面；用户可能同时在用这台电脑。
 - ref 只在产生它的快照里有效，界面变了会返回 `STALE_REF` 或 `AMBIGUOUS_TARGET`。
