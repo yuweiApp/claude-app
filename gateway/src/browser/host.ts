@@ -15,15 +15,17 @@ export interface CdpTransport {
  *   agent-input / user-input（网页弹出的，弹出前 AI / 用户刚在原标签页上点击或按键）、page（网页自己弹出的）
  * - closed：agent（AI 用 page.close）、user（用户点标签上的 ×）、turn-end（一轮结束自动关的临时标签页）、page（网页 window.close 或崩溃）
  * - navigated：user（用户在地址栏跳转、点后退、前进、刷新；action 是哪一种）
+ * - downloaded：标签页里的下载结束了（桌面版存进系统的「下载」文件夹），没有 by；download 是存到哪里、结果、大小、下载地址
  */
 export interface TabEvent {
-  kind: "opened" | "closed" | "navigated";
-  by: "agent" | "user" | "agent-input" | "user-input" | "page" | "turn-end";
+  kind: "opened" | "closed" | "navigated" | "downloaded";
+  by?: "agent" | "user" | "agent-input" | "user-input" | "page" | "turn-end";
   tabId: string;
   url: string;
   title: string;
   openerId?: string;
   action?: "address" | "back" | "forward" | "reload";
+  download?: { path: string; state: "completed" | "cancelled" | "interrupted"; bytes: number; url: string };
 }
 
 /** 还没留下的临时标签页（desktop/src/browser/views.ts 的 temporaryTabs）；latest：AI 最近操作过的那个，browser_keep_tab 会留下它 */

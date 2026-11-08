@@ -732,6 +732,14 @@ function describeEvent(e: TabEvent): string | null {
     return `网页自己关闭了标签页（window.close 或崩溃）：${target}`;
   }
   const name = `「${e.title && e.title !== "about:blank" ? e.title : e.url || "新标签页"}」`;
+  if (e.kind === "downloaded") {
+    const d = e.download;
+    if (!d) return null;
+    // blob:、data: 地址很长又没用，不写
+    const from = /^(blob|data):/.test(d.url) ? "" : `（下载地址 ${d.url}）`;
+    if (d.state === "completed") return `标签页${name}的下载已保存到 ${d.path}，${d.bytes} 字节${from}`;
+    return `标签页${name}的下载${d.state === "cancelled" ? "被取消了" : "中断了"}，没有存完：${d.path}${from}`;
+  }
   if (e.action === "back" || e.action === "forward" || e.action === "reload") {
     return `用户在标签页${name}上点了${e.action === "back" ? "后退" : e.action === "forward" ? "前进" : "刷新"}`;
   }

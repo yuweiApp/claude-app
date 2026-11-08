@@ -57,16 +57,19 @@ export interface Tab extends TabInfo {
  *   agent-input / user-input（网页弹出的，弹出前 AI / 用户刚在原标签页上点击或按键）、page（网页自己弹出的，前面没有点击按键）
  * - closed：agent（AI 用 page.close）、user（用户点标签上的 ×）、turn-end（一轮结束自动关的临时标签页）、page（网页 window.close 或崩溃）
  * - navigated：user（用户在地址栏跳转、点后退、前进、刷新）
+ * - downloaded：标签页里的下载结束了（存进系统的「下载」文件夹，见 setupSession），没有 by：网页脚本触发的下载分不出是谁
  */
 export interface TabEvent {
-  kind: "opened" | "closed" | "navigated";
-  by: "agent" | "user" | "agent-input" | "user-input" | "page" | "turn-end";
+  kind: "opened" | "closed" | "navigated" | "downloaded";
+  by?: "agent" | "user" | "agent-input" | "user-input" | "page" | "turn-end";
   tabId: string;
   url: string;
   title: string;
   openerId?: string;
   /** navigated 的方式 */
   action?: "address" | "back" | "forward" | "reload";
+  /** downloaded：存到哪里、结果（completed 存好了，cancelled 取消了，interrupted 中断了）、文件大小（字节）、下载地址 */
+  download?: { path: string; state: "completed" | "cancelled" | "interrupted"; bytes: number; url: string };
 }
 
 /** browser-tabs.json 里的一个标签页 */
@@ -697,7 +700,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     ses.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
     // 下载直接存进系统的「下载」文件夹，同名时加 (1)、(2)：不指定位置会弹「另存为」，停放窗口里的标签页弹出来看不见
     const downloading = new Set<string>();
-    ses.on("will-download", (_e, item) => {
+    ses.on("will-download", (_e, item, contents) => {
       const dir = app.getPath("downloads");
       fs.mkdirSync(dir, { recursive: true });
       const name = path.basename(item.getFilename().replace(/[\\/]/g, "_")) || "download";
@@ -707,7 +710,19 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
       for (let i = 1; fs.existsSync(target) || downloading.has(target); i++) target = path.join(dir, `${stem} (${i})${ext}`);
       item.setSavePath(target);
       downloading.add(target);
-      item.once("done", () => downloading.delete(target));
+      // 哪个标签页下载的：结束时告诉网关（模型的工具结果里会写），网页脚本触发的下载 Playwright 收不到 download 事件
+      const tab = [...this.tabs.values()].find((t) => t.view.webContents === contents);
+      item.once("done", (_e, state) => {
+        downloading.delete(target);
+        if (!tab) return;
+        this.emit("tabEvent", tab.sessionId, {
+          kind: "downloaded",
+          tabId: tab.id,
+          url: tab.url,
+          title: tab.title,
+          download: { path: target, state, bytes: item.getReceivedBytes(), url: item.getURL() },
+        });
+      });
     });
   }
 }
