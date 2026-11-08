@@ -506,9 +506,9 @@ function Chat({
           <PermissionCard
             key={request.requestId}
             request={request}
-            onReply={(behavior, always) => {
+            onReply={(behavior, always, answers) => {
               if (sessionId) {
-                api.replyPermission(sessionId, request.requestId, behavior, always).catch((e: Error) => onError(e.message));
+                api.replyPermission(sessionId, request.requestId, behavior, always, answers).catch((e: Error) => onError(e.message));
               }
             }}
           />

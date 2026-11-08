@@ -37,6 +37,11 @@ export interface PermissionReply {
   message?: string;
   /** 以后同类操作都允许（采用 SDK 给的 suggestions） */
   always?: boolean;
+  /**
+   * AskUserQuestion 的回答：问题原文 → 选中的选项（多选用逗号连接，「其他」是用户写的文字）。
+   * 放进 updatedInput.answers 交还 Claude Code，模型读到的就是这些
+   */
+  answers?: Record<string, string>;
 }
 
 /** 一个活跃会话：持有一个 claude 子进程，见 docs/README.md「活跃会话」 */
@@ -166,7 +171,7 @@ export class AgentSession {
     if (reply.behavior === "allow") {
       this.resolvePermission(requestId, {
         behavior: "allow",
-        updatedInput: pending.input,
+        updatedInput: reply.answers ? { ...pending.input, answers: reply.answers } : pending.input,
         ...(reply.always && pending.suggestions ? { updatedPermissions: pending.suggestions } : {}),
       });
     } else {
@@ -212,8 +217,9 @@ export class AgentSession {
         // 桌面操作：命令行、ref 指向哪个应用的哪个元素、headed 时会动鼠标
         description: desktopRun ? describeRun(input) : options.description,
         decisionReason: options.decisionReason,
-        // 桌面操作不给「总是允许」：规则按工具名放行，放行了就是这个会话以后的所有桌面操作
-        canAlways: Boolean(options.suggestions?.length) && !options.suppressAlwaysAllowRule && !desktopRun,
+        // 桌面操作不给「总是允许」：规则按工具名放行，放行了就是这个会话以后的所有桌面操作；
+        // AskUserQuestion 是向用户提问（网页渲染成选择题），每次都要回答，也不给
+        canAlways: Boolean(options.suggestions?.length) && !options.suppressAlwaysAllowRule && !desktopRun && toolName !== "AskUserQuestion",
       });
     });
   };

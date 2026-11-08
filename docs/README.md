@@ -118,7 +118,7 @@ SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类
   - 允许：`{ behavior: 'allow', updatedInput: input }`；勾"以后都允许"时带上 `updatedPermissions: suggestions`
   - 拒绝：`{ behavior: 'deny', message }`
 - `signal` 中止（用户打断）或超过 `PERMISSION_TIMEOUT_MS`（默认 10 分钟）时自动拒绝，并发 `permission_resolved`。
-- `AskUserQuestion` 也走 `canUseTool`，入参里是问题和选项。客户端单独渲染成选择题，用户的回答通过 `updatedInput.answers` 返回（第一版先按普通权限处理，见 §9）。
+- `AskUserQuestion` 也走 `canUseTool`（「完全访问权限」下也走），入参里是 1–4 道题，每道题有 `question`、`header`、2–4 个选项（`label`、`description`、可能有 `preview`）和 `multiSelect`。网页把它渲染成选择题卡片（`PermissionCard.tsx` 的 `QuestionCard`）：单选或多选，另有「其他」可以自己写，选了带 `preview` 的选项时显示它；「提交」把回答放在回复的 `answers` 里（问题原文 → 选中的选项 `label`，按选项的顺序；多选用 `, ` 连接；「其他」是用户写的文字），网关放进 `updatedInput.answers` 交还 Claude Code，模型读到的就是这些；「跳过」是拒绝这次调用。不给「总是允许」。以前没有单独处理，卡片上只有原始 JSON 和「允许 / 拒绝」，点「允许」交回的没有回答。
 
 ## 5. 附件
 
@@ -255,7 +255,7 @@ client/
 ## 9. 路线图
 
 1. **骨架（已完成）**：单工作目录、流式对话、工具调用展示、权限确认、打断、历史会话、附件。
-2. **对话体验**：Markdown 和代码高亮、diff 展示（Edit / Write 的入参）、思考块、AskUserQuestion 选择题、斜杠命令（`supportedCommands()`）、模型切换（`setModel()`）、上下文用量（`getContextUsage()`）。
+2. **对话体验**：Markdown 和代码高亮、diff 展示（Edit / Write 的入参）、思考块、AskUserQuestion 选择题（已完成，见 §4）、斜杠命令（`supportedCommands()`）、模型切换（`setModel()`）、上下文用量（`getContextUsage()`）。
 3. **自定义工具**（`createSdkMcpServer()` 进程内 MCP）：内置浏览器（已完成第一版，只有桌面版，见第 12 节）、外部浏览器（用户的 Chrome，原型，见第 13 节）、终端读取（已完成）、会话管理、桌面操作（agent-desktop，设计中，见 [agent-desktop.md](agent-desktop.md)）。
 4. **多人部署**：沿用 codex-app-server 的 hub + 每用户一个容器，每个容器一个 `CLAUDE_CONFIG_DIR`。
 5. **桌面版**：Electron 外壳。

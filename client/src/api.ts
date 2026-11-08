@@ -149,8 +149,9 @@ export const api = {
   /** 删除会话，会话记录一起删，不能恢复 */
   deleteSession: (id: string) => request("DELETE", `/sessions/${id}`),
   setPermissionMode: (id: string, mode: PermissionMode) => request("POST", `/sessions/${id}/permission-mode`, { mode }),
-  replyPermission: (id: string, requestId: string, behavior: "allow" | "deny", always = false) =>
-    request("POST", `/sessions/${id}/permissions/${requestId}`, { behavior, always }),
+  /** answers：AskUserQuestion 的回答（问题原文 → 选中的选项） */
+  replyPermission: (id: string, requestId: string, behavior: "allow" | "deny", always = false, answers?: Record<string, string>) =>
+    request("POST", `/sessions/${id}/permissions/${requestId}`, { behavior, always, ...(answers ? { answers } : {}) }),
 };
 
 /**

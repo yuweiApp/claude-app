@@ -213,7 +213,7 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
 
   app.post<{
     Params: IdParams & { requestId: string };
-    Body: { behavior: "allow" | "deny"; message?: string; always?: boolean };
+    Body: { behavior: "allow" | "deny"; message?: string; always?: boolean; answers?: Record<string, string> };
   }>(
     "/sessions/:id/permissions/:requestId",
     {
@@ -225,6 +225,8 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
             behavior: { type: "string", enum: ["allow", "deny"] },
             message: { type: "string" },
             always: { type: "boolean" },
+            // AskUserQuestion 的回答：问题原文 → 选中的选项
+            answers: { type: "object", additionalProperties: { type: "string" } },
           },
         },
       },

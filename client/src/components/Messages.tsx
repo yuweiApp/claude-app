@@ -377,6 +377,8 @@ export function toolBrief(name: string, input: unknown): string {
       return pick("description");
     case "mcp__terminal__run_in_terminal":
       return pick("command");
+    case "AskUserQuestion":
+      return Array.isArray(i.questions) ? (i.questions as { question?: string }[]).map((q) => q.question ?? "").join("\n") : "";
     default:
       return "";
   }
