@@ -60,7 +60,7 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
 - 导入技能和插件：技能文件夹要有 `SKILL.md`，复制到 `$CLAUDE_CONFIG_DIR/skills/<名称>/`，Claude Code 自己发现；插件文件夹要有 `.claude-plugin/plugin.json`，复制到 `$CLAUDE_CONFIG_DIR/gateway-plugins/<名称>/`，通过 `options.plugins` 加载，它的技能叫 `插件名:技能名`。桌面版用系统对话框选文件夹，网页用 `GET /folders` 浏览。
 - 停用技能：停用的名称存在 `$CLAUDE_CONFIG_DIR/gateway-disabled-skills.json`。有停用的技能时，网关把其余技能作为 `options.skills` 白名单传给 SDK，模型看不到停用的技能，调 Skill 工具也会被拒绝；这个白名单管不到用户自己输入的 `/技能名`，所以网关在新建和发送时再拦一次，返回 400。白名单在拉起 claude 进程时确定，已经活跃的会话要等进程重启才更新，`/技能名` 的拦截立即生效。内置技能只能停用；删除只针对导入的技能，是删文件，SDK 没有对应接口。
 - MCP 服务器：设置页添加的存在 `$CLAUDE_CONFIG_DIR/gateway-mcp-servers.json`（权限 600，请求头和环境变量可能有令牌），启用的通过 `options.mcpServers` 传给会话，对新会话和子进程重启后的会话生效。插件或配置文件带来的服务器只显示，不能在设置页改。
-- 标题：新会话发出第一条消息时，网关直接请求模型接口概括成简短标题（`gateway/src/agent/title.ts`，失败时取提问第一行），用 `renameSession()` 写成自定义标题，之后不再变。网页显示 `customTitle`，没有时用 `firstPrompt`；`summary` 没有自定义标题时跟着最新一条提问变，不用它。
+- 标题：新会话发出第一条消息时，网关直接请求模型接口概括成简短标题（`gateway/src/agent/title.ts`，失败时取提问第一行），用 `renameSession()` 写成自定义标题，之后不再变。网页显示 `customTitle`，没有时用 `firstPrompt`；`summary` 没有自定义标题时跟着最新一条提问变，不用它。SDK 列会话只读记录文件开头和结尾各 64 KB 找 `customTitle`：标题那一行在文件开头之后，网页快照、工具结果把文件撑大，它就不在结尾那段里了；Claude Code 过一阵才把标题等元数据补写到末尾（实测 Windows 上 1.5 MB 的会话，标题在第 107 KB 处，一轮结束、网页刷新列表时还没补写，显示成第一条提问，之后才补上）。所以网关记住每个会话的标题（`SessionManager.titles`：生成、改名时，列表里读到时），列表里读不到时用记住的；网关重启后没见过的会话还是可能读不到，等 Claude Code 补写。
 
 ### 2.3 项目（文件夹）
 

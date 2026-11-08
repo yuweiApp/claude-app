@@ -33,6 +33,13 @@ import { createScratchDir, isChatCwd, removeScratchDirIfEmpty, sessionRecordDir 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
 export class SessionManager {
   private readonly active = new Map<string, AgentSession>();
+  /**
+   * 会话的自定义标题（生成、改名时，列表里读到时记下）。SDK 列会话只读记录文件开头和结尾各 64 KB 找标题，
+   * 标题那一行在文件开头之后，网页快照、工具结果把文件撑大，它就不在结尾那段里了；Claude Code 过一阵才把标题补写到末尾
+   * （实测 Windows 上 1.5 MB 的会话，一轮结束、网页刷新列表时还没补写，读到的没有标题，显示成第一条提问）。
+   * 读不到时用这里记的；网关重启后没见过的会话还是可能读不到，等 Claude Code 补写
+   */
+  private readonly titles = new Map<string, string>();
   /** 每个会话的后台任务，子进程回收后还留着；记录写在 claude-home/gateway-tasks/<会话 id>.json，网关重启后读回来 */
   private readonly tasks = new Map<string, TaskList>();
   private readonly sweeper: NodeJS.Timeout;
@@ -78,6 +85,7 @@ export class SessionManager {
     for (let i = 0; i < 20; i++) {
       try {
         await renameSession(sessionId, title);
+        this.titles.set(sessionId, title);
         this.hub.publish(sessionId, { type: "title", title });
         return;
       } catch {
@@ -112,11 +120,16 @@ export class SessionManager {
 
   async list(): Promise<SessionListItem[]> {
     // 不传 dir：所有工作目录（项目）的会话
-    const stored: SessionListItem[] = (await listSessions()).map((info) => ({ ...info, chat: isChatCwd(info.cwd), state: this.active.get(info.sessionId)?.state }));
+    const stored: SessionListItem[] = (await listSessions()).map((info) => {
+      if (info.customTitle) this.titles.set(info.sessionId, info.customTitle);
+      const customTitle = info.customTitle || this.titles.get(info.sessionId);
+      return { ...info, ...(customTitle ? { customTitle } : {}), chat: isChatCwd(info.cwd), state: this.active.get(info.sessionId)?.state };
+    });
     // 刚建的会话第一轮还没落盘时也要出现在列表里，字段按 SDKSessionInfo 补
     for (const session of this.active.values()) {
       if (!stored.some((s) => s.sessionId === session.id)) {
-        stored.push({ sessionId: session.id, summary: "", lastModified: session.lastActiveAt, cwd: session.cwd, chat: isChatCwd(session.cwd), state: session.state });
+        const customTitle = this.titles.get(session.id);
+        stored.push({ sessionId: session.id, summary: customTitle ?? "", ...(customTitle ? { customTitle } : {}), lastModified: session.lastActiveAt, cwd: session.cwd, chat: isChatCwd(session.cwd), state: session.state });
       }
     }
     return stored.sort((a, b) => b.lastModified - a.lastModified);
@@ -128,6 +141,7 @@ export class SessionManager {
 
   async rename(sessionId: string, title: string): Promise<void> {
     await renameSession(sessionId, title);
+    this.titles.set(sessionId, title.trim());
   }
 
   async closeSession(sessionId: string): Promise<void> {
@@ -142,6 +156,7 @@ export class SessionManager {
     const cwd = session?.cwd ?? info?.cwd;
     const recordDir = info ? await sessionRecordDir(sessionId) : undefined;
     // 刚建的会话第一轮还没落盘时只有子进程，没有文件可删
+    this.titles.delete(sessionId);
     if (info) await deleteSession(sessionId);
     else if (!session) throw new NotFoundError(`会话不存在：${sessionId}`);
     // close() 只等到消息流结束，子进程退出时还会往 jsonl 写最后几条记录，把删掉的文件又建出来，所以再查几次
