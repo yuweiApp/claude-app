@@ -34,7 +34,7 @@ cd desktop && npm install && npm start
 
 桌面版会拉起网关（`node --import tsx`）和网页（Vite），关窗口时一起结束；网关或网页已经在跑就直接用。VS Code 里选「启动桌面应用」。环境变量 `DESKTOP_GATEWAY_URL`、`DESKTOP_CLIENT_URL` 改地址，`DESKTOP_NODE` 指定 node，`DESKTOP_USER_DATA` 指定单独的数据目录（开发时可以和已经开着的桌面版同时运行），网关设了 `API_TOKEN` 时用 `DESKTOP_GATEWAY_TOKEN` 告诉外壳。桌面版右侧面板有内置浏览器，AI 也能操作，见 [docs/README.md](docs/README.md) 第 12 节；还可以让 AI 操作你自己的 Chrome（`config.yml` 的 `externalBrowser`），见第 13 节。还可以让 AI 操作这台电脑上的原生应用（`config.yml` 的 `desktop`，默认关，用 [agent-desktop](https://github.com/vercel-labs/agent-desktop)），见 [docs/agent-desktop.md](docs/agent-desktop.md)。
 
-会话记录、settings、skills 等都在 `gateway/.data/claude-home`（`CLAUDE_CONFIG_DIR`），没选文件夹的会话各在 `gateway/.data/workspace`（`WORKSPACE_DIR`）下新建一个 `scratch-日期-随机串` 目录，都不会碰本机的 `~/.claude`。
+会话记录、settings、skills 等都在 `gateway/.data/claude-home`（`CLAUDE_CONFIG_DIR`），没选文件夹的会话各在用户数据目录的 `claude-app/workspace`（`WORKSPACE_DIR`；Windows 是 `%LOCALAPPDATA%\claude-app\workspace`，macOS 是 `~/Library/Application Support/claude-app/workspace`，Linux 是 `~/.local/share/claude-app/workspace`）下新建一个 `scratch-日期-随机串` 目录，都不会碰本机的 `~/.claude`。
 
 > 智能体能在网关所在机器上执行命令、读写文件。默认只监听 `127.0.0.1`；对外开放时务必设置 `API_TOKEN`。
 >

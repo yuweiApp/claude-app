@@ -66,7 +66,7 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
 
 和 Claude 桌面版 Code 标签页一致：**项目就是会话的文件夹（工作目录）**，没有单独的项目列表。Claude Code 按工作目录存会话（`$CLAUDE_CONFIG_DIR/projects/<编码后的目录>/`），`SDKSessionInfo.cwd` 就是会话所在的文件夹；桌面版自己的会话记录（`claude-code-sessions/…/local_<id>.json`）里也只记 `cwd`。
 
-- 侧边栏「会话」按文件夹分组（桌面版的 Group by › Project），组名取目录最后一级，悬停有「在 {文件夹} 中新建会话」。没选文件夹的会话同 Claude 桌面版的 scratch-workspaces：新建时网关在 `WORKSPACE_DIR` 下建一个 `scratch-日期-随机串` 目录作为它的工作目录（`gateway/src/agent/scratch.ts`），AI 下载、写的文件各归各的；会话列表的 `chat` 标记它是普通会话（工作目录是 scratch 目录，或者旧会话的 `WORKSPACE_DIR` 本身），侧边栏按它分「会话」和「项目」。删会话时 scratch 目录是空的就一起删，有文件就留着。Claude Code 的会话记录按工作目录放在 `projects/<目录名>/` 下，所以每个普通会话的记录也各在一个文件夹里，列表用不带 `dir` 的 `listSessions()` 全部读出来。
+- 侧边栏「会话」按文件夹分组（桌面版的 Group by › Project），组名取目录最后一级，悬停有「在 {文件夹} 中新建会话」。没选文件夹的会话同 Claude 桌面版的 scratch-workspaces：新建时网关在 `WORKSPACE_DIR` 下建一个 `scratch-日期-随机串` 目录作为它的工作目录（`gateway/src/agent/scratch.ts`），AI 下载、写的文件各归各的。`WORKSPACE_DIR` 默认在用户数据目录（Windows `%LOCALAPPDATA%`、macOS `~/Library/Application Support`、Linux `~/.local/share`）的 `claude-app/workspace`：以前默认是 `gateway/.data/workspace`，在 git 仓库里，Claude Code 会把仓库的 git 状态和最近的提交放进系统提示（实测普通会话的模型看到了 claude-app 的提交记录）；也不放临时目录，系统会清理，AI 产出的文件会丢，resume 时工作目录没了子进程起不来；会话列表的 `chat` 标记它是普通会话（工作目录是 scratch 目录，或者旧会话的 `WORKSPACE_DIR` 本身），侧边栏按它分「会话」和「项目」。删会话时 scratch 目录是空的就一起删，有文件就留着。Claude Code 的会话记录按工作目录放在 `projects/<目录名>/` 下，所以每个普通会话的记录也各在一个文件夹里，列表用不带 `dir` 的 `listSessions()` 全部读出来。
 - 新会话在输入框上面一栏「选择文件夹」（桌面版的 Choose a folder，样式同 codex-app-server 新聊天页）：最近用过的文件夹，或「选择文件夹…」打开对话框浏览网关这台机器上的文件夹（`GET /folders`）。
 - `POST /sessions` 带 `cwd`（必须是已存在的目录，支持 `~`），子进程在这个目录里跑；续接会话时用 `getSessionInfo(id).cwd` 找回原来的目录。
 - 附件存在 `WORKSPACE_DIR/.attachments`，工作目录不是 `WORKSPACE_DIR` 本身的会话（项目会话、普通会话的 scratch 目录）启动时用 `additionalDirectories` 把附件目录加进来，读附件不用确认。

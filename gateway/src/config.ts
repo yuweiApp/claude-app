@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { parseEnv } from "node:util";
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
@@ -10,6 +11,17 @@ for (const file of [".env", ".env.local"]) {
 
 const env = process.env;
 const gatewayRoot = path.resolve(import.meta.dirname, "..");
+
+/**
+ * 各平台放应用数据的目录：Windows 是 %LOCALAPPDATA%，macOS 是 ~/Library/Application Support，其他是 $XDG_DATA_HOME 或 ~/.local/share。
+ * 普通会话的工作目录放在这里：不在临时目录（系统会清理，AI 产出的文件会丢，resume 时工作目录也没了），
+ * 也不在网关的目录里（网关在 git 仓库里，Claude Code 会把仓库的 git 状态和最近提交放进系统提示）
+ */
+function userDataDir(): string {
+  if (process.platform === "win32") return env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
+  if (process.platform === "darwin") return path.join(os.homedir(), "Library", "Application Support");
+  return env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
+}
 
 function int(name: string, fallback: number): number {
   const raw = env[name];
@@ -70,8 +82,8 @@ export const config = {
   /** 设置后所有接口要求 Authorization: Bearer <token>（SSE 用 ?token=） */
   apiToken: env.API_TOKEN?.trim() || undefined,
 
-  /** 智能体的工作目录，默认 gateway/.data/workspace */
-  workspaceDir: path.resolve(env.WORKSPACE_DIR || path.join(gatewayRoot, ".data", "workspace")),
+  /** 普通会话（没选文件夹）的工作目录都建在这下面，上传的附件也在这里，默认是用户数据目录下的 claude-app/workspace（见 userDataDir） */
+  workspaceDir: path.resolve(env.WORKSPACE_DIR || path.join(userDataDir(), "claude-app", "workspace")),
   /** Claude Code 的配置目录（会话记录、settings、skills、memory），和本机自己用的 ~/.claude 分开 */
   claudeConfigDir: path.resolve(env.CLAUDE_CONFIG_DIR || path.join(gatewayRoot, ".data", "claude-home")),
   /** 桌面操作（agent-desktop）的状态目录（快照、ref），传给它的 AGENT_DESKTOP_HOME，不用本机的 ~/.agent-desktop */
