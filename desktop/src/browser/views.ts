@@ -86,7 +86,8 @@ export interface DownloadEvent {
 
 /**
  * 一次下载的现状（downloadsOf，网关 REPL 的 downloads() 返回它；gateway/src/browser/host.ts 里有一份同样的）：
- * state 是 progressing（进行中，paused 时暂停了）、completed、cancelled、interrupted；totalBytes 不知道时是 0；startTime 是毫秒时间戳
+ * state 是 progressing（进行中，paused 时暂停了）、completed、cancelled、interrupted；totalBytes 不知道时是 0；startTime 是毫秒时间戳；
+ * url 是 data: 地址时只有类型和长度
  */
 export interface DownloadInfo {
   filename: string;
@@ -98,6 +99,16 @@ export interface DownloadInfo {
   totalBytes: number;
   bytesPerSecond: number;
   startTime: number;
+}
+
+/**
+ * 下载地址：data: 地址是整个文件的内容编码进链接（可能有几 MB），只留类型和长度，写成 data:image/png;base64,…（共 1438554 个字符）；
+ * 其他地址原样（截断了就打不开了）
+ */
+function shortUrl(url: string): string {
+  if (!url.startsWith("data:")) return url;
+  const comma = url.indexOf(",");
+  return `${comma >= 0 && comma < 200 ? url.slice(0, comma + 1) : "data:"}…（共 ${url.length} 个字符）`;
 }
 
 /** 每个会话留多少个结束了的下载（downloadsOf） */
@@ -713,8 +724,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
       .map(({ item, path: file }) => ({
         filename: path.basename(file),
         path: file,
-        // data: 地址可能有几 MB（网页把图片编码进链接），只留开头
-        url: item.getURL().length > 300 ? `${item.getURL().slice(0, 300)}…` : item.getURL(),
+        url: shortUrl(item.getURL()),
         state: item.getState(),
         paused: item.isPaused(),
         receivedBytes: item.getReceivedBytes(),

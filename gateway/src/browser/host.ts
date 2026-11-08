@@ -35,7 +35,8 @@ export interface TemporaryTab {
 
 /**
  * 一次下载的现状（desktop/src/browser/views.ts 的 DownloadInfo，两边各写一份），REPL 的 downloads() 返回它：
- * state 是 progressing（进行中，paused 时暂停了）、completed、cancelled、interrupted；totalBytes 不知道时是 0；startTime 是毫秒时间戳
+ * state 是 progressing（进行中，paused 时暂停了）、completed、cancelled、interrupted；totalBytes 不知道时是 0；startTime 是毫秒时间戳；
+ * url 是 data: 地址时只有类型和长度
  */
 export interface DownloadInfo {
   filename: string;
