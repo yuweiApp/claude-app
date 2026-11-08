@@ -39,4 +39,4 @@ externalBrowser:
 # 本应用（桌面版）自己的窗口网关会拦掉。macOS 要给桌面版（或启动网关的终端）「辅助功能」权限，截图还要「屏幕录制」。
 # 默认关；要用时改成 true，重启网关。
 desktop:
-  enabled: false
+  enabled: true
