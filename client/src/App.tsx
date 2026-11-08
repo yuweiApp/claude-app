@@ -21,6 +21,7 @@ import { TitleBar } from "./components/TitleBar";
 import { desktop } from "./desktop";
 import { useBrowserTabs } from "./state/browserTabs";
 import { TabPicker } from "./components/TabPicker";
+import { DesktopPicker } from "./components/DesktopPicker";
 import { emptyView, reduce } from "./state/session";
 import { AnnotationEditor, AnnotationSelectionButton, AnnotationSessionContext, NotesChip } from "./components/ResponseAnnotations";
 import { ANNOTATION_SCOPE_ATTR, clearResponseAnnotations, useResponseAnnotations, withResponseAnnotations } from "./state/responseAnnotations";
@@ -560,8 +561,12 @@ function Chat({
             <CapabilityPicker kind="插件" items={capabilities?.plugins.filter((p) => !p.builtin) ?? []} onPick={(name) => composerRef.current?.mention(name)} />
             <TabPicker
               inapp={browserTabs}
-              onPick={(tab, chrome) => composerRef.current?.mentionTab(tab.title, tab.url, chrome)}
-              onPickBrowser={(chrome) => composerRef.current?.mentionBrowser(chrome)}
+              onPick={(tab, chrome) => composerRef.current?.mentionTab(tab.title, tab.url, chrome ? "chrome" : undefined)}
+              onPickBrowser={(chrome) => composerRef.current?.mentionBrowser(chrome ? "chrome" : undefined)}
+            />
+            <DesktopPicker
+              onPick={(w) => composerRef.current?.mentionTab(w.title || w.app, `window:${w.id}`, "desktop")}
+              onPickDesktop={() => composerRef.current?.mentionBrowser("desktop")}
             />
           </>
         }

@@ -32,6 +32,7 @@
   --ic-skill: #9333ea;
   --ic-plugin: #2563eb;
   --ic-tab: #059669;
+  --ic-desktop: #0284c7;
   --ic-mcp: #db2777;
   color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
@@ -58,6 +59,7 @@
     --ic-skill: #c084fc;
     --ic-plugin: #79a6ff;
     --ic-tab: #34d399;
+    --ic-desktop: #38bdf8;
     --ic-mcp: #f472b6;
     color-scheme: dark;
   }
@@ -1019,7 +1021,7 @@ main {
 /* 外部浏览器（用户的 Chrome）的标签页引用：标题前标上 Chrome */
 .mention-tab-source { color: var(--muted); font-size: 0.9em; }
 .mention-tab-source::after { content: " ·"; }
-/* 输入框上面的「标签页」：每项一行，图标加标题 */
+/* 输入框上面的「浏览器」「Computer Use」：每项一行，图标加标题 */
 .tab-picker-menu { width: 320px; }
 .tab-picker-icon { flex: none; display: flex; color: var(--muted); }
 /* 每组：第一行是浏览器本身（可以引用），下面缩进列它的标签页；组之间一条分隔线 */
@@ -1029,6 +1031,9 @@ main {
 .tab-picker-badge { flex: none; display: grid; place-items: center; width: 22px; height: 22px; }
 .tab-picker-badge .inapp-logo { width: 22px; height: 22px; }
 .tab-picker-badge .chrome-logo { width: 19px; height: 19px; }
+/* 「Computer Use」里桌面那一行：和内置浏览器的图标块一个做法，底色用桌面的图标色 */
+.desktop-badge { border-radius: 23%; color: #fff; background: linear-gradient(180deg, color-mix(in srgb, var(--ic-desktop) 78%, #fff), var(--ic-desktop)); }
+.desktop-badge svg { width: 15px; height: 15px; }
 /* 内置浏览器的图标：品牌色圆角方块（上浅下深），白色图形；和首页、设置的图标块一个做法 */
 .inapp-logo {
   display: inline-grid; place-items: center; flex: none; width: 13px; height: 13px; border-radius: 23%; color: #fff;
@@ -1053,6 +1058,7 @@ svg.ic-chat { color: var(--ic-chat); }
 svg.ic-skill { color: var(--ic-skill); }
 svg.ic-plugin { color: var(--ic-plugin); }
 svg.ic-tab { color: var(--ic-tab); }
+svg.ic-desktop { color: var(--ic-desktop); }
 svg.ic-mcp { color: var(--ic-mcp); }
 
 /* iOS 设置风格的图标：圆角方块（圆角约为边长的 23%），上浅下深的渐变，一圈很细的内描边，里面白色图形 */

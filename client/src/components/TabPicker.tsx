@@ -31,7 +31,7 @@ interface Props {
 }
 
 /**
- * 输入框上面的「标签页」：和「技能」「插件」一样点开搜索、选择，选中后插在输入框的光标处。
+ * 输入框上面的「浏览器」：和「技能」「插件」一样点开搜索、选择，选中后插在输入框的光标处。
  * 分两组：内置浏览器（只有桌面版）、Chrome（网关开了外部浏览器时；还没连上时是空的，不会为了列标签页去连）。两组都没有就不显示按钮。
  * 每组第一行是浏览器本身（写成 @内置浏览器、@Chrome，指定用哪个浏览器），下面是它的标签页（@[标题](网址)、@chrome[标题](网址)）
  */
@@ -86,7 +86,7 @@ export function TabPicker({ inapp, onPick, onPickBrowser }: Props) {
     <div className="capability-picker" ref={ref}>
       <button className="new-chat-chip" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <GlobeIcon className="ic ic-tab" />
-        <span className="new-chat-chip-label">标签页</span>
+        <span className="new-chat-chip-label">浏览器</span>
       </button>
       {open && (
         <div className="menu capability-menu tab-picker-menu" role="menu">

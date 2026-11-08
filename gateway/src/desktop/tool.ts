@@ -79,6 +79,7 @@ const INSTRUCTIONS = [
   `- 调用超过约 ${BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，结束后结果作为通知送达。屏幕上的变化不会通知你。`,
   "- 别的会话也可能在操作这个桌面：自你上次调用以来它们执行过的操作，列在下一次结果的开头。",
   `- 截图原始大小超过 ${(MAX_IMAGE_BYTES / 1e6).toFixed(2)}MB 时不返回图片。`,
+  "- 用户消息里的 @桌面 指这个桌面，@desktop[标题](window:<id>) 指这里的一个窗口，<id> 是用户引用时 list-windows 里它的窗口 id。",
 ].join("\n");
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });

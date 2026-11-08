@@ -310,7 +310,7 @@ export function SiteIcon({ src }: { src?: string }) {
 }
 
 /**
- * 引用整个浏览器（@内置浏览器、@Chrome）的图标，「标签页」菜单、输入框、消息里都用这一个。
+ * 引用整个浏览器（@内置浏览器、@Chrome）的图标，「浏览器」菜单、输入框、消息里都用这一个。
  * 内置浏览器：品牌色圆角方块里白色的「左边对话、右边面板」窗口（就是这个应用的样子，见 .inapp-logo）；Chrome：彩色的 Chrome 标志（见 .chrome-logo）
  */
 export function BrowserIcon({ chrome }: { chrome?: boolean }) {

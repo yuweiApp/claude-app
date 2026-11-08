@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { FileTypeIcon, FolderTypeIcon } from "./FileTypeIcon";
 
-/** 输入 @ 后弹出的一项：项目里的文件、文件夹（value 相对项目文件夹，文件夹以 / 结尾）。浏览器标签页走输入框上面的「标签页」 */
+/** 输入 @ 后弹出的一项：项目里的文件、文件夹（value 相对项目文件夹，文件夹以 / 结尾）。浏览器标签页走输入框上面的「浏览器」，桌面窗口走「Computer Use」 */
 export interface MentionOption {
   kind: "file" | "dir";
   value: string;

@@ -4,7 +4,7 @@ import { AddMenu } from "./AddMenu";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { MentionMenu, type MentionOption } from "./MentionMenu";
-import { fileMention, findMentions, MentionText, browserMention, MentionNamesContext, tabMention, tabToken, type Mention } from "./MentionText";
+import { fileMention, findMentions, MentionText, browserMention, MentionNamesContext, tabMention, tabToken, type Mention, type MentionSource } from "./MentionText";
 
 /** 输入框下方的附件：选中后立刻上传，发送时只传 id */
 interface PendingFile {
@@ -24,10 +24,10 @@ export interface ComposerHandle {
   mentionSkill: (name: string) => void;
   /** 引用插件：插在光标处 */
   mention: (name: string) => void;
-  /** 引用浏览器标签页（输入框上面的「标签页」）：插在光标处，chrome 时是外部浏览器（用户的 Chrome）的 */
-  mentionTab: (title: string, url: string, chrome: boolean) => void;
-  /** 引用整个浏览器（「标签页」里点浏览器那一行）：插在光标处，chrome 时是外部浏览器 */
-  mentionBrowser: (chrome: boolean) => void;
+  /** 引用浏览器标签页（输入框上面的「浏览器」）或桌面上的窗口（「Computer Use」）：插在光标处，source 见 MentionSource */
+  mentionTab: (title: string, url: string, source?: MentionSource) => void;
+  /** 引用整个浏览器或桌面（「浏览器」「Computer Use」菜单的第一行）：插在光标处 */
+  mentionBrowser: (source?: MentionSource) => void;
   /** 把焦点给输入框，光标留在原来的位置 */
   focus: () => void;
 }
@@ -62,12 +62,12 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
   const names = useContext(MentionNamesContext);
   // @ 菜单里选过的文件，只有这些（和带引号的）算文件引用，手打的 @xxx 不算
   const [picked, setPicked] = useState<string[]>([]);
-  // 「标签页」里选过的：输入框里只显示 token（@[标题]），发送时换成 full（带网址的 @[标题](网址)）
+  // 「浏览器」里选过的：输入框里只显示 token（@[标题]），发送时换成 full（带网址的 @[标题](网址)）
   const [pickedTabs, setPickedTabs] = useState<{ token: string; full: string }[]>([]);
   const mentions = findMentions(text, names, picked, pickedTabs.map((t) => t.token));
   const highlighted = mentions.length > 0;
 
-  // 光标前紧挨着的 @xxx：弹出项目里的文件候选（插件、浏览器标签页走上面的「插件」「标签页」按钮，这里不列）；已经是整体的引用不弹，选中的文件夹接着列里面的
+  // 光标前紧挨着的 @xxx：弹出项目里的文件候选（插件、浏览器标签页走上面的「插件」「浏览器」按钮，这里不列）；已经是整体的引用不弹，选中的文件夹接着列里面的
   const [caret, setCaret] = useState(0);
   const [focused, setFocused] = useState(false);
   const atMatch = /(^|\s)@([^\s"]*)$/.exec(text.slice(0, caret));
@@ -128,7 +128,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     setCaret(pendingCaret.current);
     pendingCaret.current = null;
   }, [text]);
-  // 上面「技能」「插件」「标签页」选中的：插在光标处（输入框失焦后 textarea 还记着光标），前后不是空白的补空格，光标放到后面
+  // 上面「技能」「插件」「浏览器」选中的：插在光标处（输入框失焦后 textarea 还记着光标），前后不是空白的补空格，光标放到后面
   const insertAtCaret = (token: string) => {
     const input = textareaRef.current;
     const start = input?.selectionStart ?? text.length;
@@ -143,13 +143,13 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
   useImperativeHandle(handle, () => ({
     mentionSkill: (name) => insertAtCaret(`/${name}`),
     mention: (name) => insertAtCaret(`@${name}`),
-    mentionBrowser: (chrome) => insertAtCaret(browserMention(chrome)),
-    mentionTab: (title, url, chrome) => {
+    mentionBrowser: (source) => insertAtCaret(browserMention(source)),
+    mentionTab: (title, url, source) => {
       // 同名不同网址的标签页：标题后面加 (2)、(3) 区分
-      const full = (t: string) => tabMention(t, url, chrome);
+      const full = (t: string) => tabMention(t, url, source);
       let name = title || url;
-      for (let n = 2; pickedTabs.some((p) => p.token === tabToken(name, chrome) && p.full !== full(name)); n++) name = `${title || url} (${n})`;
-      const token = tabToken(name, chrome);
+      for (let n = 2; pickedTabs.some((p) => p.token === tabToken(name, source) && p.full !== full(name)); n++) name = `${title || url} (${n})`;
+      const token = tabToken(name, source);
       setPickedTabs((prev) => (prev.some((p) => p.token === token) ? prev : [...prev, { token, full: full(name) }]));
       insertAtCaret(token);
     },

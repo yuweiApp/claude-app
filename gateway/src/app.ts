@@ -2,7 +2,8 @@ import multipart from "@fastify/multipart";
 import websocket from "@fastify/websocket";
 import { BrowserHost } from "./browser/host.js";
 import { chromeBridge } from "./browser/chrome.js";
-import { externalBrowserEnabled } from "./config-file.js";
+import { desktopEnabled, externalBrowserEnabled } from "./config-file.js";
+import { listWindows, stripOwn } from "./desktop/guard.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import { AttachmentError } from "./agent/attachments.js";
 import { BadRequestError, BusyError, NotFoundError, SessionManager } from "./agent/session-manager.js";
@@ -87,6 +88,13 @@ export function buildApp(): App {
 
   // 外部浏览器（用户的 Chrome）里交给 Playwright 的标签页，输入框 @ 引用用；没开或还没连上时 tabs 是空的
   app.get("/chrome/tabs", async () => ({ enabled: externalBrowserEnabled, tabs: externalBrowserEnabled ? ((await chromeBridge.tabs()) ?? []) : [] }));
+
+  // 桌面工具（agent-desktop）能看到的窗口，输入框上面「Computer Use」引用用；本应用自己的窗口去掉
+  app.get("/desktop/windows", async () => {
+    if (!desktopEnabled) return { enabled: false, windows: [] };
+    const windows = stripOwn(await listWindows().catch(() => [])) as Awaited<ReturnType<typeof listWindows>>;
+    return { enabled: true, windows: windows.map((w) => ({ id: w.id, app: w.app_name ?? "", title: w.title ?? "" })) };
+  });
 
   // 桌面版外壳连上来（内置浏览器），见 browser/host.ts 和 desktop/src/browser/bridge.ts
   void app.register(websocket);
