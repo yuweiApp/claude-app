@@ -1,6 +1,4 @@
 import { useEffect, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { Item, SessionView, TaskItem } from "../state/session";
 import { Attachments } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
@@ -10,6 +8,7 @@ import { StepThumbs } from "./StepThumbs";
 import { formatShortDuration } from "./TasksPopover";
 import { MentionText } from "./MentionText";
 import { AnnotatableText, SentNotesChip } from "./ResponseAnnotations";
+import { ReplyMarkdown } from "./ReplyMarkdown";
 
 type UserItem = Extract<Item, { kind: "user" }>;
 type ResultItem = Extract<Item, { kind: "result" }>;
@@ -257,7 +256,7 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
       )}
       {live && view.streaming.text && (
         <div className="assistant streaming">
-          <Markdown remarkPlugins={[remarkGfm]}>{view.streaming.text}</Markdown>
+          <ReplyMarkdown>{view.streaming.text}</ReplyMarkdown>
         </div>
       )}
       {errors.map((u) => (
@@ -321,7 +320,7 @@ function UnitView({ unit, view }: { unit: Unit; view: SessionView }) {
     case "text":
       return (
         <AnnotatableText messageId={unit.key}>
-          <Markdown remarkPlugins={[remarkGfm]}>{unit.text}</Markdown>
+          <ReplyMarkdown>{unit.text}</ReplyMarkdown>
         </AnnotatableText>
       );
     case "steps":

@@ -36,6 +36,26 @@ export function newPanelState(): PanelState {
   return { tabs: [tab], active: tab.id };
 }
 
+/**
+ * 在面板里打开文件（同 codex-app-server）：已经开着就切过去；from 这个标签是「新标签页」「打开文件」或预览打开的，就在这个标签里换；
+ * 否则换掉别处预览打开的那个，没有就接在 from 后面新开一个。from 是目录树所在的标签，或者（回复里的链接）当前标签
+ */
+export function withFileOpen(s: PanelState, from: string, path: string, pin: boolean): PanelState {
+  const open = s.tabs.find((t) => t.kind === "files" && t.path === path);
+  const set = (id: string, tab: PanelTab) => ({ tabs: s.tabs.map((t) => (t.id === id ? tab : t)), active: id });
+  if (open) return set(open.id, { ...open, transient: open.kind === "files" && open.transient && !pin } as PanelTab);
+  const here = s.tabs.find((t) => t.id === from);
+  if (here?.kind === "new") return set(here.id, { id: here.id, kind: "files", path, transient: !pin });
+  if (here?.kind === "files" && (here.path === null || here.transient)) return set(here.id, { ...here, path, transient: !pin });
+  const preview = s.tabs.find((t) => t.kind === "files" && t.transient);
+  if (preview) return set(preview.id, { ...preview, path, transient: !pin } as PanelTab);
+  const tab: PanelTab = { id: crypto.randomUUID(), kind: "files", path, transient: !pin };
+  const index = s.tabs.findIndex((t) => t.id === from);
+  const tabs = [...s.tabs];
+  tabs.splice(index < 0 ? tabs.length : index + 1, 0, tab);
+  return { tabs, active: tab.id };
+}
+
 const WIDTH_KEY = "sidePanelWidth";
 const MIN_WIDTH = 320;
 /** 打开面板时对话区至少留这么宽 */
@@ -293,25 +313,7 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
   /** 新标签页里选了工具：这个标签页变成那个工具 */
   const replaceTab = (id: string, tab: PanelTab) =>
     onChange((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? tab : t)), active: tab.id }));
-  /**
-   * 在某个文件标签的目录树里选了文件（同 codex-app-server）：已经开着就切过去；
-   * 这个标签是「打开文件」或预览打开的，就在这个标签里换；否则换掉别处预览打开的那个，没有就接在后面新开一个
-   */
-  const openFile = (from: string, path: string, pin: boolean) =>
-    onChange((s) => {
-      const open = s.tabs.find((t) => t.kind === "files" && t.path === path);
-      const set = (id: string, tab: PanelTab) => ({ tabs: s.tabs.map((t) => (t.id === id ? tab : t)), active: id });
-      if (open) return set(open.id, { ...open, transient: open.kind === "files" && open.transient && !pin } as PanelTab);
-      const here = s.tabs.find((t) => t.id === from);
-      if (here?.kind === "files" && (here.path === null || here.transient)) return set(here.id, { ...here, path, transient: !pin });
-      const preview = s.tabs.find((t) => t.kind === "files" && t.transient);
-      if (preview) return set(preview.id, { ...preview, path, transient: !pin } as PanelTab);
-      const tab: PanelTab = { id: crypto.randomUUID(), kind: "files", path, transient: !pin };
-      const index = s.tabs.findIndex((t) => t.id === from);
-      const tabs = [...s.tabs];
-      tabs.splice(index < 0 ? tabs.length : index + 1, 0, tab);
-      return { tabs, active: tab.id };
-    });
+  const openFile = (from: string, path: string, pin: boolean) => onChange((s) => withFileOpen(s, from, path, pin));
   /** 目录树里重命名、拖动了（文件夹的路径以 / 结尾）：开着的文件标签跟着换路径，没保存的修改也跟过去 */
   const fileRenamed = (from: string, to: string) => {
     const remap = (p: string) => (p === from ? to : from.endsWith("/") && p.startsWith(from) ? to + p.slice(from.length) : null);

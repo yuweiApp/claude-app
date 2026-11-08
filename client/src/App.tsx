@@ -13,7 +13,8 @@ import { Sidebar, folderName, groupByFolder, sessionTitle } from "./components/S
 import { DEFAULT_SIDEBAR_WIDTH, SidebarResizer } from "./components/SidebarResizer";
 import { SidebarToggle } from "./components/SidebarToggle";
 import { SettingsPage } from "./components/SettingsPage";
-import { newPanelState, PanelIcon, SidePanel, type PanelState } from "./components/SidePanel";
+import { newPanelState, PanelIcon, SidePanel, withFileOpen, type PanelState } from "./components/SidePanel";
+import { FileLinkContext } from "./components/ReplyMarkdown";
 import { TasksPopover } from "./components/TasksPopover";
 import { TitleBar } from "./components/TitleBar";
 import { desktop } from "./desktop";
@@ -96,6 +97,24 @@ export function App() {
     }
   };
   const togglePanel = () => showPanel(!panelOpen);
+  // 回复里指向工作目录里文件的链接：打开右侧面板，在文件标签里显示
+  const fileLinks = useMemo(
+    () =>
+      panelCwd
+        ? {
+            cwd: panelCwd,
+            open: (path: string) => {
+              setPanels((all) => {
+                const state = panelOf(all, panelCwd);
+                return { ...all, [panelCwd]: withFileOpen(state, state.active, path, false) };
+              });
+              showPanel(true);
+            },
+          }
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [panelCwd],
+  );
 
   const deleteSessions = async (ids: string[]) => {
     const results = await Promise.allSettled(ids.map((id) => api.deleteSession(id)));
@@ -174,6 +193,7 @@ export function App() {
           </>
         )}
         {!settingsOpen && (
+          <FileLinkContext.Provider value={fileLinks}>
           <main>
             {error && (
               <div className="banner" onClick={() => setError(null)}>
@@ -243,6 +263,7 @@ export function App() {
             )}
             </div>
           </main>
+          </FileLinkContext.Provider>
         )}
       </div>
     </div>
