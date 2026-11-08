@@ -71,7 +71,7 @@ export interface TabEvent {
 
 /**
  * 标签页里的一次下载（setupSession 的 will-download），CDP 代理按它给 Playwright 报 Browser.downloadWillBegin / downloadProgress：
- * started 开始了（path 是要存到的位置），completed 存好了，cancelled / interrupted 取消、中断了
+ * started 开始了（path 是要存到的位置，suggestedFilename 是它的文件名），completed 存好了，cancelled / interrupted 取消、中断了
  */
 export interface DownloadEvent {
   guid: string;
@@ -171,6 +171,8 @@ const chromeUserAgent = (ua: string) => ua.replace(/ (?!Chrome\/|Safari\/|AppleW
 
 export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   private readonly tabs = new Map<string, Tab>();
+  /** 会话的工作目录（网关告诉的，bridge.ts），这个会话的标签页里的下载存到这里 */
+  private readonly sessionDirs = new Map<string, string>();
   /** 进行中的下载（guid 见 DownloadEvent），cancelDownload 用 */
   private readonly downloads = new Map<string, DownloadItem>();
   private park: BrowserWindow | null = null;
@@ -352,6 +354,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   /** 会话删除了：关掉它的所有标签页（AI 留下的、用户开的不会自动关，不关会一直留在后台） */
   closeSession(sessionId: string): void {
     for (const tab of this.list(sessionId)) this.close(tab.id, "user");
+    this.sessionDirs.delete(sessionId);
   }
 
   /** 一轮结束：关掉这个会话里 AI 开的、没留下的临时标签页（用户正在面板里看着的不关） */
@@ -668,6 +671,16 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     return new Response(new Uint8Array(icon.bytes), { headers: { "content-type": icon.type, "cache-control": "max-age=86400" } });
   }
 
+  /** 记下会话的工作目录（下载存到这里）；null 是网关不知道这个会话，之后存进系统的「下载」文件夹 */
+  setSessionDir(sessionId: string, dir: string | null): void {
+    if (dir) this.sessionDirs.set(sessionId, dir);
+    else this.sessionDirs.delete(sessionId);
+  }
+
+  hasSessionDir(sessionId: string): boolean {
+    return this.sessionDirs.has(sessionId);
+  }
+
   /** 取消一个进行中的下载（Playwright 的 download.cancel()）；已经结束的不管 */
   cancelDownload(guid: string): void {
     this.downloads.get(guid)?.cancel();
@@ -719,12 +732,19 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     const allowed = new Set(["clipboard-sanitized-write"]);
     ses.setPermissionRequestHandler((_wc, permission, callback) => callback(allowed.has(permission)));
     ses.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
-    // 下载直接存进系统的「下载」文件夹，同名时加 (1)、(2)：不指定位置会弹「另存为」，停放窗口里的标签页弹出来看不见。
+    // 下载直接存进标签页所属会话的工作目录（网关告诉的，见 setSessionDir），不知道时存进系统的「下载」文件夹；同名时加 (1)、(2)。
+    // 不指定位置会弹「另存为」，停放窗口里的标签页弹出来看不见。
     // 开始、结束都发出 download 事件，CDP 代理照 Chrome 的样子报给 Playwright（page.waitForEvent('download') 这些才能用）
     const downloading = new Set<string>();
     ses.on("will-download", (_e, item, contents) => {
-      const dir = app.getPath("downloads");
-      fs.mkdirSync(dir, { recursive: true });
+      const tab = [...this.tabs.values()].find((t) => t.view.webContents === contents);
+      let dir = (tab && this.sessionDirs.get(tab.sessionId)) || app.getPath("downloads");
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+      } catch {
+        dir = app.getPath("downloads");
+        fs.mkdirSync(dir, { recursive: true });
+      }
       const name = path.basename(item.getFilename().replace(/[\\/]/g, "_")) || "download";
       const ext = path.extname(name);
       const stem = name.slice(0, name.length - ext.length);
@@ -732,9 +752,9 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
       for (let i = 1; fs.existsSync(target) || downloading.has(target); i++) target = path.join(dir, `${stem} (${i})${ext}`);
       item.setSavePath(target);
       downloading.add(target);
-      const tab = [...this.tabs.values()].find((t) => t.view.webContents === contents);
       const guid = randomUUID();
-      const base = { guid, url: item.getURL(), suggestedFilename: name, path: target };
+      // 报给 Playwright 的文件名用实际存下的（同名时带 (1)），download.suggestedFilename() 就是磁盘上的名字
+      const base = { guid, url: item.getURL(), suggestedFilename: path.basename(target), path: target };
       this.downloads.set(guid, item);
       if (tab) this.emit("download", tab, { ...base, state: "started", receivedBytes: 0, totalBytes: item.getTotalBytes() });
       item.once("done", (_e, state) => {

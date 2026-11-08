@@ -51,6 +51,11 @@ export class BrowserHost {
   /** 这个会话的 worker 在运行时，标签页变化直接交给它（worker-repl.ts），不在这里攒 */
   private readonly tabListeners = new Map<string, (event: TabEvent) => void>();
 
+  /**
+   * @param sessionDir 会话的工作目录（不知道这个会话时 null）：桌面版问了就回答，这个会话的标签页里的下载存到那里
+   */
+  constructor(private readonly sessionDir: (sessionId: string) => Promise<string | null> = async () => null) {}
+
   get connected(): boolean {
     return this.socket !== null;
   }
@@ -85,6 +90,14 @@ export class BrowserHost {
         const list = this.tabEvents.get(msg.session) ?? [];
         if (list.length < MAX_TAB_EVENTS) list.push(msg.event);
         this.tabEvents.set(msg.session, list);
+      }
+      else if (msg.type === "sessionDir" && msg.session) {
+        const session = msg.session;
+        void this.sessionDir(session)
+          .catch(() => null)
+          .then((dir) => {
+            if (this.socket === socket) this.post({ type: "sessionDir", session, dir });
+          });
       }
       else if ((msg.type === "kept" || msg.type === "temporary") && typeof msg.id === "number") {
         this.waiting.get(msg.id)?.(msg.type === "kept" ? (msg.tab ?? null) : (msg.tabs ?? null));

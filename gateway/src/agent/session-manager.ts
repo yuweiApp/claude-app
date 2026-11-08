@@ -103,6 +103,13 @@ export class SessionManager {
     return this.launch(sessionId, true, { cwd: info.cwd || config.workspaceDir });
   }
 
+  /** 会话的工作目录；没有这个会话时 null */
+  async cwd(sessionId: string): Promise<string | null> {
+    const session = this.active.get(sessionId);
+    if (session) return session.cwd;
+    return (await getSessionInfo(sessionId))?.cwd || null;
+  }
+
   async list(): Promise<SessionListItem[]> {
     // 不传 dir：所有工作目录（项目）的会话
     const stored: SessionListItem[] = (await listSessions()).map((info) => ({ ...info, chat: isChatCwd(info.cwd), state: this.active.get(info.sessionId)?.state }));

@@ -44,7 +44,8 @@ export function buildApp(): App {
   });
   const hub = new EventHub(config.eventBufferSize);
   const terminals = new TerminalManager();
-  const browser = new BrowserHost();
+  // 桌面版问会话的工作目录（内置浏览器的下载存到那里）时用 sessions 回答，两边互相引用，所以传函数
+  const browser = new BrowserHost((sessionId) => sessions.cwd(sessionId));
   const sessions = new SessionManager(hub, app.log, new ConversationLog(config.conversationLog, app.log), terminals, browser);
 
   if (config.apiToken) {

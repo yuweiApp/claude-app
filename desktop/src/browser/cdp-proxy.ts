@@ -11,7 +11,7 @@ import type { BrowserViews, DownloadEvent, Tab } from "./views.js";
  *
  * 标签页在 Playwright 这边的会话号是 "S" + targetId；iframe、Worker 等子会话的号由调试接口分配，原样转发
  *
- * 下载由外壳自己存进系统的「下载」文件夹（views.ts 的 setupSession），调试接口不报下载事件。这里照 Chrome 的协议补上：
+ * 下载由外壳自己存（views.ts 的 setupSession：会话的工作目录，不知道时系统的「下载」文件夹），调试接口不报下载事件。这里照 Chrome 的协议补上：
  * Playwright 连上时发 Browser.setDownloadBehavior（allowAndName，downloadPath 是它的临时目录），之后下载开始报
  * Browser.downloadWillBegin，结束时把文件链接（不行就复制）成 downloadPath/guid 再报 Browser.downloadProgress（completed / canceled），
  * page.waitForEvent('download')、download.path()、saveAs() 就和普通 Chrome 一样能用
