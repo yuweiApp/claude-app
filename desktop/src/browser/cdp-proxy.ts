@@ -1,4 +1,6 @@
-import type { BrowserViews, Tab } from "./views.js";
+import fs from "node:fs/promises";
+import path from "node:path";
+import type { BrowserViews, DownloadEvent, Tab } from "./views.js";
 
 /**
  * 一个对话会话的 CDP 代理（做法参照 VS Code 的 browserView/common/cdp/proxy.ts）：
@@ -8,6 +10,11 @@ import type { BrowserViews, Tab } from "./views.js";
  * - 发给标签页的命令转给那个标签页的 webContents.debugger
  *
  * 标签页在 Playwright 这边的会话号是 "S" + targetId；iframe、Worker 等子会话的号由调试接口分配，原样转发
+ *
+ * 下载由外壳自己存进系统的「下载」文件夹（views.ts 的 setupSession），调试接口不报下载事件。这里照 Chrome 的协议补上：
+ * Playwright 连上时发 Browser.setDownloadBehavior（allowAndName，downloadPath 是它的临时目录），之后下载开始报
+ * Browser.downloadWillBegin，结束时把文件链接（不行就复制）成 downloadPath/guid 再报 Browser.downloadProgress（completed / canceled），
+ * page.waitForEvent('download')、download.path()、saveAs() 就和普通 Chrome 一样能用
  */
 
 type Message = { id?: number; method?: string; params?: Record<string, unknown>; sessionId?: string };
@@ -22,6 +29,10 @@ export class CdpProxy {
   private readonly unsubscribe: () => void;
   /** AI 上次让面板切过去的标签页：同一个标签页只切一次，用户手动切走后，AI 接着在原来的标签页上点不会把面板拉回来 */
   private lastActivated: string | null = null;
+  /** Playwright 要的下载目录（Browser.setDownloadBehavior）；没要、或者要 deny 时不报下载事件 */
+  private downloadPath: string | null = null;
+  /** 开始时报给 Playwright 的下载：guid → 当时的下载目录、downloadWillBegin 报成功了没有；结束时接着报 downloadProgress */
+  private readonly downloads = new Map<string, { dir: string; begun: Promise<boolean> }>();
 
   constructor(
     private readonly sessionId: string,
@@ -52,15 +63,20 @@ export class CdpProxy {
       if (method === "Target.detachedFromTarget") this.children.delete((params as { sessionId: string }).sessionId);
       this.send({ method, params, sessionId: child || pageSession(tab.id) });
     };
+    const onDownload = (tab: Tab, event: DownloadEvent) => {
+      if (mine(tab)) this.download(tab, event);
+    };
     views.on("created", onCreated);
     views.on("closed", onClosed);
     views.on("changed", onChanged);
     views.on("cdp", onCdp);
+    views.on("download", onDownload);
     this.unsubscribe = () => {
       views.off("created", onCreated);
       views.off("closed", onClosed);
       views.off("changed", onChanged);
       views.off("cdp", onCdp);
+      views.off("download", onDownload);
     };
   }
 
@@ -103,6 +119,36 @@ export class CdpProxy {
     const work = tab.view.webContents.debugger.sendCommand(method, msg.params, child);
     // 截图要等新的一帧，后台标签页要先让它出画面
     return method === "Page.captureScreenshot" ? this.views.whileRendering(tab.id, work) : work;
+  }
+
+  /** 下载开始、结束：照 Chrome 报给 Playwright（见类的说明） */
+  private download(tab: Tab, event: DownloadEvent): void {
+    const { guid } = event;
+    if (event.state === "started") {
+      const dir = this.downloadPath;
+      if (!dir || !this.attached.has(tab.id)) return;
+      // 事件里的 frameId 让 Playwright 找到是哪个标签页的下载，用主框架的
+      const begun = tab.view.webContents.debugger.sendCommand("Page.getFrameTree").then(
+        (tree: { frameTree: { frame: { id: string } } }) => {
+          this.event("Browser.downloadWillBegin", { frameId: tree.frameTree.frame.id, guid, url: event.url, suggestedFilename: event.suggestedFilename });
+          return true;
+        },
+        () => false,
+      );
+      this.downloads.set(guid, { dir, begun });
+      return;
+    }
+    const started = this.downloads.get(guid);
+    this.downloads.delete(guid);
+    if (!started) return;
+    const { dir, begun } = started;
+    void begun.then(async (ok) => {
+      if (!ok) return;
+      let state = event.state === "completed" ? "completed" : "canceled";
+      // Playwright 在 downloadPath/guid 读文件（download.path()、saveAs()）
+      if (state === "completed") await linkOrCopy(event.path, path.join(dir, guid)).catch(() => (state = "canceled"));
+      this.event("Browser.downloadProgress", { guid, totalBytes: event.totalBytes, receivedBytes: event.receivedBytes, state });
+    });
   }
 
   /** 让面板切到 AI 在操作的标签页；force 是 AI 明确要切（bringToFront、activateTarget），否则同一个标签页只切一次 */
@@ -164,6 +210,14 @@ export class CdpProxy {
         return { windowId: 1, bounds: { left: 0, top: 0, width: 1280, height: 800, windowState: "normal" } };
       case "Target.createBrowserContext":
         throw new Error("内置浏览器不支持新建浏览器上下文");
+      case "Browser.setDownloadBehavior": {
+        const allow = params.behavior === "allow" || params.behavior === "allowAndName";
+        this.downloadPath = allow && params.eventsEnabled && typeof params.downloadPath === "string" ? params.downloadPath : null;
+        return {};
+      }
+      case "Browser.cancelDownload":
+        if (typeof params.guid === "string") this.views.cancelDownload(params.guid);
+        return {};
       default:
         // 下载设置、权限重置、关闭浏览器等：这里没有对应的东西，当作成功
         return {};
@@ -196,6 +250,12 @@ export class CdpProxy {
 }
 
 const pageSession = (targetId: string) => `S${targetId}`;
+
+/** 下载好的文件给 Playwright 一份：同一个盘上硬链接（不占空间），不行就复制 */
+async function linkOrCopy(from: string, to: string): Promise<void> {
+  await fs.mkdir(path.dirname(to), { recursive: true });
+  await fs.link(from, to).catch(() => fs.copyFile(from, to));
+}
 /** 算作 AI 在操作这个标签页的命令：跳转、输入、读页面、截图 */
 const AGENT_ACTIONS = /^(Input\.|DOM\.|Page\.(navigate|reload|captureScreenshot)|Runtime\.(evaluate|callFunctionOn))/;
 /**

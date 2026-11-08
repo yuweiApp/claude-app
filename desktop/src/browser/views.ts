@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
-import { app, BrowserWindow, clipboard, Menu, session, WebContentsView, type MenuItemConstructorOptions, type Rectangle, type Session, type WebContents } from "electron";
+import { app, BrowserWindow, clipboard, Menu, session, WebContentsView, type DownloadItem, type MenuItemConstructorOptions, type Rectangle, type Session, type WebContents } from "electron";
 import { BrowserHistory } from "./history.js";
 
 /**
@@ -57,19 +57,31 @@ export interface Tab extends TabInfo {
  *   agent-input / user-input（网页弹出的，弹出前 AI / 用户刚在原标签页上点击或按键）、page（网页自己弹出的，前面没有点击按键）
  * - closed：agent（AI 用 page.close）、user（用户点标签上的 ×）、turn-end（一轮结束自动关的临时标签页）、page（网页 window.close 或崩溃）
  * - navigated：user（用户在地址栏跳转、点后退、前进、刷新）
- * - downloaded：标签页里的下载结束了（存进系统的「下载」文件夹，见 setupSession），没有 by：网页脚本触发的下载分不出是谁
  */
 export interface TabEvent {
-  kind: "opened" | "closed" | "navigated" | "downloaded";
-  by?: "agent" | "user" | "agent-input" | "user-input" | "page" | "turn-end";
+  kind: "opened" | "closed" | "navigated";
+  by: "agent" | "user" | "agent-input" | "user-input" | "page" | "turn-end";
   tabId: string;
   url: string;
   title: string;
   openerId?: string;
   /** navigated 的方式 */
   action?: "address" | "back" | "forward" | "reload";
-  /** downloaded：存到哪里、结果（completed 存好了，cancelled 取消了，interrupted 中断了）、文件大小（字节）、下载地址 */
-  download?: { path: string; state: "completed" | "cancelled" | "interrupted"; bytes: number; url: string };
+}
+
+/**
+ * 标签页里的一次下载（setupSession 的 will-download），CDP 代理按它给 Playwright 报 Browser.downloadWillBegin / downloadProgress：
+ * started 开始了（path 是要存到的位置），completed 存好了，cancelled / interrupted 取消、中断了
+ */
+export interface DownloadEvent {
+  guid: string;
+  url: string;
+  suggestedFilename: string;
+  path: string;
+  state: "started" | "completed" | "cancelled" | "interrupted";
+  /** 已收到、总共的字节数（总数不知道时是 0） */
+  receivedBytes: number;
+  totalBytes: number;
 }
 
 /** browser-tabs.json 里的一个标签页 */
@@ -147,6 +159,8 @@ export interface BrowserViewsEvents {
   cdp: [tab: Tab, method: string, params: unknown, sessionId: string];
   /** 标签页的变化和是谁做的，发给网关 */
   tabEvent: [sessionId: string, event: TabEvent];
+  /** 标签页里的下载开始、结束 */
+  download: [tab: Tab, event: DownloadEvent];
 }
 
 const PARTITION = "persist:claude-browser";
@@ -157,6 +171,8 @@ const chromeUserAgent = (ua: string) => ua.replace(/ (?!Chrome\/|Safari\/|AppleW
 
 export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   private readonly tabs = new Map<string, Tab>();
+  /** 进行中的下载（guid 见 DownloadEvent），cancelDownload 用 */
+  private readonly downloads = new Map<string, DownloadItem>();
   private park: BrowserWindow | null = null;
   private shown: Tab | null = null;
   /** 网页图标的缓存：图标网址 → favicon:// 地址（取不到是 null）；编号 → 图片 */
@@ -652,6 +668,11 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     return new Response(new Uint8Array(icon.bytes), { headers: { "content-type": icon.type, "cache-control": "max-age=86400" } });
   }
 
+  /** 取消一个进行中的下载（Playwright 的 download.cancel()）；已经结束的不管 */
+  cancelDownload(guid: string): void {
+    this.downloads.get(guid)?.cancel();
+  }
+
   /** 发出标签页的变化（bridge 转给网关）；url 不给时用标签页现在的网址 */
   private emitTabEvent(tab: Tab, kind: TabEvent["kind"], by: TabEvent["by"], url?: string, action?: TabEvent["action"]): void {
     this.emit("tabEvent", tab.sessionId, {
@@ -698,7 +719,8 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     const allowed = new Set(["clipboard-sanitized-write"]);
     ses.setPermissionRequestHandler((_wc, permission, callback) => callback(allowed.has(permission)));
     ses.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
-    // 下载直接存进系统的「下载」文件夹，同名时加 (1)、(2)：不指定位置会弹「另存为」，停放窗口里的标签页弹出来看不见
+    // 下载直接存进系统的「下载」文件夹，同名时加 (1)、(2)：不指定位置会弹「另存为」，停放窗口里的标签页弹出来看不见。
+    // 开始、结束都发出 download 事件，CDP 代理照 Chrome 的样子报给 Playwright（page.waitForEvent('download') 这些才能用）
     const downloading = new Set<string>();
     ses.on("will-download", (_e, item, contents) => {
       const dir = app.getPath("downloads");
@@ -710,18 +732,15 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
       for (let i = 1; fs.existsSync(target) || downloading.has(target); i++) target = path.join(dir, `${stem} (${i})${ext}`);
       item.setSavePath(target);
       downloading.add(target);
-      // 哪个标签页下载的：结束时告诉网关（模型的工具结果里会写），网页脚本触发的下载 Playwright 收不到 download 事件
       const tab = [...this.tabs.values()].find((t) => t.view.webContents === contents);
+      const guid = randomUUID();
+      const base = { guid, url: item.getURL(), suggestedFilename: name, path: target };
+      this.downloads.set(guid, item);
+      if (tab) this.emit("download", tab, { ...base, state: "started", receivedBytes: 0, totalBytes: item.getTotalBytes() });
       item.once("done", (_e, state) => {
         downloading.delete(target);
-        if (!tab) return;
-        this.emit("tabEvent", tab.sessionId, {
-          kind: "downloaded",
-          tabId: tab.id,
-          url: tab.url,
-          title: tab.title,
-          download: { path: target, state, bytes: item.getReceivedBytes(), url: item.getURL() },
-        });
+        this.downloads.delete(guid);
+        if (tab) this.emit("download", tab, { ...base, state, receivedBytes: item.getReceivedBytes(), totalBytes: item.getTotalBytes() });
       });
     });
   }
