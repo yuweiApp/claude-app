@@ -227,6 +227,11 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     for (const event of ["created", "changed", "closed"] as const) this.on(event, () => this.scheduleSave());
   }
 
+  /** 所有标签页共用的 Electron 会话（cookie、缓存都在这里），CDP 代理的 Storage.*Cookies 用它 */
+  get browserSession(): Session {
+    return session.fromPartition(PARTITION);
+  }
+
   /** app ready 之后调用一次 */
   async init(): Promise<void> {
     app.userAgentFallback = chromeUserAgent(app.userAgentFallback);

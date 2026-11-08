@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { clearCookies, getCookies, setCookies } from "./cookies.js";
 import type { BrowserViews, DownloadEvent, Tab } from "./views.js";
 
 /**
@@ -218,6 +219,13 @@ export class CdpProxy {
       case "Browser.cancelDownload":
         if (typeof params.guid === "string") this.views.cancelDownload(params.guid);
         return {};
+      // 所有会话的标签页共用一个 Electron 会话，cookie 也是共用的
+      case "Storage.getCookies":
+        return getCookies(this.views.browserSession);
+      case "Storage.setCookies":
+        return setCookies(this.views.browserSession, params);
+      case "Storage.clearCookies":
+        return clearCookies(this.views.browserSession);
       default:
         // 下载设置、权限重置、关闭浏览器等：这里没有对应的东西，当作成功
         return {};
