@@ -207,8 +207,8 @@ function NoteIcon() {
 
 const EDITOR_W = 340;
 
-/** 写回复的框，挂在选区（新的注释）或编号（已有的）上方，放不下时放到下面；会话里只放一个 */
-export function AnnotationEditor({ sessionId }: { sessionId: string | null }) {
+/** 写回复的框，挂在选区（新的注释）或编号（已有的）上方，放不下时放到下面；会话里只放一个。onSaved：添加、保存后调用（把焦点交给输入框，再按回车就发出去） */
+export function AnnotationEditor({ sessionId, onSaved }: { sessionId: string | null; onSaved?: () => void }) {
   const state = useEditor();
   const annotations = useResponseAnnotations(sessionId);
   const [, rerender] = useState(0);
@@ -279,6 +279,7 @@ export function AnnotationEditor({ sessionId }: { sessionId: string | null }) {
     if (state.mode === "new") addResponseAnnotation(sessionId, state.text, draft, state.source);
     else updateResponseAnnotation(sessionId, state.id, draft);
     setEditor(null);
+    onSaved?.();
   };
 
   return createPortal(

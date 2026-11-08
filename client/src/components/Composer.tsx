@@ -28,6 +28,8 @@ export interface ComposerHandle {
   mentionTab: (title: string, url: string, chrome: boolean) => void;
   /** 引用整个浏览器（「标签页」里点浏览器那一行）：插在光标处，chrome 时是外部浏览器 */
   mentionBrowser: (chrome: boolean) => void;
+  /** 把焦点给输入框，光标留在原来的位置 */
+  focus: () => void;
 }
 
 interface Props {
@@ -151,6 +153,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
       setPickedTabs((prev) => (prev.some((p) => p.token === token) ? prev : [...prev, { token, full: full(name) }]));
       insertAtCaret(token);
     },
+    focus: () => textareaRef.current?.focus(),
   }));
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [sending, setSending] = useState(false);

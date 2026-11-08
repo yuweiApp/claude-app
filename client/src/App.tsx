@@ -518,7 +518,7 @@ function Chat({
       {!atBottom && <ScrollToBottom running={view.state === "running"} onClick={() => scrollToBottom("smooth")} />}
       </div>
       <AnnotationSelectionButton scrollRef={scrollRef} />
-      <AnnotationEditor sessionId={sessionId} />
+      <AnnotationEditor sessionId={sessionId} onSaved={() => composerRef.current?.focus()} />
       <Composer
         running={view.state === "running"}
         maxUploadMb={config.maxUploadMb}
