@@ -65,6 +65,9 @@ export function buildOptions(launch: SessionLaunch): Options {
     ...(allowedTools.length ? { allowedTools } : {}),
     disallowedTools: config.disallowedTools,
     settingSources: ["user", "project", "local"],
+    // WebFetch 抓网页前先问 api.anthropic.com 这个域名能不能抓，不支持的地区（如中国）一律 403，所有网址都报
+    // "Unable to verify if domain … is safe to fetch"，网页本身其实能连上。跳过这一步
+    settings: { skipWebFetchPreflight: true },
     mcpServers: {
       ...enabledMcpServers(),
       ...(terminal ? { [TERMINAL_SERVER]: terminal } : {}),

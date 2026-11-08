@@ -174,6 +174,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 
 - `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`：关掉遥测、错误上报、自动更新检查，不往 Anthropic 发东西。
 - `WebSearch` 是 Anthropic 服务端工具，第三方模型用不了，默认放进 `disallowedTools`。
+- `WebFetch` 每次抓网页前会先请求 `api.anthropic.com/api/web/domain_info?domain=<域名>` 查域名黑名单，Anthropic 不支持的地区（如中国）这个接口一律返回 403，所有网址都报 "Unable to verify if domain … is safe to fetch"，网页本身其实能连上。网关在 SDK 的 `settings` 选项里设 `skipWebFetchPreflight: true` 跳过这一步。
 - Windows 上命令输出的编码：Claude Code 的 Bash 工具跑的是 Git Bash，模型在里面调 `powershell.exe`、`ipconfig` 等原生程序时，它们按控制台代码页输出（中文系统是 936，GBK），Claude Code 按 UTF-8 读，中文全是乱码。`agentEnv()` 在 Windows 上给子进程设 `BASH_ENV`，指向网关写在 `$CLAUDE_CONFIG_DIR/claude-app-bash-env.sh` 的脚本，每次起 bash 先 `chcp.com 65001`；环境里原来有 `BASH_ENV` 的放进 `CLAUDE_APP_USER_BASH_ENV`，脚本最后接着 source 它。Claude Code 自己的 PowerShell 工具（`CLAUDE_CODE_USE_POWERSHELL_TOOL=1`，预览）也是先 `chcp 65001` 再起 PowerShell。
 - 追加的系统提示（`APPEND_SYSTEM_PROMPT`，经 `systemPrompt.append` 接在 Claude Code 的提示词后面）：网关代码里没有默认值，不设或设成空串就不追加；`.env.example` 里写了一句，要求调用工具前用一句话说明要做什么、做事过程中有重要发现或改变方向时说一句：SDK 会话拿到的 Claude Code 提示词是精简版（截过实际请求，约 5800 字），没有完整版里「Before your first tool call, say in a sentence what you're about to do」那段；Claude 模型不说也会边做边说，GPT 类模型（`gpt-6-luna`）不被要求就一句不说，工具调用之间没有文字（两台机器统计 119 次带工具调用的响应，一次都没有）。加上后新会话里会先说一句再调用工具；老会话里前面几十轮都没说，模型多半照着历史继续不说。Codex 的提示词里也有同样的要求（Preamble messages）。
 - 兼容性需要实测：工具调用格式、`thinking` 块、prompt caching 字段、并行工具调用。不兼容时优先在 newapi 侧修，其次关掉对应特性（如 `MAX_THINKING_TOKENS=0`）。
