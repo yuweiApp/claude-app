@@ -33,6 +33,22 @@ export interface TemporaryTab {
   latest: boolean;
 }
 
+/**
+ * 一次下载的现状（desktop/src/browser/views.ts 的 DownloadInfo，两边各写一份），REPL 的 downloads() 返回它：
+ * state 是 progressing（进行中，paused 时暂停了）、completed、cancelled、interrupted；totalBytes 不知道时是 0；startTime 是毫秒时间戳
+ */
+export interface DownloadInfo {
+  filename: string;
+  path: string;
+  url: string;
+  state: "progressing" | "completed" | "cancelled" | "interrupted";
+  paused: boolean;
+  receivedBytes: number;
+  totalBytes: number;
+  bytesPerSecond: number;
+  startTime: number;
+}
+
 /** 每个会话最多攒多少条没告诉模型的标签页变化 */
 const MAX_TAB_EVENTS = 50;
 
@@ -73,6 +89,7 @@ export class BrowserHost {
         id?: number;
         tab?: { title: string; url: string } | null;
         tabs?: TemporaryTab[];
+        downloads?: DownloadInfo[];
         event?: TabEvent;
         pids?: number[];
       };
@@ -99,8 +116,8 @@ export class BrowserHost {
             if (this.socket === socket) this.post({ type: "sessionDir", session, dir });
           });
       }
-      else if ((msg.type === "kept" || msg.type === "temporary") && typeof msg.id === "number") {
-        this.waiting.get(msg.id)?.(msg.type === "kept" ? (msg.tab ?? null) : (msg.tabs ?? null));
+      else if ((msg.type === "kept" || msg.type === "temporary" || msg.type === "downloads") && typeof msg.id === "number") {
+        this.waiting.get(msg.id)?.(msg.type === "kept" ? (msg.tab ?? null) : msg.type === "temporary" ? (msg.tabs ?? null) : (msg.downloads ?? null));
         this.waiting.delete(msg.id);
       }
     });
@@ -153,6 +170,14 @@ export class BrowserHost {
   temporaryTabs(sessionId: string): Promise<TemporaryTab[] | null> {
     if (!this.socket) return Promise.resolve(null);
     return this.request<TemporaryTab[]>("temporary", sessionId, 2000);
+  }
+
+  /** 这个会话的下载和进度（REPL 的 downloads()）；桌面版没在运行、没回复（旧版本的桌面版）时报错 */
+  async downloads(sessionId: string): Promise<DownloadInfo[]> {
+    if (!this.socket) throw new Error("内置浏览器只在桌面版里有：桌面版没有运行");
+    const list = await this.request<DownloadInfo[]>("downloads", sessionId, 5000);
+    if (!list) throw new Error("桌面版没有回复下载列表");
+    return list;
   }
 
   /** 发一个要外壳回复的请求，timeoutMs 内没回复是 null */

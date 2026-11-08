@@ -1,6 +1,6 @@
 import { parentPort } from "node:worker_threads";
 import { chromium, type Browser, type BrowserContext } from "playwright-core";
-import type { CdpTransport, TabEvent } from "./host.js";
+import type { CdpTransport, DownloadInfo, TabEvent } from "./host.js";
 import { BrowserRepl, type ToolOutput } from "./repl.js";
 import type { ReplCall, ToMain, ToWorker } from "./worker-protocol.js";
 
@@ -76,7 +76,19 @@ async function getContext(): Promise<BrowserContext> {
 
 // ───────────── REPL 和主线程发来的调用 ─────────────
 
-const repl = new BrowserRepl(getContext, () => tabEvents.splice(0));
+// ───────────── 下载列表（REPL 的 downloads()，经主线程问桌面版） ─────────────
+
+const downloadReplies = new Map<number, (reply: { downloads?: DownloadInfo[]; error?: string }) => void>();
+
+function listDownloads(): Promise<DownloadInfo[]> {
+  const req = nextReq++;
+  return new Promise((resolve, reject) => {
+    downloadReplies.set(req, ({ downloads, error }) => (downloads ? resolve(downloads) : reject(new Error(error ?? "没有取到下载列表"))));
+    post({ type: "downloads", req });
+  });
+}
+
+const repl = new BrowserRepl(getContext, () => tabEvents.splice(0), listDownloads);
 /** 还在跑的调用，取消时用 */
 const running = new Map<number, AbortController>();
 
@@ -130,6 +142,10 @@ port.on("message", (msg: ToWorker) => {
     }
     case "tabEvent":
       if (tabEvents.length < MAX_TAB_EVENTS) tabEvents.push(msg.event);
+      break;
+    case "downloads":
+      downloadReplies.get(msg.req)?.(msg);
+      downloadReplies.delete(msg.req);
       break;
   }
 });

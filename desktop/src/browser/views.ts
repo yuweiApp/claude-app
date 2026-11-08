@@ -84,6 +84,25 @@ export interface DownloadEvent {
   totalBytes: number;
 }
 
+/**
+ * 一次下载的现状（downloadsOf，网关 REPL 的 downloads() 返回它；gateway/src/browser/host.ts 里有一份同样的）：
+ * state 是 progressing（进行中，paused 时暂停了）、completed、cancelled、interrupted；totalBytes 不知道时是 0；startTime 是毫秒时间戳
+ */
+export interface DownloadInfo {
+  filename: string;
+  path: string;
+  url: string;
+  state: "progressing" | "completed" | "cancelled" | "interrupted";
+  paused: boolean;
+  receivedBytes: number;
+  totalBytes: number;
+  bytesPerSecond: number;
+  startTime: number;
+}
+
+/** 每个会话留多少个结束了的下载（downloadsOf） */
+const MAX_DOWNLOADS = 20;
+
 /** browser-tabs.json 里的一个标签页 */
 interface SavedTab {
   key: string;
@@ -173,8 +192,8 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   private readonly tabs = new Map<string, Tab>();
   /** 会话的工作目录（网关告诉的，bridge.ts），这个会话的标签页里的下载存到这里 */
   private readonly sessionDirs = new Map<string, string>();
-  /** 进行中的下载（guid 见 DownloadEvent），cancelDownload 用 */
-  private readonly downloads = new Map<string, DownloadItem>();
+  /** 下载（guid 见 DownloadEvent）：进行中的和结束了的，按开始的先后；cancelDownload、downloadsOf 用，每个会话只留最近 MAX_DOWNLOADS 个 */
+  private readonly downloads = new Map<string, { sessionId: string | null; item: DownloadItem; path: string }>();
   private park: BrowserWindow | null = null;
   private shown: Tab | null = null;
   /** 网页图标的缓存：图标网址 → favicon:// 地址（取不到是 null）；编号 → 图片 */
@@ -355,6 +374,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   closeSession(sessionId: string): void {
     for (const tab of this.list(sessionId)) this.close(tab.id, "user");
     this.sessionDirs.delete(sessionId);
+    for (const [guid, d] of this.downloads) if (d.sessionId === sessionId && d.item.getState() !== "progressing") this.downloads.delete(guid);
   }
 
   /** 一轮结束：关掉这个会话里 AI 开的、没留下的临时标签页（用户正在面板里看着的不关） */
@@ -683,7 +703,25 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
 
   /** 取消一个进行中的下载（Playwright 的 download.cancel()）；已经结束的不管 */
   cancelDownload(guid: string): void {
-    this.downloads.get(guid)?.cancel();
+    this.downloads.get(guid)?.item.cancel();
+  }
+
+  /** 这个会话的标签页里的下载（进行中的和结束了的，先开始的在前），进度是 Electron 下载对象上的实时数据 */
+  downloadsOf(sessionId: string): DownloadInfo[] {
+    return [...this.downloads.values()]
+      .filter((d) => d.sessionId === sessionId)
+      .map(({ item, path: file }) => ({
+        filename: path.basename(file),
+        path: file,
+        // data: 地址可能有几 MB（网页把图片编码进链接），只留开头
+        url: item.getURL().length > 300 ? `${item.getURL().slice(0, 300)}…` : item.getURL(),
+        state: item.getState(),
+        paused: item.isPaused(),
+        receivedBytes: item.getReceivedBytes(),
+        totalBytes: item.getTotalBytes(),
+        bytesPerSecond: item.getState() === "progressing" ? item.getCurrentBytesPerSecond() : 0,
+        startTime: Math.round(item.getStartTime() * 1000),
+      }));
   }
 
   /** 发出标签页的变化（bridge 转给网关）；url 不给时用标签页现在的网址 */
@@ -755,11 +793,14 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
       const guid = randomUUID();
       // 报给 Playwright 的文件名用实际存下的（同名时带 (1)），download.suggestedFilename() 就是磁盘上的名字
       const base = { guid, url: item.getURL(), suggestedFilename: path.basename(target), path: target };
-      this.downloads.set(guid, item);
+      const sessionId = tab?.sessionId ?? null;
+      this.downloads.set(guid, { sessionId, item, path: target });
+      // 每个会话只留最近的几个（进行中的不删）
+      const mine = [...this.downloads].filter(([, d]) => d.sessionId === sessionId && d.item.getState() !== "progressing");
+      for (const [old] of mine.slice(0, Math.max(0, mine.length - MAX_DOWNLOADS))) this.downloads.delete(old);
       if (tab) this.emit("download", tab, { ...base, state: "started", receivedBytes: 0, totalBytes: item.getTotalBytes() });
       item.once("done", (_e, state) => {
         downloading.delete(target);
-        this.downloads.delete(guid);
         if (tab) this.emit("download", tab, { ...base, state, receivedBytes: item.getReceivedBytes(), totalBytes: item.getTotalBytes() });
       });
     });

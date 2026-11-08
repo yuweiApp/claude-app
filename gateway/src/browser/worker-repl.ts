@@ -175,6 +175,12 @@ export class WorkerRepl implements Repl {
       case "cdp":
         this.transports.get(msg.conn)?.send(msg.message);
         break;
+      case "downloads":
+        this.host.downloads(this.sessionId).then(
+          (downloads) => this.send(worker, { type: "downloads", req: msg.req, downloads }),
+          (err: unknown) => this.send(worker, { type: "downloads", req: msg.req, error: err instanceof Error ? err.message : String(err) }),
+        );
+        break;
       case "cdpClose": {
         const transport = this.transports.get(msg.conn);
         this.transports.delete(msg.conn);

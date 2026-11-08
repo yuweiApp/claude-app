@@ -9,10 +9,12 @@ import type { BrowserViews } from "./views.js";
  *   { type: "turnEnded", session }（一轮结束，关掉 AI 的临时标签页）、{ type: "keep", session, id }（browser_keep_tab）、
  *   { type: "closeSession", session }（会话删除了，关掉它的所有标签页）、
  *   { type: "temporary", session, id }（问这个会话现在有哪些临时标签页）、
- *   { type: "sessionDir", session, dir }（会话的工作目录，回答下面的问题；网关不知道这个会话时 dir 是 null）
+ *   { type: "sessionDir", session, dir }（会话的工作目录，回答下面的问题；网关不知道这个会话时 dir 是 null）、
+ *   { type: "downloads", session, id }（问这个会话的下载和进度，REPL 的 downloads()）
  * - 外壳 → 网关：{ type: "hello", pids }（连上时发，外壳的进程号：网关的桌面工具不能读取、操作这些进程的窗口，见 docs/agent-desktop.md 6.1）、
  *   { type: "cdp", session, message }、{ type: "kept", id, tab }（tab 是留下的标签页的标题和网址，没有可留的是 null）、
  *   { type: "temporary", id, tabs }（还没留下的临时标签页的标题、网址，latest 标出 AI 最近操作过的那个）、
+ *   { type: "downloads", id, downloads }（这个会话的下载，见 views.ts 的 DownloadInfo）、
  *   { type: "tabEvent", session, event }（标签页新开、关闭、用户跳转，带上是谁做的，见 views.ts 的 TabEvent）、
  *   { type: "sessionDir", session }（问会话的工作目录：下载存到那里。连上时问有标签页的会话，之后会话有了第一个标签页时问）
  * 网关重启、还没起来时每 2 秒重连
@@ -91,6 +93,8 @@ export class GatewayBridge {
       this.views.setSessionDir(session, typeof msg.dir === "string" ? msg.dir : null);
     } else if (msg.type === "temporary") {
       this.post({ type: "temporary", id: msg.id, tabs: this.views.temporaryTabs(session) });
+    } else if (msg.type === "downloads") {
+      this.post({ type: "downloads", id: msg.id, downloads: this.views.downloadsOf(session) });
     }
   }
 

@@ -1,4 +1,4 @@
-import type { TabEvent } from "./host.js";
+import type { DownloadInfo, TabEvent } from "./host.js";
 import type { RunResult, ToolOutput } from "./repl.js";
 
 /**
@@ -28,7 +28,9 @@ export type ToWorker =
   /** 这条通道断了（桌面版断开、同一个会话又开了新的） */
   | { type: "cdpClosed"; conn: number; reason?: string }
   /** 桌面版发来的标签页变化 */
-  | { type: "tabEvent"; event: TabEvent };
+  | { type: "tabEvent"; event: TabEvent }
+  /** 回复 downloads：这个会话的下载，或者没取到的原因 */
+  | { type: "downloads"; req: number; downloads?: DownloadInfo[]; error?: string };
 
 /** worker 发给主线程的 */
 export type ToMain =
@@ -39,4 +41,6 @@ export type ToMain =
   /** 发给桌面版的 CDP 消息 */
   | { type: "cdp"; conn: number; message: object }
   /** 关掉这条通道 */
-  | { type: "cdpClose"; conn: number };
+  | { type: "cdpClose"; conn: number }
+  /** REPL 的 downloads()：问这个会话的下载和进度 */
+  | { type: "downloads"; req: number };

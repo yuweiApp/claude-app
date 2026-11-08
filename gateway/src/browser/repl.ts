@@ -2,7 +2,7 @@ import { format, inspect } from "node:util";
 import vm from "node:vm";
 import { parse, type Pattern } from "acorn";
 import type { BrowserContext, Page } from "playwright-core";
-import type { TabEvent } from "./host.js";
+import type { DownloadInfo, TabEvent } from "./host.js";
 
 /**
  * browser_run_code 的执行环境（参照 Codex 的 node_repl）：每个会话一个常驻的 vm 上下文，
@@ -356,10 +356,12 @@ export class BrowserRepl implements Repl {
   /**
    * @param tabEvents 内置浏览器：取走桌面版发来的标签页变化（带着是谁做的，见 host.ts 的 TabEvent）；
    *   Chrome 没有，在这里自己记（Playwright 的事件里看不出是用户还是网页，只能分出是不是 AI）
+   * @param downloads 内置浏览器：这个会话的下载和进度，代码里的全局函数 downloads() 就是它；Chrome 没有
    */
   constructor(
     private readonly getContext: () => Promise<BrowserContext>,
     private readonly tabEvents?: () => TabEvent[],
+    downloads?: () => Promise<DownloadInfo[]>,
   ) {
     const capture =
       (prefix: string) =>
@@ -392,6 +394,7 @@ export class BrowserRepl implements Repl {
         const base64 = typeof data === "string" ? data : Buffer.from(data).toString("base64");
         sink.images.push({ data: base64, mimeType });
       },
+      ...(downloads ? { downloads } : {}),
     });
     Object.defineProperty(this.sandbox, "page", {
       enumerable: true,
