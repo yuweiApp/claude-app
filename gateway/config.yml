@@ -25,11 +25,6 @@ tools:
     - mcp__desktop__snapshot
     - mcp__desktop__screenshot
     - mcp__desktop__run
-    # CDP 接管（下面 desktop.cdp 也打开时才有）
-    - mcp__cdp__browser_run_code
-    - mcp__cdp__browser_snapshot
-    - mcp__cdp__browser_take_screenshot
-    - mcp__cdp__browser_tabs
 
 # 外部浏览器：模型多一组 mcp__chrome__… 工具，操作用户自己的 Chrome（带着登录状态），见 docs/README.md 第 13 节。
 # 要先在 Chrome 里装 Playwright Extension；第一次调用工具时 Chrome 打开扩展的连接页，在里面允许。
@@ -45,7 +40,3 @@ externalBrowser:
 # 默认关；要用时改成 true，重启网关。
 desktop:
   enabled: false
-  # CDP 接管：打开后模型能用 launch --cdp 以本机调试端口重新启动 Chromium / Electron 应用（如紫鸟、VS Code、Slack），
-  # 再用 mcp__cdp__… 工具（Playwright，同浏览器那一套）操作它的网页内容：不经无障碍接口，窗口被挡住也能操作，不动鼠标、不抢前台。
-  # 调试端口开着时本机任何程序都能控制这个应用；已经在运行的应用要先关掉才能这样启动。默认关，enabled 也要是 true。
-  cdp: false

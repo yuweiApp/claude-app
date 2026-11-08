@@ -28,7 +28,6 @@ import { generateTitle } from "./title.js";
 import { readOutputTail, TaskList } from "./tasks.js";
 import { disposeRepls } from "../browser/tool.js";
 import { disposeDesktopSession } from "../desktop/guard.js";
-import { disposeCdpSession } from "../desktop/cdp.js";
 import { createScratchDir, isChatCwd, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
@@ -152,7 +151,6 @@ export class SessionManager {
     disposeRepls(sessionId);
     // 桌面工具的快照（agent-desktop 的状态目录里这个会话的命名空间）和网关记下的 ref
     disposeDesktopSession(sessionId);
-    disposeCdpSession(sessionId);
     // 内置浏览器里这个会话的标签页也关掉：AI 留下的、用户开的不会自动关，不关的话会一直留在桌面版后台（会话没了，面板里也看不到）
     this.browser?.closeSession(sessionId);
     await removeScratchDirIfEmpty(cwd, recordDir);

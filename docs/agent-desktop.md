@@ -8,7 +8,7 @@
 
 让模型操作**网关所在那台电脑**上的原生应用（记事本、Finder / 资源管理器、系统对话框、Office、各种 Electron 应用的原生部分）。[vercel-labs/agent-desktop](https://github.com/vercel-labs/agent-desktop) 读系统的无障碍树（macOS 是 AX API，Windows 是 UI Automation，Linux 是 AT-SPI），给出带 ref 的元素，按 ref 操作，不靠截图识别。
 
-- 网页还是第 12 节（内置浏览器）、第 13 节（用户的 Chrome）的事。agent-desktop 自己也不操作网页内容（它对 Chromium 应用的办法是 `launch --cdp` 后交给别的工具）；网关把这一步接上了，见第 14 节「CDP 接管」，默认关。
+- 网页还是第 12 节（内置浏览器）、第 13 节（用户的 Chrome）的事。agent-desktop 自己也不操作网页内容（它对 Chromium 应用的办法是 `launch --cdp` 后交给别的工具）；网关试过把这一步接上，没走通，已删除，见第 14 节。
 - 不做：桌面画面的实时面板、录屏、多台电脑。
 
 ## 2. 为什么不直接挂 `agent-desktop mcp`
@@ -91,7 +91,7 @@ snapshot s191jb6hk0gciz（mousepad，窗口 w-1.1895-…）
   - 命令：`mcp`、`session`、`trace`、`batch`（第一版：要逐条检查里面的命令，以后再开）。
   - 全局参数：`--session`、`--agent-id`、`--trace`、`--trace-strict`、`--screenshot`、`--debug`（受管或会写文件），`--headed` 只能经 `headed` 参数（卡片上要单独显示）。
   - `--force`：上游拿它放行 `alt+f4`、`win+l`、`cmd+q` 这类快捷键和强制结束进程，第一版拒绝。
-  - `--cdp`：`config.yml` 的 `desktop.cdp` 打开时只接受 `launch` 带它（第 14 节），其余情况拒绝。
+  - `--cdp`：拒绝（第 14 节）。
 
 ### 返回给模型的内容
 
@@ -277,24 +277,11 @@ desktop:
 
 **拦不住的**：模型用 Bash 直接跑 `gateway/node_modules/agent-desktop/bin/agent-desktop`（或 xdotool、AppleScript 这类）就绕过了网关。这和 Bash 本身能做任何事一样，边界是 Bash 的权限卡片；「完全访问权限」下没有这道边界。
 
-## 14. CDP 接管（`desktop.cdp`）
+## 14. CDP 接管（试过，已删除）
 
-Windows 上紫鸟（Electron）实测：窗口被挡住时无障碍树停在第一次读到的一小部分，没名字的 `group` 按 ref 点不了，模型只好把紫鸟切到前台、用真实鼠标点，挡住用户的窗口。CDP 接管绕开无障碍接口：
+想法：Windows 上紫鸟（Electron）的无障碍树不可靠（窗口被挡住时停在第一次读到的一小部分，没名字的 `group` 按 ref 点不了，模型只好切到前台用真实鼠标点），于是用 agent-desktop 的 `launch --cdp` 以本机调试端口重新启动应用，网关用 Playwright `connectOverCDP` 连上去，模型用 `mcp__cdp__` 一组工具（同浏览器那一套）操作网页内容，不经无障碍接口、不抢前台。`config.yml` 的 `desktop.cdp` 开关，提交 4aaeab5 里实现过，Linux 上拿 Electron 实测能用。
 
-```
-模型 ──mcp__desktop__run launch <应用> --cdp──▶ agent-desktop 以本机调试端口重新启动应用，返回 data.cdp（port、websocket_url、product）
-     ──mcp__cdp__browser_run_code 等──▶ 网关 Playwright connectOverCDP(websocket_url) ──▶ 应用的网页内容
-```
+没走通，代码已删除，`run` 照旧拒绝 `--cdp`：
 
-- **开关**：`config.yml` 的 `desktop.cdp`，默认 `false`，`desktop.enabled` 也要是 `true`（`config-file.ts` 的 `desktopCdpEnabled`）。打开后：`run` 接受 `launch … --cdp`（别的命令带 `--cdp` 照样拒绝），说明里多一句 `--cdp` 是什么、端口开着时本机任何程序都能控制这个应用；每个会话多一个 MCP 服务器 `cdp`。
-- **工具**（`desktop/cdp.ts`）：复用浏览器那一套（`browserMcpServer` + `BrowserRepl`，同第 13 节外部 Chrome，REPL 在网关主线程）：`mcp__cdp__browser_run_code`、`browser_snapshot`、`browser_take_screenshot`、`browser_tabs`。只读的三个不用确认，`browser_run_code` 走权限卡片。应用里的每个网页视图是一个标签页。
-- **连哪个应用**：这个会话最近一次 `launch --cdp` 启动的；这个会话没启动过时，用所有会话里最近启动的那个。`launch --cdp` 成功时结果末尾说明「X 的网页内容现在可以用 mcp__cdp__ 的工具操作：调试端口 …」。
-- **记录**：应用名、pid、端口、`websocket_url` 存在状态目录的 `cdp-apps.json`（权限 600）。网关重启后接着连（实测）；连不上（应用退出了）报错并删掉这条记录（实测）。同名应用重新 `--cdp` 启动时旧连接作废。
-- **限制**：
-  - 只能用于新启动的进程：应用已经在运行时 agent-desktop 返回 `cdp_requires_fresh_launch`，它不会替你关掉，关掉（`close-app`）会丢掉用户在应用里的状态，走权限卡片。
-  - 实测 Linux 上拿项目里的 Electron 启动会被当成「已在运行」（桌面版自己就是同一个 electron 可执行文件），拷一份改名才行；紫鸟这类独立安装的应用没有这个问题。
-  - 原生菜单、文件对话框、窗口管理不在网页里，还是 `mcp__desktop__` 的事。
-  - 有的应用打包时关掉了远程调试，这时 agent-desktop 报 `cdp_endpoint_unavailable`，应用照常运行。紫鸟能不能用还没在 Windows 上测。
-- **安全**：本应用自己不能这样启动（guard 拦 `launch` 本应用的名字）。端口只听本机，但本机任何程序都能连上去控制这个应用；用 CDP 能在应用的网页里执行任意脚本，Electron 应用开了 `nodeIntegration` 的话等于在本机执行代码。
-- **成功结果里的建议也去掉**：`launch --cdp` 成功时 agent-desktop 在 `data` 里带一段 `suggestion`（「Next: run agent-browser connect …」），和错误里的一样去掉，`renderer`、`cdp` 这些事实留着。
-- 本机实测（Linux，拷出来的 Electron 加一个最小页面）：`launch --cdp` → 登记 → `browser_tabs`、`browser_snapshot` 列出页面，`browser_run_code` 填输入框、点按钮、读到结果，`browser_take_screenshot` 返回图片。
+- 紫鸟（6.50，Windows 实测）主进程启动时检查命令行，正式版里带 `--remote-debugging-port` 或 `--inspect` 就打印「Remote debugging is not allowed.」并退出（app.asar 里的代码），agent-desktop 等满 30 秒报 `cdp_endpoint_unavailable`。绕开启动器、直接带实例参数（`--use-chromium-request --user-data-dir=…`）启动也一样。它还在开发者工具打开时自动关掉。紫鸟只在官方的 WebDriver 模式里给店铺窗口（另起的浏览器内核进程）开调试端口，客户端界面本身不开。
+- 其余限制：只能用于新启动的进程（已在运行时返回 `cdp_requires_fresh_launch`，要先关掉应用，丢掉用户在里面的状态）；端口开着时本机任何程序都能控制这个应用。

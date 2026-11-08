@@ -5,11 +5,10 @@ import path from "node:path";
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { MCP_AUTO_BACKGROUND_MS } from "../config.js";
-import { ALWAYS_LOAD_META, desktopCdpEnabled, isAlwaysLoad } from "../config-file.js";
+import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
 import { rememberResult } from "../browser/tool.js";
 import { runCli, type CliResult, type Envelope } from "./cli.js";
-import { registerCdpLaunch } from "./cdp.js";
-import { deniedReason, flagValues, isCdpLaunch, isReadOnly } from "./commands.js";
+import { deniedReason, flagValues, isReadOnly } from "./commands.js";
 import { beginWrite, checkTarget, describeRefs, listDisplays, listWindows, othersSince, recordOperation, registerRefsIn, registerSnapshot, stripOwn } from "./guard.js";
 import { renderSnapshot, type SnapshotData } from "./render.js";
 
@@ -70,12 +69,7 @@ const INSTRUCTIONS = [
   "  通知：dismiss-notification、dismiss-all-notifications、notification-action；剪贴板：clipboard-get、clipboard-set、clipboard-clear；其他：cursor-overlay",
   "- 默认经无障碍接口操作，不移动鼠标、不切换前台窗口。run 的 headed 为 true 时用真实的鼠标键盘，会移动鼠标、切换前台窗口；一部分命令只在 headed 下可用（它们的 --help 里写着 requires --headed）。",
   "- 网关的规则：本应用（claude-app）自己的窗口不在结果里，也不能读取或操作；ref 只认这个会话经 snapshot 或 find 拿到的；find、press、list-surfaces 和窗口命令（focus-window、restore 等）不指定目标时作用于前台窗口，网关要求指定目标（每条命令接受哪些目标参数见它的 --help）；" +
-    `run 不执行 snapshot、screenshot（用对应的工具）、mcp、session、trace、batch，不接受参数 --session、--agent-id、--trace、--trace-strict、--screenshot、--debug、--force、--stdin、--headed（用 headed 参数）${desktopCdpEnabled ? "；--cdp 只能用在 launch 上" : "、--cdp"}。`,
-  ...(desktopCdpEnabled
-    ? [
-        "- launch 带 --cdp：agent-desktop 以本机调试端口重新启动 Chromium / Electron 应用（应用已经在运行时返回 cdp_requires_fresh_launch，它不会替你关掉正在运行的应用）。启动成功后，这个应用的网页内容可以用 mcp__cdp__ 的工具（Playwright）操作，不经无障碍接口。调试端口开着时，本机任何程序都能控制这个应用。",
-      ]
-    : []),
+    `run 不执行 snapshot、screenshot（用对应的工具）、mcp、session、trace、batch，不接受参数 --session、--agent-id、--trace、--trace-strict、--screenshot、--debug、--force、--stdin、--headed（用 headed 参数）、--cdp。`,
   `- 调用超过约 ${BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，结束后结果作为通知送达。屏幕上的变化不会通知你。`,
   "- 别的会话也可能在操作这个桌面：自你上次调用以来它们执行过的操作，列在下一次结果的开头。",
   `- 截图原始大小超过 ${(MAX_IMAGE_BYTES / 1e6).toFixed(2)}MB 时不返回图片。`,
@@ -92,8 +86,7 @@ function formatError(err: NonNullable<Envelope["error"]>): string {
 }
 
 /**
- * 成功结果里也可能带它建议的做法（launch --cdp 成功时的 suggestion：「Next: run agent-browser connect …」），同错误一样去掉，
- * 事实（renderer: "chromium"、cdp 的端口和地址）留着
+ * 成功结果里也可能带它建议的做法（如 launch 的 suggestion），同错误一样去掉，事实留着
  */
 function withoutAdvice(data: unknown): unknown {
   if (!data || typeof data !== "object" || Array.isArray(data)) return data;
@@ -250,7 +243,7 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
           rememberResult(extra, out, isError);
           return isError ? error(out) : text(out);
         };
-        const denied = deniedReason(args, { cdp: desktopCdpEnabled }) ?? (await checkTarget(sessionId, args));
+        const denied = deniedReason(args) ?? (await checkTarget(sessionId, args));
         if (denied) return done(denied, true);
         const readOnly = isReadOnly(args);
         const endWrite = readOnly ? null : beginWrite();
@@ -268,10 +261,7 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
         const envelope = result.envelope!;
         if (!envelope.ok) return done(formatError(envelope.error!), true);
         registerRefsIn(sessionId, result.stdout, flagValues(args, "--app")[0]);
-        const body = JSON.stringify(withoutAdvice(stripOwn(envelope.data)) ?? null);
-        // launch --cdp 成功：记下调试地址，mcp__cdp__ 的工具连它
-        const cdpNote = desktopCdpEnabled && isCdpLaunch(args) ? registerCdpLaunch(sessionId, envelope.data) : null;
-        return done(cdpNote ? `${body}\n\n${cdpNote}` : body, false);
+        return done(JSON.stringify(withoutAdvice(stripOwn(envelope.data)) ?? null), false);
       },
       { annotations: { title: "Desktop command", readOnlyHint: false, destructiveHint: true, openWorldHint: true } },
     ),

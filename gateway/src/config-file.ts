@@ -20,8 +20,3 @@ export const externalBrowserEnabled: boolean = configFile?.externalBrowser?.enab
 /** 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 的 desktop.enabled，默认关（只有写成 true 才开），见 desktop/tool.ts */
 export const desktopEnabled: boolean = configFile?.desktop?.enabled === true;
 
-/**
- * 桌面操作里的 CDP 接管：config.yml 的 desktop.cdp，默认关，desktop.enabled 也打开时才生效。
- * 打开后 run 接受 launch --cdp（agent-desktop 以本机调试端口重新启动 Chromium / Electron 应用），模型多一组 mcp__cdp__ 工具用 Playwright 操作它的网页内容，见 desktop/cdp.ts
- */
-export const desktopCdpEnabled: boolean = desktopEnabled && configFile?.desktop?.cdp === true;

@@ -63,9 +63,6 @@ function stateHome(): string {
   return home;
 }
 
-/** 状态目录（AGENT_DESKTOP_HOME），网关自己的记录（cdp.ts 的 cdp-apps.json）也放这里 */
-export const stateDir = () => stateHome();
-
 /** 这个会话的快照目录（删会话时删掉） */
 export const sessionStateDir = (sessionId: string) => path.join(stateHome(), "sessions", sessionId);
 
