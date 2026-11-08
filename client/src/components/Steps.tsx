@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Block, Item, SessionView, ToolResult } from "../state/session";
 import { ImageThumb } from "./ImageThumb";
 import { StepThumbs, type StepImage } from "./StepThumbs";
@@ -148,6 +148,17 @@ function toolDuration(ms: number): string {
   return ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : formatShortDuration(ms);
 }
 
+/** 工具还在执行时的计时，从工具调用发出时算起，每秒刷新 */
+function RunningTime({ start }: { start: number | undefined }) {
+  const [mounted] = useState(Date.now);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return <span className="step-time">{formatShortDuration(now - (start ?? mounted))}</span>;
+}
+
 /** 一次工具调用：一行摘要，点击展开详情，鼠标移上去出现复制按钮 */
 export function ToolStep({ block, view, renderChildren }: { block: ToolUse; view: SessionView; renderChildren: (items: Item[]) => ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -165,6 +176,7 @@ export function ToolStep({ block, view, renderChildren }: { block: ToolUse; view
           </span>
           {result?.isError && <span className="step-bad">失败</span>}
           {result?.durationMs !== undefined && <span className="step-time">{toolDuration(result.durationMs)}</span>}
+          {running && <RunningTime start={view.toolStarts[block.id]} />}
           <span className="step-caret">{open ? "▾" : "›"}</span>
         </button>
         <StepThumbs images={stepImages(block, result)} />
