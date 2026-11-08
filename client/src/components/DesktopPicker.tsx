@@ -10,6 +10,8 @@ interface DesktopWindow {
 }
 
 interface Props {
+  /** 网关开没开桌面工具（config.yml 的 desktop.enabled），没开不显示按钮 */
+  enabled: boolean;
   /** 选中一个窗口 */
   onPick: (window: DesktopWindow) => void;
   /** 选中桌面本身（第一行） */
@@ -19,10 +21,9 @@ interface Props {
 /**
  * 输入框上面的「Computer Use」：和「浏览器」一样点开搜索、选择，选中后插在输入框的光标处。
  * 第一行是桌面本身（写成 @桌面），下面是桌面工具（agent-desktop）能看到的窗口（@desktop[标题](window:窗口 id)），本应用自己的窗口网关已经去掉。
- * 网关没开桌面工具（config.yml 的 desktop.enabled）时不显示按钮
+ * 网关没开桌面工具（config.yml 的 desktop.enabled）时不显示按钮；开没开从网关的 /config 来，窗口打开菜单时才列
  */
-export function DesktopPicker({ onPick, onPickDesktop }: Props) {
-  const [enabled, setEnabled] = useState(false);
+export function DesktopPicker({ enabled, onPick, onPickDesktop }: Props) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [windows, setWindows] = useState<DesktopWindow[] | null>(null);
@@ -30,10 +31,6 @@ export function DesktopPicker({ onPick, onPickDesktop }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   useDismiss(ref, open, () => setOpen(false));
 
-  // 网关开没开桌面工具，启动时问一次（顺带列一次窗口，不用）
-  useEffect(() => {
-    api.desktopWindows().then((r) => setEnabled(r.enabled), () => undefined);
-  }, []);
   // 每次打开时重新列窗口（窗口随时在开关）
   useEffect(() => {
     if (!open) {

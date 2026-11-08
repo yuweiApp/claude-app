@@ -565,6 +565,7 @@ function Chat({
               onPickBrowser={(chrome) => composerRef.current?.mentionBrowser(chrome ? "chrome" : undefined)}
             />
             <DesktopPicker
+              enabled={config.desktop}
               onPick={(w) => composerRef.current?.mentionTab(w.title || w.app, `window:${w.id}`, "desktop")}
               onPickDesktop={() => composerRef.current?.mentionBrowser("desktop")}
             />

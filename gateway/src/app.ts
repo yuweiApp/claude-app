@@ -75,6 +75,8 @@ export function buildApp(): App {
     permissionMode: config.defaultPermissionMode,
     effort: config.defaultEffort,
     maxUploadMb: config.maxUploadMb,
+    // 开没开桌面工具：输入框上面的「Computer Use」据此显示，不用等列窗口（list-windows 在 Windows 上要几秒）
+    desktop: desktopEnabled,
   }));
 
   // 超过大小的文件流会被截断（file.truncated），由 saveUpload 删掉并报错

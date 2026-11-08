@@ -72,6 +72,8 @@ export interface GatewayConfig {
   permissionMode: PermissionMode;
   effort: EffortLevel;
   maxUploadMb: number;
+  /** 网关开没开桌面工具（config.yml 的 desktop.enabled） */
+  desktop: boolean;
 }
 
 export const api = {
