@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, FileContent, GatewayEvent, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, DesktopTarget, FileContent, GatewayEvent, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { Attachment, BackgroundTask, Capabilities, FileContent, GatewayEvent, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo };
+export type { Attachment, BackgroundTask, Capabilities, DesktopTarget, FileContent, GatewayEvent, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 

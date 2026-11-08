@@ -96,6 +96,7 @@ export class AgentSession {
         canUseTool: this.canUseTool,
         terminals,
         browser,
+        onDesktopTarget: (target) => this.publish({ type: "desktop_target", target }),
         abortController: this.abortController,
         stderr: (data) => this.log.debug({ sessionId: id, stderr: data.trimEnd() }, "claude stderr"),
       }),

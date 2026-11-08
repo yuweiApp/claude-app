@@ -37,7 +37,20 @@ export type GatewayEvent =
    * SDK 的通知里只有 summary（工具名），结果原文 Claude Code 直接交给了模型，网页拿不到，失败时用它显示原因
    */
   | { type: "task_result"; taskId: string; text: string; isError: boolean }
+  /** 桌面工具（agent-desktop）这个会话最近操作的窗口，变了才发；null 是关掉了那个应用（close-app） */
+  | { type: "desktop_target"; target: DesktopTarget | null }
   | { type: "reset" };
+
+/** 桌面工具操作的窗口：网页右上角的浮窗显示它，桌面版按标题找到这个窗口显示实时画面 */
+export interface DesktopTarget {
+  /** 应用名（list-apps 里的 name） */
+  app: string;
+  /** agent-desktop 的窗口 id；没在 list-windows 里找到窗口时没有（应用还没开出窗口） */
+  windowId?: string;
+  title?: string;
+  pid?: number;
+  minimized?: boolean;
+}
 
 /** 会话的后台任务（Bash 后台命令、后台子代理等），见 gateway/src/agent/tasks.ts */
 export interface BackgroundTask {

@@ -1,5 +1,5 @@
 import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
-import type { BackgroundTask, GatewayEvent, HistoryMessage } from "../api";
+import type { BackgroundTask, DesktopTarget, GatewayEvent, HistoryMessage } from "../api";
 import { splitResponseAnnotations, type SentResponseAnnotation } from "./responseAnnotations";
 
 /** 消息里显示的附件（历史消息里只有路径，没有大小） */
@@ -113,6 +113,8 @@ export interface SessionView {
    * 马上放进去的话，这一轮剩下的回复会排在它后面、被算进它那一轮
    */
   queued: QueuedMessage[];
+  /** 桌面工具最近操作的窗口（网关的 desktop_target 事件），右上角的浮窗显示它 */
+  desktopTarget: DesktopTarget | null;
 }
 
 export function emptyView(): SessionView {
@@ -131,6 +133,7 @@ export function emptyView(): SessionView {
     backgroundTasks: [],
     backgroundTasksLive: false,
     queued: [],
+    desktopTarget: null,
   };
 }
 
@@ -166,6 +169,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
     next.pendingTasks = view.pendingTasks;
     next.backgroundTasks = view.backgroundTasks;
     next.backgroundTasksLive = view.backgroundTasksLive;
+    next.desktopTarget = view.desktopTarget;
     // 历史里已经有的（Claude Code 已经交给模型、写进了会话文件），不再排队
     next.queued = view.queued.filter((q) => !next.seen.has(q.uuid));
     return next;
@@ -220,6 +224,9 @@ export function reduce(view: SessionView, action: Action): SessionView {
       next.items = next.items.map((item) => (item.kind === "task" ? withDetail(item) : item));
       break;
     }
+    case "desktop_target":
+      next.desktopTarget = event.target;
+      break;
     case "reset":
       next.needsReload = true;
       break;

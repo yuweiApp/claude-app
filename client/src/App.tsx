@@ -16,6 +16,7 @@ import { SettingsPage } from "./components/SettingsPage";
 import { newPanelState, PanelIcon, SidePanel, withFileOpen, type PanelState } from "./components/SidePanel";
 import { FileLinkContext } from "./components/ReplyMarkdown";
 import { TasksPopover } from "./components/TasksPopover";
+import { DesktopTargetFloat } from "./components/DesktopTargetFloat";
 import { TitleBar } from "./components/TitleBar";
 import { desktop } from "./desktop";
 import { useBrowserTabs } from "./state/browserTabs";
@@ -537,6 +538,7 @@ function Chat({
         </div>
       </div>
       {!atBottom && <ScrollToBottom running={view.state === "running"} onClick={() => scrollToBottom("smooth")} />}
+      {sessionId && view.desktopTarget && <DesktopTargetFloat key={sessionId} target={view.desktopTarget} running={view.state === "running"} />}
       </div>
       <AnnotationSelectionButton scrollRef={scrollRef} />
       <AnnotationEditor sessionId={sessionId} onSaved={() => composerRef.current?.focus()} />

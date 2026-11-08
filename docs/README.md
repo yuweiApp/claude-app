@@ -97,6 +97,7 @@ Claude Code 默认读写 `~/.claude`。gateway 通过 `env.CLAUDE_CONFIG_DIR` �
 | `error` | `{ message }` | 子进程异常退出等 |
 | `tasks` | `{ tasks: BackgroundTask[] }` | 会话的后台任务有变化，整个列表（见下面「后台任务」） |
 | `task_result` | `{ taskId, text, isError }` | 转到后台的网关工具调用（`browser_run_code` 等）的结果原文，跟在那个任务的 `task_notification` 后面发。SDK 的通知里只有 `summary`（工具名）和 `tool_use_id`，结果 Claude Code 直接交给了模型；网关的工具按 Claude Code 调用时放在 `_meta["claudecode/toolUseId"]` 里的 id 记下自己返回的结果（`takeToolResult`），对上后补发。网页在失败时把原因（第一行）显示在「后台任务失败」下面，悬停看全文；历史里的 `<task-notification>` 带 `<result>`（以 `Task failed: ` 开头），也从那里取 |
+| `desktop_target` | `{ target: { app, windowId?, title?, pid?, minimized? } \| null }` | 桌面工具（`mcp__desktop__…`）这个会话最近操作的窗口，变了才发（`gateway/src/desktop/guard.ts` 的 `noteTarget`）；`null` 是 `close-app` 关掉了它。网页在对话区右上角浮着显示，点开后桌面版按窗口标题找到采集源显示实时画面，见 [agent-desktop.md](agent-desktop.md) 第 10 节 |
 | `reset` | — | 续传点已不在缓冲里 |
 
 SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类型比较全，转一遍只会丢字段；客户端可以直接 `import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'`。
@@ -174,7 +175,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 - `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`：关掉遥测、错误上报、自动更新检查，不往 Anthropic 发东西。
 - `WebSearch` 是 Anthropic 服务端工具，第三方模型用不了，默认放进 `disallowedTools`。
 - Windows 上命令输出的编码：Claude Code 的 Bash 工具跑的是 Git Bash，模型在里面调 `powershell.exe`、`ipconfig` 等原生程序时，它们按控制台代码页输出（中文系统是 936，GBK），Claude Code 按 UTF-8 读，中文全是乱码。`agentEnv()` 在 Windows 上给子进程设 `BASH_ENV`，指向网关写在 `$CLAUDE_CONFIG_DIR/claude-app-bash-env.sh` 的脚本，每次起 bash 先 `chcp.com 65001`；环境里原来有 `BASH_ENV` 的放进 `CLAUDE_APP_USER_BASH_ENV`，脚本最后接着 source 它。Claude Code 自己的 PowerShell 工具（`CLAUDE_CODE_USE_POWERSHELL_TOOL=1`，预览）也是先 `chcp 65001` 再起 PowerShell。
-- 追加的系统提示（`APPEND_SYSTEM_PROMPT`，经 `systemPrompt.append` 接在 Claude Code 的提示词后面）：不设时用 `config.ts` 的 `DEFAULT_APPEND_SYSTEM_PROMPT`，设成空串就不追加。默认那句要求调用工具前用一句话说明要做什么、做事过程中有重要发现或改变方向时说一句：SDK 会话拿到的 Claude Code 提示词是精简版（截过实际请求，约 5800 字），没有完整版里「Before your first tool call, say in a sentence what you're about to do」那段；Claude 模型不说也会边做边说，GPT 类模型（`gpt-6-luna`）不被要求就一句不说，工具调用之间没有文字（两台机器统计 119 次带工具调用的响应，一次都没有）。加上后新会话里会先说一句再调用工具；老会话里前面几十轮都没说，模型多半照着历史继续不说。Codex 的提示词里也有同样的要求（Preamble messages）。
+- 追加的系统提示（`APPEND_SYSTEM_PROMPT`，经 `systemPrompt.append` 接在 Claude Code 的提示词后面）：网关代码里没有默认值，不设或设成空串就不追加；`.env.example` 里写了一句，要求调用工具前用一句话说明要做什么、做事过程中有重要发现或改变方向时说一句：SDK 会话拿到的 Claude Code 提示词是精简版（截过实际请求，约 5800 字），没有完整版里「Before your first tool call, say in a sentence what you're about to do」那段；Claude 模型不说也会边做边说，GPT 类模型（`gpt-6-luna`）不被要求就一句不说，工具调用之间没有文字（两台机器统计 119 次带工具调用的响应，一次都没有）。加上后新会话里会先说一句再调用工具；老会话里前面几十轮都没说，模型多半照着历史继续不说。Codex 的提示词里也有同样的要求（Preamble messages）。
 - 兼容性需要实测：工具调用格式、`thinking` 块、prompt caching 字段、并行工具调用。不兼容时优先在 newapi 侧修，其次关掉对应特性（如 `MAX_THINKING_TOKENS=0`）。
 
 ## 7. HTTP 接口（第一版）

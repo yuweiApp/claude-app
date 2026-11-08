@@ -9,7 +9,8 @@ import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
 import { rememberResult } from "../browser/tool.js";
 import { runCli, type CliResult, type Envelope } from "./cli.js";
 import { deniedReason, flagValues, isReadOnly } from "./commands.js";
-import { beginWrite, checkTarget, describeRefs, listDisplays, listWindows, othersSince, recordOperation, registerRefsIn, registerSnapshot, stripOwn } from "./guard.js";
+import type { DesktopTarget } from "../shared/types.js";
+import { beginWrite, checkTarget, describeRefs, listDisplays, listWindows, noteTarget, othersSince, recordOperation, registerRefsIn, registerSnapshot, stripOwn } from "./guard.js";
 import { renderSnapshot, type SnapshotData } from "./render.js";
 
 /**
@@ -131,7 +132,14 @@ async function screenshotGeometry(png: Buffer, target: { app?: string; windowId?
   return `截的是窗口 ${win.id}${win.title ? `「${win.title}」` : ""}：桌面坐标 ${range(win.bounds)}${pixels}`;
 }
 
-export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance {
+/**
+ * onTarget：调用作用的窗口变了（网页右上角的浮窗显示它）。调用一开始就报（snapshot 读得慢时浮窗不用等），launch 等结束了再报（之前还没有窗口）。
+ * 报的过程（list-windows）不耽误工具返回
+ */
+export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarget | null) => void): McpSdkServerConfigWithInstance {
+  const note = (args: string[]) => {
+    if (onTarget) void noteTarget(sessionId, args, onTarget).catch(() => {});
+  };
   const tools = [
     tool(
       "snapshot",
@@ -170,6 +178,7 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
         ];
         const denied = await checkTarget(sessionId, args);
         if (denied) return error(prefixed(notice, denied));
+        note(args);
         const timeoutMs = (input.timeout_ms ?? SNAPSHOT_TIMEOUT_MS) + 30_000;
         const result = await runCli(args, { session: sessionId, timeoutMs, signal: signalOf(extra) });
         const failed = failure(result, timeoutMs);
@@ -207,6 +216,7 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
           ];
           const denied = await checkTarget(sessionId, args);
           if (denied) return error(prefixed(notice, denied));
+          note(args);
           const result = await runCli(args, { session: sessionId, timeoutMs: 60_000, signal: signalOf(extra) });
           const failed = failure(result, 60_000);
           if (failed) return error(prefixed(notice, failed));
@@ -246,6 +256,7 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
         const denied = deniedReason(args) ?? (await checkTarget(sessionId, args));
         if (denied) return done(denied, true);
         const readOnly = isReadOnly(args);
+        if (args[0] !== "launch") note(args);
         const endWrite = readOnly ? null : beginWrite();
         const timeoutMs = timeout_ms ?? DEFAULT_TIMEOUT_MS;
         let result: CliResult;
@@ -256,6 +267,7 @@ export function desktopServer(sessionId: string): McpSdkServerConfigWithInstance
         }
         const delivered = result.envelope?.ok || (result.envelope?.error?.disposition?.delivery ?? "unknown") !== "not_delivered";
         if (!readOnly && delivered) recordOperation(sessionId, args);
+        if (args[0] === "launch" && delivered) note(args);
         const failed = failure(result, timeoutMs);
         if (failed) return done(failed, Boolean(result.killed) || !result.stdout.trim());
         const envelope = result.envelope!;

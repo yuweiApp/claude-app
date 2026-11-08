@@ -219,7 +219,11 @@ desktop:
 - 工具调用：`run` 显示成命令行；`screenshot` 显示图片（现有的图片结果渲染应该直接能用）；`snapshot` 折叠。
 - 权限卡片：见第 5 节；被 6.2 挡掉的回复要有提示。
 - 设置页：桌面操作开没开（来自 `config.yml`，只读显示）、平台和权限状态、macOS 的授权引导按钮。
-- 第一版不做右侧面板的桌面视图。
+- 不做右侧面板的桌面视图；改成对话区右上角的浮窗（`client/src/components/DesktopTargetFloat.tsx`）：
+  - 显示这个会话最近操作的软件（应用图标、应用名、窗口标题），这一轮进行中带一个闪烁的点。目标由网关从参数里算（`--window-id`、`--app`、`launch` / `close-app` 的应用名、ref 所属快照的应用和窗口），只给应用名时在 `list-windows` 里找窗口，前台的优先；变了才发 `desktop_target` 事件。调用一开始就发，`launch` 结束后再发。
+  - 点开是那个窗口的实时画面，只看不能点：桌面版用 `desktopCapturer` 按窗口标题找采集源（`desktop/src/capture.ts`；agent-desktop 的窗口 id 和采集源的 id 对不上，所以按标题），网页用 `getUserMedia`（`chromeMediaSource: desktop`）取视频流。不用 agent-desktop 的 `screenshot` 轮询：每张起一个进程，而且上游拒绝截被挡住的窗口，看预览时本应用正好挡在上面。
+  - Windows 10 1903+（Windows Graphics Capture）和 macOS（ScreenCaptureKit）上被挡住的窗口也有画面，最小化的没有；macOS 要给本应用开「屏幕录制」。网页版没有窗口采集，只显示名字。
+  - 待实测：Windows、macOS 上两边的窗口标题是否一致（标题前后加了应用名时按包含匹配，只有一个匹配才用）。
 
 ## 11. 实测清单（Windows、macOS 各一遍）
 

@@ -3,6 +3,7 @@ import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell, type OpenDialogOptions, type Rectangle } from "electron";
 import { GatewayBridge } from "./browser/bridge.js";
 import { BrowserViews, FAVICON_SCHEME, tabInfo } from "./browser/views.js";
+import { findCaptureSource } from "./capture.js";
 
 // 桌面版：拉起网关和网页（Vite），在窗口里打开网页。已经在跑的（比如 VS Code 里先启动了「启动网页」）直接复用
 const root = path.resolve(import.meta.dirname, "..", "..");
@@ -159,6 +160,9 @@ ipcMain.on("browser:show", (e, id: unknown, bounds: Rectangle) => fromUi(e.sende
 ipcMain.on("browser:hide", (e) => fromUi(e.sender) && browserViews.hide());
 ipcMain.handle("browser:snapshot", (e, id: unknown) => (fromUi(e.sender) && typeof id === "string" ? browserViews.snapshot(id) : null));
 ipcMain.handle("browser:suggest", (e, query: unknown) => (fromUi(e.sender) && typeof query === "string" ? browserViews.history.suggest(query) : []));
+
+// 桌面工具正在操作的窗口的实时画面（网页右上角的浮窗）：按标题找采集源，见 capture.ts
+ipcMain.handle("capture:find", (e, title: unknown) => (fromUi(e.sender) && typeof title === "string" ? findCaptureSource(title) : null));
 
 // 新会话的「选择文件夹…」：系统的文件夹对话框（Windows 上是资源管理器），取消时返回 null
 ipcMain.handle("dialog:pick-folder", async (e, defaultPath: unknown) => {

@@ -1,4 +1,4 @@
-// 预加载脚本：给网页提供窗口按钮（窗口没有系统边框，见 main.ts）、系统的文件夹对话框和内置浏览器。
+// 预加载脚本：给网页提供窗口按钮（窗口没有系统边框，见 main.ts）、系统的文件夹对话框、内置浏览器和窗口采集。
 // 沙箱里的预加载脚本只能是 CommonJS，所以是 .cts；接口类型和 client/src/desktop.ts 的 DesktopApi 一致
 import electron = require("electron");
 
@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.on("window:maximized", listener);
     return () => void ipcRenderer.removeListener("window:maximized", listener);
   },
+  // 桌面工具正在操作的窗口：按标题找采集源（见 capture.ts），网页拿 id 调 getUserMedia
+  findCaptureSource: (title: string): Promise<unknown> => ipcRenderer.invoke("capture:find", title),
   // 内置浏览器（右侧面板的「浏览器」），见 main.ts 和 browser/views.ts
   browser: {
     list: (): Promise<unknown[]> => ipcRenderer.invoke("browser:list"),

@@ -10,6 +10,7 @@ import type { BrowserHost } from "../browser/host.js";
 import { CHROME_READ_TOOLS, CHROME_SERVER, chromeServer } from "../browser/chrome.js";
 import { desktopEnabled, externalBrowserEnabled } from "../config-file.js";
 import { DESKTOP_READ_TOOLS, DESKTOP_SERVER, desktopServer } from "../desktop/tool.js";
+import type { DesktopTarget } from "../shared/types.js";
 
 export interface SessionLaunch {
   sessionId: string;
@@ -27,6 +28,8 @@ export interface SessionLaunch {
   terminals?: TerminalManager;
   /** 桌面版的内置浏览器：给模型加上浏览器工具（browser_run_code 等），只能操作这个会话自己的标签页 */
   browser?: BrowserHost;
+  /** 桌面工具操作的窗口变了（发 desktop_target 事件） */
+  onDesktopTarget?: (target: DesktopTarget | null) => void;
   abortController: AbortController;
   stderr: (data: string) => void;
 }
@@ -40,7 +43,7 @@ export function buildOptions(launch: SessionLaunch): Options {
   // 外部浏览器（用户自己的 Chrome）：config.yml 里开了才挂，第一次调用工具时才连
   const chrome = externalBrowserEnabled ? chromeServer(launch.sessionId, launch.resume) : null;
   // 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 里开了才挂，默认关
-  const desktop = desktopEnabled ? desktopServer(launch.sessionId) : null;
+  const desktop = desktopEnabled ? desktopServer(launch.sessionId, launch.onDesktopTarget) : null;
   const allowedTools = [
     ...(terminal ? TERMINAL_READ_TOOLS : []),
     ...(browser ? BROWSER_READ_TOOLS : []),

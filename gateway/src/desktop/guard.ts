@@ -1,4 +1,5 @@
 import { rmSync } from "node:fs";
+import type { DesktopTarget } from "../shared/types.js";
 import { APP_ARGUMENT, flagValues, isHelp, NEEDS_TARGET, pointsIn, refsIn, snapshotIdOf } from "./commands.js";
 import { runCli, sessionStateDir } from "./cli.js";
 import type { SnapshotData } from "./render.js";
@@ -8,6 +9,7 @@ import type { SnapshotData } from "./render.js";
  * - 本应用（桌面版）的窗口不能读、不能操作（6.1）：桌面版连上 /browser/host 时报自己的进程号（BrowserHost 调 setOwnPids）
  * - 桌面写操作进行中收到的权限回复不算数（6.2）：desktopWriteActive()
  * - 别的会话做过的桌面操作，下一次调用时告诉模型（7.2）：othersSince()
+ * 另外记着每个会话正在操作的窗口，给网页右上角的浮窗：noteTarget()
  * 都在网关里，不经过权限系统，「完全访问权限」下照样生效
  */
 
@@ -35,6 +37,8 @@ interface WindowInfo {
   pid?: number;
   title?: string;
   is_focused?: boolean;
+  minimized?: boolean;
+  visible?: boolean;
   bounds?: Bounds;
 }
 
@@ -233,11 +237,55 @@ export function othersSince(session: string): string | null {
   return others.length ? `（自你上次调用桌面工具以来，别的会话执行过：${others.join("、")}）` : null;
 }
 
+// ---------- 正在操作的窗口（网页右上角的浮窗） ----------
+
+/** 每个会话上次报出去的目标（JSON），没变不再报 */
+const reported = new Map<string, string>();
+
+/**
+ * 这次调用作用于哪个窗口，变了就调 report：目标来自 --window-id、--app、launch / close-app 的应用名、
+ * ref 所属快照的应用和窗口。只给应用名时在 list-windows 里按应用名找，前台的优先，其次没最小化的。
+ * 找不到窗口（应用还没开出窗口）时只报应用名；close-app 报 null。没有目标的命令（list-apps 等）不报
+ */
+export async function noteTarget(session: string, args: string[], report: (target: DesktopTarget | null) => void): Promise<void> {
+  const command = args[0] ?? "";
+  if (isHelp(args)) return;
+  const send = (target: DesktopTarget | null) => {
+    const key = JSON.stringify(target);
+    if (reported.get(session) === key) return;
+    reported.set(session, key);
+    report(target);
+  };
+  if (command === "close-app") return send(null);
+  let windowId = flagValues(args, "--window-id")[0];
+  let app = flagValues(args, "--app")[0] ?? (APP_ARGUMENT.has(command) && args[1] && !args[1].startsWith("-") ? args[1] : undefined);
+  for (const ref of refsIn(args)) {
+    const entry = snapshots.get(snapshotIdOf(ref));
+    windowId ??= entry?.windowId;
+    app ??= entry?.app;
+  }
+  if (!windowId && !app) return;
+  const windows = (await listWindows()).filter((w) => !ownPids.has(w.pid ?? -1));
+  let win: WindowInfo | undefined;
+  if (windowId) win = windows.find((w) => w.id === windowId);
+  if (!win && app) {
+    const same = windows.filter((w) => w.app_name?.toLowerCase() === app!.toLowerCase());
+    win = same.find((w) => w.is_focused) ?? same.find((w) => !w.minimized && w.visible !== false) ?? same[0];
+  }
+  const name = win?.app_name ?? app;
+  if (!name) return;
+  send({
+    app: name,
+    ...(win ? { windowId: win.id, title: win.title || undefined, pid: win.pid, ...(win.minimized ? { minimized: true } : {}) } : {}),
+  });
+}
+
 // ---------- 删会话 ----------
 
 export function disposeDesktopSession(session: string): void {
   for (const [id, entry] of snapshots) if (entry.session === session) snapshots.delete(id);
   seen.delete(session);
+  reported.delete(session);
   try {
     rmSync(sessionStateDir(session), { recursive: true, force: true });
   } catch {

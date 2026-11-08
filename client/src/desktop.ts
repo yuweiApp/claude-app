@@ -9,8 +9,19 @@ export interface DesktopApi {
   pickFolder(defaultPath?: string): Promise<string | null>;
   /** 返回取消订阅的函数 */
   onMaximizedChange(callback: (maximized: boolean) => void): () => void;
+  /** 按标题找桌面上的窗口（桌面工具正在操作的那个），返回采集源，getUserMedia 用它的 id 取实时画面；找不到时 null。见 desktop/src/capture.ts */
+  findCaptureSource(title: string): Promise<CaptureSource | null>;
   /** 内置浏览器（右侧面板的「浏览器」），见 desktop/src/browser/views.ts */
   browser: DesktopBrowserApi;
+}
+
+/** 窗口的采集源，和 desktop/src/capture.ts 的 CaptureSource 一致 */
+export interface CaptureSource {
+  /** desktopCapturer 的 id（window:…） */
+  id: string;
+  name: string;
+  /** 应用图标（data URL） */
+  icon?: string;
 }
 
 /** 内置浏览器的一个标签页，和 desktop/src/browser/views.ts 的 TabInfo 一致 */
