@@ -5,7 +5,8 @@ import type { Item, SessionView, TaskItem } from "../state/session";
 import { Attachments } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { CopyAction, MessageActions } from "./MessageActions";
-import { StepGroup, ToolIcon, ToolStep, type ToolUse } from "./Steps";
+import { StepGroup, stepImages, ToolIcon, ToolStep, type ToolUse } from "./Steps";
+import { StepThumbs } from "./StepThumbs";
 import { formatShortDuration } from "./TasksPopover";
 import { MentionText } from "./MentionText";
 import { AnnotatableText, SentNotesChip } from "./ResponseAnnotations";
@@ -209,22 +210,26 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
       )}
       {(hasProcess || live || duration !== null) && (
         <div className="process-wrap">
-          <button
-            className="process-toggle"
-            onClick={() => (live ? setLiveCollapsed((c) => !c) : setOpen((o) => !o))}
-            disabled={!hasProcess}
-          >
-            {live ? (
-              <>
-                已处理 <Elapsed />
-              </>
-            ) : duration !== null ? (
-              `用时 ${formatShortDuration(duration)}`
-            ) : (
-              "处理过程"
-            )}
-            {hasProcess && <span className="step-caret">{expanded ? "▾" : "›"}</span>}
-          </button>
+          <div className="process-toggle-row">
+            <button
+              className="process-toggle"
+              onClick={() => (live ? setLiveCollapsed((c) => !c) : setOpen((o) => !o))}
+              disabled={!hasProcess}
+            >
+              {live ? (
+                <>
+                  已处理 <Elapsed />
+                </>
+              ) : duration !== null ? (
+                `用时 ${formatShortDuration(duration)}`
+              ) : (
+                "处理过程"
+              )}
+              {hasProcess && <span className="step-caret">{expanded ? "▾" : "›"}</span>}
+            </button>
+            {/* 折叠时过程里各步返回的图片排在右边，展开后看各步行末的 */}
+            {hasProcess && !expanded && <StepThumbs images={processImages(process, view)} />}
+          </div>
           {hasProcess && expanded && (
             <div className="process">
               {process.map((u) => (
@@ -261,6 +266,11 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
       {turn.result?.isError && <div className="result error">出错：{turn.result.text}</div>}
     </section>
   );
+}
+
+/** 过程里各步工具调用返回的图片（不含子代理里的） */
+function processImages(units: Unit[], view: SessionView) {
+  return units.flatMap((u) => (u.kind === "steps" ? u.tools.flatMap((t) => stepImages(t, view.toolResults[t.id])) : []));
 }
 
 /**

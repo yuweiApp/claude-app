@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { Block, Item, SessionView, ToolResult } from "../state/session";
 import { ImageThumb } from "./ImageThumb";
+import { StepThumbs, type StepImage } from "./StepThumbs";
 import { formatShortDuration } from "./TasksPopover";
 
 export type ToolUse = Extract<Block, { type: "tool_use" }>;
@@ -44,6 +45,15 @@ function toolLabel(block: ToolUse, running: boolean): { icon: string; verb: stri
     default:
       return { icon: "⚙", verb: v("正在调用", "已调用"), target: block.name };
   }
+}
+
+/** 一次工具调用结果里的图片，预览卡上的名字是这一行的动词和对象（文件只留文件名） */
+export function stepImages(block: ToolUse, result: ToolResult | undefined): StepImage[] {
+  if (!result?.images.length) return [];
+  const { verb, target } = toolLabel(block, false);
+  const name = block.name === "Read" ? target.split(/[\\/]/).pop() || target : target;
+  const label = name ? `${verb} ${name}` : verb;
+  return result.images.map((src) => ({ src, label }));
 }
 
 /** 复制的内容：工具名、传入参数和结果 */
@@ -157,6 +167,7 @@ export function ToolStep({ block, view, renderChildren }: { block: ToolUse; view
           {result?.durationMs !== undefined && <span className="step-time">{toolDuration(result.durationMs)}</span>}
           <span className="step-caret">{open ? "▾" : "›"}</span>
         </button>
+        <StepThumbs images={stepImages(block, result)} />
         <CopyButton getText={() => copyText(block, result)} />
       </div>
       {open && (
@@ -187,6 +198,8 @@ export function StepGroup({ tools, view, renderChildren }: { tools: ToolUse[]; v
           </span>
           <span className="step-caret">{open ? "▾" : "›"}</span>
         </button>
+        {/* 展开时每一步行末有自己的小图，标题行就不重复了 */}
+        {!open && <StepThumbs images={tools.flatMap((b) => stepImages(b, view.toolResults[b.id]))} />}
       </div>
       {open && (
         <div className="step-group-body">

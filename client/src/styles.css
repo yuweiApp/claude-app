@@ -395,6 +395,38 @@ main {
 .step-detail { margin: 4px 0 6px 24px; display: flex; flex-direction: column; gap: 6px; }
 .step-group-body { margin-left: 24px; display: flex; flex-direction: column; }
 
+/* 结果小图（StepThumbs.tsx）：排在工具行、折叠的组标题行和「用时 …」行的最右边，悬停弹出预览卡，点击看大图（参照 codex-app-server） */
+.process-toggle-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.step-thumbs { flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.step-thumb {
+  display: block; flex-shrink: 0; width: 38px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: 5px;
+  overflow: hidden; background: var(--panel); cursor: zoom-in; transition: border-color 0.12s, box-shadow 0.12s;
+}
+.step-thumb:hover, .step-thumb:focus-visible {
+  border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); outline: none;
+}
+.step-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* 小图翻页的「‹」「›」：能翻的一边是强调色，翻不动的一边置灰 */
+.step-thumbs-nav {
+  display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 22px; padding: 0; border: none;
+  border-radius: 5px; background: none; color: var(--accent); font-size: 16px; line-height: 1; cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+}
+.step-thumbs-nav:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.step-thumbs-nav:disabled { color: var(--muted); opacity: 0.35; cursor: default; }
+/* 悬停小图时的预览卡：挂在 body 上（position: fixed），不会被会话的滚动区域裁掉 */
+.thumb-preview {
+  position: fixed; z-index: 1000; overflow: hidden; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg); box-shadow: 0 12px 32px rgb(0 0 0 / 0.22); pointer-events: none; animation: thumb-preview-in 0.12s ease-out;
+}
+@keyframes thumb-preview-in { from { opacity: 0; transform: translateY(4px); } }
+.thumb-preview-img { display: flex; align-items: center; justify-content: center; height: 180px; background: var(--panel); }
+.thumb-preview-img img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.thumb-preview-foot { display: flex; align-items: center; gap: 12px; padding: 8px 12px; font-size: 12px; color: var(--text); }
+.thumb-preview-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thumb-preview-count { flex-shrink: 0; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .thumb-preview { animation: none; } }
+
 .copy-btn {
   flex-shrink: 0; border: 1px solid transparent; background: transparent; color: var(--muted); font-size: 12px;
   padding: 1px 6px; border-radius: 4px; white-space: nowrap; opacity: 0; transition: opacity 0.12s;
