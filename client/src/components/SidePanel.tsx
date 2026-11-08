@@ -211,7 +211,7 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
     const apply = (list: BrowserTabInfo[]) => setBrowserTabs(new Map(list.map((t) => [t.id, t])));
     void browserApi.list().then(apply);
     const offTabs = browserApi.onTabs(apply);
-    // AI 切了标签页（当前会话的），面板跟着切。AI 刚开的标签页可能还没补进面板（标签页列表还没推来），先记着，补上时再切
+    // AI 切了标签页、用户在网页里点开了新页面（当前会话的），面板跟着切。刚开的标签页可能还没补进面板（标签页列表还没推来），先记着，补上时再切
     const offActivate = browserApi.onActivate((browserId) =>
       onChange((s) => {
         const tab = s.tabs.find((t) => t.kind === "browser" && t.browserId === browserId);

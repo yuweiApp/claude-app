@@ -128,7 +128,7 @@ ipcMain.on("window:close", (e) => BrowserWindow.fromWebContents(e.sender)?.close
 ipcMain.handle("window:is-maximized", (e) => BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false);
 
 // 内置浏览器（右侧面板的「浏览器」）：界面经 preload 的 browser 接口建标签页、导航、告诉外壳显示位置；
-// 标签页有变化时把整个列表推给界面（browser:tabs），AI 切标签页时让面板跟着切（browser:activate）
+// 标签页有变化时把整个列表推给界面（browser:tabs），AI 切标签页、用户在网页里点开新页面时让面板跟着切（browser:activate）
 let mainWindow: BrowserWindow | undefined;
 const browserViews = new BrowserViews(() => mainWindow);
 // 内置浏览器标签页的图标（views.ts 的 fetchFavicon 取下来的）：界面的 <img> 用 favicon://icon/<编号> 加载。要在 ready 之前注册

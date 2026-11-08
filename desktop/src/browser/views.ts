@@ -183,7 +183,7 @@ export interface BrowserViewsEvents {
   created: [tab: Tab];
   closed: [tab: Tab];
   changed: [tab: Tab];
-  /** AI 切到了这个标签页（CDP Target.activateTarget），面板跟着切 */
+  /** 面板要切到这个标签页：AI 切过去的（CDP Target.activateTarget），或用户在网页里点开的新页面 */
   activate: [tab: Tab];
   /** 调试接口发来的 CDP 事件；sessionId 是 iframe、Worker 等子会话，网页本身为空 */
   cdp: [tab: Tab, method: string, params: unknown, sessionId: string];
@@ -765,6 +765,8 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
         const tab = await this.register(view, opener.sessionId, opener.openedBy, opener.id);
         // 刚登记时还没开始加载，网址是空的，用 window.open / 链接的目标网址
         this.emitTabEvent(tab, "opened", cause, tab.url || url);
+        // 用户点开的新页面跟 Chrome 一样切到前台；AI 触发的、网页自己弹的不抢
+        if (cause === "user-input") this.emit("activate", tab);
         return;
       } catch {
         await new Promise((r) => setTimeout(r, 100));
