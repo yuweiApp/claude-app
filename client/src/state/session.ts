@@ -32,6 +32,11 @@ export type Item =
    */
   | { kind: "model"; uuid: string; from: string; to: string }
   /**
+   * 压缩了上下文，显示成一行，摘要不显示（不是用户写的）。实时：先来 system/compact_boundary（生成这一项，pending），
+   * 紧跟着一条 isSynthetic 的 user 消息是摘要，uuid 换成摘要的；历史：getSessionMessages 只从最近一次压缩读起，开头是摘要（isCompactSummary）
+   */
+  | { kind: "compact"; uuid: string; pending?: boolean }
+  /**
    * 后台任务（Bash 后台命令、后台子代理等）完成的通知。模型空闲时 Claude Code 会拿它自动开始新的一轮，所以它和用户消息一样是一轮的开头。
    * uuid 用 task:<task_id>：实时的 system/task_notification 和历史里的 <task-notification> 消息 uuid 不同，按任务 id 去重
    */
@@ -149,7 +154,9 @@ export function reduce(view: SessionView, action: Action): SessionView {
     // 历史放在前面，已经从事件流收到的（按 uuid）不重复
     const next = { ...emptyView(), state: view.state, model: view.model, effort: view.effort, permissionMode: view.permissionMode };
     for (const m of action.messages) {
-      ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id, m.timestamp ? Date.parse(m.timestamp) : undefined);
+      const at = m.timestamp ? Date.parse(m.timestamp) : undefined;
+      if (m.isCompactSummary && !m.parent_tool_use_id) ingestCompactSummary(next, m.uuid);
+      else ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id, at);
     }
     for (const item of view.items) {
       if (item.kind === "model") {
@@ -256,10 +263,17 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       if (!message.parent_tool_use_id) view.streaming = { text: "" };
       ingestMessage(view, "assistant", message.uuid, message.message, message.parent_tool_use_id, Date.now());
       return;
-    case "user":
-      if (message.uuid) ingestMessage(view, "user", message.uuid, message.message, message.parent_tool_use_id, Date.now());
+    case "user": {
+      if (!message.uuid) return;
+      // isSynthetic 是 Claude Code 自己加的 user 消息（不止摘要），紧跟在 compact_boundary 后面的才是摘要
+      const last = view.items.at(-1);
+      if (message.isSynthetic && !message.parent_tool_use_id && last?.kind === "compact" && last.pending) {
+        ingestCompactSummary(view, message.uuid);
+      } else ingestMessage(view, "user", message.uuid, message.message, message.parent_tool_use_id, Date.now());
       return;
+    }
     case "system":
+      if (message.subtype === "compact_boundary") pushItem(view, null, { kind: "compact", uuid: message.uuid, pending: true });
       if (message.subtype === "task_notification" && !message.skip_transcript) {
         view.pendingTasks = [...view.pendingTasks, { kind: "task", uuid: `task:${message.task_id}`, status: message.status, text: message.summary }];
       }
@@ -427,6 +441,22 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       view.seen = new Set(view.seen).add(uuid);
     }
   }
+}
+
+/**
+ * 压缩的摘要：前面有 compact_boundary 生成的那一项（实时）就把它的 uuid 换成摘要的，之后重新拉历史时按 uuid 去重；
+ * 没有就新加一项（历史）
+ */
+function ingestCompactSummary(view: SessionView, uuid: string): void {
+  if (view.seen.has(uuid)) return;
+  const item: Item = { kind: "compact", uuid };
+  const i = view.items.findLastIndex((it) => it.kind === "compact" && it.pending);
+  if (i < 0) {
+    pushItem(view, null, item);
+    return;
+  }
+  view.seen = new Set(view.seen).add(uuid);
+  view.items = view.items.with(i, item);
 }
 
 /** 用户消息：末尾带回复注释的拆出来 */

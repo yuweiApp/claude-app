@@ -183,9 +183,10 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
   const lastIdx = units.findLastIndex((u) => u.kind !== "item");
   const finalIdx = !live && units[lastIdx]?.kind === "text" ? lastIdx : -1;
   const final = finalIdx >= 0 ? units[finalIdx]! : null;
-  // 网关报的错不折叠
-  const errors = units.filter((u) => u.kind === "item");
-  const process = units.filter((u, i) => i !== finalIdx && u.kind !== "item");
+  // 网关报的错不折叠；压缩上下文是这一轮过程中的一步，按顺序放在过程里
+  const inProcess = (u: Unit) => u.kind !== "item" || u.item.kind === "compact";
+  const errors = units.filter((u) => !inProcess(u));
+  const process = units.filter((u, i) => i !== finalIdx && inProcess(u));
   const streaming = live && view.streaming.text;
   const hasProcess = process.length > 0;
   const duration = live ? null : turnDuration(turn);
@@ -361,6 +362,13 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
       return <ModelLine from={item.from} to={item.to} />;
     case "task":
       return <TaskLine task={item} />;
+    case "compact":
+      // 样式和换模型的一样：居中一行，两边是分割线
+      return (
+        <div className="model-line">
+          <span>已压缩上下文</span>
+        </div>
+      );
   }
 }
 
