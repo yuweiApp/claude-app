@@ -82,10 +82,20 @@ export interface Capabilities {
   /** managed：导入的，可以删除；enabled：false 时新会话里模型看不到、也调用不了；builtin：Claude Code 自带的 */
   skills: { name: string; description: string; managed: boolean; enabled: boolean; builtin: boolean }[];
   /**
-   * builtin：Claude Code 自带的（source 是 名字@builtin）；description、author 取自插件的 .claude-plugin/plugin.json。
+   * builtin：Claude Code 自带的（source 是 名字@builtin）；marketplace：从插件市场装的（source 是 名字@市场名），卸载用 source；
+   * managed：导入的或从市场装的，可以删除。description、author 取自插件的 .claude-plugin/plugin.json。
    * 插件带的技能叫「插件名:技能名」，带的 MCP 服务器叫「plugin:插件名:服务器名」
    */
-  plugins: { name: string; source?: string; version?: string; description?: string; author?: string; managed: boolean; builtin: boolean }[];
+  plugins: {
+    name: string;
+    source?: string;
+    version?: string;
+    description?: string;
+    author?: string;
+    marketplace?: string;
+    managed: boolean;
+    builtin: boolean;
+  }[];
   mcpServers: McpServerInfo[];
 }
 
@@ -108,9 +118,25 @@ export interface McpServerInfo {
   status: string;
   error?: string;
   source?: string;
-  /** 从连接器目录添加的：注册表里的名称、标题和图标 */
+  /** 从连接器市场添加的：注册表里的名称、标题和图标 */
   connector?: ConnectorRef;
   tools: { name: string; description?: string }[];
+}
+
+/** 插件市场里的一个插件（GET /plugin-market）。id 是「插件名@市场名」，安装、卸载、更新都用它 */
+export interface MarketPlugin {
+  id: string;
+  name: string;
+  title?: string;
+  description: string;
+  marketplace: string;
+  category?: string;
+  author?: string;
+  homepage?: string;
+  version?: string;
+  /** 市场给的安装次数（只有一部分市场有） */
+  installCount?: number;
+  installed: boolean;
 }
 
 export interface ConnectorRef {
@@ -120,7 +146,7 @@ export interface ConnectorRef {
 }
 
 /**
- * 连接器目录里的一项（GET /connectors）：MCP 官方注册表里有远程地址的服务器。
+ * 连接器市场里的一项（GET /connectors）：MCP 官方注册表里有远程地址的服务器。
  * id 是注册表里的名称，如 com.figma.mcp/mcp；斜杠前的反向域名注册表验证过所有权（io.github.用户名 验证的是 GitHub 账号）
  */
 export interface ConnectorEntry {

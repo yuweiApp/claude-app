@@ -2,10 +2,12 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, type ConnectorEntry, type McpServerInfo } from "../api";
 import { Avatar } from "./CapabilityPicker";
 import { McpAuthDialog } from "./McpAuthDialog";
+import { PAGE_SIZE, Pager, pageOf } from "./Pager";
 
 /**
- * 设置 → 连接器 → 目录：MCP 官方注册表里有远程地址的服务器。不搜索时是网关配置里推荐的，搜索时查整个注册表。
- * 添加后直接进入登录（不用登录的连上就关掉）；要填请求头、地址变量的先填表
+ * 设置 → 连接器 → 连接器市场：MCP 官方注册表里有远程地址的服务器。不搜索时是网关配置里推荐的，搜索时查整个注册表。
+ * 添加后直接进入登录（不用登录的连上就关掉）；要填请求头、地址变量的先填表。
+ * 分页显示，每页 PAGE_SIZE 条；搜索结果网关一次给 100 条，翻到取回来的最后一页再往后时取下一批
  */
 export function ConnectorDirectory({ search, servers, onChanged }: { search: string; servers: McpServerInfo[]; onChanged: () => void }) {
   const [entries, setEntries] = useState<ConnectorEntry[] | null>(null);
@@ -16,6 +18,7 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
   const [signingIn, setSigningIn] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
+  const [page, setPage] = useState(0);
 
   // 搜索词停下来 400ms 再查
   const keyword = search.trim();
@@ -31,6 +34,7 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
               if (cancelled) return;
               setEntries(page.connectors);
               setNextCursor(page.nextCursor);
+              setPage(0);
               setError(null);
             },
             (e: Error) => !cancelled && setError(e.message),
@@ -45,9 +49,9 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
   }, [keyword, reload]);
 
   const more = () => {
-    if (!nextCursor) return;
+    if (!nextCursor) return Promise.resolve();
     setLoading(true);
-    api
+    return api
       .connectors(keyword, nextCursor)
       .then(
         (page) => {
@@ -57,6 +61,11 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
         (e: Error) => setError(e.message),
       )
       .finally(() => setLoading(false));
+  };
+
+  const turn = (next: number) => {
+    if (entries && next * PAGE_SIZE >= entries.length && nextCursor) void more().then(() => setPage(next));
+    else setPage(next);
   };
 
   const added = (name: string) => {
@@ -74,7 +83,7 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
   };
 
   const status = (name: string) => servers.find((s) => s.name === name)?.status;
-  /** 已经有的服务器：从目录添加的，或者地址相同的（插件带来的、手动添加的），免得重复添加 */
+  /** 已经有的服务器：从连接器市场添加的，或者地址相同的（插件带来的、手动添加的），免得重复添加 */
   const existing = (entry: ConnectorEntry) => entry.added ?? servers.find((s) => s.target === entry.url)?.name;
 
   return (
@@ -82,7 +91,7 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
       {error && <div className="settings-error">{error}</div>}
       {entries && entries.length > 0 ? (
         <div className="settings-list">
-          {entries.map((entry) => {
+          {pageOf(entries, page).map((entry) => {
             const name = existing(entry);
             return (
               <div key={entry.id} className="settings-row">
@@ -125,13 +134,7 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
       ) : (
         <div className="settings-empty">{loading || !entries ? "加载中…" : keyword ? "注册表里没有匹配的连接器" : "没有推荐的连接器，搜索试试"}</div>
       )}
-      {nextCursor && entries && entries.length > 0 && (
-        <div className="connector-more">
-          <button disabled={loading} onClick={more}>
-            {loading ? "加载中…" : "加载更多"}
-          </button>
-        </div>
-      )}
+      {entries && entries.length > 0 && <Pager page={page} total={entries.length} hasMore={nextCursor !== undefined} loading={loading} onPage={turn} />}
       {filling && <ConnectorForm entry={filling} onAdded={added} onCancel={() => setFilling(null)} />}
       {signingIn && (
         <McpAuthDialog

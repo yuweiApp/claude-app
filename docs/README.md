@@ -59,10 +59,15 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
 - 模型用终端（参照 Claude 桌面版的终端工具）：每个会话（操作它工作目录那一组终端），网关给 SDK 加一个进程内 MCP 服务器 `terminal`（`gateway/src/terminal/tool.ts`，`createSdkMcpServer`），工具有 `read_terminal`（读屏幕上的文字：清屏之前的丢掉，去掉控制序列，回车、退格按覆盖处理；可以先等新输出）、`list_terminal_tabs`、`run_in_terminal`（敲一行命令并回车；不传 tab_id 开新终端，title 是标签页名字）、`stop_terminal_tab`（Ctrl-C 或关闭）。读的两个在 `allowedTools` 里不用确认，写命令、停止走权限卡片（「完全访问权限」下直接执行）。模型只能往它自己开的、用户没敲过、回到了提示符的终端里写命令，只能停止、关闭它自己开的；前台在跑什么用 node-pty 的 `process`（Unix 上是 tcgetpgrp，Windows 上拿不到）。面板每 2 秒对一次 `GET /terminals?cwd=`：模型开的终端补成标签页（不抢当前标签），关掉的去掉。
 - 导入技能和插件：技能文件夹要有 `SKILL.md`，复制到 `$CLAUDE_CONFIG_DIR/skills/<名称>/`，Claude Code 自己发现；插件文件夹要有 `.claude-plugin/plugin.json`，复制到 `$CLAUDE_CONFIG_DIR/gateway-plugins/<名称>/`，通过 `options.plugins` 加载，它的技能叫 `插件名:技能名`。桌面版用系统对话框选文件夹，网页用 `GET /folders` 浏览。
 - 插件详情：设置页「插件」点一个插件进详情（同 Claude 桌面版），显示 `plugin.json` 里的描述和作者（`GET /capabilities` 按 SDK 返回的插件 `path` 读），下面分「技能」「连接器」两个标签。插件和它带的东西不另外记对应关系，按名称认：技能是 `插件名:技能名`，MCP 服务器是 `plugin:插件名:服务器名`。技能的启停、查看和连接器的登录、查看工具和「技能」「连接器」页里的一样。
+- 插件市场（`gateway/src/agent/plugin-market.ts`、`client/src/components/PluginDirectory.tsx`）：设置页「插件」第三个标签「插件市场」。整个交给 SDK 自带的 Claude Code 命令行做（`claude plugin …`，`CLAUDE_CONFIG_DIR` 是网关的配置目录，可执行文件和 SDK 一样按平台包名 `@anthropic-ai/claude-agent-sdk-<平台>-<架构>` 找），网关不自己解析插件来源、不自己拉代码。
+  - 市场是一个 git 仓库，`.claude-plugin/marketplace.json` 列出插件。地址在 `config.yml` 的 `plugins.marketplaces`，默认 Anthropic 官方的 `claude-plugins-official`（三百多个）；第一次打开目录时没加过的先 `marketplace add`（克隆到 `plugins/marketplaces/` 下，记进 `settings.json` 的 `extraKnownMarketplaces`）。要写完整的 https 地址：`owner/repo` 简写 Claude Code 用 SSH 克隆，没配 SSH 密钥就失败。
+  - 列表用 `plugin list --available --json`（有安装次数），只留配置里的市场，再从 `marketplace.json` 补分类、作者、主页；按安装次数排序，缓存 10 分钟，设置页「刷新」先 `marketplace update`（git 拉取）。一次全部返回，搜索、分类在网页里筛，分页显示（每页 20 条，`client/src/components/Pager.tsx`）。Claude Code 还内置一个 `anthropic-plugin-directory`（三千多个，含合作伙伴的），不在配置里就不显示。
+  - 安装、卸载、更新是 `plugin install / uninstall / update <插件名@市场名> --json`（不加 `-y`：要执行市场声明的命令的插件会失败并报原因）。插件按来源（市场仓库里的目录、别的 git 仓库或其中的子目录）拉到 `plugins/cache/` 下，记进 `settings.json` 的 `enabledPlugins`，会话按 `settingSources` 的 `user` 加载，对新会话和子进程重启后的会话生效。插件来源是 git 仓库的要有 git（Windows 上 Claude Code 本来就要 Git for Windows）。
+  - 能力列表里插件的 source 是 `插件名@市场名` 的算从市场装的（`marketplace` 字段），列表和详情里「删除」换成「卸载」，详情多一个「检查更新」，显示 Claude Code 的说明。已经手动导入了同名插件的不让装（两个同名插件的技能、MCP 服务器名称冲突），目录里显示「已导入」。
 - 停用技能：停用的名称存在 `$CLAUDE_CONFIG_DIR/gateway-disabled-skills.json`。有停用的技能时，网关把其余技能作为 `options.skills` 白名单传给 SDK，模型看不到停用的技能，调 Skill 工具也会被拒绝；这个白名单管不到用户自己输入的 `/技能名`，所以网关在新建和发送时再拦一次，返回 400。白名单在拉起 claude 进程时确定，已经活跃的会话要等进程重启才更新，`/技能名` 的拦截立即生效。内置技能只能停用；删除只针对导入的技能，是删文件，SDK 没有对应接口。
 - MCP 服务器：设置页添加的存在 `$CLAUDE_CONFIG_DIR/gateway-mcp-servers.json`（权限 600，请求头和环境变量可能有令牌），启用的通过 `options.mcpServers` 传给会话，对新会话和子进程重启后的会话生效。插件或配置文件带来的服务器只显示，不能在设置页改。
-- 连接器（`gateway/src/agent/connectors.ts`、`client/src/components/ConnectorDirectory.tsx`）：设置页原来的「MCP」改叫「连接器」，分「已添加」和「目录」两个标签。目录的数据来自 MCP 官方注册表（`config.yml` 的 `connectors.registry`，默认 `https://registry.modelcontextprotocol.io`），只列有远程地址（streamable-http 优先，其次 SSE）的服务器，删除了的不列。
-  - 注册表很大（2 万多条，不少是批量发布的杂项），所以不搜索时只列 `connectors.featured` 里推荐的（按名称逐个取最新版本，缓存 1 小时，取不到的跳过）；搜索时查整个注册表（`version=latest`，一页 100 条，「加载更多」取下一页，缓存 5 分钟），推荐的和名称主体就是搜索词的排在前面。
+- 连接器（`gateway/src/agent/connectors.ts`、`client/src/components/ConnectorDirectory.tsx`）：设置页原来的「MCP」改叫「连接器」，分「已添加」和「连接器市场」两个标签。连接器市场的数据来自 MCP 官方注册表（`config.yml` 的 `connectors.registry`，默认 `https://registry.modelcontextprotocol.io`），只列有远程地址（streamable-http 优先，其次 SSE）的服务器，删除了的不列。
+  - 注册表很大（2 万多条，不少是批量发布的杂项），所以不搜索时只列 `connectors.featured` 里推荐的（按名称逐个取最新版本，缓存 1 小时，取不到的跳过）；搜索时查整个注册表（`version=latest`，网关一页 100 条，缓存 5 分钟），推荐的和名称主体就是搜索词的排在前面。网页分页显示，每页 20 条，翻到已经取回来的最后一页再往后时取注册表的下一页（页数显示成「3+」）。
   - 名称是反向域名（`com.figma.mcp/mcp`），注册表验证过所有权：`com.figma` 验证域名，`io.github.用户名` 验证 GitHub 账号，所以列表里显示完整名称和地址，看得出是不是官方的。没写 title 的，标题用斜杠后面那段，那段只是 mcp 的用名称主体（`com.notion/mcp` → Notion）。
   - 添加（`POST /connectors`）由网关按名称再取一次注册表，填好地址变量和请求头，存成设置页的 MCP 服务器（`gateway-mcp-servers.json` 里多记一个 `connector`：注册表名称、标题、图标），之后的连接、登录、启停、删除和手动添加的一样。默认名称是名称主体（figma、linear），`io.github.*` 的用标题；被别的服务器占了加 `-2`。有请求头或地址变量的先弹表单（可选的请求头不填就不带），没有的直接添加；添加后直接打开登录对话框，不用登录的连上就自动关掉。
   - 目录里地址和已有服务器相同的（插件带来的、手动添加的）显示「已添加」，免得重复；已添加但要登录的显示「登录」。
@@ -229,6 +234,8 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | GET | `/capabilities?cwd=&refresh=` | 工作目录下可用的技能、插件和 MCP 服务器状态（临时 query 的 `reloadSkills()`、`reloadPlugins()`，不调模型接口，缓存 1 分钟，`refresh=1` 不用缓存） |
 | GET | `/skills/:name` | 技能的 `SKILL.md`（导入的、项目里的、导入插件里的 `插件名:技能名`）；内置技能没有文件，返回 404 |
 | POST | `/skills/import`、`/plugins/import` | 导入：`{ path }` 是网关机器上的文件夹，复制到配置目录，已有同名的不覆盖 |
+| GET | `/plugin-market?refresh=` | 插件市场里的插件（`MarketPlugin[]`），按安装次数排序，缓存 10 分钟；`refresh=1` 先更新市场 |
+| POST | `/plugin-market/install`、`/uninstall`、`/update` | `{ id }`（插件名@市场名），交给 Claude Code 安装、卸载、更新；更新返回 `{ message }` |
 | PATCH | `/skills/:name` | 启用、停用技能：`{ enabled }` |
 | DELETE | `/skills/:name`、`/plugins/:name` | 删除导入的技能、插件和它们的文件 |
 | PUT | `/mcp-servers/:name` | 添加 MCP 服务器，同名覆盖（stdio：`command`、`args`、`env`；http / sse：`url`、`headers`） |
@@ -238,7 +245,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | GET | `/mcp-servers/:name/auth` | 登录进度：`waiting`、`done`、`failed`（带 `error`），结束后留 5 分钟 |
 | POST | `/mcp-servers/:name/auth/callback` | 交回调网址 `{ url }`（浏览器和网关不在同一台电脑上时） |
 | DELETE | `/mcp-servers/:name/auth` | 放弃正在进行的登录 |
-| GET | `/connectors?search=&cursor=` | 连接器目录：不传 `search` 是推荐的，传了查 MCP 注册表，返回 `{ connectors, nextCursor }` |
+| GET | `/connectors?search=&cursor=` | 连接器市场：不传 `search` 是推荐的，传了查 MCP 注册表，返回 `{ connectors, nextCursor }` |
 | POST | `/connectors` | 添加连接器 `{ id, name?, variables?, headers? }`，返回存成的 MCP 服务器名称 |
 | GET | `/sessions/:id/tasks` | 会话的后台任务（打开会话时拉一次，之后靠 `tasks` 事件） |
 | GET | `/sessions/:id/tasks/:taskId/output` | 后台 Bash 任务输出的最后 64 KB，只能读这个会话记下的输出文件 |

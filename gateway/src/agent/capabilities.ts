@@ -98,14 +98,20 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
         enabled: !disabledSkills().includes(name),
         builtin: builtin === true,
       })),
-      plugins: plugins.map(({ name, source, version, path }) => ({
-        name,
-        source,
-        version,
-        ...pluginManifest(path),
-        managed: importedPluginNames().includes(name),
-        builtin: source?.endsWith("@builtin") === true,
-      })),
+      plugins: plugins.map(({ name, source, version, path }) => {
+        // 导入的是 名字@inline，自带的是 名字@builtin，其余 @ 后面是市场名
+        const origin = source?.split("@")[1];
+        const marketplace = origin && origin !== "inline" && origin !== "builtin" ? origin : undefined;
+        return {
+          name,
+          source,
+          version,
+          ...pluginManifest(path),
+          ...(marketplace ? { marketplace } : {}),
+          managed: importedPluginNames().includes(name) || marketplace !== undefined,
+          builtin: origin === "builtin",
+        };
+      }),
       mcpServers: [...managed, ...others],
     };
     cache.set(cwd, { at: Date.now(), value });

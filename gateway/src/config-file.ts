@@ -21,6 +21,9 @@ export const externalBrowserEnabled: boolean = configFile?.externalBrowser?.enab
 export const desktopEnabled: boolean = configFile?.desktop?.enabled === true;
 
 
-/** 连接器目录：MCP 注册表的地址和不搜索时列出的推荐连接器（config.yml 的 connectors），见 agent/connectors.ts */
+/** 连接器市场：MCP 注册表的地址和不搜索时列出的推荐连接器（config.yml 的 connectors），见 agent/connectors.ts */
 export const connectorRegistry: string = (configFile?.connectors?.registry ?? "https://registry.modelcontextprotocol.io").replace(/\/+$/, "");
 export const featuredConnectors: string[] = configFile?.connectors?.featured ?? [];
+
+/** 插件市场（设置页「插件」→「插件市场」）：市场的 git 仓库地址（config.yml 的 plugins.marketplaces），见 agent/plugin-market.ts */
+export const pluginMarketplaces: string[] = configFile?.plugins?.marketplaces ?? ["https://github.com/anthropics/claude-plugins-official.git"];

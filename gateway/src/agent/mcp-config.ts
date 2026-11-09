@@ -9,7 +9,7 @@ export type McpConfig = McpStdioServerConfig | McpHttpServerConfig | McpSSEServe
 interface StoredServer {
   enabled: boolean;
   config: McpConfig;
-  /** 从连接器目录添加的 */
+  /** 从连接器市场添加的 */
   connector?: ConnectorRef;
 }
 

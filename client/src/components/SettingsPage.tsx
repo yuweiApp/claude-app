@@ -7,14 +7,15 @@ import { Avatar } from "./CapabilityPicker";
 import { useDismiss } from "./ComposerPickers";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ConnectorDirectory, ConnectorIcon } from "./ConnectorDirectory";
+import { PluginDirectory } from "./PluginDirectory";
 import { McpAuthDialog } from "./McpAuthDialog";
 import { FolderPickerDialog } from "./FolderPickerDialog";
 import { IosIcon } from "./IosIcon";
 
 type Section = "plugins" | "skills" | "mcp";
-/** 技能、插件页顶部的标签：个人（导入的、项目里的、导入插件带的）和 Claude Code 自带的 */
-type Origin = "mine" | "builtin";
-/** 连接器页顶部的标签：已经添加的（设置页添加的、插件和配置文件带来的）和目录（MCP 注册表） */
+/** 技能、插件页顶部的标签：个人（导入的、项目里的、导入插件带的、从市场装的）和 Claude Code 自带的；插件页还有插件市场 */
+type Origin = "mine" | "builtin" | "directory";
+/** 连接器页顶部的标签：已经添加的（设置页添加的、插件和配置文件带来的）和连接器市场（MCP 注册表） */
 type ConnectorTab = "added" | "directory";
 
 const SECTIONS: { key: Section; label: string; icon: ReactNode }[] = [
@@ -32,7 +33,7 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
   const [search, setSearch] = useState("");
   const [origin, setOrigin] = useState<Origin>("mine");
   const [connectorTab, setConnectorTab] = useState<ConnectorTab>("added");
-  /** 目录的「刷新」：换个 key 让目录重新加载 */
+  /** 插件市场、连接器市场的「刷新」：换个 key 让市场列表重新加载 */
   const [directoryKey, setDirectoryKey] = useState(0);
   const [viewing, setViewing] = useState<Capabilities["skills"][number] | null>(null);
   /** 插件页里打开详情的插件名 */
@@ -57,6 +58,7 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
     setOrigin("mine");
     setConnectorTab("added");
     setOpenPlugin(null);
+    setDirectoryKey(0);
   }, [section]);
   useEffect(() => setSearch(""), [origin, connectorTab]);
 
@@ -68,6 +70,7 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
   const count = (items: { builtin: boolean }[] | undefined, builtin: boolean) => items?.filter((i) => i.builtin === builtin).length ?? 0;
   const servers = (data?.mcpServers ?? []).filter((m) => match(m.name, m.target, m.connector?.title));
   const browsing = section === "mcp" && connectorTab === "directory";
+  const marketBrowsing = section === "plugins" && origin === "directory";
   const detail = section === "plugins" ? (data?.plugins.find((p) => p.name === openPlugin) ?? null) : null;
   const label = SECTIONS.find((s) => s.key === section)!.label;
 
@@ -94,12 +97,12 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
                 `连接器（MCP 服务器）把 Figma、Notion、GitHub 等外部服务接进对话，提供工具和数据。已添加 ${data?.mcpServers.length ?? 0} 个，已启用 ${data?.mcpServers.filter((m) => m.enabled).length ?? 0} 个。`}
             </p>
           </div>
-          <input className="settings-search" hidden={detail !== null} value={search} placeholder={browsing ? "在 MCP 注册表里搜索" : `搜索${label}`} onChange={(e) => setSearch(e.target.value)} />
+          <input className="settings-search" hidden={detail !== null} value={search} placeholder={browsing ? "在 MCP 注册表里搜索" : marketBrowsing ? "搜索插件市场" : `搜索${label}`} onChange={(e) => setSearch(e.target.value)} />
           <button
             disabled={loading}
             onClick={() => {
               load(true);
-              if (browsing) setDirectoryKey((k) => k + 1);
+              if (browsing || marketBrowsing) setDirectoryKey((k) => k + 1);
             }}
           >
             {loading ? "刷新中…" : "刷新"}
@@ -110,11 +113,17 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
         </header>
         {(section === "plugins" || section === "skills") && !detail && (
           <div className="settings-tabs" role="tablist">
-            {(["mine", "builtin"] as const).map((o) => (
+            {(section === "plugins" ? (["mine", "builtin", "directory"] as const) : (["mine", "builtin"] as const)).map((o) => (
               <button key={o} role="tab" aria-selected={o === origin} className={`settings-tab${o === origin ? " active" : ""}`} onClick={() => setOrigin(o)}>
-                {o === "mine" ? "个人" : "内置"}
-                {label}
-                <span className="settings-tab-count">{count(section === "skills" ? data?.skills : data?.plugins, o === "builtin")}</span>
+                {o === "directory" ? (
+                  "插件市场"
+                ) : (
+                  <>
+                    {o === "mine" ? "个人" : "内置"}
+                    {label}
+                    <span className="settings-tab-count">{count(section === "skills" ? data?.skills : data?.plugins, o === "builtin")}</span>
+                  </>
+                )}
               </button>
             ))}
           </div>
@@ -123,7 +132,7 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
           <div className="settings-tabs" role="tablist">
             {(["added", "directory"] as const).map((t) => (
               <button key={t} role="tab" aria-selected={t === connectorTab} className={`settings-tab${t === connectorTab ? " active" : ""}`} onClick={() => setConnectorTab(t)}>
-                {t === "added" ? "已添加" : "目录"}
+                {t === "added" ? "已添加" : "连接器市场"}
                 {t === "added" && <span className="settings-tab-count">{data?.mcpServers.length ?? 0}</span>}
               </button>
             ))}
@@ -144,14 +153,24 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
             onError={setError}
           />
         )}
-        {section === "plugins" && !detail && (
-          <List empty={data ? (keyword ? "没有匹配的插件" : origin === "mine" ? "还没有个人插件，点右上角导入" : "没有内置插件") : "加载中…"}>
+        {marketBrowsing && !detail && (
+          <PluginDirectory
+            key={directoryKey}
+            refresh={directoryKey > 0}
+            search={search}
+            imported={(data?.plugins ?? []).filter((p) => p.managed && !p.marketplace).map((p) => p.name)}
+            onChanged={() => load(false)}
+            onOpen={setOpenPlugin}
+          />
+        )}
+        {section === "plugins" && !detail && !marketBrowsing && (
+          <List empty={data ? (keyword ? "没有匹配的插件" : origin === "mine" ? "还没有个人插件，在「插件市场」里安装，或点右上角导入" : "没有内置插件") : "加载中…"}>
             {plugins.map((p) => {
               const parts = pluginParts(p.name, data!);
               const meta = [`${parts.skills.length} 个技能`, `${parts.servers.length} 个连接器`, p.version && `版本 ${p.version}`].filter(Boolean).join(" · ");
               return (
                 <Row key={p.name} name={p.name} sub={p.description ?? p.source} wrap meta={meta} onOpen={() => setOpenPlugin(p.name)}>
-                  {p.managed && <DeleteButton kind="plugins" name={p.name} onDeleted={() => load(false)} onError={setError} />}
+                  {p.managed && <PluginDeleteButton plugin={p} onDeleted={() => load(false)} onError={setError} />}
                 </Row>
               );
             })}
@@ -168,7 +187,7 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
         )}
         {browsing && <ConnectorDirectory key={directoryKey} search={search} servers={data?.mcpServers ?? []} onChanged={() => load(false)} />}
         {section === "mcp" && !browsing && (
-          <List empty={data ? (keyword ? "没有匹配的连接器" : "还没有连接器，在「目录」里添加，或点右上角手动添加") : "加载中…"}>
+          <List empty={data ? (keyword ? "没有匹配的连接器" : "还没有连接器，在「连接器市场」里添加，或点右上角手动添加") : "加载中…"}>
             {servers.map((server) => (
               <ServerRow key={server.name} server={server} onChanged={() => load(false)} onError={setError} />
             ))}
@@ -213,6 +232,23 @@ function PluginDetail({
   const { skills, servers } = pluginParts(plugin.name, data);
   const [tab, setTab] = useState<"skills" | "connectors">(skills.length === 0 && servers.length > 0 ? "connectors" : "skills");
   const meta = [plugin.author && `作者：${plugin.author}`, plugin.version && `版本 ${plugin.version}`, plugin.source].filter(Boolean).join(" · ");
+  const [updating, setUpdating] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  /** 从市场装的：更新到市场里的最新版本，显示 Claude Code 的说明 */
+  const update = () => {
+    setUpdating(true);
+    setNotice(null);
+    api
+      .updatePlugin(plugin.source!)
+      .then(
+        (message) => {
+          setNotice(message);
+          onChanged();
+        },
+        (e: Error) => onError(`更新失败：${e.message}`),
+      )
+      .finally(() => setUpdating(false));
+  };
 
   return (
     <>
@@ -228,8 +264,14 @@ function PluginDetail({
           </div>
           {meta && <div className="settings-row-sub">{meta}</div>}
         </div>
-        {plugin.managed && <DeleteButton kind="plugins" name={plugin.name} onDeleted={onDeleted} onError={onError} />}
+        {plugin.marketplace && (
+          <button disabled={updating} onClick={update}>
+            {updating ? "更新中…" : "检查更新"}
+          </button>
+        )}
+        {plugin.managed && <PluginDeleteButton plugin={plugin} onDeleted={onDeleted} onError={onError} />}
       </div>
+      {notice && <p className="plugin-notice">{notice}</p>}
       {plugin.description && <p className="plugin-description">{plugin.description}</p>}
       <div className="settings-tabs" role="tablist">
         {(["skills", "connectors"] as const).map((t) => (
@@ -337,6 +379,36 @@ function ConfirmDelete({ kind, name, onClose, onDeleted, onError }: { kind: "ski
         api.deleteExtension(kind, name).then(onDeleted, (e: Error) => onError(e.message));
       }}
     />
+  );
+}
+
+/** 删除插件：导入的删文件；从市场装的交给 Claude Code 卸载 */
+function PluginDeleteButton({ plugin, onDeleted, onError }: { plugin: Capabilities["plugins"][number]; onDeleted: () => void; onError: (message: string) => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [running, setRunning] = useState(false);
+  if (!plugin.marketplace) return <DeleteButton kind="plugins" name={plugin.name} onDeleted={onDeleted} onError={onError} />;
+  return (
+    <>
+      <button className="settings-danger" disabled={running} onClick={() => setConfirming(true)}>
+        {running ? "卸载中…" : "卸载"}
+      </button>
+      {confirming && (
+        <ConfirmDialog
+          title="卸载插件"
+          message={`将卸载从「${plugin.marketplace}」安装的插件「${plugin.name}」，它带的技能和连接器在新会话里不再可用。`}
+          confirmLabel="卸载"
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => {
+            setConfirming(false);
+            setRunning(true);
+            api
+              .uninstallPlugin(plugin.source!)
+              .then(onDeleted, (e: Error) => onError(`卸载失败：${e.message}`))
+              .finally(() => setRunning(false));
+          }}
+        />
+      )}
+    </>
   );
 }
 

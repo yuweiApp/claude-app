@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, MarketPlugin, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo };
+export type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, MarketPlugin, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -138,10 +138,16 @@ export const api = {
   /** 导入技能、插件：path 是网关机器上的文件夹 */
   importExtension: (kind: "skills" | "plugins", path: string) => request<{ name: string }>("POST", `/${kind}/import`, { path }),
   deleteExtension: (kind: "skills" | "plugins", name: string) => request("DELETE", `/${kind}/${encodeURIComponent(name)}`),
+  /** 插件市场里的插件；refresh 时网关先更新市场（git 拉取） */
+  pluginMarket: (refresh = false) => request<{ plugins: MarketPlugin[] }>("GET", `/plugin-market${refresh ? "?refresh=1" : ""}`).then((r) => r.plugins),
+  /** 安装、卸载、更新市场里的插件：id 是「插件名@市场名」 */
+  installPlugin: (id: string) => request("POST", "/plugin-market/install", { id }),
+  uninstallPlugin: (id: string) => request("POST", "/plugin-market/uninstall", { id }),
+  updatePlugin: (id: string) => request<{ message: string }>("POST", "/plugin-market/update", { id }).then((r) => r.message),
   saveMcpServer: (name: string, input: Omit<McpServerInput, "name">) => request("PUT", `/mcp-servers/${encodeURIComponent(name)}`, input),
   setMcpServerEnabled: (name: string, enabled: boolean) => request("PATCH", `/mcp-servers/${encodeURIComponent(name)}`, { enabled }),
   deleteMcpServer: (name: string) => request("DELETE", `/mcp-servers/${encodeURIComponent(name)}`),
-  /** 连接器目录：不传 search 是推荐的，传了查整个 MCP 注册表，cursor 取下一页 */
+  /** 连接器市场：不传 search 是推荐的，传了查整个 MCP 注册表，cursor 取下一页 */
   connectors: (search?: string, cursor?: string) => {
     const params = new URLSearchParams({ ...(search ? { search } : {}), ...(cursor ? { cursor } : {}) });
     return request<{ connectors: ConnectorEntry[]; nextCursor?: string }>("GET", `/connectors?${params}`);

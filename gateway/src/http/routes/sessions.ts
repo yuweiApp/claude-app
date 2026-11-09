@@ -1,7 +1,7 @@
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { listModels } from "../../agent/models.js";
 import type { FastifyInstance } from "fastify";
-import type { ConnectorEntry, ConnectorInput, McpAuthState, McpServerInput } from "../../shared/types.js";
+import type { ConnectorEntry, ConnectorInput, MarketPlugin, McpAuthState, McpServerInput } from "../../shared/types.js";
 import { AttachmentError } from "../../agent/attachments.js";
 import { BadRequestError, NotFoundError, type SessionManager } from "../../agent/session-manager.js";
 import type { EventHub } from "../../events/event-hub.js";
@@ -11,6 +11,7 @@ import { ExtensionError, importPlugin, importSkill, readSkill, removePlugin, rem
 import { removeMcpServer, saveMcpServer, setMcpServerEnabled } from "../../agent/mcp-config.js";
 import { addConnector, ConnectorError, listConnectors } from "../../agent/connectors.js";
 import { cancelMcpAuth, clearMcpAuth, getMcpAuth, McpAuthError, startMcpAuth, submitMcpAuthCallback } from "../../agent/mcp-auth.js";
+import { installMarketPlugin, listMarketPlugins, PluginMarketError, uninstallMarketPlugin, updateMarketPlugin } from "../../agent/plugin-market.js";
 import { config } from "../../config.js";
 
 const permissionModes = ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"];
@@ -78,6 +79,26 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     return { ok: true };
   });
 
+  /** 插件市场：config.yml 里配置的市场的插件；refresh=1 先更新市场 */
+  app.get<{ Querystring: { refresh?: string } }>("/plugin-market", async (req): Promise<{ plugins: MarketPlugin[] }> => {
+    return { plugins: await market(() => listMarketPlugins(req.query.refresh === "1")) };
+  });
+
+  /** 安装、卸载、更新市场里的插件：id 是「插件名@市场名」。对新会话和子进程重启后的会话生效 */
+  app.post<{ Body: { id: string } }>("/plugin-market/install", async (req) => {
+    await market(() => installMarketPlugin(String(req.body?.id ?? "")));
+    return { ok: true };
+  });
+
+  app.post<{ Body: { id: string } }>("/plugin-market/uninstall", async (req) => {
+    await market(() => uninstallMarketPlugin(String(req.body?.id ?? "")));
+    return { ok: true };
+  });
+
+  app.post<{ Body: { id: string } }>("/plugin-market/update", async (req) => {
+    return { message: await market(() => updateMarketPlugin(String(req.body?.id ?? ""))) };
+  });
+
   /** 添加 MCP 服务器，同名时覆盖。对新会话和子进程重启后的会话生效 */
   app.put<{ Params: { name: string }; Body: Omit<McpServerInput, "name"> }>("/mcp-servers/:name", async (req) => {
     const { name } = req.params;
@@ -101,7 +122,7 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     return { ok: true };
   });
 
-  /** 连接器目录（MCP 官方注册表里有远程地址的服务器）：不传 search 是推荐的，传了查整个注册表，cursor 取下一页 */
+  /** 连接器市场（MCP 官方注册表里有远程地址的服务器）：不传 search 是推荐的，传了查整个注册表，cursor 取下一页 */
   app.get<{ Querystring: { search?: string; cursor?: string } }>("/connectors", async (req): Promise<{ connectors: ConnectorEntry[]; nextCursor?: string }> => {
     return connectorCall(() => listConnectors(req.query.search, req.query.cursor));
   });
@@ -336,6 +357,16 @@ function activeOr404(sessions: SessionManager, id: string) {
   const session = sessions.get(id);
   if (!session) throw new NotFoundError("会话不在运行");
   return session;
+}
+
+/** 插件市场失败（克隆不了、插件不存在、同名冲突等）是 400，带着 Claude Code 给的原因 */
+async function market<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof PluginMarketError) throw new BadRequestError(err.message);
+    throw err;
+  }
 }
 
 /** 登录、断开失败（服务器不支持注册客户端、回调网址不对等）是 400，带着 Claude Code 给的原因 */

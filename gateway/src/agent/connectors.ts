@@ -3,7 +3,7 @@ import type { ConnectorEntry, ConnectorField, ConnectorInput } from "../shared/t
 import { readMcpServers, saveMcpServer } from "./mcp-config.js";
 
 /**
- * 连接器目录：MCP 官方注册表（registry.modelcontextprotocol.io，API 见 /docs）里有远程地址的服务器。
+ * 连接器市场：MCP 官方注册表（registry.modelcontextprotocol.io，API 见 /docs）里有远程地址的服务器。
  * 不搜索时列 config.yml 里推荐的（注册表很大，也有不少批量发布的杂项），搜索时查整个注册表。添加就是存成设置页的 MCP 服务器，
  * 之后的连接、OAuth 登录和手动添加的一样
  */
@@ -62,10 +62,10 @@ async function registry<T>(path: string): Promise<T | null> {
     res = await fetch(connectorRegistry + path, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(TIMEOUT_MS) });
   } catch (err) {
     const e = err as Error;
-    throw new ConnectorError(`连接器目录加载失败：${e.name === "TimeoutError" ? "注册表超过 15 秒没有响应" : ((e.cause as Error | undefined)?.message ?? e.message)}`);
+    throw new ConnectorError(`连接器市场加载失败：${e.name === "TimeoutError" ? "注册表超过 15 秒没有响应" : ((e.cause as Error | undefined)?.message ?? e.message)}`);
   }
   if (res.status === 404) return null;
-  if (!res.ok) throw new ConnectorError(`连接器目录加载失败：注册表返回 ${res.status}`);
+  if (!res.ok) throw new ConnectorError(`连接器市场加载失败：注册表返回 ${res.status}`);
   return (await res.json()) as T;
 }
 
@@ -150,7 +150,7 @@ function markAdded(entries: ConnectorEntry[]): ConnectorEntry[] {
   return entries.map((entry) => (added.has(entry.id) ? { ...entry, added: added.get(entry.id) } : { ...entry, added: undefined }));
 }
 
-/** 目录：不传 search 列推荐的；传了查整个注册表，一次一页，nextCursor 取下一页 */
+/** 连接器市场：不传 search 列推荐的；传了查整个注册表，一次一页，nextCursor 取下一页 */
 export async function listConnectors(search?: string, cursor?: string): Promise<{ connectors: ConnectorEntry[]; nextCursor?: string }> {
   const keyword = search?.trim();
   if (!keyword) {

@@ -313,10 +313,10 @@ main {
 .mcp-hint { margin: 0; color: var(--muted); font-size: 13px; }
 .mcp-auth-text { margin: 0; font-size: 14px; line-height: 1.6; }
 .mcp-auth-text a { color: var(--accent); }
-/* 连接器目录：注册表里的图标（大小同首字母头像），已添加的标记，「加载更多」 */
+/* 连接器市场：注册表里的图标（大小同首字母头像），已添加的标记；插件、连接器市场的分页 */
 .connector-icon { object-fit: contain; background: #fff; padding: 2px; }
 .connector-added { color: var(--muted); font-size: 13px; white-space: nowrap; }
-.connector-more { display: flex; justify-content: center; margin-top: 12px; }
+.pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 14px; color: var(--muted); font-size: 13px; }
 .banner { background: var(--err); color: #fff; padding: 8px 16px; cursor: pointer; }
 .chat { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .chat-header {
@@ -1195,3 +1195,6 @@ svg.ic-mcp { color: var(--ic-mcp); }
 .sent-note:hover:not(:disabled) { background: none; }
 .sent-note:disabled { cursor: default; opacity: 1; }
 .sent-note-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.plugin-notice { margin: 12px 0 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.plugin-directory-bar { display: flex; align-items: center; gap: 12px; margin: -4px 0 12px; color: var(--muted); font-size: 13px; }
+.plugin-directory-bar span { flex: 1; min-width: 0; }
