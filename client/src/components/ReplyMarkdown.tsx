@@ -1,6 +1,7 @@
-import { createContext, useContext, type AnchorHTMLAttributes, type MouseEvent } from "react";
+import { createContext, useContext, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useFileExists } from "../state/fileExists";
 
 /**
  * Claude 回复里的链接指向本地文件时，在右侧面板打开：cwd 是会话的工作目录（面板的文件只能是它里面的），
@@ -8,13 +9,46 @@ import remarkGfm from "remark-gfm";
  */
 export const FileLinkContext = createContext<{ cwd: string; open: (path: string) => void } | null>(null);
 
-/** Claude 回复的 Markdown：GFM，本地文件链接点开在右侧面板，网址在新窗口打开 */
+/**
+ * Claude 回复的 Markdown：GFM，本地文件链接点开在右侧面板，网址在新窗口打开。
+ * 行内代码像文件路径（`index.html`、`src/a.ts:12`）、又是工作目录里存在的文件时，显示成文件链接，
+ * 同写成 [index.html](index.html)；只改显示，消息内容不变
+ */
 export function ReplyMarkdown({ children }: { children: string }) {
   return (
-    <Markdown remarkPlugins={[remarkGfm, remarkKeepWindowsPaths]} urlTransform={urlTransform} components={{ a: ({ node: _node, ...props }) => <ReplyLink {...props} /> }}>
+    <Markdown
+      remarkPlugins={[remarkGfm, remarkKeepWindowsPaths]}
+      urlTransform={urlTransform}
+      components={{
+        a: ({ node: _node, ...props }) => <ReplyLink {...props} />,
+        pre: ({ node: _node, ...props }) => (
+          <InCodeBlock.Provider value={true}>
+            <pre {...props} />
+          </InCodeBlock.Provider>
+        ),
+        code: ({ node: _node, ...props }) => <ReplyCode {...props} />,
+      }}
+    >
       {children}
     </Markdown>
   );
+}
+
+/** 在代码块（```）里：里面的 code 不当文件路径 */
+const InCodeBlock = createContext(false);
+
+/** 像文件路径的行内代码：没有空白和引号、括号这些，带扩展名（可以带 :行号）；网址不算 */
+const PATH_LIKE = /^(?:[a-z]:[\\/]|\\\\|\.{0,2}[\\/])?[^\s`'"<>|*?()[\]{}]*[^\s`'"<>|*?()[\]{}\\/.]\.[a-z\d]{1,10}(?::\d+(?::\d+)?)?$/i;
+
+function ReplyCode({ children, ...rest }: HTMLAttributes<HTMLElement> & { children?: ReactNode }) {
+  const inBlock = useContext(InCodeBlock);
+  const files = useContext(FileLinkContext);
+  const text = typeof children === "string" ? children : null;
+  const candidate = !inBlock && files && text && !text.includes("://") && PATH_LIKE.test(text) ? text : null;
+  const path = candidate && files ? projectPath(files.cwd, candidate) : null;
+  const exists = useFileExists(files?.cwd ?? null, path);
+  if (candidate && exists) return <ReplyLink href={candidate}>{candidate}</ReplyLink>;
+  return <code {...rest}>{children}</code>;
 }
 
 function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement>) {

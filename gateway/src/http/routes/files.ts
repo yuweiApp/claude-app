@@ -167,6 +167,22 @@ export function fileRoutes(app: FastifyInstance): void {
     return {};
   });
 
+  // Claude 回复里的行内代码像文件路径时，网页来问是不是工作目录里存在的文件（是就显示成文件链接）；paths 相对项目文件夹
+  app.post<{ Body: { cwd?: string; paths?: unknown } }>("/files/exists", async (req) => {
+    const paths = Array.isArray(req.body?.paths) ? req.body.paths.filter((p): p is string => typeof p === "string").slice(0, 200) : [];
+    const checked = await Promise.all(
+      paths.map(async (rel) => {
+        try {
+          const { abs } = resolveInProject(req.body?.cwd, rel);
+          return (await stat(abs)).isFile() ? rel : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return { exists: checked.filter((p): p is string => p !== null) };
+  });
+
   // 右侧面板把 HTML 显示成网页：先拿这个文件的预览地址（要鉴权），iframe 再按地址取
   app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/page-url", async (req) => {
     const { cwd, abs } = resolveInProject(req.query.cwd, req.query.path);
