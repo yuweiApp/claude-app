@@ -60,6 +60,11 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
 - 导入技能和插件：技能文件夹要有 `SKILL.md`，复制到 `$CLAUDE_CONFIG_DIR/skills/<名称>/`，Claude Code 自己发现；插件文件夹要有 `.claude-plugin/plugin.json`，复制到 `$CLAUDE_CONFIG_DIR/gateway-plugins/<名称>/`，通过 `options.plugins` 加载，它的技能叫 `插件名:技能名`。桌面版用系统对话框选文件夹，网页用 `GET /folders` 浏览。
 - 停用技能：停用的名称存在 `$CLAUDE_CONFIG_DIR/gateway-disabled-skills.json`。有停用的技能时，网关把其余技能作为 `options.skills` 白名单传给 SDK，模型看不到停用的技能，调 Skill 工具也会被拒绝；这个白名单管不到用户自己输入的 `/技能名`，所以网关在新建和发送时再拦一次，返回 400。白名单在拉起 claude 进程时确定，已经活跃的会话要等进程重启才更新，`/技能名` 的拦截立即生效。内置技能只能停用；删除只针对导入的技能，是删文件，SDK 没有对应接口。
 - MCP 服务器：设置页添加的存在 `$CLAUDE_CONFIG_DIR/gateway-mcp-servers.json`（权限 600，请求头和环境变量可能有令牌），启用的通过 `options.mcpServers` 传给会话，对新会话和子进程重启后的会话生效。插件或配置文件带来的服务器只显示，不能在设置页改。
+- MCP 服务器的 OAuth 登录（`gateway/src/agent/mcp-auth.ts`）：状态是「需要认证」的服务器（设置页添加的、插件和配置文件带来的都算）在设置页有「登录」。登录整个由 Claude Code 自己做：发现授权服务器、动态注册客户端、PKCE、在 localhost 的随机端口上等回调、换令牌、存令牌（Linux / Windows 是 `$CLAUDE_CONFIG_DIR/.credentials.json` 的 `mcpOAuth`，按「服务器名称|配置的哈希」存；macOS 是钥匙串）、过期刷新。同一个配置目录下的会话共用令牌，所以登录一次，之后的新会话直接连上。
+  - 网关起一个和会话同样配置的临时 query（`inspectQuery`），发 `mcp_authenticate` 控制请求拿到登录页地址给网页；query 留着等回调（端口在它的子进程里），每秒查一次 `mcpServerStatus()`，服务器变成 connected 就算成功，10 分钟没完成就结束。成功后开着的会话都 `reconnectMcpServer()`，不用等子进程重启。
+  - SDK 的 `Query` 上有 `mcpAuthenticate`、`mcpSubmitOAuthCallbackUrl`、`mcpClearAuth`，但类型定义里没写（0.3.317），网关按运行时有没有这两个方法判断，没有就报「不支持」。升级 SDK 后要重新跑一遍登录。
+  - 网页在浏览器里打开登录页（桌面版的 `window.open` 由外壳交给系统浏览器）。浏览器和网关在同一台电脑上时，登录后跳回 localhost 由 Claude Code 收下；不在同一台电脑上时跳到打不开的 localhost 页面，对话框里可以把地址栏的网址贴回来，网关经 `mcp_oauth_callback_url` 交给 Claude Code。贴回来的回调 Claude Code 不会自己重连服务器（localhost 收到的会），网关接着调 `reconnectMcpServer()`。
+  - 服务器的授权服务器不让注册客户端时（没有注册接口、或者拒绝），Claude Code 报 `mcp_client_registration_unavailable`，原因原样显示在对话框里。
 - 标题：新会话发出第一条消息时，网关直接请求模型接口概括成简短标题（`gateway/src/agent/title.ts`，失败时取提问第一行），用 `renameSession()` 写成自定义标题，之后不再变。网页显示 `customTitle`，没有时用 `firstPrompt`；`summary` 没有自定义标题时跟着最新一条提问变，不用它。SDK 列会话只读记录文件开头和结尾各 64 KB 找 `customTitle`：标题那一行在文件开头之后，网页快照、工具结果把文件撑大，它就不在结尾那段里了；Claude Code 过一阵才把标题等元数据补写到末尾（实测 Windows 上 1.5 MB 的会话，标题在第 107 KB 处，一轮结束、网页刷新列表时还没补写，显示成第一条提问，之后才补上）。所以网关记住每个会话的标题（`SessionManager.titles`：生成、改名时，列表里读到时），列表里读不到时用记住的；网关重启后没见过的会话还是可能读不到，等 Claude Code 补写。
 
 ### 2.3 项目（文件夹）
@@ -222,6 +227,10 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | PUT | `/mcp-servers/:name` | 添加 MCP 服务器，同名覆盖（stdio：`command`、`args`、`env`；http / sse：`url`、`headers`） |
 | PATCH | `/mcp-servers/:name` | 启用、停用 `{ enabled }` |
 | DELETE | `/mcp-servers/:name` | 删除 |
+| POST | `/mcp-servers/:name/auth` | 开始 OAuth 登录，返回 `{ state, authUrl }`；已经连上的返回 `done` |
+| GET | `/mcp-servers/:name/auth` | 登录进度：`waiting`、`done`、`failed`（带 `error`），结束后留 5 分钟 |
+| POST | `/mcp-servers/:name/auth/callback` | 交回调网址 `{ url }`（浏览器和网关不在同一台电脑上时） |
+| DELETE | `/mcp-servers/:name/auth` | 放弃正在进行的登录 |
 | GET | `/sessions/:id/tasks` | 会话的后台任务（打开会话时拉一次，之后靠 `tasks` 事件） |
 | GET | `/sessions/:id/tasks/:taskId/output` | 后台 Bash 任务输出的最后 64 KB，只能读这个会话记下的输出文件 |
 | POST | `/sessions/:id/tasks/:taskId/stop` | 停止后台任务（`Query.stopTask()`） |

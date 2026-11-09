@@ -108,6 +108,16 @@ export interface McpServerInfo {
   tools: { name: string; description?: string }[];
 }
 
+/**
+ * MCP 服务器的 OAuth 登录（POST /mcp-servers/:name/auth 开始，GET 查进度）。
+ * waiting：等用户在浏览器里登录，authUrl 是登录页；done：令牌已经存好、服务器连上了；failed：error 是原因
+ */
+export interface McpAuthState {
+  state: "waiting" | "done" | "failed";
+  authUrl?: string;
+  error?: string;
+}
+
 /** 添加 MCP 服务器（PUT /mcp-servers/:name）：stdio 填 command、args、env，http / sse 填 url、headers */
 export interface McpServerInput {
   name: string;

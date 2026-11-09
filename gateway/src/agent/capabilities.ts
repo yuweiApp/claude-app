@@ -16,7 +16,7 @@ export function clearCapabilitiesCache(): void {
 }
 
 /** 刚起的 query 里 MCP 服务器还在连接，等到都有结果 */
-async function settledMcpStatus(q: Query, first: McpServerStatus[]): Promise<McpServerStatus[]> {
+export async function settledMcpStatus(q: Query, first: McpServerStatus[]): Promise<McpServerStatus[]> {
   let servers = first;
   const deadline = Date.now() + MCP_CONNECT_MS;
   while (servers.some((server) => server.status === "pending") && Date.now() < deadline) {
@@ -36,16 +36,24 @@ export async function enabledSkillNames(cwd: string): Promise<string[] | undefin
 const target = (config: McpConfig) => ("url" in config ? config.url : [config.command, ...(config.args ?? [])].join(" "));
 
 /**
+ * 不发消息、不落盘的临时 query，MCP 服务器、插件和会话里的一样（设置页添加的、导入的插件、配置文件里的）。
+ * 不调模型接口，会连一下 MCP 服务器
+ */
+export function inspectQuery(cwd: string): Query {
+  return query({
+    prompt: noInput(),
+    options: { cwd, env: agentEnv(), persistSession: false, settingSources: ["user", "project", "local"], mcpServers: enabledMcpServers(), plugins: importedPlugins() },
+  });
+}
+
+/**
  * 工作目录下可用的技能、插件和 MCP 服务器：起一个不发消息、不落盘的临时 query 读一次（不调模型接口，会连一下 MCP 服务器）。
  * 按工作目录缓存：项目里的 .claude/skills 只在那个目录下有
  */
 export async function listCapabilities(cwd: string): Promise<Capabilities> {
   const cached = cache.get(cwd);
   if (cached && Date.now() - cached.at < CACHE_MS) return cached.value;
-  const q = query({
-    prompt: noInput(),
-    options: { cwd, env: agentEnv(), persistSession: false, settingSources: ["user", "project", "local"], mcpServers: enabledMcpServers(), plugins: importedPlugins() },
-  });
+  const q = inspectQuery(cwd);
   try {
     const { skills } = await q.reloadSkills();
     const reloaded = await q.reloadPlugins();
@@ -73,6 +81,9 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
         name: server.name,
         enabled: server.status !== "disabled",
         managed: false,
+        ...(server.config && server.config.type !== "sdk" && server.config.type !== "claudeai-proxy"
+          ? { type: server.config.type ?? "stdio", target: target(server.config) }
+          : {}),
         status: server.status,
         error: server.error,
         source: server.source,

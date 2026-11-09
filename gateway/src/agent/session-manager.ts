@@ -195,6 +195,13 @@ export class SessionManager {
     await session.stopTask(taskId);
   }
 
+  /** 开着的会话都重连这个 MCP 服务器（登录之后）；没有这个服务器的会话报错，忽略 */
+  reconnectMcpServer(name: string): void {
+    for (const session of this.active.values()) {
+      session.reconnectMcpServer(name).catch((err: Error) => this.log.debug({ sessionId: session.id, name, err: err.message }, "重连 MCP 服务器失败"));
+    }
+  }
+
   /** 清掉已经结束的后台任务 */
   clearFinishedTasks(sessionId: string): void {
     const list = this.taskList(sessionId);

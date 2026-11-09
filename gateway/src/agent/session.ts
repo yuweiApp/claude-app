@@ -140,6 +140,11 @@ export class AgentSession {
     await this.query.stopTask(taskId);
   }
 
+  /** 重连 MCP 服务器：登录、退出登录之后，让已经开着的会话用上新的令牌 */
+  async reconnectMcpServer(name: string): Promise<void> {
+    await this.query.reconnectMcpServer(name);
+  }
+
   async setPermissionMode(mode: PermissionMode): Promise<void> {
     await this.query.setPermissionMode(mode);
     this.permissionMode = mode;

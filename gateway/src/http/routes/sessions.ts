@@ -1,7 +1,7 @@
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { listModels } from "../../agent/models.js";
 import type { FastifyInstance } from "fastify";
-import type { McpServerInput } from "../../shared/types.js";
+import type { McpAuthState, McpServerInput } from "../../shared/types.js";
 import { AttachmentError } from "../../agent/attachments.js";
 import { BadRequestError, NotFoundError, type SessionManager } from "../../agent/session-manager.js";
 import type { EventHub } from "../../events/event-hub.js";
@@ -9,6 +9,7 @@ import { streamSession } from "../sse.js";
 import { clearCapabilitiesCache, listCapabilities } from "../../agent/capabilities.js";
 import { ExtensionError, importPlugin, importSkill, readSkill, removePlugin, removeSkill, setSkillEnabled } from "../../agent/extensions.js";
 import { removeMcpServer, saveMcpServer, setMcpServerEnabled } from "../../agent/mcp-config.js";
+import { cancelMcpAuth, getMcpAuth, McpAuthError, startMcpAuth, submitMcpAuthCallback } from "../../agent/mcp-auth.js";
 import { config } from "../../config.js";
 
 const permissionModes = ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"];
@@ -96,6 +97,32 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
   app.delete<{ Params: { name: string } }>("/mcp-servers/:name", async (req) => {
     if (!removeMcpServer(req.params.name)) throw new NotFoundError("MCP 服务器不存在");
     clearCapabilitiesCache();
+    return { ok: true };
+  });
+
+  /**
+   * MCP 服务器的 OAuth 登录（设置页添加的和插件、配置文件带来的都行）：返回登录页地址，网页在浏览器里打开，之后用 GET 查进度。
+   * 登录成功后开着的会话重连这个服务器
+   */
+  app.post<{ Params: { name: string }; Body: { cwd?: string } | undefined }>("/mcp-servers/:name/auth", async (req): Promise<McpAuthState> => {
+    const { name } = req.params;
+    return mcpAuth(() => startMcpAuth(name, req.body?.cwd || config.workspaceDir, () => sessions.reconnectMcpServer(name)));
+  });
+
+  app.get<{ Params: { name: string } }>("/mcp-servers/:name/auth", async (req): Promise<McpAuthState> => {
+    const state = getMcpAuth(req.params.name);
+    if (!state) throw new NotFoundError("没有进行中的登录");
+    return state;
+  });
+
+  /** 浏览器和网关不在同一台电脑上时，登录后跳到打不开的 localhost 页面：把地址栏里的网址交上来 */
+  app.post<{ Params: { name: string }; Body: { url: string } }>("/mcp-servers/:name/auth/callback", async (req): Promise<McpAuthState> => {
+    if (!/^https?:\/\//.test(req.body?.url ?? "")) throw new BadRequestError("请粘贴完整的网址");
+    return mcpAuth(() => submitMcpAuthCallback(req.params.name, req.body.url.trim()));
+  });
+
+  app.delete<{ Params: { name: string } }>("/mcp-servers/:name/auth", async (req) => {
+    cancelMcpAuth(req.params.name);
     return { ok: true };
   });
 
@@ -287,4 +314,14 @@ function activeOr404(sessions: SessionManager, id: string) {
   const session = sessions.get(id);
   if (!session) throw new NotFoundError("会话不在运行");
   return session;
+}
+
+/** 登录失败（服务器不支持注册客户端、回调网址不对等）是 400，带着 Claude Code 给的原因 */
+async function mcpAuth(run: () => Promise<McpAuthState>): Promise<McpAuthState> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof McpAuthError) throw new BadRequestError(err.message);
+    throw err;
+  }
 }
