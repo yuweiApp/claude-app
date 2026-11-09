@@ -201,6 +201,7 @@ desktop:
 
 - 没有权限弹窗。受 UIPI 限制：以管理员身份运行的窗口操作不了，网关不提权。
 - 最小化的窗口不能按 ref 操作（元素都是 `offscreen`），要先 `restore`；被挡住的窗口可以。
+- 最小化的窗口也不能截图：返回 `INVALID_ARGS`「Cannot capture a minimized window」（实测要 5 秒多，它先试着截、超时才报错），`restore` 之后能截。
 - 二进制没签名。npm 装的文件没有「来自网络」的标记，SmartScreen 一般不拦，杀毒软件可能拦。
 - 上游默认拒绝 `alt+f4`、`win+l`、`win+d`、`alt+tab`、`win+r` 等。
 
@@ -213,8 +214,8 @@ desktop:
 ## 9. 安装和版本
 
 - `gateway/package.json` 加 `agent-desktop`，版本写死（`--save-exact`，第一版 1.2.0）。
-- npm 包 30MB，带全部平台的二进制和 macOS / Linux 的辅助程序；`postinstall` 把本机的那个链接到 `bin/agent-desktop`。没跑 `postinstall` 时（包管理器禁了安装脚本）是 Node 启动器，一次约 0.15 秒。
-- 网关按 `process.platform` / `process.arch` 直接找 `bin/` 下对应的文件，不经 PATH，也不用用户全局安装。
+- npm 包 30MB，带全部平台的二进制和 macOS / Linux 的辅助程序；`bin/agent-desktop` 是 Node 启动器，macOS、Linux 上 `postinstall` 把它换成本机原生程序的硬链接，Windows 上不换（只改 `node_modules/.bin` 里的 `.cmd`）。经启动器每次多起一个 node 进程：home 上实测 `version` 原生 40 毫秒、经启动器 170 毫秒，网关带着调试参数时还要等调试器连上。
+- 网关按 `process.platform` / `process.arch` 直接找 `bin/agent-desktop-<平台>-<架构>`（Windows 加 `.exe`），没有时才用 `bin/agent-desktop`（启动器）；不经 PATH，也不用用户全局安装。以前 Windows 上找的是不存在的 `bin/agent-desktop.exe`，一直在走启动器。
 - 升级后跑一遍第 11 节的清单。
 
 ## 10. 界面
@@ -283,7 +284,8 @@ desktop:
 - 第三轮（2026-11-10，截图 @desktop 引用的窗口「树屿森 SYS」，是 codex-app-server 的桌面版）：
   - 模型把引用里的窗口标题填进 `app`，和 `window_id` 一起给，agent-desktop 先按 `--app` 找应用，报 `APP_NOT_FOUND`：现在 `snapshot`、`screenshot` 给了 `window_id` 就不传 `--app`。
   - 模型改填进程名 `electron.exe`：开发模式下本应用和 codex-app-server 的桌面版都叫 `electron.exe`，网关按应用名拦下，还报「这是本应用的窗口」，模型以为真是本应用。现在同名的还有其他进程时，错误信息照实说（应用名和本应用相同、分不出来，按窗口 id 指定时看窗口所属的进程）。
-  - 那个窗口是最小化的，没走到截图这一步，Windows 上截最小化窗口的结果还没测（SSH 里没有交互桌面，测不了）。
+  - 改完再试：网关放行（按窗口 id 查到 pid 38508，不是本应用），agent-desktop 报不能截最小化的窗口（第 8 节），模型 `restore` 后截图成功。这一轮靠新加的桌面日志（`log.ts`）对上了每一步。
+  - 日志里每次调用的 stderr 都是 Node 调试器的输出：Windows 上一直在经 Node 启动器调用，改成直接调用原生程序（第 9 节）。
 - 快照渲染改成不认识的字段也原样带上（节点行尾、快照头的「其他：」），Windows 上快照节点有没有额外字段还没看到原始 JSON。
 
 **拦不住的**：模型用 Bash 直接跑 `gateway/node_modules/agent-desktop/bin/agent-desktop`（或 xdotool、AppleScript 这类）就绕过了网关。这和 Bash 本身能做任何事一样，边界是 Bash 的权限卡片；「完全访问权限」下没有这道边界。

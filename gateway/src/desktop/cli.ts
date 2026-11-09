@@ -31,15 +31,17 @@ export interface CliResult {
 }
 
 /**
- * agent-desktop 的可执行文件：npm 包的 postinstall 把本机的原生二进制放在 bin/agent-desktop（Windows 是 .exe），
- * 辅助程序（macOS 的 helper、Linux 的剪贴板）以原名放在旁边。没跑 postinstall 时 bin/agent-desktop 是 Node 启动器（#! 开头），
- * 用网关自己的 node 跑它
+ * agent-desktop 的可执行文件。npm 包的 bin/ 里带全部平台的原生程序（agent-desktop-<平台>-<架构>，Windows 加 .exe），
+ * 辅助程序（macOS 的 helper、Linux 的剪贴板）在旁边。bin/agent-desktop 本来是 Node 启动器（#! 开头）：
+ * macOS、Linux 上 postinstall 把它换成本机原生程序的硬链接；Windows 上不换，只改 node_modules/.bin 里的 .cmd。
+ * 所以先用本机平台的原生程序，没有时（不支持的平台）才用 Node 启动器。实测 Windows 上经启动器每次多一个 node 进程，
+ * 网关带着调试参数时子进程还要等调试器连上，list-windows 一次要 1 秒多
  */
 function resolveCommand(): { file: string; prefix: string[] } {
   const pkg = createRequire(import.meta.url).resolve("agent-desktop/package.json");
   const bin = path.join(path.dirname(pkg), "bin");
-  const exe = path.join(bin, "agent-desktop.exe");
-  if (process.platform === "win32" && existsSync(exe)) return { file: exe, prefix: [] };
+  const native = path.join(bin, `agent-desktop-${process.platform}-${process.arch}${process.platform === "win32" ? ".exe" : ""}`);
+  if (existsSync(native)) return { file: native, prefix: [] };
   const file = path.join(bin, "agent-desktop");
   const head = Buffer.alloc(2);
   const fd = openSync(file, "r");
