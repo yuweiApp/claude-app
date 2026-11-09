@@ -170,14 +170,14 @@ async function decide(session: string, args: string[], context: Record<string, u
   const refs = refsIn(args);
   for (const ref of refs) {
     const entry = snapshots.get(snapshotIdOf(ref));
-    if (!entry || entry.session !== session) return `${ref} 不是这个会话经 snapshot 或 find 拿到的 ref（网关重启后，之前的 ref 也不再认）`;
+    if (!entry || entry.session !== session) return `${ref} 不是这个会话经 snapshot 或 find 拿到的 ref（本应用重启后，之前拿到的 ref 也不再认）`;
   }
   const windowIds = flagValues(args, "--window-id");
   const appArg = APP_ARGUMENT.has(command) && args[1] && !args[1].startsWith("-") ? [args[1]] : [];
   const apps = [...flagValues(args, "--app"), ...appArg];
   const targets = NEEDS_TARGET[command];
   if (targets && refs.length === 0 && windowIds.length === 0 && apps.length === 0) {
-    return `${command} 不指定目标时作用于前台窗口，网关要求指定目标；${command} 接受的目标参数：${targets.join("、")}`;
+    return `${command} 不指定目标时作用于前台窗口，这里要求指定目标；${command} 接受的目标参数：${targets.join("、")}`;
   }
   if (ownPids.size === 0) return null;
 
@@ -207,7 +207,7 @@ async function decide(session: string, args: string[], context: Record<string, u
       // 应用名和本应用相同的其他进程（实测 Windows 上开发模式的 Electron 应用都叫 electron.exe）：拦下的不一定是本应用的窗口，照实说
       const others = running.filter((a) => !ownPids.has(a.pid) && a.name.toLowerCase() === app.toLowerCase()).map((a) => a.pid);
       if (others.length === 0) return OWN_APP;
-      return `网关不接受 ${app} 这个应用名：本应用（claude-app）的进程也叫 ${app}，按应用名分不出是不是本应用（同名的其他进程：pid ${others.join("、")}）。只按窗口 id 指定（run 的 --window-id、snapshot / screenshot 的 window_id）、不给应用名时，按窗口所属的进程判断`;
+      return `不接受 ${app} 这个应用名：本应用（claude-app）的进程也叫 ${app}，按应用名分不出是不是本应用（同名的其他进程：pid ${others.join("、")}）。只按窗口 id 指定（run 的 --window-id、snapshot / screenshot 的 window_id）、不给应用名时，按窗口所属的进程判断`;
     }
   }
   return null;

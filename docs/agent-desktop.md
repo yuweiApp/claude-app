@@ -100,7 +100,7 @@ snapshot s191jb6hk0gciz（mousepad，窗口 w-1.1895-…）
 
 - 成功：`data` 的 JSON，不缩进。
 - 失败：留 `code`、`message`、`details`、`disposition`（`delivery` 送没送到、`retry` 能不能重试，都是事实），去掉上游的 `suggestion`、`recovery`（「先 focus-window 再重试」这类是做法，同 CLAUDE.md 的约定）。
-- 网关自己的错误（被拦、超时）写清楚是谁、因为什么：「这是本应用（claude-app）的窗口，桌面工具不能读取或操作它」「命令超过 timeout_ms 被网关终止，动作可能已经生效」。
+- 网关自己的错误（被拦、超时）写清楚因为什么，用模型看得到的东西说（run、工具名、本应用），不提网关（模型不知道有网关）：「这是本应用（claude-app）的窗口，桌面工具不能读取或操作它」「命令超过 timeout_ms 被终止，动作可能已经生效」「run 不接受 --force」。
 
 ### 说明（instructions）
 
@@ -186,7 +186,7 @@ desktop:
 
 ### 7.3 超时、中断、转后台
 
-- `timeout_ms` 默认 60 秒（`wait` 上游最多 30 秒）。到时间就杀进程，报「命令超过 timeout_ms 被网关终止，动作可能已经生效」（第 4 节）。
+- `timeout_ms` 默认 60 秒（`wait` 上游最多 30 秒）。到时间就杀进程，报「命令超过 timeout_ms 被终止，动作可能已经生效」（第 4 节）。
 - MCP 请求的 `signal` 中断时也杀进程。
 - 超过 20 秒转后台，沿用现在的 `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`，不用另做。
 

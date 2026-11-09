@@ -60,7 +60,7 @@ const REF_RULE =
  * 和上游 README 给 agent 的那句一样；其余只写事实
  */
 const INSTRUCTIONS = [
-  `桌面：运行网关的这台电脑（${PLATFORM}）上、当前登录用户的桌面（原生应用的窗口、菜单、对话框），经系统的无障碍接口（${ACCESSIBILITY_API}）读取和操作，工具是 agent-desktop ${version}。用户可能同时在用这台电脑。`,
+  `桌面：运行你（Claude Code）的这台电脑（${PLATFORM}）上、当前登录用户的桌面（原生应用的窗口、菜单、对话框），经系统的无障碍接口（${ACCESSIBILITY_API}）读取和操作，工具是 agent-desktop ${version}。用户可能同时在用这台电脑。`,
   '- 第一次使用前，先用 run 执行 ["skills", "get", "desktop"] 和 ["skills", "get", "platform"]，读 agent-desktop 自带的使用说明（和这个版本对应），按里面的做法操作；说明里提到的参考文档用 ["skills", "get", "desktop", "<文件名>"] 读。',
   "- 使用说明里的命令行写法 `agent-desktop <命令> <参数…>` 在这里对应：snapshot、screenshot 用同名工具（参数见工具定义），其余命令用 run，args 是数组、直接交给程序，不经过 shell（说明里 PowerShell、POSIX shell 的引号转义用不上）。这里没有 agent-desktop 命令行，Bash 里也没有。",
   "- snapshot 返回一个窗口的无障碍树，元素带 [ref=@快照编号:eN]。ref 只在产生它的快照里有效；界面变了，用旧 ref 的命令返回 STALE_REF 或 AMBIGUOUS_TARGET。",
@@ -74,7 +74,7 @@ const INSTRUCTIONS = [
   "  应用和窗口：launch、close-app、focus-window、resize-window、move-window、minimize、maximize、restore、open-system-surface",
   "  通知：dismiss-notification、dismiss-all-notifications、notification-action；剪贴板：clipboard-get、clipboard-set、clipboard-clear；其他：cursor-overlay",
   "- 默认经无障碍接口操作，不移动鼠标、不切换前台窗口。run 的 headed 为 true 时用真实的鼠标键盘，会移动鼠标、切换前台窗口；一部分命令只在 headed 下可用（它们的 --help 里写着 requires --headed）。",
-  "- 网关的规则：本应用（claude-app）自己的窗口不在结果里，也不能读取或操作；ref 只认这个会话经 snapshot 或 find 拿到的；find、press、list-surfaces 和窗口命令（focus-window、restore 等）不指定目标时作用于前台窗口，网关要求指定目标（每条命令接受哪些目标参数见它的 --help）；" +
+  "- 桌面工具的规则：本应用（claude-app）自己的窗口不在结果里，也不能读取或操作；ref 只认这个会话经 snapshot 或 find 拿到的；find、press、list-surfaces 和窗口命令（focus-window、restore 等）不指定目标时作用于前台窗口，这里要求指定目标（每条命令接受哪些目标参数见它的 --help）；" +
     `run 不执行 snapshot、screenshot（用对应的工具）、mcp、session、trace、batch，不接受参数 --session、--agent-id、--trace、--trace-strict、--screenshot、--debug、--force、--stdin、--headed（用 headed 参数）、--cdp。`,
   `- 调用超过约 ${BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，结束后结果作为通知送达。屏幕上的变化不会通知你。`,
   "- 别的会话也可能在操作这个桌面：自你上次调用以来它们执行过的操作，列在下一次结果的开头。",
@@ -103,8 +103,8 @@ function withoutAdvice(data: unknown): unknown {
 
 /** 没有拿到 agent-desktop 的 JSON 结果时的说明（被终止、输出不是 JSON），有 JSON 结果返回 null */
 function failure(result: CliResult, timeoutMs: number): string | null {
-  if (result.killed === "timeout") return `命令超过 timeout_ms（${timeoutMs} 毫秒）被网关终止，动作可能已经生效`;
-  if (result.killed === "abort") return "调用被中断，网关终止了命令，动作可能已经生效";
+  if (result.killed === "timeout") return `命令超过 timeout_ms（${timeoutMs} 毫秒）被终止，动作可能已经生效`;
+  if (result.killed === "abort") return "调用被中断，命令被终止，动作可能已经生效";
   if (result.envelope) return null;
   return result.stdout.trim() || `agent-desktop 没有输出结果${result.stderr.trim() ? `：${result.stderr.trim().slice(0, 2000)}` : ""}`;
 }
@@ -233,7 +233,7 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
           if (input.window_id) {
             const win = (await listWindows()).find((w) => w.id === input.window_id);
             if (win?.minimized) {
-              return error(prefixed(notice, `窗口 ${win.id}${win.title ? `「${win.title}」` : ""}是最小化的（list-windows 的 minimized: true），agent-desktop 不能截最小化的窗口，网关没有执行截图`));
+              return error(prefixed(notice, `窗口 ${win.id}${win.title ? `「${win.title}」` : ""}是最小化的（list-windows 里 minimized: true），最小化的窗口不能截图，这次没有截`));
             }
           }
           note(args);

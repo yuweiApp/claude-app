@@ -19,28 +19,28 @@ const READ_ONLY = new Set([
   "skills",
 ]);
 
-/** 网关不执行的命令和原因（原因原样告诉模型） */
+/** run 不执行的命令和原因（原因原样告诉模型，只说模型看得到的：run、工具名，不提网关） */
 const DENIED_COMMANDS: Record<string, string> = {
   snapshot: "snapshot 由 mcp__desktop__snapshot 工具执行，run 不执行它",
   screenshot: "screenshot 由 mcp__desktop__screenshot 工具执行，run 不执行它",
-  mcp: "网关不执行 mcp 命令",
-  session: "快照命名空间由网关管理（每个会话一个），run 不执行 session 命令",
-  trace: "网关不执行 trace 命令",
-  batch: "网关不执行 batch 命令",
+  mcp: "run 不执行 mcp 命令",
+  session: "快照命名空间是固定的（每个会话一个），run 不执行 session 命令",
+  trace: "run 不执行 trace 命令",
+  batch: "run 不执行 batch 命令",
 };
 
-/** 网关不接受的参数：受管的全局参数、会写文件的、放行危险快捷键的 */
+/** run 不接受的参数：网关代管的全局参数、会写文件的、放行危险快捷键的（原因原样告诉模型，同上） */
 const DENIED_FLAGS: Record<string, string> = {
-  "--session": "--session 由网关设置（每个会话一个快照命名空间）",
-  "--agent-id": "--agent-id 由网关管理",
-  "--trace": "网关不接受 --trace",
-  "--trace-strict": "网关不接受 --trace-strict",
-  "--screenshot": "网关不接受 --screenshot（会写出含屏幕内容的文件）",
-  "--debug": "网关不接受 --debug",
-  "--force": "网关不接受 --force（它放行 alt+f4、win+l、cmd+q 这类快捷键和强制结束进程）",
+  "--session": "--session 是固定设好的（每个会话一个快照命名空间），run 不接受",
+  "--agent-id": "run 不接受 --agent-id",
+  "--trace": "run 不接受 --trace",
+  "--trace-strict": "run 不接受 --trace-strict",
+  "--screenshot": "run 不接受 --screenshot（会写出含屏幕内容的文件）",
+  "--debug": "run 不接受 --debug",
+  "--force": "run 不接受 --force（它放行 alt+f4、win+l、cmd+q 这类快捷键和强制结束进程）",
   "--headed": "--headed 由 run 的 headed 参数设置",
-  "--cdp": "网关不接受 --cdp",
-  "--stdin": "网关不接受 --stdin（没有标准输入）",
+  "--cdp": "run 不接受 --cdp",
+  "--stdin": "run 不接受 --stdin（没有标准输入）",
 };
 
 /**

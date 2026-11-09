@@ -21,7 +21,7 @@ export function terminalServer(terminals: TerminalManager, cwd: string): McpSdkS
     name: TERMINAL_SERVER,
     version: "1.0.0",
     instructions:
-      "用户界面右侧面板里有这个项目的终端（网关机器上的真实 shell）。用户说「终端」「内置终端」「看一下终端」时指的就是它们：" +
+      "用户界面右侧面板里有这个项目的终端（运行你的这台电脑上的真实 shell）。用户说「终端」「内置终端」「看一下终端」时指的就是它们：" +
       "用 read_terminal 读屏幕上的内容，用 run_in_terminal 在终端里敲命令（用户能在面板里看到、接着操作）。" +
       "需要在本轮拿到结果的短命令照常用 Bash；要让用户看着、长时间运行或交互的（开发服务、日志、REPL）用 run_in_terminal。",
     // config.yml 里配了常驻的：第一轮就给完整定义（默认都不常驻，用到时 ToolSearch）
