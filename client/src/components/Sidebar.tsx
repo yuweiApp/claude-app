@@ -20,6 +20,8 @@ interface FolderGroup {
 const COLLAPSED_KEY = "sidebarCollapsedGroups";
 const SECTION_PROJECTS = "section:projects";
 const SECTION_CHATS = "section:chats";
+/** 「会话」和每个项目默认列出的会话数，也是「展开更多」每次多列的个数 */
+const PREVIEW_COUNT = 5;
 
 function loadCollapsed(): Set<string> {
   try {
@@ -103,6 +105,47 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
 
   const row = (s: SessionListItem) => <SessionRow key={s.sessionId} session={s} active={s.sessionId === currentId} onSelect={onSelect} onDelete={deleteSession} />;
 
+  /** 「会话」和各个项目当前列出的会话数（键是 SECTION_CHATS 或项目文件夹），没记的是默认个数；不保存，刷新后都回到默认 */
+  const [shownCounts, setShownCounts] = useState<Map<string, number>>(() => new Map());
+  const setShownCount = (key: string, count: number) =>
+    setShownCounts((prev) => {
+      const next = new Map(prev);
+      if (count <= PREVIEW_COUNT) next.delete(key);
+      else next.set(key, count);
+      return next;
+    });
+  /**
+   * 一组会话：默认只列前 PREVIEW_COUNT 个，「展开更多」每次多列这么多个，展开过就能「收起」回默认个数。
+   * 当前会话排在后面时一直列到它为止，打开的会话不会藏在「展开更多」里
+   */
+  const sessionList = (key: string, items: SessionListItem[], className?: string) => {
+    const pinned = items.findIndex((s) => s.sessionId === currentId) + 1;
+    const count = Math.max(shownCounts.get(key) ?? PREVIEW_COUNT, pinned);
+    const canExpand = items.length > count;
+    const canCollapse = count > Math.max(PREVIEW_COUNT, pinned);
+    return (
+      <ul className={className}>
+        {items.slice(0, count).map(row)}
+        {(canExpand || canCollapse) && (
+          <li className="list-toggle">
+            {canExpand && (
+              <button onClick={() => setShownCount(key, count + PREVIEW_COUNT)}>
+                <ChevronIcon />
+                展开更多
+              </button>
+            )}
+            {canCollapse && (
+              <button onClick={() => setShownCount(key, PREVIEW_COUNT)}>
+                <ChevronIcon up />
+                收起
+              </button>
+            )}
+          </li>
+        )}
+      </ul>
+    );
+  };
+
   return (
     <aside className="sidebar" style={{ "--sidebar-width": `${width}px` } as CSSProperties}>
       <div className="sidebar-top">
@@ -138,7 +181,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
               onToggle={() => toggle(g.cwd)}
               onNew={onNew}
               onDelete={deleteProject}
-              row={row}
+              list={sessionList(g.cwd, g.sessions, "group-list")}
             />
           );
         })}
@@ -157,7 +200,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
         <SectionToggle label="会话" icon={<ChatIcon />} count={chats.length} expanded={chatsOpen} onClick={() => toggle(SECTION_CHATS)} />
       </SectionHead>
       {chatsOpen && chats.length === 0 && <div className="group-empty">暂无会话</div>}
-      {chatsOpen && <ul>{chats.map(row)}</ul>}
+      {chatsOpen && sessionList(SECTION_CHATS, chats)}
     </aside>
   );
 }
@@ -285,7 +328,7 @@ function ProjectGroup({
   onToggle,
   onNew,
   onDelete,
-  row,
+  list,
 }: {
   group: FolderGroup;
   open: boolean;
@@ -293,7 +336,8 @@ function ProjectGroup({
   onToggle: () => void;
   onNew: (cwd?: string) => void;
   onDelete: (g: FolderGroup) => void;
-  row: (s: SessionListItem) => ReactNode;
+  /** 这个项目的会话列表（带「展开更多 / 收起」） */
+  list: ReactNode;
 }) {
   const menu = useRowMenu();
   return (
@@ -312,7 +356,7 @@ function ProjectGroup({
         </div>
         <MenuPopup menu={menu} items={[{ label: "删除项目", danger: true, onClick: () => onDelete(g) }]} />
       </div>
-      {open && <ul className="group-list">{g.sessions.map(row)}</ul>}
+      {open && list}
     </div>
   );
 }
@@ -371,6 +415,15 @@ function FolderIcon() {
   return (
     <svg className="ic ic-folder" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" aria-hidden="true">
       <path fill="currentColor" fillOpacity="0.2" d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" />
+    </svg>
+  );
+}
+
+/** 「展开更多」的向下箭头，「收起」的向上 */
+function ChevronIcon({ up }: { up?: boolean }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={up ? "M4 10l4-4 4 4" : "M4 6l4 4 4-4"} />
     </svg>
   );
 }

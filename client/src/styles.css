@@ -179,6 +179,15 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .sidebar .group-toggle, .sidebar .group-toggle:hover, .sidebar .section-toggle, .sidebar .section-toggle:hover { background: none; }
 .group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group-list .session-row { padding-left: 34px; }
+/* 会话超出默认个数时的「展开更多 / 收起」，和会话标题左对齐 */
+.list-toggle { display: flex; align-items: center; gap: 2px; padding: 2px 0 4px 6px; }
+.group-list > .list-toggle { padding-left: 28px; }
+.list-toggle button {
+  display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px 0 6px;
+  border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px;
+  transition: background-color 120ms, color 120ms;
+}
+.list-toggle button:hover { background: var(--frame-hover); color: var(--text); }
 /* 会话一行：标题，右边灰色的相对时间；悬停、选中时浅底，选中的像新会话按钮一样浮起来 */
 .session-row { justify-content: space-between; gap: 8px; min-height: 32px; padding: 6px 10px 6px 12px; font-size: 13.5px; }
 /* 悬停底色按整行算（和项目行一样）：鼠标移到右边的「…」上、菜单开着时也保持 */
