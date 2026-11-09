@@ -233,6 +233,8 @@ main {
 .settings-nav-item:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
 .settings-nav-item.active { background: color-mix(in srgb, var(--text) 10%, transparent); }
 .settings-main { flex: 1; min-width: 0; overflow-y: auto; padding: 24px 32px; }
+/* main 是纵向 flex：子元素默认会被压缩，列表（overflow: hidden）内容多时被裁掉，要整页滚动 */
+.settings-main > * { flex-shrink: 0; }
 .settings-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
 .settings-title { flex: 1; min-width: 0; }
 .settings-title h1 { margin: 0 0 4px; font-size: 20px; }
