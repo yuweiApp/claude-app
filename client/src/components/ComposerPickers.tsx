@@ -102,11 +102,13 @@ interface ModelPickerProps {
   /** 当前的实际模型名（会话 init 报的，或新会话选的别名解析出来的） */
   model: string | undefined;
   effort: EffortLevel | undefined;
+  /** 切换的请求还没返回：胶囊显示的是要切到的模型、推理强度 */
+  switching?: boolean;
   onModel: (value: string) => void;
   onEffort: (effort: EffortLevel) => void;
 }
 
-export function ModelPicker({ models, model, effort, onModel, onEffort }: ModelPickerProps) {
+export function ModelPicker({ models, model, effort, switching, onModel, onEffort }: ModelPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -123,7 +125,13 @@ export function ModelPicker({ models, model, effort, onModel, onEffort }: ModelP
   if (!model) return null;
   return (
     <div className="model-picker" ref={ref}>
-      <button className="model-pill" data-effort={effort} onClick={() => setOpen((o) => !o)} title={`模型 ${plainModel(model)}${effort ? `，推理强度 ${EFFORT_LABELS[effort]}` : ""}`}>
+      <button
+        className={`model-pill${switching ? " switching" : ""}`}
+        data-effort={effort}
+        aria-busy={switching}
+        onClick={() => setOpen((o) => !o)}
+        title={`${switching ? "正在切换到" : ""}模型 ${plainModel(model)}${effort ? `，推理强度 ${EFFORT_LABELS[effort]}` : ""}`}
+      >
         {shortModel(model)}
         {effort && <span className="model-pill-effort">{EFFORT_LABELS[effort]}</span>}
       </button>

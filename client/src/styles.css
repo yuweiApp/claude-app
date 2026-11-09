@@ -671,6 +671,9 @@ main {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pill-text) 22%, transparent);
 }
 .model-pill:hover { background: color-mix(in srgb, var(--pill-bg) 90%, var(--pill-text)); }
+/* 切换模型、推理强度的请求还没返回（可能要等好几秒）：胶囊已经显示成要切到的，一明一暗表示还在切 */
+.model-pill.switching { animation: model-pill-switching 1.2s ease-in-out infinite; }
+@keyframes model-pill-switching { 50% { opacity: 0.55; } }
 .model-pill[data-effort="low"] { --pill-bg: light-dark(#c2e8e5, #246d72); }
 .model-pill[data-effort="medium"] { --pill-bg: light-dark(#a8cdeb, #275d94); }
 .model-pill[data-effort="high"] { --pill-bg: light-dark(#596be0, #4354ba); --pill-text: #fff; }

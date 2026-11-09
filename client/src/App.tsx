@@ -350,6 +350,19 @@ function Chat({
   const [newModel, setNewModel] = useState<string | undefined>();
   const [newEffort, setNewEffort] = useState<EffortLevel>(config.effort);
   const [models, setModels] = useState<ModelInfo[]>([]);
+  // 正在切换的模型、推理强度：要等子进程 resume、Claude Code 第一次用新模型时的检查，可能好几秒。
+  // 这期间胶囊先显示要切到的，带「切换中」样式；接口返回（成功时会话的 state 事件已经先到）或报错后清掉
+  const [switching, setSwitching] = useState<{ model?: string; effort?: EffortLevel } | null>(null);
+  const switchSeq = useRef(0);
+  const switchModel = (id: string, change: { model?: string; effort?: EffortLevel }) => {
+    const seq = ++switchSeq.current;
+    setSwitching((prev) => ({ ...prev, ...change }));
+    api
+      .setModel(id, change)
+      .catch((e: Error) => onError(`切换${change.model !== undefined ? "模型" : "推理强度"}失败：${e.message}`))
+      // 连着点了几次时，等最后一次返回再清
+      .finally(() => seq === switchSeq.current && setSwitching(null));
+  };
   useEffect(() => {
     api.models().then(setModels, (e: Error) => onError(`读取模型列表失败：${e.message}`));
   }, []);
@@ -574,15 +587,20 @@ function Chat({
         right={
           <ModelPicker
             models={models}
-            model={sessionId ? (view.model ?? config.model ?? undefined) : (resolveModel(models, newModel) ?? config.model ?? undefined)}
-            effort={sessionId ? (view.effort ?? config.effort) : newEffort}
+            model={
+              sessionId
+                ? (resolveModel(models, switching?.model) ?? view.model ?? config.model ?? undefined)
+                : (resolveModel(models, newModel) ?? config.model ?? undefined)
+            }
+            effort={sessionId ? (switching?.effort ?? view.effort ?? config.effort) : newEffort}
+            switching={switching !== null}
             onModel={(value) => {
               if (!sessionId) setNewModel(value);
-              else api.setModel(sessionId, { model: value }).catch((e: Error) => onError(e.message));
+              else switchModel(sessionId, { model: value });
             }}
             onEffort={(effort) => {
               if (!sessionId) setNewEffort(effort);
-              else api.setModel(sessionId, { effort }).catch((e: Error) => onError(e.message));
+              else switchModel(sessionId, { effort });
             }}
           />
         }
