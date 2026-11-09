@@ -266,7 +266,6 @@ main {
 .settings-row-sub { margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .settings-row-target { margin-top: 3px; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 .settings-row-status { margin-top: 3px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-.settings-row-status a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .settings-tag { padding: 0 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; font-weight: 500; line-height: 18px; }
 .mcp-status.connected { color: var(--ok); }
 .mcp-status.failed { color: var(--err); }
@@ -323,7 +322,34 @@ main {
 /* 连接器市场：注册表里的图标（大小同首字母头像），已添加的标记；插件、连接器市场的分页 */
 .connector-icon { object-fit: contain; background: #fff; padding: 2px; }
 .connector-added { color: var(--muted); font-size: 13px; white-space: nowrap; }
-.pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 14px; color: var(--muted); font-size: 13px; }
+/* 插件市场、连接器市场：卡片从左往右排，放不下换行 */
+.market-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; transition: opacity 120ms; }
+/* 换页、搜索的请求还没回来：旧的卡片变淡 */
+.market-grid.loading { opacity: 0.5; }
+.market-card { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); transition: border-color 120ms; }
+.market-card:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.market-card-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.market-card-title { flex: 1; min-width: 0; overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+/* 简介最多 3 行；下面的信息行用 margin-top: auto 推到底部，同一行的卡片底部对齐 */
+.market-card-desc {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+  color: var(--muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere;
+}
+.market-card-meta { margin-top: auto; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+/* 连接器的注册表名称和地址：等宽字体，各占一行，太长截断 */
+.market-card-target { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.market-card-target > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.market-card-meta a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.market-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; color: var(--muted); font-size: 13px; }
+.pager-btn {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 30px; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums;
+}
+.pager-btn:hover:not(:disabled) { color: var(--text); }
+.pager-btn.current { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.pager-btn.current:disabled { opacity: 1; }
+.pager-gap { min-width: 18px; text-align: center; letter-spacing: 1px; }
 .banner { background: var(--err); color: #fff; padding: 8px 16px; cursor: pointer; }
 .chat { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .chat-header {
@@ -1209,7 +1235,7 @@ svg.ic-mcp { color: var(--ic-mcp); }
 .sent-note-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .plugin-notice { margin: 12px 0 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .plugin-directory-bar { display: flex; align-items: center; gap: 12px; margin: -4px 0 12px; color: var(--muted); font-size: 13px; }
-.plugin-directory-bar span { flex: 1; min-width: 0; }
+.plugin-directory-bar > span { flex: 1; min-width: 0; }
 
 /* 自定义下拉框（代替原生 select）：按钮 + 弹出列表 */
 .select { position: relative; display: inline-flex; min-width: 0; }

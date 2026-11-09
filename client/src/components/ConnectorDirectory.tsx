@@ -8,7 +8,7 @@ import { Select } from "./Select";
 /**
  * 设置 → 连接器 → 连接器市场：MCP 官方注册表里有远程地址的服务器。不搜索时是网关配置里推荐的，搜索时查整个注册表。
  * 添加后直接进入登录（不用登录的连上就关掉）；要填请求头、地址变量的先填表。
- * 分页显示，每页 PAGE_SIZE 条；搜索结果网关一次给 100 条，翻到取回来的最后一页再往后时取下一批
+ * 卡片网格，每页 PAGE_SIZE 个；搜索结果网关一次给 100 条，翻到取回来的最后一页再往后时取下一批
  */
 export function ConnectorDirectory({ search, servers, onChanged }: { search: string; servers: McpServerInfo[]; onChanged: () => void }) {
   const [entries, setEntries] = useState<ConnectorEntry[] | null>(null);
@@ -91,27 +91,26 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
     <>
       {error && <div className="settings-error">{error}</div>}
       {entries && entries.length > 0 ? (
-        <div className="settings-list">
+        <div className={`market-grid${loading ? " loading" : ""}`} aria-busy={loading}>
           {pageOf(entries, page).map((entry) => {
             const name = existing(entry);
             return (
-              <div key={entry.id} className="settings-row">
-                <ConnectorIcon name={entry.title} icon={entry.icon} />
-                <div className="settings-row-main">
-                  <div className="settings-row-name">
+              <div key={entry.id} className="market-card">
+                <div className="market-card-head">
+                  <ConnectorIcon name={entry.title} icon={entry.icon} />
+                  <div className="market-card-title" title={entry.title}>
                     {entry.title}
-                    {entry.type === "sse" && <span className="settings-tag">SSE</span>}
-                  </div>
-                  {entry.description && (
-                    <div className="settings-row-sub wrap" title={entry.description}>
-                      {entry.description}
-                    </div>
-                  )}
-                  <div className="settings-row-target" title={`${entry.id} · ${entry.url}`}>
-                    {entry.id} · {entry.url}
                   </div>
                 </div>
-                <div className="settings-row-actions">
+                <div className="market-card-desc" title={entry.description}>
+                  {entry.description}
+                </div>
+                <div className="market-card-meta market-card-target">
+                  <div title={entry.id}>{entry.id}</div>
+                  <div title={entry.url}>{entry.url}</div>
+                </div>
+                <div className="market-card-foot">
+                  {entry.type === "sse" ? <span className="settings-tag">SSE</span> : <span />}
                   {name ? (
                     status(name) === "needs-auth" ? (
                       <button className="primary" title={`已添加为 ${name}，需要登录`} onClick={() => setSigningIn(name)}>

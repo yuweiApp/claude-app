@@ -197,7 +197,8 @@ function repositoryOf(source: Available["source"]): string | undefined {
   return undefined;
 }
 
-let cache: { at: number; value: Promise<MarketPlugin[]> } | null = null;
+/** 完整列表的缓存：data 是最近一次取到的（at 是取到的时间），pending 是正在取的 */
+let cache: { at: number; data?: MarketPlugin[]; pending?: Promise<MarketPlugin[]> } = { at: 0 };
 
 async function load(refresh: boolean): Promise<MarketPlugin[]> {
   const markets = await marketplaces();
@@ -248,13 +249,31 @@ async function load(refresh: boolean): Promise<MarketPlugin[]> {
     .map(({ plugin }) => plugin);
 }
 
-/** 市场里的插件（同名的只留一个），按市场、安装次数排序；缓存 10 分钟，refresh 时先更新市场 */
+/** 重新取完整列表：已经在取（又不是要先更新市场）就等那一次；取的过程中缓存被作废了（装、卸了插件），结果不要 */
+function reload(refresh: boolean): Promise<MarketPlugin[]> {
+  if (cache.pending && !refresh) return cache.pending;
+  const pending: Promise<MarketPlugin[]> = load(refresh).then(
+    (data) => {
+      if (cache.pending === pending) cache = { at: Date.now(), data };
+      return data;
+    },
+    (err: unknown) => {
+      if (cache.pending === pending) cache = { ...cache, pending: undefined };
+      throw err;
+    },
+  );
+  cache = { ...cache, pending };
+  return pending;
+}
+
+/**
+ * 市场里的插件（同名的只留一个），按市场、安装次数排序。Claude Code 一次给出全部，取一次要几秒，所以缓存起来：
+ * refresh 时先更新市场再取；还没取到过时等着取；超过 10 分钟的先用旧的返回，后台重新取
+ */
 function listMarketPlugins(refresh: boolean): Promise<MarketPlugin[]> {
-  if (!refresh && cache && Date.now() - cache.at < LIST_TTL_MS) return cache.value;
-  const value = load(refresh);
-  cache = { at: Date.now(), value };
-  value.catch(() => cache?.value === value && (cache = null));
-  return value;
+  if (refresh || !cache.data) return reload(refresh);
+  if (Date.now() - cache.at >= LIST_TTL_MS) reload(false).catch(() => undefined);
+  return Promise.resolve(cache.data);
 }
 
 export interface MarketQuery {
@@ -290,9 +309,13 @@ export async function queryMarketPlugins(query: MarketQuery): Promise<MarketPlug
   };
 }
 
-/** 装上、卸载、更新之后，列表和能力列表都要重新读 */
-function changed(): void {
-  cache = null;
+/**
+ * 装上、卸载、更新之后，能力列表要重新读；插件列表先在缓存里改好这一个的安装状态，下次查询时后台重新取，
+ * 正在取的那一次是改之前开始的，结果不要
+ */
+function changed(id: string, installed?: boolean): void {
+  if (cache.data && installed !== undefined) cache.data = cache.data.map((p) => (p.id === id ? { ...p, installed } : p));
+  cache = { at: 0, ...(cache.data ? { data: cache.data } : {}) };
   clearCapabilitiesCache();
 }
 
@@ -307,19 +330,25 @@ export async function installMarketPlugin(id: string): Promise<void> {
   checkId(id);
   const name = id.split("@")[0]!;
   if (importedPluginNames().includes(name)) throw new PluginMarketError(`已经导入了同名插件「${name}」，请先删除`);
+  let done = false;
   try {
     await cliJson(["install", id]);
+    done = true;
   } finally {
-    changed();
+    // 失败时不知道装到了哪一步，状态等重新取
+    changed(id, done ? true : undefined);
   }
 }
 
 export async function uninstallMarketPlugin(id: string): Promise<void> {
   checkId(id);
+  let done = false;
   try {
     await cliJson(["uninstall", id]);
+    done = true;
   } finally {
-    changed();
+    // 失败时不知道装到了哪一步，状态等重新取
+    changed(id, done ? false : undefined);
   }
 }
 
@@ -329,6 +358,6 @@ export async function updateMarketPlugin(id: string): Promise<string> {
   try {
     return (await cliJson(["update", id])).message ?? "已更新";
   } finally {
-    changed();
+    changed(id);
   }
 }

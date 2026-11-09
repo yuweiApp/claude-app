@@ -100,7 +100,10 @@ export function PluginDirectory({
       {error && <div className="settings-error">{error}</div>}
       {result && result.marketplaces.length > 0 && (
         <div className="plugin-directory-bar">
-          <span>{result.total} 个插件</span>
+          <span>
+            {result.total} 个插件
+            {loading && <span className="plugin-directory-loading"> · 加载中…</span>}
+          </span>
           {result.marketplaces.length > 1 && (
             <Select
               value={market}
@@ -127,7 +130,7 @@ export function PluginDirectory({
         </div>
       )}
       {result && result.plugins.length > 0 ? (
-        <div className="settings-list">
+        <div className={`market-grid${loading ? " loading" : ""}`} aria-busy={loading}>
           {result.plugins.map((plugin) => {
             const meta = [
               marketLabel(plugin.marketplace),
@@ -138,32 +141,31 @@ export function PluginDirectory({
             ]
               .filter(Boolean)
               .join(" · ");
+            const title = plugin.title ?? plugin.name;
             return (
-              <div key={plugin.id} className="settings-row">
-                <Avatar name={plugin.name} />
-                <div className="settings-row-main">
-                  <div className="settings-row-name">
-                    {plugin.title ?? plugin.name}
-                    {plugin.category && <span className="settings-tag">{plugin.category}</span>}
-                  </div>
-                  {plugin.description && (
-                    <div className="settings-row-sub wrap" title={plugin.description}>
-                      {plugin.description}
-                    </div>
-                  )}
-                  <div className="settings-row-status">
-                    {meta}
-                    {plugin.repository && (
-                      <>
-                        {" · "}
-                        <a href={plugin.repository} target="_blank" rel="noreferrer" title={plugin.repository}>
-                          代码仓库
-                        </a>
-                      </>
-                    )}
+              <div key={plugin.id} className="market-card">
+                <div className="market-card-head">
+                  <Avatar name={plugin.name} />
+                  <div className="market-card-title" title={title}>
+                    {title}
                   </div>
                 </div>
-                <div className="settings-row-actions">
+                <div className="market-card-desc" title={plugin.description}>
+                  {plugin.description}
+                </div>
+                <div className="market-card-meta">
+                  {meta}
+                  {plugin.repository && (
+                    <>
+                      {" · "}
+                      <a href={plugin.repository} target="_blank" rel="noreferrer" title={plugin.repository}>
+                        代码仓库
+                      </a>
+                    </>
+                  )}
+                </div>
+                <div className="market-card-foot">
+                  {plugin.category ? <span className="settings-tag">{plugin.category}</span> : <span />}
                   {plugin.installed || imported.includes(plugin.name) ? (
                     <button className="connector-added settings-link" title="打开插件详情" onClick={() => onOpen(plugin.name)}>
                       {plugin.installed ? "已安装" : "已导入"}
