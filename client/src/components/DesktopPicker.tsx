@@ -60,7 +60,7 @@ export function DesktopPicker({ enabled, onPick, onPickDesktop }: Props) {
 
   return (
     <div className="capability-picker" ref={ref}>
-      <button className="new-chat-chip" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button className="new-chat-chip" title="Computer Use" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <MonitorIcon className="ic ic-desktop" />
         <span className="new-chat-chip-label">Computer Use</span>
       </button>

@@ -41,7 +41,7 @@ export function CapabilityPicker({ kind, items, onPick }: Props) {
 
   return (
     <div className="capability-picker" ref={ref}>
-      <button className="new-chat-chip" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button className="new-chat-chip" title={kind} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         {kind === "技能" ? <SkillIcon /> : <PluginIcon />}
         <span className="new-chat-chip-label">{kind}</span>
       </button>

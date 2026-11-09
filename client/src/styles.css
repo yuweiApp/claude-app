@@ -846,6 +846,8 @@ main {
 .new-chat-chip:hover { background: color-mix(in srgb, var(--text) 7%, var(--panel)); }
 .new-chat-chip svg { flex: none; color: var(--muted); }
 .new-chat-chip-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* 一栏放不下时（Composer 里量出来加的 compact）只留图标，文字见按钮的 title */
+.new-chat-bar.compact .new-chat-chip-label { display: none; }
 .menu {
   position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 30; min-width: 240px; max-width: 360px;
   padding: 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);

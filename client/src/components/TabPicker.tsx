@@ -84,7 +84,7 @@ export function TabPicker({ inapp, onPick, onPickBrowser }: Props) {
 
   return (
     <div className="capability-picker" ref={ref}>
-      <button className="new-chat-chip" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button className="new-chat-chip" title="浏览器" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <GlobeIcon className="ic ic-tab" />
         <span className="new-chat-chip-label">浏览器</span>
       </button>

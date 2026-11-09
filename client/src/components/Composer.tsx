@@ -125,6 +125,27 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     mirror.style.right = `${input.offsetWidth - input.clientWidth}px`;
   };
   useLayoutEffect(syncMirror, [text]);
+  // 输入框上面那一栏放不下时（窗口窄）按钮只留图标：先去掉 compact 量一次带文字的宽度，超出就加回去。量在同一帧里，不会闪
+  const barRef = useRef<HTMLDivElement>(null);
+  const hasTop = !!top;
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const fit = () => {
+      bar.classList.remove("compact");
+      bar.classList.toggle("compact", bar.scrollWidth > bar.clientWidth);
+    };
+    fit();
+    const resize = new ResizeObserver(fit);
+    resize.observe(bar);
+    // 按钮增减、文件夹名变了也重新量（只看子节点和文字，不看 class，免得自己触发自己）
+    const mutation = new MutationObserver(fit);
+    mutation.observe(bar, { childList: true, subtree: true, characterData: true });
+    return () => {
+      resize.disconnect();
+      mutation.disconnect();
+    };
+  }, [hasTop]);
   // 改了文字后要放的光标位置（插入引用、整体删掉技能名和插件引用后），等新文字渲染完再放
   const pendingCaret = useRef<number | null>(null);
   useLayoutEffect(() => {
@@ -291,7 +312,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
 
   return (
     <div className="composer-wrap">
-    {top && <div className="new-chat-bar">{top}</div>}
+    {top && <div className="new-chat-bar" ref={barRef}>{top}</div>}
     <div
       className={dragging ? "composer dragging" : "composer"}
       onDragOver={(e) => {
