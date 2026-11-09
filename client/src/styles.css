@@ -34,6 +34,8 @@
   --ic-tab: #059669;
   --ic-desktop: #0284c7;
   --ic-mcp: #db2777;
+  --ic-tasks-from: #0ea5e9;
+  --ic-tasks-to: #7c3aed;
   color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
   font-size: 15px;
@@ -61,6 +63,8 @@
     --ic-tab: #34d399;
     --ic-desktop: #38bdf8;
     --ic-mcp: #f472b6;
+    --ic-tasks-from: #38bdf8;
+    --ic-tasks-to: #a78bfa;
     color-scheme: dark;
   }
 }
@@ -806,6 +810,11 @@ main {
 .tasks-anchor { flex-shrink: 0; display: flex; }
 .tasks-btn { position: relative; width: 28px; height: 28px; }
 .tasks-btn.active { color: var(--text); background: var(--panel); }
+/* 有任务在跑：秒表指针绕表盘中心转 */
+.tasks-icon-hand { transform-box: view-box; transform-origin: 8px 9.2px; }
+.tasks-btn.running .tasks-icon-hand { animation: tasks-hand 2.4s linear infinite; }
+@keyframes tasks-hand { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .tasks-btn.running .tasks-icon-hand { animation: none; } }
 .tasks-badge {
   position: absolute; top: -2px; right: -4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
   background: var(--accent); color: var(--accent-text); font-size: 10px; line-height: 15px; text-align: center;

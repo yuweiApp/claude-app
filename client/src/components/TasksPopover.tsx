@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { api, type BackgroundTask } from "../api";
 import { useDismiss } from "./ComposerPickers";
 
@@ -31,8 +31,8 @@ export function TasksPopover({ sessionId, tasks, onError }: Props) {
 
   return (
     <div className="tasks-anchor" ref={ref}>
-      <button className={`icon-btn tasks-btn${at ? " active" : ""}`} title="后台任务" aria-label="后台任务" aria-expanded={at !== null} onClick={toggle}>
-        <TerminalIcon />
+      <button className={`icon-btn tasks-btn${at ? " active" : ""}${running.length > 0 ? " running" : ""}`} title="后台任务" aria-label="后台任务" aria-expanded={at !== null} onClick={toggle}>
+        <StopwatchIcon />
         {running.length > 0 && <span className="tasks-badge">{running.length}</span>}
       </button>
       {at && (
@@ -170,6 +170,26 @@ function useNow(ticking: boolean): number {
     return () => clearInterval(timer);
   }, [ticking]);
   return now;
+}
+
+/** 标题后面的按钮：秒表（上浅蓝下紫的渐变），有任务在跑时指针转动 */
+function StopwatchIcon() {
+  const id = useId();
+  const stroke = `url(#${CSS.escape(id)})`;
+  return (
+    <svg className="tasks-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke={stroke} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <defs>
+        <linearGradient id={id} gradientUnits="userSpaceOnUse" x1="3" y1="1" x2="13" y2="15">
+          <stop offset="0" style={{ stopColor: "var(--ic-tasks-from)" }} />
+          <stop offset="1" style={{ stopColor: "var(--ic-tasks-to)" }} />
+        </linearGradient>
+      </defs>
+      <circle cx="8" cy="9.2" r="5.3" fill={stroke} fillOpacity="0.16" />
+      <path d="M6.4 1.6h3.2M8 1.6v2.3M12.3 3.9l1 1" />
+      <path className="tasks-icon-hand" d="M8 9.2 10.1 7.1" />
+      <circle cx="8" cy="9.2" r="0.9" fill={stroke} stroke="none" />
+    </svg>
+  );
 }
 
 function TerminalIcon() {
