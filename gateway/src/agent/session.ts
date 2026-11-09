@@ -78,6 +78,8 @@ export class AgentSession {
     private readonly onClosed: (session: AgentSession) => void,
     terminals?: TerminalManager,
     private readonly browser?: BrowserHost,
+    /** 一轮结束（result）之后 */
+    private readonly onTurnEnd?: (session: AgentSession) => void,
   ) {
     this.model = opts.model ?? config.model;
     this.effort = opts.effort;
@@ -288,6 +290,7 @@ export class AgentSession {
           const deferred = inappBusy(this.id) || this.browserTaskEnded;
           this.browserTaskEnded = false;
           if (!deferred) this.browser?.turnEnded(this.id);
+          this.onTurnEnd?.(this);
         }
       }
     } catch (err) {

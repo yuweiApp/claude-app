@@ -44,10 +44,26 @@ interface WindowInfo {
   bounds?: Bounds;
 }
 
-/** 所有窗口（含本应用的，给 guard 和截图的坐标说明用，不交给模型） */
-export async function listWindows(): Promise<WindowInfo[]> {
-  const { envelope } = await runCli(["list-windows"], { timeoutMs: 10_000 });
-  return envelope?.ok && Array.isArray(envelope.data) ? (envelope.data as WindowInfo[]) : [];
+/**
+ * 网关自己查的 list-windows 结果留 1 秒：一次截图要查三遍（guard、右上角浮窗、截图的坐标说明），Windows 上一遍 0.4 秒。
+ * 桌面写操作（restore、close-app 等）开始和结束时清掉，免得拿着操作前的窗口状态
+ */
+const WINDOWS_TTL_MS = 1000;
+let windowsCache: { at: number; promise: Promise<WindowInfo[]> } | null = null;
+
+/** 所有窗口（含本应用的，给 guard、截图前的检查和截图的坐标说明用，不交给模型） */
+export function listWindows(): Promise<WindowInfo[]> {
+  if (windowsCache && Date.now() - windowsCache.at < WINDOWS_TTL_MS) return windowsCache.promise;
+  const entry = {
+    at: Date.now(),
+    promise: runCli(["list-windows"], { timeoutMs: 10_000 }).then(({ envelope }) => {
+      if (envelope?.ok && Array.isArray(envelope.data)) return envelope.data as WindowInfo[];
+      if (windowsCache === entry) windowsCache = null;
+      return [];
+    }),
+  };
+  windowsCache = entry;
+  return entry.promise;
 }
 
 /** 屏幕，顺序同 --screen 的序号 */
@@ -207,12 +223,14 @@ const WRITE_GRACE_MS = 1000;
 /** 开始一次桌面写操作，返回结束时调用的函数 */
 export function beginWrite(): () => void {
   writesInFlight++;
+  windowsCache = null;
   let ended = false;
   return () => {
     if (ended) return;
     ended = true;
     writesInFlight--;
     lastWriteEnd = Date.now();
+    windowsCache = null;
   };
 }
 

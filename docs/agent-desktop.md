@@ -78,6 +78,8 @@ snapshot s191jb6hk0gciz（mousepad，窗口 w-1.1895-…）
 参数：`app`、`window_id`、`screen`（至少一个）。网关让 agent-desktop 把 PNG 存到临时目录、读出来转成 MCP 图片，再删掉（不解析它 JSON 里的 base64）。
 
 - 上游行为（实测）：窗口被别的窗口挡住时拒绝截图（`reason: covered`），不会把挡在上面的内容截进来。
+- 最小化的窗口上游要先试着截、超时（Windows 上 5 秒）才报错，网关在 `list-windows` 里看到 `window_id` 的窗口 `minimized: true` 时直接返回，不执行截图。
+- 网关自己查的 `list-windows`（guard、浮窗、截图前检查、截图的坐标说明）结果留 1 秒共用，桌面写操作开始和结束时清掉。
 - macOS 要「屏幕录制」权限。
 - 图片太大：原始大小超过 3.75MB（base64 后 5MB，模型接口的单张上限）时不返回图片，报大小和上限。缩小见第 12 节待定问题。
 
@@ -286,6 +288,7 @@ desktop:
   - 模型改填进程名 `electron.exe`：开发模式下本应用和 codex-app-server 的桌面版都叫 `electron.exe`，网关按应用名拦下，还报「这是本应用的窗口」，模型以为真是本应用。现在同名的还有其他进程时，错误信息照实说（应用名和本应用相同、分不出来，按窗口 id 指定时看窗口所属的进程）。
   - 改完再试：网关放行（按窗口 id 查到 pid 38508，不是本应用），agent-desktop 报不能截最小化的窗口（第 8 节），模型 `restore` 后截图成功。这一轮靠新加的桌面日志（`log.ts`）对上了每一步。
   - 日志里每次调用的 stderr 都是 Node 调试器的输出：Windows 上一直在经 Node 启动器调用，改成直接调用原生程序（第 9 节）。
+  - 改完：`skills get` 746 → 67 毫秒，`list-windows` 1–1.4 秒 → 0.35–0.46 秒。截最小化窗口仍要 4.9 秒（上游），一次截图跑 3 遍 `list-windows`：网关改成看到最小化直接返回、`list-windows` 留 1 秒共用（第 4 节 screenshot）。
 - 快照渲染改成不认识的字段也原样带上（节点行尾、快照头的「其他：」），Windows 上快照节点有没有额外字段还没看到原始 JSON。
 
 **拦不住的**：模型用 Bash 直接跑 `gateway/node_modules/agent-desktop/bin/agent-desktop`（或 xdotool、AppleScript 这类）就绕过了网关。这和 Bash 本身能做任何事一样，边界是 Bash 的权限卡片；「完全访问权限」下没有这道边界。

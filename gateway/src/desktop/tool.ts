@@ -205,7 +205,7 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
     ),
     tool(
       "screenshot",
-      "一个窗口（app 或 window_id）或一块屏幕（screen）的 PNG 图片。给了 app 或 window_id 时截窗口，screen 不起作用；给了 window_id 时 app 也不起作用。窗口被别的窗口挡住时不截。",
+      "一个窗口（app 或 window_id）或一块屏幕（screen）的 PNG 图片。给了 app 或 window_id 时截窗口，screen 不起作用；给了 window_id 时 app 也不起作用。窗口被别的窗口挡住或最小化时不截。",
       {
         app: z.string().optional().describe("应用名（list-apps 里的 name，不是窗口标题）"),
         window_id: z.string().optional().describe("窗口 id（list-windows 里的 id）"),
@@ -229,6 +229,13 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
           ];
           const denied = await checkTarget(sessionId, args);
           if (denied) return error(prefixed(notice, denied));
+          // agent-desktop 截最小化的窗口要先试着截、超时（实测 Windows 上 5 秒）才报 INVALID_ARGS，list-windows 里已经看得到
+          if (input.window_id) {
+            const win = (await listWindows()).find((w) => w.id === input.window_id);
+            if (win?.minimized) {
+              return error(prefixed(notice, `窗口 ${win.id}${win.title ? `「${win.title}」` : ""}是最小化的（list-windows 的 minimized: true），agent-desktop 不能截最小化的窗口，网关没有执行截图`));
+            }
+          }
           note(args);
           const result = await runCli(args, { session: sessionId, timeoutMs: 60_000, signal: signalOf(extra) });
           const failed = failure(result, 60_000);
