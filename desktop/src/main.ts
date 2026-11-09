@@ -14,6 +14,7 @@ const nodeBin = process.env.DESKTOP_NODE || "node";
 const readyTimeoutMs = 60_000;
 /** 网关设了 API_TOKEN 时，外壳连网关（内置浏览器）也要带上 */
 const gatewayToken = process.env.DESKTOP_GATEWAY_TOKEN || process.env.API_TOKEN || "";
+const iconPath = path.join(root, "desktop", "assets", "icon.png");
 
 // 开发时指定单独的数据目录，可以和已经开着的桌面版同时运行（单实例锁、登录状态都按数据目录分开）
 if (process.env.DESKTOP_USER_DATA) app.setPath("userData", path.resolve(process.env.DESKTOP_USER_DATA));
@@ -92,7 +93,8 @@ function createWindow(): BrowserWindow {
     minWidth: 720,
     minHeight: 480,
     title: "Claude App",
-    icon: path.join(root, "desktop", "assets", "icon.png"),
+    // macOS 不看窗口的 icon，程序坞图标在 whenReady 里用 app.dock.setIcon 换
+    icon: iconPath,
     show: false,
     autoHideMenuBar: true,
     // 不要系统标题栏：网页自己画（client/src/components/TitleBar.tsx），按钮通过 preload 调下面的 window:* 消息。
@@ -199,6 +201,8 @@ if (!app.requestSingleInstanceLock()) {
 
   // 入口模块不能在顶层 await whenReady()：Electron 要等入口模块的顶层 await 结束才发 ready，会互相等死
   void app.whenReady().then(async () => {
+    // 开发时直接跑 electron，macOS 程序坞默认是 Electron 自己的图标。放在等网关、网页之前，启动的这几秒也是新图标
+    if (process.platform === "darwin") app.dock?.setIcon(iconPath);
     try {
       // 网关的 .env.local 按工作目录读，所以 cwd 设成 gateway/；输出接到管道上不是终端，LOG_PRETTY 让日志仍然按行格式化
       await ensure(`${gatewayUrl}/health`, () =>
