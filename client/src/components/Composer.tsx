@@ -16,7 +16,12 @@ interface PendingFile {
   error?: string;
   /** 图片的本地预览地址（URL.createObjectURL），移除或发送后释放 */
   preview?: string;
+  /** 大段粘贴的文字转成的附件：卡片上显示开头一行和「粘贴的文本」 */
+  pastedText?: string;
 }
+
+/** 粘贴的文字超过这么多字时存成附件（同 codex-app-server），输入框里只留自己要说的话 */
+const PASTE_AS_FILE_CHARS = 5000;
 
 /** 外面往输入框里写内容 */
 export interface ComposerHandle {
@@ -164,7 +169,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
   const ready = files.filter((f) => f.status === "done");
   const canSend = (text.trim() || ready.length > 0 || hasNotes) && !uploading && !sending;
 
-  const addFiles = (list: File[]) => {
+  const addFiles = (list: File[], pastedText?: string) => {
     for (const file of list) {
       const key = crypto.randomUUID();
       if (file.size > maxUploadMb * 1024 * 1024) {
@@ -172,7 +177,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
         continue;
       }
       const preview = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
-      setFiles((prev) => [...prev, { key, name: file.name, size: file.size, status: "uploading", preview }]);
+      setFiles((prev) => [...prev, { key, name: file.name, size: file.size, status: "uploading", preview, pastedText }]);
       api.upload([file]).then(
         ([attachment]) =>
           setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, status: "done", attachment } : f))),
@@ -269,6 +274,12 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     if (pasted.length) {
       e.preventDefault();
       addFiles(pasted);
+      return;
+    }
+    const plain = e.clipboardData.getData("text/plain");
+    if (plain.length > PASTE_AS_FILE_CHARS) {
+      e.preventDefault();
+      addFiles([new File([plain], "粘贴的文本.txt", { type: "text/plain" })], plain);
     }
   };
 
@@ -308,6 +319,24 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
                   <ImageThumb src={f.preview} alt={f.name} className="image-chip-thumb" />
                   {f.status === "uploading" && <span className="image-chip-state">上传中…</span>}
                   {f.status === "error" && <span className="image-chip-state error">{f.error}</span>}
+                  <button className="image-chip-remove" onClick={remove} title="移除" aria-label="移除">
+                    ×
+                  </button>
+                </span>
+              );
+            }
+            if (f.pastedText) {
+              return (
+                <span key={f.key} className={`chip pasted-chip ${f.status}`} title={f.error ?? f.pastedText.slice(0, 500)}>
+                  <span className="pasted-chip-icon">
+                    <PastedTextIcon />
+                  </span>
+                  <span className="pasted-chip-body">
+                    <span className="chip-name">{f.pastedText.trim().split("\n", 1)[0]}</span>
+                    <span className="chip-meta">
+                      {f.status === "uploading" ? "上传中…" : f.status === "error" ? f.error : `粘贴的文本 · ${formatSize(f.size)}`}
+                    </span>
+                  </span>
                   <button className="image-chip-remove" onClick={remove} title="移除" aria-label="移除">
                     ×
                   </button>
@@ -401,4 +430,12 @@ function expandTabs(text: string, tabs: { token: string; full: string }[]): stri
     const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return acc.replace(new RegExp(`(^|\\s)${escaped}(?!\\()`, "g"), (_m, space: string) => space + full);
   }, text);
+}
+
+function PastedTextIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3.5 7V5.5a2 2 0 0 1 2-2H7M13 3.5h1.5a2 2 0 0 1 2 2V7M16.5 13v1.5a2 2 0 0 1-2 2H13M7 16.5H5.5a2 2 0 0 1-2-2V13M7.5 8.5h5M6.5 11.5h7" />
+    </svg>
+  );
 }

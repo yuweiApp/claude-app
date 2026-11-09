@@ -366,7 +366,7 @@ main {
 .messages { display: flex; flex-direction: column; gap: 28px; }
 .user {
   align-self: flex-end; background: var(--user-bubble); border-radius: 18px 18px 6px 18px; padding: 9px 16px;
-  max-width: 80%; white-space: pre-wrap; line-height: 1.6;
+  max-width: 80%; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6;
 }
 .mention { color: var(--skill); }
 .mention-sigil { color: var(--muted); }
@@ -617,6 +617,15 @@ main {
 .chip.error .chip-meta { color: var(--err); }
 .chip-remove { border: none; padding: 0 4px; line-height: 1; color: var(--muted); }
 .user .chips:last-child { margin-bottom: 0; }
+/* 大段粘贴转成的附件：左边图标，右边开头一行和「粘贴的文本」；× 同图片附件，悬停时出现在右上角 */
+.pasted-chip { position: relative; gap: 10px; width: 240px; max-width: 100%; padding: 6px 12px 6px 6px; border-radius: 12px; }
+.pasted-chip-icon {
+  display: flex; flex: none; align-items: center; justify-content: center; width: 36px; height: 36px;
+  border-radius: 8px; background: var(--panel); color: var(--muted);
+}
+.pasted-chip-body { display: flex; flex-direction: column; min-width: 0; gap: 1px; font-size: 13px; }
+.pasted-chip-body .chip-meta { font-size: 12px; }
+.pasted-chip:hover .image-chip-remove { display: block; }
 .composer-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
 .composer-add { font-size: 16px; width: 28px; height: 28px; }
 /* 「＋」点开的添加菜单：图标、名字、说明一行 */
