@@ -4,6 +4,7 @@ import { BrowserHost } from "./browser/host.js";
 import { chromeBridge } from "./browser/chrome.js";
 import { desktopEnabled, externalBrowserEnabled } from "./config-file.js";
 import { listWindows, stripOwn } from "./desktop/guard.js";
+import { setDesktopLog } from "./desktop/log.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import { AttachmentError } from "./agent/attachments.js";
 import { BadRequestError, BusyError, NotFoundError, SessionManager } from "./agent/session-manager.js";
@@ -47,7 +48,9 @@ export function buildApp(): App {
   const terminals = new TerminalManager();
   // 桌面版问会话的工作目录（内置浏览器的下载存到那里）时用 sessions 回答，两边互相引用，所以传函数
   const browser = new BrowserHost((sessionId) => sessions.cwd(sessionId));
-  const sessions = new SessionManager(hub, app.log, new ConversationLog(config.conversationLog, app.log), terminals, browser);
+  const conversationLog = new ConversationLog(config.conversationLog, app.log);
+  setDesktopLog((entry) => conversationLog.recordDesktop(entry));
+  const sessions = new SessionManager(hub, app.log, conversationLog, terminals, browser);
 
   if (config.apiToken) {
     app.addHook("onRequest", async (req, reply) => {

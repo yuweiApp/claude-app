@@ -114,6 +114,12 @@ const signalOf = (extra: unknown) => (extra as { signal?: AbortSignal } | undefi
 /** 只有在 app、window_id 等目标参数都没给时报错 */
 const needOne = (names: string[]) => `${names.join("、")} 至少给一个`;
 
+/**
+ * snapshot、screenshot 给了 window_id 时不传 --app：窗口 id 已经唯一。agent-desktop 两个都给时先按 --app 找应用，
+ * 实测 Windows 上模型把 @desktop 引用里的窗口标题填进 app，返回 APP_NOT_FOUND；填进程名（electron.exe）时又和本应用同名，被网关拦下
+ */
+const appUnlessWindow = (input: { app?: string; window_id?: string }) => (input.window_id ? undefined : input.app || undefined);
+
 /** PNG 的宽高（IHDR） */
 const pngSize = (png: Buffer) => (png.length >= 24 ? { width: png.readUInt32BE(16), height: png.readUInt32BE(20) } : null);
 
@@ -149,9 +155,9 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
   const tools = [
     tool(
       "snapshot",
-      "一个窗口的无障碍树（默认只列可交互的元素），元素带 [ref=@快照编号:eN]，run 的命令用这个 ref 指定元素。不改动界面。",
+      "一个窗口的无障碍树（默认只列可交互的元素），元素带 [ref=@快照编号:eN]，run 的命令用这个 ref 指定元素。给了 window_id 时按窗口读，app 不起作用。不改动界面。",
       {
-        app: z.string().optional().describe("应用名（list-apps 里的 name）"),
+        app: z.string().optional().describe("应用名（list-apps 里的 name，不是窗口标题）"),
         window_id: z.string().optional().describe("窗口 id（list-windows 里的 id）"),
         root: z.string().optional().describe("从这个 ref 往下读，不读整个窗口"),
         interactive_only: z.boolean().optional().describe("只列可交互的元素，默认 true"),
@@ -173,7 +179,7 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
           "snapshot",
           "--compact",
           ...(input.interactive_only !== false ? ["-i"] : []),
-          ...(input.app ? ["--app", input.app] : []),
+          ...(appUnlessWindow(input) ? ["--app", input.app!] : []),
           ...(input.window_id ? ["--window-id", input.window_id] : []),
           ...(input.root ? ["--root", input.root] : []),
           ...(input.skeleton ? ["--skeleton"] : []),
@@ -199,9 +205,9 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
     ),
     tool(
       "screenshot",
-      "一个窗口（app 或 window_id）或一块屏幕（screen）的 PNG 图片。给了 app 或 window_id 时截窗口，screen 不起作用。窗口被别的窗口挡住时不截。",
+      "一个窗口（app 或 window_id）或一块屏幕（screen）的 PNG 图片。给了 app 或 window_id 时截窗口，screen 不起作用；给了 window_id 时 app 也不起作用。窗口被别的窗口挡住时不截。",
       {
-        app: z.string().optional().describe("应用名（list-apps 里的 name）"),
+        app: z.string().optional().describe("应用名（list-apps 里的 name，不是窗口标题）"),
         window_id: z.string().optional().describe("窗口 id（list-windows 里的 id）"),
         screen: z.number().int().min(0).optional().describe("屏幕序号（list-displays；0 是主屏幕），截整块屏幕"),
       },
@@ -213,9 +219,10 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
         const dir = await mkdtemp(path.join(os.tmpdir(), "claude-app-desktop-"));
         const file = path.join(dir, "screenshot.png");
         try {
+          const app = appUnlessWindow(input);
           const args = [
             "screenshot",
-            ...(input.app ? ["--app", input.app] : []),
+            ...(app ? ["--app", app] : []),
             ...(input.window_id ? ["--window-id", input.window_id] : []),
             ...(screen !== undefined ? ["--screen", String(screen)] : []),
             file,
@@ -228,7 +235,7 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
           if (failed) return error(prefixed(notice, failed));
           if (!result.envelope!.ok) return error(prefixed(notice, formatError(result.envelope!.error!)));
           const png = await readFile(file);
-          const geometry = await screenshotGeometry(png, { app: input.app, windowId: input.window_id, screen }).catch(() => null);
+          const geometry = await screenshotGeometry(png, { app, windowId: input.window_id, screen }).catch(() => null);
           if (png.length > MAX_IMAGE_BYTES) {
             return error(prefixed(notice, `截图有 ${(png.length / 1e6).toFixed(1)}MB，超过 ${(MAX_IMAGE_BYTES / 1e6).toFixed(2)}MB 的上限，没有返回图片`));
           }

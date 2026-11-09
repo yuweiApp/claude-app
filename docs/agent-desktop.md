@@ -39,6 +39,7 @@ claude 子进程 ──进程内 MCP──▶ 网关 desktop 服务器 ──exe
 - `cli.ts`：找二进制、拼参数（加 `--session`、按需加 `--headed`）、`execFile`、解析 JSON 结果、超时和中断时杀进程。环境变量 `AGENT_DESKTOP_HOME` 设成 `gateway/.data/agent-desktop`（实测有效；要真实路径，带 `..` 会报 `private file parent must not contain parent traversal`；目录权限 700），不碰 `~/.agent-desktop`，同 `CLAUDE_CONFIG_DIR` 的做法。
 - `guard.ts`：见第 6 节。
 - `render.ts`：快照 JSON 转成缩进文本。
+- `log.ts`：每次 agent-desktop 调用和 guard 的判断写进对话日志（格式见 [README.md](README.md) 第 11 节）。网关的运行日志在 Windows 上只输出到桌面版的终端，对话日志是文件，远程也能取。
 - `tool.ts`：`createSdkMcpServer`，写法同 `browser/tool.ts`（`alwaysLoad` 标记、`rememberResult` 给转后台的调用留结果）。
 
 **每次起一个进程**，不常驻 `agent-desktop mcp`，也不用它的 C 库（`libagent_desktop_ffi`）：实测一次 0.1 秒左右（`status` 0.13 秒；`type` 1 秒，大部分是它自己的等待和校验），够用；全局参数能每次不同；卡住或崩溃只影响这一次调用。多个进程同时操作时，agent-desktop 自己有跨进程的「交互租约」排队（结果里的 `lease_contention_count`），网关不另加锁。
@@ -279,6 +280,10 @@ desktop:
   - `mouse-click` 被判为落在本应用窗口里：紫鸟挪到主屏后盖住了 Claude App，以前不看叠放次序。现在前台窗口不是本应用、又盖住这个坐标时放行（点击落在前台窗口上）。
   - 截图结果附上屏幕 / 窗口在桌面坐标里的范围、缩放和图片像素大小：两块屏 125%、150%，副屏从 x=1920 开始，模型拿到的图还被 Claude Code 缩小过。
   - `find` 报「Chromium 的树还很薄」：agent-desktop 的 Windows 说明里写，Chromium 窗口被完全挡住时树会一直停在第一次读到的那一小部分。模型因此改用坐标点击（真实鼠标，要把紫鸟切到前台），挡住了用户的窗口。
+- 第三轮（2026-11-10，截图 @desktop 引用的窗口「树屿森 SYS」，是 codex-app-server 的桌面版）：
+  - 模型把引用里的窗口标题填进 `app`，和 `window_id` 一起给，agent-desktop 先按 `--app` 找应用，报 `APP_NOT_FOUND`：现在 `snapshot`、`screenshot` 给了 `window_id` 就不传 `--app`。
+  - 模型改填进程名 `electron.exe`：开发模式下本应用和 codex-app-server 的桌面版都叫 `electron.exe`，网关按应用名拦下，还报「这是本应用的窗口」，模型以为真是本应用。现在同名的还有其他进程时，错误信息照实说（应用名和本应用相同、分不出来，按窗口 id 指定时看窗口所属的进程）。
+  - 那个窗口是最小化的，没走到截图这一步，Windows 上截最小化窗口的结果还没测（SSH 里没有交互桌面，测不了）。
 - 快照渲染改成不认识的字段也原样带上（节点行尾、快照头的「其他：」），Windows 上快照节点有没有额外字段还没看到原始 JSON。
 
 **拦不住的**：模型用 Bash 直接跑 `gateway/node_modules/agent-desktop/bin/agent-desktop`（或 xdotool、AppleScript 这类）就绕过了网关。这和 Bash 本身能做任何事一样，边界是 Bash 的权限卡片；「完全访问权限」下没有这道边界。

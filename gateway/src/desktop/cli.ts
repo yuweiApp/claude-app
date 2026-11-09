@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, openSync, readSync, closeSync, realpa
 import { createRequire } from "node:module";
 import path from "node:path";
 import { config } from "../config.js";
+import { clip, desktopLog } from "./log.js";
 
 /** agent-desktop 每条命令输出的 JSON（schema 2.6） */
 export interface Envelope {
@@ -69,6 +70,29 @@ export const sessionStateDir = (sessionId: string) => path.join(stateHome(), "se
 /** 截图、snapshot 的结果可能很大（高分屏整屏 PNG 的 base64 有十几 MB） */
 const MAX_BUFFER = 64 * 1024 * 1024;
 
+/** 成功结果的 data 在日志里留多少字符（list-windows 二十来个窗口约 6000；快照可能几十 KB） */
+const MAX_LOGGED_DATA = 8000;
+
+/** 记一次调用：参数、耗时、退出码、原始结果（错误全留，含网关不交给模型的 suggestion、recovery） */
+function logRun(args: string[], session: string | undefined, ms: number, err: Error | null, result: CliResult): void {
+  const { envelope, stdout, stderr, killed } = result;
+  desktopLog({
+    kind: "cli",
+    ...(session ? { session } : {}),
+    args,
+    ms,
+    ...(err && "code" in err && err.code !== undefined ? { exitCode: err.code } : {}),
+    ...(killed ? { killed } : {}),
+    ...(envelope
+      ? envelope.ok
+        ? // 不叫 data：对话日志把名为 data 的长字符串当成 base64 省略掉
+          { ok: true, output: clip(JSON.stringify(envelope.data ?? null), MAX_LOGGED_DATA) }
+        : { ok: false, error: envelope.error }
+      : { stdout: clip(stdout, 2000) }),
+    ...(stderr.trim() ? { stderr: clip(stderr.trim(), 2000) } : {}),
+  });
+}
+
 /**
  * 执行一条 agent-desktop 命令，每次一个进程（一次约 0.1 秒）。
  * session：快照命名空间（--session），网关的会话 id；headed：真实的鼠标键盘（--headed）
@@ -78,14 +102,16 @@ export function runCli(
   opts: { session?: string; headed?: boolean; timeoutMs: number; signal?: AbortSignal },
 ): Promise<CliResult> {
   command ??= resolveCommand();
-  const full = [...command.prefix, ...args, ...(opts.session ? ["--session", opts.session] : []), ...(opts.headed ? ["--headed"] : [])];
+  const cliArgs = [...args, ...(opts.session ? ["--session", opts.session] : []), ...(opts.headed ? ["--headed"] : [])];
+  const full = [...command.prefix, ...cliArgs];
+  const started = Date.now();
   return new Promise((resolve) => {
     let killed: CliResult["killed"];
     const child = execFile(
       command!.file,
       full,
       { env: { ...process.env, AGENT_DESKTOP_HOME: stateHome() }, maxBuffer: MAX_BUFFER, windowsHide: true },
-      (_err, stdout, stderr) => {
+      (err, stdout, stderr) => {
         clearTimeout(timer);
         opts.signal?.removeEventListener("abort", onAbort);
         let envelope: Envelope | undefined;
@@ -95,6 +121,7 @@ export function runCli(
         } catch {
           // --help 等输出纯文字
         }
+        logRun(cliArgs, opts.session, Date.now() - started, err, { envelope, stdout, stderr, killed });
         resolve({ envelope, stdout, stderr, killed });
       },
     );

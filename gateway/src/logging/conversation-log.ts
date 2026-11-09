@@ -95,11 +95,19 @@ export class ConversationLog {
   record(sessionId: string, event: GatewayEvent): void {
     if (!this.options.enabled || !shouldRecord(event)) return;
     const images = new Map<string, Buffer>();
-    const line = this.format(sessionId, event, images);
+    const line = this.format(sessionId, { event }, images);
     this.enqueue(async () => {
       for (const [file, data] of images) await this.saveImage(file, data);
       await this.write(line);
     });
+  }
+
+  /** 桌面工具的排查记录（desktop/log.ts）：每行 { time, sessionId, desktop }，没有会话时 sessionId 为空 */
+  recordDesktop(entry: { session?: string } & Record<string, unknown>): void {
+    if (!this.options.enabled) return;
+    const { session, ...desktop } = entry;
+    const line = this.format(session ?? "", { desktop }, new Map());
+    this.enqueue(() => this.write(line));
   }
 
   /** 等排队的写入完成（关闭网关时） */
@@ -113,9 +121,9 @@ export class ConversationLog {
   }
 
   /** 序列化一条记录：base64 内容换成文件路径，要写的文件放进 images */
-  private format(sessionId: string, event: GatewayEvent, images: Map<string, Buffer>): string {
+  private format(sessionId: string, body: { event: GatewayEvent } | { desktop: Record<string, unknown> }, images: Map<string, Buffer>): string {
     const time = new Date().toISOString();
-    const text = JSON.stringify({ time, sessionId, event }, (key, value: unknown) => {
+    const text = JSON.stringify({ time, sessionId, ...body }, (key, value: unknown) => {
       if (isBase64Source(value)) {
         const data = Buffer.from(value.data, "base64");
         const hash = createHash("sha256").update(data).digest("hex").slice(0, 32);
@@ -130,7 +138,8 @@ export class ConversationLog {
     const bytes = Buffer.byteLength(text);
     if (bytes <= this.options.maxEntryBytes) return `${text}\n`;
     const preview = Buffer.from(text).subarray(0, Math.floor(this.options.maxEntryBytes * 0.8)).toString();
-    return `${JSON.stringify({ time, sessionId, type: event.type, truncated: true, originalBytes: bytes, preview })}\n`;
+    const type = "event" in body ? body.event.type : `desktop:${String(body.desktop.kind)}`;
+    return `${JSON.stringify({ time, sessionId, type, truncated: true, originalBytes: bytes, preview })}\n`;
   }
 
   /** 同一张图再次出现时更新时间，免得它比引用它的新日志先被清理 */

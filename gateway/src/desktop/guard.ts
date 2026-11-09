@@ -2,6 +2,7 @@ import { rmSync } from "node:fs";
 import type { DesktopTarget } from "../shared/types.js";
 import { APP_ARGUMENT, flagValues, isHelp, NEEDS_TARGET, pointsIn, refsIn, snapshotIdOf } from "./commands.js";
 import { runCli, sessionStateDir } from "./cli.js";
+import { desktopLog } from "./log.js";
 import type { SnapshotData } from "./render.js";
 
 /**
@@ -20,6 +21,7 @@ let ownPids = new Set<number>();
 /** 桌面版的进程号（主进程和它的子进程）；桌面版断开时传空数组 */
 export function setOwnPids(pids: number[]): void {
   ownPids = new Set(pids);
+  desktopLog({ kind: "own-pids", pids });
 }
 
 const OWN_APP = "这是本应用（claude-app）的窗口，桌面工具不能读取或操作它";
@@ -138,6 +140,14 @@ export function describeRefs(args: string[]): string[] {
  * - 不带目标时作用于前台窗口的命令，要求带 --app / --window-id / ref
  */
 export async function checkTarget(session: string, args: string[]): Promise<string | null> {
+  // 日志里记下判断用到的东西：本应用的进程号、--window-id 在 list-windows 里对应的窗口、--app 在 list-apps 里同名的进程
+  const context: Record<string, unknown> = {};
+  const denied = await decide(session, args, context);
+  desktopLog({ kind: "guard", session, args, ownPids: [...ownPids], ...context, ...(denied ? { denied } : { allowed: true }) });
+  return denied;
+}
+
+async function decide(session: string, args: string[], context: Record<string, unknown>): Promise<string | null> {
   const command = args[0] ?? "";
   // 只是看参数说明，不作用于任何窗口
   if (isHelp(args)) return null;
@@ -158,6 +168,7 @@ export async function checkTarget(session: string, args: string[]): Promise<stri
   const points = pointsIn(args);
   if (windowIds.length || points.length) {
     const windows = await listWindows();
+    context.windows = windowIds.map((id) => windows.find((w) => w.id === id) ?? { id, found: false });
     for (const id of windowIds) {
       if (ownPids.has(windows.find((w) => w.id === id)?.pid ?? -1)) return OWN_APP;
     }
@@ -172,8 +183,16 @@ export async function checkTarget(session: string, args: string[]): Promise<stri
     }
   }
   if (apps.length) {
-    const ownNames = new Set((await listApps()).filter((a) => ownPids.has(a.pid)).map((a) => a.name.toLowerCase()));
-    if (apps.some((a) => ownNames.has(a.toLowerCase()))) return `${OWN_APP}（同名的其他应用请用 --window-id 指定）`;
+    const running = await listApps();
+    context.apps = running.filter((a) => apps.some((name) => name.toLowerCase() === a.name.toLowerCase()));
+    const ownNames = new Set(running.filter((a) => ownPids.has(a.pid)).map((a) => a.name.toLowerCase()));
+    const app = apps.find((a) => ownNames.has(a.toLowerCase()));
+    if (app) {
+      // 应用名和本应用相同的其他进程（实测 Windows 上开发模式的 Electron 应用都叫 electron.exe）：拦下的不一定是本应用的窗口，照实说
+      const others = running.filter((a) => !ownPids.has(a.pid) && a.name.toLowerCase() === app.toLowerCase()).map((a) => a.pid);
+      if (others.length === 0) return OWN_APP;
+      return `网关不接受 ${app} 这个应用名：本应用（claude-app）的进程也叫 ${app}，按应用名分不出是不是本应用（同名的其他进程：pid ${others.join("、")}）。只按窗口 id 指定（run 的 --window-id、snapshot / screenshot 的 window_id）、不给应用名时，按窗口所属的进程判断`;
+    }
   }
   return null;
 }
