@@ -99,6 +99,8 @@ export const api = {
   deleteFile: (cwd: string, path: string) => request<object>("POST", "/files/delete", { cwd, path }),
   /** 文件树：重命名、拖到别的文件夹 */
   renameFile: (cwd: string, from: string, to: string) => request<object>("POST", "/files/rename", { cwd, from, to }),
+  /** HTML 文件显示成网页用的地址（iframe 的 src）；网页里的相对路径照常按目录取 */
+  pageUrl: (cwd: string, path: string) => request<{ url: string }>("GET", `/files/page-url?${q({ cwd, path })}`).then((r) => BASE + r.url),
   rawFileUrl: (cwd: string, path: string, v?: number) => withToken(`/files/raw?${q({ cwd, path, ...(v ? { v: String(Math.round(v)) } : {}) })}`),
   /** 右侧面板的终端 */
   terminals: (cwd: string) => request<{ terminals: TerminalInfo[] }>("GET", `/terminals?${q({ cwd })}`).then((r) => r.terminals),

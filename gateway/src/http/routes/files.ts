@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, open, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -27,6 +28,46 @@ const IMAGE_TYPES: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 const cache = new Map<string, { at: number; entries: Promise<ProjectEntry[]> }>();
+/** 网页预览按扩展名给的类型，没列的按 application/octet-stream */
+const PAGE_TYPES: Record<string, string> = {
+  ...IMAGE_TYPES,
+  ".html": "text/html; charset=utf-8",
+  ".htm": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".xml": "application/xml; charset=utf-8",
+  ".wasm": "application/wasm",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".pdf": "application/pdf",
+};
+/**
+ * 网页预览的地址是「/files/page/<项目文件夹的随机 id>/<相对路径>」，网页里的相对路径（样式、脚本、图片）照常按目录解析，不用带令牌。
+ * id 只在内存里，网关重启后旧地址失效
+ */
+const pageIds = new Map<string, string>();
+const pageCwds = new Map<string, string>();
+function pageId(cwd: string): string {
+  let id = pageIds.get(cwd);
+  if (!id) {
+    id = randomBytes(18).toString("base64url");
+    pageIds.set(cwd, id);
+    pageCwds.set(id, cwd);
+  }
+  return id;
+}
+export const PAGE_PREFIX = "/files/page/";
 
 /**
  * GET /files?cwd=&q=：输入框里 @ 引用文件用。
@@ -123,6 +164,35 @@ export function fileRoutes(app: FastifyInstance): void {
     await rename(from, to);
     cache.delete(cwd);
     return {};
+  });
+
+  // 右侧面板把 HTML 显示成网页：先拿这个文件的预览地址（要鉴权），iframe 再按地址取
+  app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/page-url", async (req) => {
+    const { cwd, abs } = resolveInProject(req.query.cwd, req.query.path);
+    const rel = path.relative(cwd, abs).split(path.sep).map(encodeURIComponent).join("/");
+    return { url: `${PAGE_PREFIX}${pageId(cwd)}/${rel}` };
+  });
+
+  // 网页预览：不走令牌鉴权（见 app.ts），靠地址里的随机 id，只能读这个项目文件夹里的文件。
+  // 和界面同源，用 CSP 的 sandbox 把它放进单独的源（不带 allow-same-origin），脚本碰不到界面的存储和接口
+  app.get<{ Params: { id: string; "*": string } }>(`${PAGE_PREFIX}:id/*`, async (req, reply) => {
+    const cwd = pageCwds.get(req.params.id);
+    if (!cwd) return reply.code(404).type("text/plain; charset=utf-8").send("预览地址已失效，重新打开文件");
+    let { abs } = resolveInProject(cwd, req.params["*"]);
+    let info = await stat(abs).catch(() => null);
+    if (info?.isDirectory()) {
+      abs = path.join(abs, "index.html");
+      info = await stat(abs).catch(() => null);
+    }
+    if (!info?.isFile()) return reply.code(404).type("text/plain; charset=utf-8").send("文件不存在");
+    return reply
+      .type(PAGE_TYPES[path.extname(abs).toLowerCase()] ?? "application/octet-stream")
+      .header("content-security-policy", "sandbox allow-scripts allow-forms allow-modals allow-popups")
+      .header("x-content-type-options", "nosniff")
+      // 沙箱里的页面是单独的源，type="module" 的脚本、fetch 同目录的文件要 CORS
+      .header("access-control-allow-origin", "*")
+      .header("cache-control", "no-store")
+      .send(createReadStream(abs));
   });
 
   app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/raw", async (req, reply) => {

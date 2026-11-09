@@ -11,7 +11,7 @@ import { config } from "./config.js";
 import { EventHub } from "./events/event-hub.js";
 import { ConversationLog } from "./logging/conversation-log.js";
 import { sessionRoutes } from "./http/routes/sessions.js";
-import { fileRoutes } from "./http/routes/files.js";
+import { fileRoutes, PAGE_PREFIX } from "./http/routes/files.js";
 import { terminalRoutes } from "./http/routes/terminals.js";
 import { TerminalError, TerminalManager } from "./terminal/terminal-manager.js";
 import { folderRoutes } from "./http/routes/folders.js";
@@ -51,7 +51,8 @@ export function buildApp(): App {
 
   if (config.apiToken) {
     app.addHook("onRequest", async (req, reply) => {
-      if (req.url === "/health") return;
+      // 网页预览靠地址里的随机 id，见 http/routes/files.ts
+      if (req.url === "/health" || req.url.startsWith(PAGE_PREFIX)) return;
       const header = req.headers.authorization;
       const token = header?.startsWith("Bearer ") ? header.slice(7) : (req.query as { token?: string }).token;
       if (token !== config.apiToken) await reply.code(401).send({ error: "未授权" });

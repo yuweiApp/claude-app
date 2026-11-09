@@ -10,7 +10,7 @@ import { MarkdownLiveEditor } from "./MarkdownLiveEditor";
  * 右侧面板的文件工具（同 codex-app-server 的 FileBrowser）：上面是切换文件树、文件名、复制路径和操作按钮，
  * 下面左边是目录树（可以收起）、右边是文件内容。没选文件时是「打开文件」：提示从目录树里选。
  * 文本打开就能编辑（Ctrl+S 保存，不自动保存）；Markdown 默认所见即所得，直接在渲染效果上改（MarkdownLiveEditor，编辑的是源码），
- * 「预览 / 源代码」开关切到源代码编辑
+ * 「预览 / 源代码」开关切到源代码编辑；HTML 默认显示成网页（HtmlPreview），同样用开关切到源代码
  */
 export function FileBrowser({
   cwd,
@@ -800,6 +800,7 @@ const EDITABLE_MAX_BYTES = 1024 * 1024;
 /** 在前面时多久看一次文件有没有被改（Claude 改了、终端里改了） */
 const POLL_MS = 3000;
 const MARKDOWN = /\.(md|markdown|mdx)$/i;
+const HTML = /\.html?$/i;
 
 function FileViewer({
   cwd,
@@ -821,7 +822,8 @@ function FileViewer({
 }) {
   const [content, setContent] = useState<FileContent | { error: string } | null>(null);
   const markdown = MARKDOWN.test(path);
-  // Markdown 默认显示渲染效果，开关切到源代码
+  const html = HTML.test(path);
+  // Markdown、HTML 默认显示渲染效果，开关切到源代码
   const [rendered, setRendered] = useState(true);
   const dirty = useHasDraft(cwd, path);
   // 草稿在 fileDrafts 里，每次输入后重新渲染一下
@@ -891,6 +893,7 @@ function FileViewer({
     );
   else if (content.kind === "binary") body = <div className="panel-empty">二进制文件，无法预览（{formatBytes(content.size)}）</div>;
   else if (content.kind === "too-large") body = <div className="panel-empty">文件太大，无法预览（{formatBytes(content.size)}）</div>;
+  else if (html && rendered) body = <HtmlPreview cwd={cwd} path={path} mtimeMs={content.mtimeMs} />;
   else if (markdown && rendered)
     body = (
       <MarkdownLiveEditor
@@ -922,7 +925,7 @@ function FileViewer({
           )}
         </div>
         <div className="viewer-head-actions">
-          {markdown && ok?.kind === "text" && (
+          {(markdown || html) && ok?.kind === "text" && (
             <label className="md-source-switch">
               {rendered ? "预览" : "源代码"}
               <button
@@ -966,6 +969,35 @@ function FileViewer({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * HTML 显示成网页：iframe 取网关的预览地址，网页里的相对路径（样式、脚本、图片）照常加载。
+ * 显示的是保存了的文件，文件改了（修改时间变了）就重新加载。
+ * sandbox 不给 allow-same-origin：网页和界面同源，脚本不能碰界面的存储和接口
+ */
+function HtmlPreview({ cwd, path, mtimeMs }: { cwd: string; path: string; mtimeMs: number }) {
+  const [url, setUrl] = useState<{ ok: string } | { error: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.pageUrl(cwd, path).then(
+      (ok) => live && setUrl({ ok }),
+      (e: Error) => live && setUrl({ error: e.message }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [cwd, path]);
+  if (!url) return <div className="panel-empty">正在加载网页…</div>;
+  if ("error" in url) return <div className="panel-empty files-error">{url.error}</div>;
+  return (
+    <iframe
+      className="viewer-frame"
+      src={`${url.ok}?v=${Math.round(mtimeMs)}`}
+      title={path}
+      sandbox="allow-scripts allow-forms allow-modals allow-popups"
+    />
   );
 }
 
