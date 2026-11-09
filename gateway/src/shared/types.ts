@@ -105,7 +105,56 @@ export interface McpServerInfo {
   status: string;
   error?: string;
   source?: string;
+  /** 从连接器目录添加的：注册表里的名称、标题和图标 */
+  connector?: ConnectorRef;
   tools: { name: string; description?: string }[];
+}
+
+export interface ConnectorRef {
+  id: string;
+  title: string;
+  icon?: string;
+}
+
+/**
+ * 连接器目录里的一项（GET /connectors）：MCP 官方注册表里有远程地址的服务器。
+ * id 是注册表里的名称，如 com.figma.mcp/mcp；斜杠前的反向域名注册表验证过所有权（io.github.用户名 验证的是 GitHub 账号）
+ */
+export interface ConnectorEntry {
+  id: string;
+  title: string;
+  description: string;
+  version: string;
+  type: "http" | "sse";
+  /** 远程地址，可能带 {变量}，添加时填 */
+  url: string;
+  variables: ConnectorField[];
+  /** 服务器声明的请求头（API 密钥等） */
+  headers: ConnectorField[];
+  icon?: string;
+  website?: string;
+  repository?: string;
+  /** 添加时默认用的名称 */
+  suggestedName: string;
+  /** 已经添加了的话，是哪个 MCP 服务器 */
+  added?: string;
+}
+
+export interface ConnectorField {
+  name: string;
+  description?: string;
+  required: boolean;
+  secret: boolean;
+  default?: string;
+  choices?: string[];
+}
+
+/** 添加连接器（POST /connectors）：name 不填用建议的名称，variables 填地址里的变量，headers 填请求头 */
+export interface ConnectorInput {
+  id: string;
+  name?: string;
+  variables?: Record<string, string>;
+  headers?: Record<string, string>;
 }
 
 /**

@@ -60,6 +60,11 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
 - 导入技能和插件：技能文件夹要有 `SKILL.md`，复制到 `$CLAUDE_CONFIG_DIR/skills/<名称>/`，Claude Code 自己发现；插件文件夹要有 `.claude-plugin/plugin.json`，复制到 `$CLAUDE_CONFIG_DIR/gateway-plugins/<名称>/`，通过 `options.plugins` 加载，它的技能叫 `插件名:技能名`。桌面版用系统对话框选文件夹，网页用 `GET /folders` 浏览。
 - 停用技能：停用的名称存在 `$CLAUDE_CONFIG_DIR/gateway-disabled-skills.json`。有停用的技能时，网关把其余技能作为 `options.skills` 白名单传给 SDK，模型看不到停用的技能，调 Skill 工具也会被拒绝；这个白名单管不到用户自己输入的 `/技能名`，所以网关在新建和发送时再拦一次，返回 400。白名单在拉起 claude 进程时确定，已经活跃的会话要等进程重启才更新，`/技能名` 的拦截立即生效。内置技能只能停用；删除只针对导入的技能，是删文件，SDK 没有对应接口。
 - MCP 服务器：设置页添加的存在 `$CLAUDE_CONFIG_DIR/gateway-mcp-servers.json`（权限 600，请求头和环境变量可能有令牌），启用的通过 `options.mcpServers` 传给会话，对新会话和子进程重启后的会话生效。插件或配置文件带来的服务器只显示，不能在设置页改。
+- 连接器（`gateway/src/agent/connectors.ts`、`client/src/components/ConnectorDirectory.tsx`）：设置页原来的「MCP」改叫「连接器」，分「已添加」和「目录」两个标签。目录的数据来自 MCP 官方注册表（`config.yml` 的 `connectors.registry`，默认 `https://registry.modelcontextprotocol.io`），只列有远程地址（streamable-http 优先，其次 SSE）的服务器，删除了的不列。
+  - 注册表很大（2 万多条，不少是批量发布的杂项），所以不搜索时只列 `connectors.featured` 里推荐的（按名称逐个取最新版本，缓存 1 小时，取不到的跳过）；搜索时查整个注册表（`version=latest`，一页 100 条，「加载更多」取下一页，缓存 5 分钟），推荐的和名称主体就是搜索词的排在前面。
+  - 名称是反向域名（`com.figma.mcp/mcp`），注册表验证过所有权：`com.figma` 验证域名，`io.github.用户名` 验证 GitHub 账号，所以列表里显示完整名称和地址，看得出是不是官方的。没写 title 的，标题用斜杠后面那段，那段只是 mcp 的用名称主体（`com.notion/mcp` → Notion）。
+  - 添加（`POST /connectors`）由网关按名称再取一次注册表，填好地址变量和请求头，存成设置页的 MCP 服务器（`gateway-mcp-servers.json` 里多记一个 `connector`：注册表名称、标题、图标），之后的连接、登录、启停、删除和手动添加的一样。默认名称是名称主体（figma、linear），`io.github.*` 的用标题；被别的服务器占了加 `-2`。有请求头或地址变量的先弹表单（可选的请求头不填就不带），没有的直接添加；添加后直接打开登录对话框，不用登录的连上就自动关掉。
+  - 目录里地址和已有服务器相同的（插件带来的、手动添加的）显示「已添加」，免得重复；已添加但要登录的显示「登录」。
 - MCP 服务器的 OAuth 登录（`gateway/src/agent/mcp-auth.ts`）：状态是「需要认证」的服务器（设置页添加的、插件和配置文件带来的都算）在设置页有「登录」。登录整个由 Claude Code 自己做：发现授权服务器、动态注册客户端、PKCE、在 localhost 的随机端口上等回调、换令牌、存令牌（Linux / Windows 是 `$CLAUDE_CONFIG_DIR/.credentials.json` 的 `mcpOAuth`，按「服务器名称|配置的哈希」存；macOS 是钥匙串）、过期刷新。同一个配置目录下的会话共用令牌，所以登录一次，之后的新会话直接连上。
   - 网关起一个和会话同样配置的临时 query（`inspectQuery`），发 `mcp_authenticate` 控制请求拿到登录页地址给网页；query 留着等回调（端口在它的子进程里），每秒查一次 `mcpServerStatus()`，服务器变成 connected 就算成功，10 分钟没完成就结束。成功后开着的会话都 `reconnectMcpServer()`，不用等子进程重启。
   - SDK 的 `Query` 上有 `mcpAuthenticate`、`mcpSubmitOAuthCallbackUrl`、`mcpClearAuth`，但类型定义里没写（0.3.317），网关按运行时有没有这两个方法判断，没有就报「不支持」。升级 SDK 后要重新跑一遍登录。
@@ -231,6 +236,8 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | GET | `/mcp-servers/:name/auth` | 登录进度：`waiting`、`done`、`failed`（带 `error`），结束后留 5 分钟 |
 | POST | `/mcp-servers/:name/auth/callback` | 交回调网址 `{ url }`（浏览器和网关不在同一台电脑上时） |
 | DELETE | `/mcp-servers/:name/auth` | 放弃正在进行的登录 |
+| GET | `/connectors?search=&cursor=` | 连接器目录：不传 `search` 是推荐的，传了查 MCP 注册表，返回 `{ connectors, nextCursor }` |
+| POST | `/connectors` | 添加连接器 `{ id, name?, variables?, headers? }`，返回存成的 MCP 服务器名称 |
 | GET | `/sessions/:id/tasks` | 会话的后台任务（打开会话时拉一次，之后靠 `tasks` 事件） |
 | GET | `/sessions/:id/tasks/:taskId/output` | 后台 Bash 任务输出的最后 64 KB，只能读这个会话记下的输出文件 |
 | POST | `/sessions/:id/tasks/:taskId/stop` | 停止后台任务（`Query.stopTask()`） |

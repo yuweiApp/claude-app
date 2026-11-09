@@ -20,3 +20,7 @@ export const externalBrowserEnabled: boolean = configFile?.externalBrowser?.enab
 /** 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 的 desktop.enabled，默认关（只有写成 true 才开），见 desktop/tool.ts */
 export const desktopEnabled: boolean = configFile?.desktop?.enabled === true;
 
+
+/** 连接器目录：MCP 注册表的地址和不搜索时列出的推荐连接器（config.yml 的 connectors），见 agent/connectors.ts */
+export const connectorRegistry: string = (configFile?.connectors?.registry ?? "https://registry.modelcontextprotocol.io").replace(/\/+$/, "");
+export const featuredConnectors: string[] = configFile?.connectors?.featured ?? [];

@@ -1,7 +1,7 @@
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { listModels } from "../../agent/models.js";
 import type { FastifyInstance } from "fastify";
-import type { McpAuthState, McpServerInput } from "../../shared/types.js";
+import type { ConnectorEntry, ConnectorInput, McpAuthState, McpServerInput } from "../../shared/types.js";
 import { AttachmentError } from "../../agent/attachments.js";
 import { BadRequestError, NotFoundError, type SessionManager } from "../../agent/session-manager.js";
 import type { EventHub } from "../../events/event-hub.js";
@@ -9,6 +9,7 @@ import { streamSession } from "../sse.js";
 import { clearCapabilitiesCache, listCapabilities } from "../../agent/capabilities.js";
 import { ExtensionError, importPlugin, importSkill, readSkill, removePlugin, removeSkill, setSkillEnabled } from "../../agent/extensions.js";
 import { removeMcpServer, saveMcpServer, setMcpServerEnabled } from "../../agent/mcp-config.js";
+import { addConnector, ConnectorError, listConnectors } from "../../agent/connectors.js";
 import { cancelMcpAuth, getMcpAuth, McpAuthError, startMcpAuth, submitMcpAuthCallback } from "../../agent/mcp-auth.js";
 import { config } from "../../config.js";
 
@@ -98,6 +99,19 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     if (!removeMcpServer(req.params.name)) throw new NotFoundError("MCP 服务器不存在");
     clearCapabilitiesCache();
     return { ok: true };
+  });
+
+  /** 连接器目录（MCP 官方注册表里有远程地址的服务器）：不传 search 是推荐的，传了查整个注册表，cursor 取下一页 */
+  app.get<{ Querystring: { search?: string; cursor?: string } }>("/connectors", async (req): Promise<{ connectors: ConnectorEntry[]; nextCursor?: string }> => {
+    return connectorCall(() => listConnectors(req.query.search, req.query.cursor));
+  });
+
+  /** 添加连接器：存成 MCP 服务器，返回它的名称；之后要登录的照常走 /mcp-servers/:name/auth */
+  app.post<{ Body: ConnectorInput }>("/connectors", async (req) => {
+    if (!req.body?.id) throw new BadRequestError("缺少连接器");
+    const name = await connectorCall(() => addConnector(req.body));
+    clearCapabilitiesCache();
+    return { name };
   });
 
   /**
@@ -322,6 +336,16 @@ async function mcpAuth(run: () => Promise<McpAuthState>): Promise<McpAuthState> 
     return await run();
   } catch (err) {
     if (err instanceof McpAuthError) throw new BadRequestError(err.message);
+    throw err;
+  }
+}
+
+/** 注册表连不上、要填的没填是 400，带着原因 */
+async function connectorCall<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof ConnectorError) throw new BadRequestError(err.message);
     throw err;
   }
 }

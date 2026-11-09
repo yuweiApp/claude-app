@@ -40,3 +40,41 @@ externalBrowser:
 # 默认关；要用时改成 true，重启网关。
 desktop:
   enabled: true
+
+# 连接器目录（设置页「连接器」→「目录」）：数据来自 MCP 官方注册表，只列有远程地址（HTTP / SSE）的服务器。
+# 注册表很大，也有不少批量发布的杂项，所以不搜索时只列下面这些推荐的；搜索时查整个注册表。
+# 写注册表里的名称（反向域名，注册表验证过域名或 GitHub 账号的所有权），按这个顺序显示。
+connectors:
+  registry: https://registry.modelcontextprotocol.io
+  featured:
+    - com.figma.mcp/mcp
+    - com.notion/mcp
+    - app.linear/linear
+    - io.github.github/github-mcp-server
+    - com.atlassian/atlassian-mcp-server
+    - io.github.getsentry/sentry-mcp
+    - com.canva.mcp/mcp
+    - com.vercel/vercel-mcp
+    - com.supabase/mcp
+    - com.stripe/mcp
+    - com.zapier/mcp
+    - com.airtable/mcp
+    - com.monday/monday.com
+    - com.gitlab/mcp
+    - net.todoist/mcp
+    - com.basecamp/mcp
+    - com.webflow/mcp
+    - com.neon/mcp
+    - io.prisma/mcp
+    - com.postman/postman-mcp-server
+    - co.huggingface/hf-mcp-server
+    - io.github.upstash/context7
+    - ai.exa/exa
+    - com.apify/apify-mcp-server
+    - io.github.firecrawl/firecrawl-mcp-server
+    - io.github.grafana/mcp-grafana
+    - com.amplitude/mcp-server
+    - com.circleci/mcp
+    - com.digitalocean/mcp
+    - com.paypal.mcp/mcp
+    - com.cloudflare.mcp/mcp

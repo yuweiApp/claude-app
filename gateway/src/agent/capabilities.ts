@@ -62,7 +62,7 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
     const stored = readMcpServers();
     const live = new Map(mcpServers.map((server) => [server.name, server]));
     // 设置页添加的（含停用的，临时 query 里没有）在前，其余是插件或配置文件带来的，只显示
-    const managed: McpServerInfo[] = Object.entries(stored).map(([name, { enabled, config }]) => {
+    const managed: McpServerInfo[] = Object.entries(stored).map(([name, { enabled, config, connector }]) => {
       const server = live.get(name);
       return {
         name,
@@ -72,6 +72,7 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
         target: target(config),
         status: enabled ? (server?.status ?? "pending") : "disabled",
         error: server?.error,
+        ...(connector ? { connector } : {}),
         tools: (server?.tools ?? []).map(({ name, description }) => ({ name, description })),
       };
     });

@@ -1,22 +1,26 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, type Capabilities, type McpAuthState, type McpServerInfo, type McpServerInput, type SkillDetail } from "../api";
+import { api, type Capabilities, type McpServerInfo, type McpServerInput, type SkillDetail } from "../api";
 import { desktop } from "../desktop";
 import { Avatar } from "./CapabilityPicker";
 import { useDismiss } from "./ComposerPickers";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ConnectorDirectory, ConnectorIcon } from "./ConnectorDirectory";
+import { McpAuthDialog } from "./McpAuthDialog";
 import { FolderPickerDialog } from "./FolderPickerDialog";
 import { IosIcon } from "./IosIcon";
 
 type Section = "plugins" | "skills" | "mcp";
 /** 技能、插件页顶部的标签：个人（导入的、项目里的、导入插件带的）和 Claude Code 自带的 */
 type Origin = "mine" | "builtin";
+/** 连接器页顶部的标签：已经添加的（设置页添加的、插件和配置文件带来的）和目录（MCP 注册表） */
+type ConnectorTab = "added" | "directory";
 
 const SECTIONS: { key: Section; label: string; icon: ReactNode }[] = [
   { key: "plugins", label: "插件", icon: <IosIcon tone="blue"><PluginIcon /></IosIcon> },
   { key: "skills", label: "技能", icon: <IosIcon tone="purple"><SkillIcon /></IosIcon> },
-  { key: "mcp", label: "MCP", icon: <IosIcon tone="pink"><McpIcon /></IosIcon> },
+  { key: "mcp", label: "连接器", icon: <IosIcon tone="pink"><McpIcon /></IosIcon> },
 ];
 
 /** 设置页（同 codex-app-server 的设置页）：左边分组导航，右边是列表；navCollapsed 时收起左边的导航（跟着侧边栏的收起状态） */
@@ -27,6 +31,9 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [origin, setOrigin] = useState<Origin>("mine");
+  const [connectorTab, setConnectorTab] = useState<ConnectorTab>("added");
+  /** 目录的「刷新」：换个 key 让目录重新加载 */
+  const [directoryKey, setDirectoryKey] = useState(0);
   const [viewing, setViewing] = useState<Capabilities["skills"][number] | null>(null);
 
   const load = (refresh: boolean) => {
@@ -46,8 +53,9 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
   useEffect(() => {
     setSearch("");
     setOrigin("mine");
+    setConnectorTab("added");
   }, [section]);
-  useEffect(() => setSearch(""), [origin]);
+  useEffect(() => setSearch(""), [origin, connectorTab]);
 
   const keyword = search.trim().toLowerCase();
   const match = (...texts: (string | undefined)[]) => texts.join(" ").toLowerCase().includes(keyword);
@@ -55,7 +63,8 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
   const plugins = (data?.plugins ?? []).filter((p) => inOrigin(p) && match(p.name, p.source));
   const skills = (data?.skills ?? []).filter((s) => inOrigin(s) && match(s.name, s.description));
   const count = (items: { builtin: boolean }[] | undefined, builtin: boolean) => items?.filter((i) => i.builtin === builtin).length ?? 0;
-  const servers = (data?.mcpServers ?? []).filter((m) => match(m.name, m.target));
+  const servers = (data?.mcpServers ?? []).filter((m) => match(m.name, m.target, m.connector?.title));
+  const browsing = section === "mcp" && connectorTab === "directory";
   const label = SECTIONS.find((s) => s.key === section)!.label;
 
   return (
@@ -77,11 +86,18 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
             <p>
               {section === "plugins" && `已安装 ${data?.plugins.length ?? 0} 个插件。`}
               {section === "skills" && `共 ${data?.skills.length ?? 0} 个技能，已启用 ${data?.skills.filter((s) => s.enabled).length ?? 0} 个，启停对新会话生效。`}
-              {section === "mcp" && `MCP 服务器提供额外的工具和数据源。共 ${data?.mcpServers.length ?? 0} 个，已启用 ${data?.mcpServers.filter((m) => m.enabled).length ?? 0} 个。`}
+              {section === "mcp" &&
+                `连接器（MCP 服务器）把 Figma、Notion、GitHub 等外部服务接进对话，提供工具和数据。已添加 ${data?.mcpServers.length ?? 0} 个，已启用 ${data?.mcpServers.filter((m) => m.enabled).length ?? 0} 个。`}
             </p>
           </div>
-          <input className="settings-search" value={search} placeholder={`搜索${label}`} onChange={(e) => setSearch(e.target.value)} />
-          <button disabled={loading} onClick={() => load(true)}>
+          <input className="settings-search" value={search} placeholder={browsing ? "在 MCP 注册表里搜索" : `搜索${label}`} onChange={(e) => setSearch(e.target.value)} />
+          <button
+            disabled={loading}
+            onClick={() => {
+              load(true);
+              if (browsing) setDirectoryKey((k) => k + 1);
+            }}
+          >
             {loading ? "刷新中…" : "刷新"}
           </button>
           {section === "plugins" && <ImportButton kind="plugins" onImported={() => load(false)} onError={setError} />}
@@ -95,6 +111,16 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
                 {o === "mine" ? "个人" : "内置"}
                 {label}
                 <span className="settings-tab-count">{count(section === "skills" ? data?.skills : data?.plugins, o === "builtin")}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {section === "mcp" && (
+          <div className="settings-tabs" role="tablist">
+            {(["added", "directory"] as const).map((t) => (
+              <button key={t} role="tab" aria-selected={t === connectorTab} className={`settings-tab${t === connectorTab ? " active" : ""}`} onClick={() => setConnectorTab(t)}>
+                {t === "added" ? "已添加" : "目录"}
+                {t === "added" && <span className="settings-tab-count">{data?.mcpServers.length ?? 0}</span>}
               </button>
             ))}
           </div>
@@ -118,8 +144,9 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
             ))}
           </List>
         )}
-        {section === "mcp" && (
-          <List empty={data ? (keyword ? "没有匹配的 MCP 服务器" : "还没有 MCP 服务器，点右上角添加") : "加载中…"}>
+        {browsing && <ConnectorDirectory key={directoryKey} search={search} servers={data?.mcpServers ?? []} onChanged={() => load(false)} />}
+        {section === "mcp" && !browsing && (
+          <List empty={data ? (keyword ? "没有匹配的连接器" : "还没有连接器，在「目录」里添加，或点右上角手动添加") : "加载中…"}>
             {servers.map((server) => (
               <ServerRow key={server.name} server={server} onChanged={() => load(false)} onError={setError} />
             ))}
@@ -375,7 +402,7 @@ function ServerRow({ server, onChanged, onError }: { server: McpServerInfo; onCh
 
   return (
     <div className="settings-row">
-      <Avatar name={server.name} />
+      <ConnectorIcon name={server.connector?.title ?? server.name} icon={server.connector?.icon} />
       <div className="settings-row-main">
         <div className="settings-row-name">
           {server.name}
@@ -455,117 +482,6 @@ function ServerRow({ server, onChanged, onError }: { server: McpServerInfo; onCh
           }}
         />
       )}
-    </div>
-  );
-}
-
-/**
- * MCP 服务器的 OAuth 登录：网关让 Claude Code 开始登录，拿到登录页在浏览器里打开；Claude Code 在网关那台电脑的 localhost 上等回调，
- * 换好令牌、连上服务器后这里查到 done 自动关掉。网页和网关不在同一台电脑上时，回调页打不开，把地址栏里的网址贴回来交给网关
- */
-function McpAuthDialog({ name, onClose }: { name: string; onClose: (done: boolean) => void }) {
-  const [auth, setAuth] = useState<McpAuthState | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [callback, setCallback] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  const finished = useRef(false);
-
-  const close = (done: boolean) => {
-    if (finished.current) return;
-    finished.current = true;
-    if (!done) void api.cancelMcpAuth(name).catch(() => {});
-    onClose(done);
-  };
-
-  // 开始登录；桌面版的 window.open 由外壳交给系统浏览器，网页版可能被拦截弹窗，对话框里还有链接
-  useEffect(() => {
-    let cancelled = false;
-    setAuth(null);
-    setError(null);
-    api.startMcpAuth(name).then(
-      (state) => {
-        if (cancelled) return;
-        if (state.state === "done") return close(true);
-        setAuth(state);
-        if (state.authUrl) window.open(state.authUrl, "_blank", "noopener");
-      },
-      (e: Error) => !cancelled && setError(e.message),
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [name, attempt]);
-
-  // 等用户在浏览器里登录完
-  const waiting = auth?.state === "waiting";
-  useEffect(() => {
-    if (!waiting) return;
-    const timer = setInterval(() => {
-      api.mcpAuth(name).then(
-        (state) => {
-          if (state.state === "done") close(true);
-          else if (state.state === "failed") setAuth(state);
-        },
-        () => {},
-      );
-    }, 1500);
-    return () => clearInterval(timer);
-  }, [name, waiting]);
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    api
-      .submitMcpAuthCallback(name, callback.trim())
-      .then(
-        (state) => (state.state === "done" ? close(true) : setAuth(state)),
-        (err: Error) => setError(err.message),
-      )
-      .finally(() => setSubmitting(false));
-  };
-
-  const failed = auth?.state === "failed" ? (auth.error ?? "登录失败") : null;
-  return (
-    <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close(false)}>
-      <form className="dialog settings-form mcp-dialog" aria-label={`登录 ${name}`} onSubmit={submit}>
-        <h3>登录 {name}</h3>
-        {!auth && !error && <p className="mcp-hint">正在获取登录页…</p>}
-        {waiting && (
-          <>
-            <p className="mcp-auth-text">
-              已在浏览器中打开登录页，登录并授权后这里会自动完成。没有打开的话，
-              <a href={auth.authUrl} target="_blank" rel="noreferrer">
-                点这里打开登录页
-              </a>
-              。
-            </p>
-            <label>
-              浏览器停在打不开的 localhost 页面时（网关不在这台电脑上会这样），把地址栏里的完整网址粘贴到这里
-              <input value={callback} onChange={(e) => setCallback(e.target.value)} placeholder="http://localhost:…/callback?code=…" />
-            </label>
-          </>
-        )}
-        {failed && <div className="settings-error">{failed}</div>}
-        {error && <div className="settings-error">{error}</div>}
-        <div className="dialog-actions">
-          <button type="button" onClick={() => close(false)}>
-            取消
-          </button>
-          {waiting ? (
-            <button type="submit" className="primary" disabled={!callback.trim() || submitting}>
-              {submitting ? "提交中…" : "提交网址"}
-            </button>
-          ) : (
-            (failed || error) && (
-              <button type="button" className="primary" onClick={() => setAttempt((n) => n + 1)}>
-                重新登录
-              </button>
-            )
-          )}
-        </div>
-      </form>
     </div>
   );
 }
@@ -684,7 +600,7 @@ function AddServerButton({ onAdded }: { onAdded: () => void }) {
   return (
     <>
       <button className="primary" onClick={() => setOpen(true)}>
-        添加服务器
+        手动添加
       </button>
       {open && (
         <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>

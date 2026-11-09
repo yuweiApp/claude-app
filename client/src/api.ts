@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, DesktopTarget, FileContent, GatewayEvent, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { Attachment, BackgroundTask, Capabilities, DesktopTarget, FileContent, GatewayEvent, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo };
+export type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -141,6 +141,13 @@ export const api = {
   saveMcpServer: (name: string, input: Omit<McpServerInput, "name">) => request("PUT", `/mcp-servers/${encodeURIComponent(name)}`, input),
   setMcpServerEnabled: (name: string, enabled: boolean) => request("PATCH", `/mcp-servers/${encodeURIComponent(name)}`, { enabled }),
   deleteMcpServer: (name: string) => request("DELETE", `/mcp-servers/${encodeURIComponent(name)}`),
+  /** 连接器目录：不传 search 是推荐的，传了查整个 MCP 注册表，cursor 取下一页 */
+  connectors: (search?: string, cursor?: string) => {
+    const params = new URLSearchParams({ ...(search ? { search } : {}), ...(cursor ? { cursor } : {}) });
+    return request<{ connectors: ConnectorEntry[]; nextCursor?: string }>("GET", `/connectors?${params}`);
+  },
+  /** 添加连接器，返回存成的 MCP 服务器名称 */
+  addConnector: (input: ConnectorInput) => request<{ name: string }>("POST", "/connectors", input).then((r) => r.name),
   /** MCP 服务器的 OAuth 登录：开始（返回登录页地址）、查进度、交回调网址、放弃 */
   startMcpAuth: (name: string) => request<McpAuthState>("POST", `/mcp-servers/${encodeURIComponent(name)}/auth`, {}),
   mcpAuth: (name: string) => request<McpAuthState>("GET", `/mcp-servers/${encodeURIComponent(name)}/auth`),

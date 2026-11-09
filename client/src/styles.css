@@ -308,6 +308,10 @@ main {
 .mcp-hint { margin: 0; color: var(--muted); font-size: 13px; }
 .mcp-auth-text { margin: 0; font-size: 14px; line-height: 1.6; }
 .mcp-auth-text a { color: var(--accent); }
+/* 连接器目录：注册表里的图标（大小同首字母头像），已添加的标记，「加载更多」 */
+.connector-icon { object-fit: contain; background: #fff; padding: 2px; }
+.connector-added { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.connector-more { display: flex; justify-content: center; margin-top: 12px; }
 .banner { background: var(--err); color: #fff; padding: 8px 16px; cursor: pointer; }
 .chat { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .chat-header {
