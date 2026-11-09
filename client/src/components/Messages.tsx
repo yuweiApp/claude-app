@@ -12,16 +12,20 @@ import { ReplyMarkdown } from "./ReplyMarkdown";
 
 type UserItem = Extract<Item, { kind: "user" }>;
 type ResultItem = Extract<Item, { kind: "result" }>;
+type CompactItem = Extract<Item, { kind: "compact" }>;
 
 /**
  * 一轮：用户消息（或自动开始这一轮的后台任务通知）开头，到 result（这一轮结束）为止。
  * 这一轮进行中用户又发的消息，SDK 在下一次工具调用之后把它并进这一轮（只有一个 result，指向开头那条）。
- * 显示上按时间顺序在它那里分段：每段一个 Turn，后面的段 continued，result 挂在最后一段，前面的段用时算到下一段开始
+ * 显示上按时间顺序在它那里分段：每段一个 Turn，后面的段 continued，result 挂在最后一段，前面的段用时算到下一段开始。
+ * 压缩上下文的地方也这样分段，分界线显示在两段之间，不随过程折叠
  */
 interface Turn {
   key: string;
   user: UserItem | null;
   task: TaskItem | null;
+  /** 这一段从压缩上下文开始 */
+  compact: CompactItem | null;
   body: Item[];
   result: ResultItem | null;
   /** 接着上一段（这条用户消息是进行中插入的） */
@@ -43,14 +47,15 @@ function splitTurns(items: Item[]): Turn[] {
     if (item.kind === "result") {
       results.push(item);
       midTool = false;
-    } else if (item.kind === "user" || item.kind === "task" || !turns.length) {
-      const continued = item.kind === "user" && midTool && !turnStarts.has(item.uuid);
+    } else if (item.kind === "user" || item.kind === "task" || item.kind === "compact" || !turns.length) {
+      const continued = (item.kind === "user" && midTool && !turnStarts.has(item.uuid)) || (item.kind === "compact" && turns.length > 0);
       if (continued) turns.at(-1)!.nextAt = item.at;
       turns.push({
         key: item.uuid,
         user: item.kind === "user" ? item : null,
         task: item.kind === "task" ? item : null,
-        body: item.kind === "user" || item.kind === "task" ? [] : [item],
+        compact: item.kind === "compact" ? item : null,
+        body: item.kind === "user" || item.kind === "task" || item.kind === "compact" ? [] : [item],
         result: null,
         continued,
       });
@@ -90,7 +95,7 @@ function turnDuration(turn: Turn): number | null {
     // 插入过消息的一轮，result 的用时是整轮的，最后一段只算它自己那部分
     if (!turn.continued) return turn.result.durationMs;
   }
-  const start = (turn.user ?? turn.task)?.at;
+  const start = (turn.user ?? turn.task ?? turn.compact)?.at;
   const end = turn.nextAt ?? turn.result?.at ?? turn.body.findLast((item) => item.kind === "assistant")?.at;
   return start && end && end > start ? end - start : null;
 }
@@ -183,20 +188,22 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
   const lastIdx = units.findLastIndex((u) => u.kind !== "item");
   const finalIdx = !live && units[lastIdx]?.kind === "text" ? lastIdx : -1;
   const final = finalIdx >= 0 ? units[finalIdx]! : null;
-  // 网关报的错不折叠；压缩上下文是这一轮过程中的一步，按顺序放在过程里
-  const inProcess = (u: Unit) => u.kind !== "item" || u.item.kind === "compact";
-  const errors = units.filter((u) => !inProcess(u));
-  const process = units.filter((u, i) => i !== finalIdx && inProcess(u));
+  // 网关报的错不折叠
+  const errors = units.filter((u) => u.kind === "item");
+  const process = units.filter((u, i) => i !== finalIdx && u.kind !== "item");
   const streaming = live && view.streaming.text;
   const hasProcess = process.length > 0;
   const duration = live ? null : turnDuration(turn);
   const expanded = live ? !liveCollapsed : open;
   // 工具正在执行时它的图标在转，不再另外显示「思考中…」
   const toolRunning = units.some((u) => u.kind === "steps" && u.tools.some((t) => !view.toolResults[t.id]));
+  // 正在压缩、压缩后还没有新的步骤：只显示压缩的动画，不显示「已处理」和「思考中…」
+  const compacting = turn.compact?.status === "running" && !hasProcess;
 
   return (
     <section className="turn">
       {turn.task && <TaskLine task={turn.task} />}
+      {turn.compact && <CompactLine item={turn.compact} />}
       {turn.user && (
         <div className="msg-group msg-group-user">
           {turn.user.annotations && <SentNotesChip annotations={turn.user.annotations} />}
@@ -208,7 +215,7 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
           )}
         </div>
       )}
-      {(hasProcess || live || duration !== null) && (
+      {(hasProcess || live || duration !== null) && !compacting && (
         <div className="process-wrap">
           <div className="process-toggle-row">
             <button
@@ -363,13 +370,33 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
     case "task":
       return <TaskLine task={item} />;
     case "compact":
-      // 样式和换模型的一样：居中一行，两边是分割线
-      return (
-        <div className="model-line">
-          <span>已压缩上下文</span>
-        </div>
-      );
+      return <CompactLine item={item} />;
   }
+}
+
+/**
+ * 压缩上下文的分界线，参照 codex-app-server 的 CompactionLive：
+ * 进行中两侧细线往中间收、图标里几条横线挤到一起再散开、文字上一道光扫过；做完后原地换成分界线
+ */
+function CompactLine({ item }: { item: CompactItem }) {
+  if (item.status === "running") {
+    return (
+      <div className="compaction-live" role="status">
+        <span className="compaction-icon" aria-hidden>
+          <i />
+          <i />
+          <i />
+          <i />
+        </span>
+        <span className="compaction-text">正在压缩上下文</span>
+      </div>
+    );
+  }
+  return (
+    <div className="model-line compact-line">
+      <span>{item.status === "done" ? "上下文已压缩" : "压缩上下文未完成"}</span>
+    </div>
+  );
 }
 
 /** 工具调用的一行摘要（权限确认卡片用） */

@@ -590,6 +590,42 @@ main {
 .model-line::before { margin-right: 4px; }
 .model-line::after { margin-left: 4px; }
 .model-line span { overflow: hidden; text-overflow: ellipsis; }
+/* 压缩上下文：一轮在这里分段，分界线上下多留点空 */
+.compact-line { margin: 12px 0; }
+/* 正在压缩上下文（参照 codex-app-server）：两侧细线往中间收，图标里的横线挤到一起再散开，文字上扫过一道光 */
+.compaction-live { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 12px 0; font-size: 12px; color: var(--muted); }
+.compaction-live::before, .compaction-live::after {
+  content: ""; flex: 1; max-width: 160px; height: 1px;
+  background: linear-gradient(to right, transparent, color-mix(in srgb, var(--accent) 55%, transparent));
+  transform-origin: right; animation: compaction-squeeze 1.6s ease-in-out infinite;
+}
+.compaction-live::after { background: linear-gradient(to left, transparent, color-mix(in srgb, var(--accent) 55%, transparent)); transform-origin: left; }
+@keyframes compaction-squeeze {
+  0%, 100% { transform: scaleX(1); opacity: 0.5; }
+  50% { transform: scaleX(0.35); opacity: 1; }
+}
+.compaction-icon { flex-shrink: 0; display: inline-flex; flex-direction: column; justify-content: center; gap: 2px; width: 14px; height: 14px; }
+.compaction-icon i { display: block; height: 1.5px; border-radius: 1px; background: var(--accent); animation: compaction-bar 1.6s ease-in-out infinite; }
+.compaction-icon i:nth-child(1) { --y: 2.6px; }
+.compaction-icon i:nth-child(2) { --y: 0.9px; }
+.compaction-icon i:nth-child(3) { --y: -0.9px; }
+.compaction-icon i:nth-child(4) { --y: -2.6px; }
+@keyframes compaction-bar {
+  0%, 100% { transform: translateY(0) scaleX(1); opacity: 0.6; }
+  50% { transform: translateY(var(--y)) scaleX(0.6); opacity: 1; }
+}
+.compaction-text {
+  background: linear-gradient(100deg, var(--muted) 0%, var(--muted) 40%, var(--text) 50%, var(--muted) 60%, var(--muted) 100%) 0 0 / 250% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: compaction-shine 1.6s linear infinite;
+}
+@keyframes compaction-shine {
+  from { background-position: 100% 0; }
+  to { background-position: 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .compaction-live::before, .compaction-live::after, .compaction-icon i, .compaction-text { animation: none; }
+}
 /* 后台任务完成、自动开始新一轮的那一行，在用户消息的位置上 */
 .task-line { align-self: center; color: var(--muted); font-size: 12px; }
 /* 失败原因：报错原文的第一行，可能是很长的网址，允许在任意处断行 */

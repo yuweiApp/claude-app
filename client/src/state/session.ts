@@ -32,10 +32,13 @@ export type Item =
    */
   | { kind: "model"; uuid: string; from: string; to: string }
   /**
-   * 压缩了上下文，显示成一行，摘要不显示（不是用户写的）。实时：先来 system/compact_boundary（生成这一项，pending），
-   * 紧跟着一条 isSynthetic 的 user 消息是摘要，uuid 换成摘要的；历史：getSessionMessages 只从最近一次压缩读起，开头是摘要（isCompactSummary）
+   * 压缩上下文：这一轮在这里分段，显示成一条分界线，摘要不显示（不是用户写的）。
+   * 实时：system/status 是 compacting 时开始（running，显示动画；压缩期间每 30 秒还会再来一次），compact_boundary 到了算完成（done），
+   * 紧跟着一条 isSynthetic 的 user 消息是摘要，uuid 换成摘要的（awaitingSummary），重新拉历史时按 uuid 去重；
+   * status 带 compact_result: failed、或者没等到 compact_boundary 这一轮就结束了，算没完成（failed）。
+   * 历史：网关接上了压缩前的消息，摘要（isCompactSummary）在分界处。at：实时是开始压缩的时间，历史是摘要的时间
    */
-  | { kind: "compact"; uuid: string; pending?: boolean }
+  | { kind: "compact"; uuid: string; at?: number; status: "running" | "done" | "failed"; awaitingSummary?: boolean }
   /**
    * 后台任务（Bash 后台命令、后台子代理等）完成的通知。模型空闲时 Claude Code 会拿它自动开始新的一轮，所以它和用户消息一样是一轮的开头。
    * uuid 用 task:<task_id>：实时的 system/task_notification 和历史里的 <task-notification> 消息 uuid 不同，按任务 id 去重
@@ -155,7 +158,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
     const next = { ...emptyView(), state: view.state, model: view.model, effort: view.effort, permissionMode: view.permissionMode };
     for (const m of action.messages) {
       const at = m.timestamp ? Date.parse(m.timestamp) : undefined;
-      if (m.isCompactSummary && !m.parent_tool_use_id) ingestCompactSummary(next, m.uuid);
+      if (m.isCompactSummary && !m.parent_tool_use_id) ingestCompactSummary(next, m.uuid, at);
       else ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id, at);
     }
     for (const item of view.items) {
@@ -201,7 +204,10 @@ export function reduce(view: SessionView, action: Action): SessionView {
       next.permissionMode = event.permissionMode;
       if (event.state !== "running") next.streaming = { text: "" };
       // 兜底：没收到 started 就停了（子进程退出等），排队的消息不再一直挂在最后
-      if (event.state === "idle" || event.state === "closed") flushQueued(next);
+      if (event.state === "idle" || event.state === "closed") {
+        flushQueued(next);
+        finishCompact(next, "failed");
+      }
       // 上一轮结束后没有用户消息就又开始运行：是后台任务的通知让 Claude Code 自动开了新的一轮（实时事件里没有这条 user 消息）
       if (event.state === "running" && view.turnEnded && view.pendingTasks.length) {
         view.pendingTasks.forEach((task) => pushItem(next, null, task));
@@ -267,13 +273,23 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       if (!message.uuid) return;
       // isSynthetic 是 Claude Code 自己加的 user 消息（不止摘要），紧跟在 compact_boundary 后面的才是摘要
       const last = view.items.at(-1);
-      if (message.isSynthetic && !message.parent_tool_use_id && last?.kind === "compact" && last.pending) {
-        ingestCompactSummary(view, message.uuid);
+      if (message.isSynthetic && !message.parent_tool_use_id && last?.kind === "compact" && last.awaitingSummary) {
+        ingestCompactSummary(view, message.uuid, Date.now());
       } else ingestMessage(view, "user", message.uuid, message.message, message.parent_tool_use_id, Date.now());
       return;
     }
     case "system":
-      if (message.subtype === "compact_boundary") pushItem(view, null, { kind: "compact", uuid: message.uuid, pending: true });
+      if (message.subtype === "status" && message.status === "compacting") {
+        if (!runningCompact(view)) pushItem(view, null, { kind: "compact", uuid: `compact:${message.uuid}`, at: Date.now(), status: "running" });
+      } else if (message.subtype === "status" && message.compact_result === "failed") {
+        finishCompact(view, "failed");
+      }
+      if (message.subtype === "compact_boundary") {
+        if (runningCompact(view)) {
+          view.seen = new Set(view.seen).add(message.uuid);
+          finishCompact(view, "done");
+        } else pushItem(view, null, { kind: "compact", uuid: message.uuid, at: Date.now(), status: "done", awaitingSummary: true });
+      }
       if (message.subtype === "task_notification" && !message.skip_transcript) {
         view.pendingTasks = [...view.pendingTasks, { kind: "task", uuid: `task:${message.task_id}`, status: message.status, text: message.summary }];
       }
@@ -282,6 +298,8 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
     case "result": {
       view.streaming = { text: "" };
       view.turnEnded = true;
+      // 压缩到一半这一轮就结束了（中断等）
+      finishCompact(view, "failed");
       // 中断的一轮也是 error_during_execution（errors 里是 [ede_diagnostic] …），前面已经有「已中断」，不算出错
       const interrupted = view.items.at(-1)?.kind === "interrupted";
       pushItem(view, null, {
@@ -447,16 +465,30 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
  * 压缩的摘要：前面有 compact_boundary 生成的那一项（实时）就把它的 uuid 换成摘要的，之后重新拉历史时按 uuid 去重；
  * 没有就新加一项（历史）
  */
-function ingestCompactSummary(view: SessionView, uuid: string): void {
+function ingestCompactSummary(view: SessionView, uuid: string, at: number | undefined): void {
   if (view.seen.has(uuid)) return;
-  const item: Item = { kind: "compact", uuid };
-  const i = view.items.findLastIndex((it) => it.kind === "compact" && it.pending);
+  const i = view.items.findLastIndex((it) => it.kind === "compact" && it.awaitingSummary);
+  const prev = view.items[i];
+  const item: Item = { kind: "compact", uuid, at: prev?.kind === "compact" ? prev.at : at, status: "done" };
   if (i < 0) {
     pushItem(view, null, item);
     return;
   }
   view.seen = new Set(view.seen).add(uuid);
   view.items = view.items.with(i, item);
+}
+
+/** 正在进行的压缩（还没等到 compact_boundary） */
+function runningCompact(view: SessionView): boolean {
+  return view.items.some((it) => it.kind === "compact" && it.status === "running");
+}
+
+/** 正在进行的压缩结束了：done 之后还要等摘要（换 uuid 用） */
+function finishCompact(view: SessionView, status: "done" | "failed"): void {
+  const i = view.items.findLastIndex((it) => it.kind === "compact" && it.status === "running");
+  const item = view.items[i];
+  if (item?.kind !== "compact") return;
+  view.items = view.items.with(i, { ...item, status, awaitingSummary: status === "done" });
 }
 
 /** 用户消息：末尾带回复注释的拆出来 */
