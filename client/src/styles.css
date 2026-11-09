@@ -1200,3 +1200,33 @@ svg.ic-mcp { color: var(--ic-mcp); }
 .plugin-notice { margin: 12px 0 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .plugin-directory-bar { display: flex; align-items: center; gap: 12px; margin: -4px 0 12px; color: var(--muted); font-size: 13px; }
 .plugin-directory-bar span { flex: 1; min-width: 0; }
+
+/* 自定义下拉框（代替原生 select）：按钮 + 弹出列表 */
+.select { position: relative; display: inline-flex; min-width: 0; }
+.select-btn {
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-width: 120px; height: 30px; padding: 0 10px 0 12px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 13px; text-align: left;
+  transition: border-color 120ms, background-color 120ms;
+}
+.select-btn:hover, .select-btn:hover:not(:disabled) { background: var(--panel); }
+.select-btn.open, .select-btn:focus-visible { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); outline: none; }
+.select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-chevron { flex: none; color: var(--muted); transition: transform 120ms; }
+.select-btn.open .select-chevron { transform: rotate(180deg); }
+.select-pop {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 40; min-width: 100%; width: max-content; max-width: 320px; max-height: 300px;
+  overflow-y: auto; scrollbar-width: thin;
+  padding: 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.select-item {
+  display: flex; align-items: center; width: 100%; padding: 6px 10px; border: none; border-radius: 6px;
+  background: none; color: var(--text); font-size: 13px; text-align: left; white-space: nowrap;
+}
+.select-item.active, .select-item.active:hover:not(:disabled) { background: var(--panel); }
+.select-item[aria-selected="true"] { font-weight: 600; }
+.select-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.select-check { flex: none; margin-left: 12px; color: var(--accent); }
+/* 表单里的下拉框占满一行，列表左对齐 */
+.settings-form .select { display: flex; }
+.settings-form .select-btn { height: auto; padding: 7px 10px; font-size: 14px; color: var(--text); }
+.settings-form .select-pop { left: 0; right: auto; }

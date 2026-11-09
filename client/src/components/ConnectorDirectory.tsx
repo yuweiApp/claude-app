@@ -3,6 +3,7 @@ import { api, type ConnectorEntry, type McpServerInfo } from "../api";
 import { Avatar } from "./CapabilityPicker";
 import { McpAuthDialog } from "./McpAuthDialog";
 import { PAGE_SIZE, Pager, pageOf } from "./Pager";
+import { Select } from "./Select";
 
 /**
  * 设置 → 连接器 → 连接器市场：MCP 官方注册表里有远程地址的服务器。不搜索时是网关配置里推荐的，搜索时查整个注册表。
@@ -188,22 +189,12 @@ function ConnectorForm({ entry, onAdded, onCancel }: { entry: ConnectorEntry; on
             {v.name}
             {v.required ? "" : "（可选）"}
             {v.choices ? (
-              <select
+              <Select
                 value={variables[v.name] ?? ""}
-                onChange={(e) =>
-                  setVariables((prev) => ({
-                    ...prev,
-                    [v.name]: e.target.value,
-                  }))
-                }
-              >
-                {!v.required && <option value="">不填</option>}
-                {v.choices.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
+                aria-label={v.name}
+                onChange={(value) => setVariables((prev) => ({ ...prev, [v.name]: value }))}
+                options={[...(v.required ? [] : [{ value: "", label: "不填" }]), ...v.choices.map((c) => ({ value: c, label: c }))]}
+              />
             ) : (
               <input
                 required={v.required}
