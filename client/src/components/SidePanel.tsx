@@ -311,6 +311,8 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
       const rest = visible.filter((t) => t.id !== tab.id);
       return { tabs, active: rest[Math.min(index, rest.length - 1)]?.id ?? tabs[0]!.id };
     });
+    // 关的是当前会话看得见的最后一个标签：收起面板，下次打开是新标签页
+    if (visibleTabs.length === 1 && visibleTabs[0]!.id === tab.id) onClose();
   };
   /** 新标签页里选了工具：这个标签页变成那个工具 */
   const replaceTab = (id: string, tab: PanelTab) =>
