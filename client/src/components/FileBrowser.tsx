@@ -1,19 +1,22 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { api, RequestError, type FileContent, type ProjectEntry } from "../api";
 import { getDraft, setDraft, useHasDraft } from "../state/fileDrafts";
 import { useDismiss } from "./ComposerPickers";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FileTypeIcon, FolderTypeIcon } from "./FileTypeIcon";
 import { MarkdownLiveEditor } from "./MarkdownLiveEditor";
+import { closePageAnnotation, editAnnotationAt, repositionAnnotationEditor, startPageAnnotation } from "./ResponseAnnotations";
+import { useResponseAnnotations, type PageAnnotationTarget } from "../state/responseAnnotations";
 
 /**
  * 右侧面板的文件工具（同 codex-app-server 的 FileBrowser）：上面是切换文件树、文件名、复制路径和操作按钮，
  * 下面左边是目录树（可以收起）、右边是文件内容。没选文件时是「打开文件」：提示从目录树里选。
  * 文本打开就能编辑（Ctrl+S 保存，不自动保存）；Markdown 默认所见即所得，直接在渲染效果上改（MarkdownLiveEditor，编辑的是源码），
- * 「预览 / 源代码」开关切到源代码编辑；HTML 默认显示成网页（HtmlPreview），同样用开关切到源代码
+ * 「预览 / 源代码」开关切到源代码编辑；HTML 显示成网页（HtmlPreview），没有开关
  */
 export function FileBrowser({
   cwd,
+  sessionId,
   path,
   active,
   onSelectFile,
@@ -22,6 +25,8 @@ export function FileBrowser({
   onDeleted,
 }: {
   cwd: string;
+  /** 网页上写的标注记在这个会话下；没有（还没发第一条消息）时不能标注 */
+  sessionId: string | null;
   /** 打开的文件（相对项目文件夹）；null 是「打开文件」 */
   path: string | null;
   /** 这个标签页在前面：轮询文件有没有被改 */
@@ -75,6 +80,7 @@ export function FileBrowser({
     <FileViewer
       key={path}
       cwd={cwd}
+      sessionId={sessionId}
       path={path}
       active={active}
       treeToggle={treeToggle}
@@ -804,6 +810,7 @@ const HTML = /\.html?$/i;
 
 function FileViewer({
   cwd,
+  sessionId,
   path,
   active,
   treeToggle,
@@ -812,6 +819,7 @@ function FileViewer({
   onOpenFile,
 }: {
   cwd: string;
+  sessionId: string | null;
   path: string;
   active: boolean;
   treeToggle: ReactNode;
@@ -823,8 +831,11 @@ function FileViewer({
   const [content, setContent] = useState<FileContent | { error: string } | null>(null);
   const markdown = MARKDOWN.test(path);
   const html = HTML.test(path);
-  // Markdown、HTML 默认显示渲染效果，开关切到源代码
+  // Markdown 默认显示渲染效果，开关切到源代码
   const [rendered, setRendered] = useState(true);
+  // HTML 的标注模式；网页里的标注脚本连上了才能开
+  const [annotating, setAnnotating] = useState(false);
+  const [pageReady, setPageReady] = useState(false);
   const dirty = useHasDraft(cwd, path);
   // 草稿在 fileDrafts 里，每次输入后重新渲染一下
   const [, rerender] = useState(0);
@@ -893,7 +904,18 @@ function FileViewer({
     );
   else if (content.kind === "binary") body = <div className="panel-empty">二进制文件，无法预览（{formatBytes(content.size)}）</div>;
   else if (content.kind === "too-large") body = <div className="panel-empty">文件太大，无法预览（{formatBytes(content.size)}）</div>;
-  else if (html && rendered) body = <HtmlPreview cwd={cwd} path={path} mtimeMs={content.mtimeMs} />;
+  else if (html)
+    body = (
+      <HtmlPreview
+        cwd={cwd}
+        path={path}
+        mtimeMs={content.mtimeMs}
+        sessionId={sessionId}
+        annotating={annotating}
+        onAnnotatingChange={setAnnotating}
+        onReady={setPageReady}
+      />
+    );
   else if (markdown && rendered)
     body = (
       <MarkdownLiveEditor
@@ -925,7 +947,7 @@ function FileViewer({
           )}
         </div>
         <div className="viewer-head-actions">
-          {(markdown || html) && ok?.kind === "text" && (
+          {markdown && ok?.kind === "text" && (
             <label className="md-source-switch">
               {rendered ? "预览" : "源代码"}
               <button
@@ -938,6 +960,18 @@ function FileViewer({
                 <span />
               </button>
             </label>
+          )}
+          {html && ok?.kind === "text" && (
+            <button
+              className={`icon-btn viewer-head-icon${annotating ? " on" : ""}`}
+              title={!sessionId ? "发出第一条消息后才能标注" : !pageReady ? "这个网页还没加载好，或者不支持标注" : annotating ? "退出标注" : "在网页上点选元素写标注，随下一条消息发给 Claude"}
+              aria-label="标注"
+              aria-pressed={annotating}
+              disabled={!sessionId || !pageReady}
+              onClick={() => setAnnotating((a) => !a)}
+            >
+              <AnnotateIcon />
+            </button>
           )}
           <FileOptionsMenu text={ok?.kind === "text" ? value : null} onReload={dirty ? undefined : load} />
         </div>
@@ -975,9 +1009,30 @@ function FileViewer({
 /**
  * HTML 显示成网页：iframe 取网关的预览地址，网页里的相对路径（样式、脚本、图片）照常加载。
  * 显示的是保存了的文件，文件改了（修改时间变了）就重新加载。
- * sandbox 不给 allow-same-origin：网页和界面同源，脚本不能碰界面的存储和接口
+ * sandbox 不给 allow-same-origin：网页和界面同源，脚本不能碰界面的存储和接口。
+ *
+ * 标注（参照 codex-app-server 的浏览器批注）：网关在网页末尾接了一段脚本（gateway/src/http/page-picker.ts），
+ * 和这里互相 postMessage。标注模式下在网页上点一个元素，界面上打开编辑框写要怎么改，
+ * 加进输入框里的「N 条注释」，随下一条消息发出；已有的标注在元素上显示编号，点编号修改
  */
-function HtmlPreview({ cwd, path, mtimeMs }: { cwd: string; path: string; mtimeMs: number }) {
+function HtmlPreview({
+  cwd,
+  path,
+  mtimeMs,
+  sessionId,
+  annotating,
+  onAnnotatingChange,
+  onReady,
+}: {
+  cwd: string;
+  path: string;
+  mtimeMs: number;
+  sessionId: string | null;
+  annotating: boolean;
+  onAnnotatingChange: (on: boolean) => void;
+  /** 网页里的标注脚本连上了（每次加载后），换地址时先报 false */
+  onReady: (ready: boolean) => void;
+}) {
   const [url, setUrl] = useState<{ ok: string } | { error: string } | null>(null);
   useEffect(() => {
     let live = true;
@@ -989,16 +1044,136 @@ function HtmlPreview({ cwd, path, mtimeMs }: { cwd: string; path: string; mtimeM
       live = false;
     };
   }, [cwd, path]);
+  const src = url && "ok" in url ? `${url.ok}?v=${Math.round(mtimeMs)}` : null;
+
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  /** 网页当前显示的文件（点链接可能跳到别的页面）和第几次加载 */
+  const [loaded, setLoaded] = useState<{ file: string; n: number } | null>(null);
+  const fileRef = useRef(path);
+  fileRef.current = loaded?.file ?? path;
+  const pickedRect = useRef<PageRect | null>(null);
+
+  const annotations = useResponseAnnotations(sessionId);
+  const file = loaded?.file;
+  const marks = useMemo(
+    () => annotations.flatMap((a, i) => (a.page && a.page.file === file ? [{ id: a.id, n: i + 1, selector: a.page.selector }] : [])),
+    [annotations, file],
+  );
+
+  const post = useCallback((msg: Record<string, unknown>) => {
+    frameRef.current?.contentWindow?.postMessage({ ...msg, source: "claude-app" }, "*");
+  }, []);
+  /** 网页视口里的位置换成界面上的 */
+  const toScreen = useCallback((r: PageRect | null) => {
+    const f = frameRef.current?.getBoundingClientRect();
+    return r && f ? new DOMRect(f.left + r.x, f.top + r.y, r.width, r.height) : null;
+  }, []);
+
+  useEffect(() => {
+    onReady(false);
+    setLoaded(null);
+  }, [src, onReady]);
+
+  // 每次加载好、标注模式和编号变了，都把状态告诉网页
+  useEffect(() => {
+    if (loaded) post({ type: "state", annotating: annotating && !!sessionId, marks });
+  }, [loaded, annotating, sessionId, marks, post]);
+
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      const frame = frameRef.current;
+      const d = e.data as Record<string, unknown> | null;
+      if (!frame || e.source !== frame.contentWindow || !d || d.source !== "claude-app-page") return;
+      if (d.type === "ready") {
+        setLoaded((prev) => ({ file: pageFile(d.path) ?? path, n: (prev?.n ?? 0) + 1 }));
+        onReady(true);
+      } else if (d.type === "pick" && sessionId) {
+        const target = pageTarget(d, fileRef.current);
+        if (!target) return;
+        pickedRect.current = pageRect(d.rect);
+        const pickId = d.pickId;
+        startPageAnnotation(
+          sessionId,
+          str(d.label, 300),
+          target,
+          () => toScreen(pickedRect.current),
+          () => post({ type: "clear-pick", pickId }),
+        );
+      } else if (d.type === "picked-rect") {
+        pickedRect.current = pageRect(d.rect);
+        repositionAnnotationEditor();
+      } else if (d.type === "edit" && sessionId && typeof d.id === "string") {
+        const rect = pageRect(d.rect);
+        editAnnotationAt(sessionId, d.id, () => toScreen(rect));
+      } else if (d.type === "escape") onAnnotatingChange(false);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [path, sessionId, post, toScreen, onReady, onAnnotatingChange]);
+
+  // 退出标注模式、关掉文件时，没写完的标注框也关掉
+  useEffect(() => {
+    if (!annotating) closePageAnnotation();
+  }, [annotating]);
+  useEffect(() => closePageAnnotation, []);
+
   if (!url) return <div className="panel-empty">正在加载网页…</div>;
   if ("error" in url) return <div className="panel-empty files-error">{url.error}</div>;
   return (
-    <iframe
-      className="viewer-frame"
-      src={`${url.ok}?v=${Math.round(mtimeMs)}`}
-      title={path}
-      sandbox="allow-scripts allow-forms allow-modals allow-popups"
-    />
+    <>
+      <iframe ref={frameRef} className="viewer-frame" src={src!} title={path} sandbox="allow-scripts allow-forms allow-modals allow-popups" />
+      {annotating && (
+        <div className="viewer-annotate-bar">
+          <span>点选网页上的元素写标注，随下一条消息发给 Claude</span>
+          <button className="icon-btn" title="退出标注（Esc）" aria-label="退出标注" onClick={() => onAnnotatingChange(false)}>
+            ×
+          </button>
+        </div>
+      )}
+    </>
   );
+}
+
+interface PageRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+// 网页发来的消息是网页里的脚本发的，逐个字段检查
+const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
+function pageRect(v: unknown): PageRect | null {
+  if (!v || typeof v !== "object") return null;
+  const r = v as Record<string, unknown>;
+  return { x: num(r.x), y: num(r.y), width: num(r.width), height: num(r.height) };
+}
+function pageTarget(d: Record<string, unknown>, file: string): PageAnnotationTarget | null {
+  const selector = str(d.selector, 1000);
+  const tag = str(d.tag, 40);
+  if (!selector || !tag) return null;
+  const p = (d.point ?? {}) as Record<string, unknown>;
+  const v = (d.viewport ?? {}) as Record<string, unknown>;
+  return {
+    file,
+    selector,
+    tag,
+    point: { x: Math.round(num(p.x)), y: Math.round(num(p.y)) },
+    viewport: { width: Math.round(num(v.width)), height: Math.round(num(v.height)) },
+  };
+}
+/** 网页地址的路径（…/files/page/<id>/<相对路径>）里的文件，文件夹是里面的 index.html */
+function pageFile(pathname: unknown): string | null {
+  if (typeof pathname !== "string") return null;
+  const m = /\/files\/page\/[^/]+\/(.*)$/.exec(pathname);
+  if (!m) return null;
+  try {
+    const rel = m[1]!.split("/").map(decodeURIComponent).join("/");
+    return !rel || rel.endsWith("/") ? `${rel}index.html` : rel;
+  } catch {
+    return null;
+  }
 }
 
 /** 带行号的编辑器（同 codex-app-server）：不自动换行，行号和每一行对齐；Ctrl/⌘+S 保存 */
@@ -1139,6 +1314,15 @@ function formatBytes(n: number): string {
 // ---------- 图标 ----------
 
 /** 两个叠着的文件夹（「切换文件树」） */
+function AnnotateIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.5 3.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5v-2.5h-.5a1 1 0 0 1-1-1z" />
+      <path d="M5.5 5.5h5M5.5 7.5h3" />
+    </svg>
+  );
+}
+
 export function FoldersIcon({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" aria-hidden="true">

@@ -439,6 +439,7 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
             {tab.kind === "files" && (
               <FileBrowser
                 cwd={cwd}
+                sessionId={sessionId}
                 path={tab.path}
                 active={tab.id === activeId}
                 onSelectFile={(path, pinned) => openFile(tab.id, path, pinned)}

@@ -2,7 +2,8 @@ import { useMemo, useSyncExternalStore } from "react";
 
 /**
  * 回复 Claude 的某段话（参照 codex-app-server 的 response annotations）：在 Claude 的回复里选中一段文字，
- * 可以写一句回复，按会话记在本地，挂在输入框里的「N 条注释」上，随下一条消息发出，发出后清空
+ * 可以写一句回复，按会话记在本地，挂在输入框里的「N 条注释」上，随下一条消息发出，发出后清空。
+ * 右侧面板里显示成网页的 HTML 文件上点选元素写的标注（参照 codex-app-server 的浏览器批注）也放在这里，带 page
  */
 export interface ResponseAnnotationSource {
   /** 被回复的那段文字的 key（消息 uuid:块序号） */
@@ -12,12 +13,27 @@ export interface ResponseAnnotationSource {
   endOffset: number;
 }
 
+/** 网页上点选的元素 */
+export interface PageAnnotationTarget {
+  /** 网页文件，相对项目文件夹（网页里点链接跳到别的页面后是那个页面） */
+  file: string;
+  /** 能找回这个元素的 CSS 选择器 */
+  selector: string;
+  /** 标签名（小写） */
+  tag: string;
+  /** 点的位置和当时的视口大小（CSS 像素） */
+  point: { x: number; y: number };
+  viewport: { width: number; height: number };
+}
+
 export interface ResponseAnnotation {
   id: string;
+  /** 回复里选中的文字；网页标注是元素的 aria-label、alt、文字等，都没有时是 <标签名> */
   text: string;
   /** 用户写的回复，没写时没有 */
   annotation?: string;
   source?: ResponseAnnotationSource;
+  page?: PageAnnotationTarget;
 }
 
 /** 发出去的消息里解析出来的注释（没有本地 id） */
@@ -78,6 +94,11 @@ export function addResponseAnnotation(sessionId: string, text: string, comment: 
   write(sessionId, [...read(sessionId), { id: `${Date.now().toString(36)}-${++seq}`, text: t, annotation: cleanComment(comment), source }]);
 }
 
+/** 网页上点选的元素，要求可以不写 */
+export function addPageAnnotation(sessionId: string, text: string, comment: string, page: PageAnnotationTarget) {
+  write(sessionId, [...read(sessionId), { id: `${Date.now().toString(36)}-${++seq}`, text: text.trim() || `<${page.tag}>`, annotation: cleanComment(comment), page }]);
+}
+
 export function updateResponseAnnotation(sessionId: string, id: string, comment: string) {
   write(
     sessionId,
@@ -106,17 +127,21 @@ export function clearResponseAnnotations(sessionId: string) {
 //   <response-annotations>
 //   [{"text":"选中的文字","annotation":"回复","source":{"messageId":"…","startOffset":0,"endOffset":10}}]
 //
-// source 是原文在页面上的位置，发出去以后点注释能跳回原文
+// source 是原文在页面上的位置，发出去以后点注释能跳回原文；网页标注没有 source，带 page
 //   </response-annotations>
 
 const HEADER = "# Response annotations:";
 const OPEN_TAG = "<response-annotations>";
 const CLOSE_TAG = "</response-annotations>";
 const INSTRUCTIONS =
-  "Each item is text the user selected from an earlier response of yours, with the user's comment on it in `annotation` when they wrote one. `source` is the selection's position on the user's screen. The user sees the items numbered Annotation 1, Annotation 2, and so on in array order.";
+  "Each item is either text the user selected from an earlier response of yours (`source` is the selection's position on the user's screen), " +
+  "or an element the user picked on an HTML file shown as a web page in the side panel (`page`: `file` is the page's path relative to the working directory, " +
+  "`selector` a CSS selector for the element, `tag` its tag name, `point` the clicked position in a viewport of `viewport` size, in CSS pixels; " +
+  "`text` is the element's label or text taken from the page). The user's comment is in `annotation` when they wrote one. " +
+  "The user sees the items numbered Annotation 1, Annotation 2, and so on in array order.";
 
 export function formatResponseAnnotations(list: SentResponseAnnotation[]): string {
-  const items = list.map((a) => ({ text: a.text, annotation: a.annotation, source: a.source }));
+  const items = list.map((a) => ({ text: a.text, annotation: a.annotation, source: a.source, page: a.page }));
   return `${HEADER}\n${INSTRUCTIONS}\n${OPEN_TAG}\n${JSON.stringify(items)}\n${CLOSE_TAG}`;
 }
 
@@ -128,6 +153,17 @@ export function withResponseAnnotations(text: string, list: SentResponseAnnotati
 }
 
 const isOffset = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+const isNum = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+
+function parsePage(p: unknown): PageAnnotationTarget | undefined {
+  if (!p || typeof p !== "object") return undefined;
+  const { file, selector, tag, point, viewport } = p as Record<string, unknown>;
+  const pt = point as { x?: unknown; y?: unknown } | null;
+  const vp = viewport as { width?: unknown; height?: unknown } | null;
+  if (typeof file !== "string" || typeof selector !== "string" || typeof tag !== "string") return undefined;
+  if (!pt || !isNum(pt.x) || !isNum(pt.y) || !vp || !isNum(vp.width) || !isNum(vp.height)) return undefined;
+  return { file, selector, tag, point: { x: pt.x, y: pt.y }, viewport: { width: vp.width, height: vp.height } };
+}
 
 /** 从消息末尾拆出注释段落：返回注释和前面用户写的文字；不是这种格式时返回 null */
 export function splitResponseAnnotations(raw: string): { annotations: SentResponseAnnotation[]; text: string } | null {
@@ -151,7 +187,14 @@ export function splitResponseAnnotations(raw: string): { annotations: SentRespon
       s && typeof s.messageId === "string" && s.messageId && isOffset(s.startOffset) && isOffset(s.endOffset) && s.endOffset > s.startOffset
         ? { messageId: s.messageId, startOffset: s.startOffset, endOffset: s.endOffset }
         : undefined;
-    return [{ text: item.text, annotation: typeof item.annotation === "string" && item.annotation ? item.annotation : undefined, source }];
+    return [
+      {
+        text: item.text,
+        annotation: typeof item.annotation === "string" && item.annotation ? item.annotation : undefined,
+        source,
+        page: source ? undefined : parsePage(item.page),
+      },
+    ];
   });
   return { annotations, text: trimmed.slice(0, at).trimEnd() };
 }

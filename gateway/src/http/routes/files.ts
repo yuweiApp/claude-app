@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, open, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { FastifyInstance } from "fastify";
 import { BadRequestError } from "../../agent/session-manager.js";
 import type { FileContent, ProjectEntry } from "../../shared/types.js";
+import { PAGE_PICKER_SCRIPT } from "../page-picker.js";
 
 const run = promisify(execFile);
 const LIMIT = 50;
@@ -174,7 +175,8 @@ export function fileRoutes(app: FastifyInstance): void {
   });
 
   // 网页预览：不走令牌鉴权（见 app.ts），靠地址里的随机 id，只能读这个项目文件夹里的文件。
-  // 和界面同源，用 CSP 的 sandbox 把它放进单独的源（不带 allow-same-origin），脚本碰不到界面的存储和接口
+  // 和界面同源，用 CSP 的 sandbox 把它放进单独的源（不带 allow-same-origin），脚本碰不到界面的存储和接口。
+  // HTML 末尾接上标注用的脚本（见 page-picker.ts）
   app.get<{ Params: { id: string; "*": string } }>(`${PAGE_PREFIX}:id/*`, async (req, reply) => {
     const cwd = pageCwds.get(req.params.id);
     if (!cwd) return reply.code(404).type("text/plain; charset=utf-8").send("预览地址已失效，重新打开文件");
@@ -185,14 +187,17 @@ export function fileRoutes(app: FastifyInstance): void {
       info = await stat(abs).catch(() => null);
     }
     if (!info?.isFile()) return reply.code(404).type("text/plain; charset=utf-8").send("文件不存在");
+    const ext = path.extname(abs).toLowerCase();
+    const html = (ext === ".html" || ext === ".htm") && info.size <= MAX_TEXT_BYTES;
+    const body = html ? Buffer.concat([await readFile(abs), Buffer.from(`\n<script>${PAGE_PICKER_SCRIPT}</script>\n`)]) : createReadStream(abs);
     return reply
-      .type(PAGE_TYPES[path.extname(abs).toLowerCase()] ?? "application/octet-stream")
+      .type(PAGE_TYPES[ext] ?? "application/octet-stream")
       .header("content-security-policy", "sandbox allow-scripts allow-forms allow-modals allow-popups")
       .header("x-content-type-options", "nosniff")
       // 沙箱里的页面是单独的源，type="module" 的脚本、fetch 同目录的文件要 CORS
       .header("access-control-allow-origin", "*")
       .header("cache-control", "no-store")
-      .send(createReadStream(abs));
+      .send(body);
   });
 
   app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/raw", async (req, reply) => {

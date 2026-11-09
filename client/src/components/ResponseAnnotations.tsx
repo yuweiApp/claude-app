@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
+  addPageAnnotation,
   addResponseAnnotation,
   clearResponseAnnotations,
   findAnnotationTarget,
@@ -10,6 +11,7 @@ import {
   updateResponseAnnotation,
   useResponseAnnotations,
   ANNOTATION_TARGET_ATTR,
+  type PageAnnotationTarget,
   type ResponseAnnotation,
   type ResponseAnnotationSource,
   type SentResponseAnnotation,
@@ -21,6 +23,7 @@ import {
  * - 「回复」在选区上方写回复（可以不写），✓ 加进输入框里的「N 条注释」
  * - 加好的注释在原文的末尾显示编号，点编号（或「N 条注释」列表里的「编辑」）改回复、删除
  * - 发出后用户消息上方显示「N 条注释」，点开看所选文本和回复，点一条跳回原文
+ * 右侧面板网页上点选元素写的标注也用这里的编辑框和「N 条注释」（见 FileBrowser 的 HtmlPreview）
  */
 
 // ---------------------------------------------------------------------------
@@ -52,12 +55,17 @@ function revealAnnotationSource(source: ResponseAnnotationSource) {
 
 type EditorState =
   | { mode: "new"; sessionId: string; text: string; source: ResponseAnnotationSource; range: Range }
-  | { mode: "edit"; sessionId: string; id: string; anchor: () => DOMRect | null };
+  | { mode: "edit"; sessionId: string; id: string; anchor: () => DOMRect | null }
+  /** 网页上点选的元素，✓ 后加进「N 条注释」（要求可以不写）；onClose：编辑框关了（添加、取消、换成别的） */
+  | { mode: "page"; sessionId: string; seq: number; text: string; page: PageAnnotationTarget; anchor: () => DOMRect | null; onClose?: () => void };
 
 let editor: EditorState | null = null;
+let pageSeq = 0;
 const listeners = new Set<() => void>();
 function setEditor(next: EditorState | null) {
+  const prev = editor;
   editor = next;
+  if (prev?.mode === "page" && prev !== next) prev.onClose?.();
   setHighlight("annotation-draft", next?.mode === "new" ? next.range : null);
   listeners.forEach((l) => l());
 }
@@ -77,6 +85,32 @@ function startAnnotationFromSelection() {
   window.getSelection()?.removeAllRanges();
   setEditor({ mode: "new", sessionId: sel.sessionId, text: sel.text, source: sel.source, range: sel.range });
   return true;
+}
+
+/** 网页上点了一个元素：打开编辑框写要求（可以不写），✓ 后加进「N 条注释」；anchor 是元素在界面上的位置（跟着网页滚动变） */
+export function startPageAnnotation(
+  sessionId: string,
+  text: string,
+  page: PageAnnotationTarget,
+  anchor: () => DOMRect | null,
+  onClose?: () => void,
+) {
+  setEditor({ mode: "page", sessionId, seq: ++pageSeq, text, page, anchor, onClose });
+}
+
+/** 改已有的注释，编辑框挂在 anchor 上（网页里的编号） */
+export function editAnnotationAt(sessionId: string, id: string, anchor: () => DOMRect | null) {
+  setEditor({ mode: "edit", sessionId, id, anchor });
+}
+
+/** 编辑框挂着的位置变了（网页里滚动），重新定位 */
+export function repositionAnnotationEditor() {
+  listeners.forEach((l) => l());
+}
+
+/** 正在写网页标注的编辑框关掉 */
+export function closePageAnnotation() {
+  if (editor?.mode === "page") setEditor(null);
 }
 
 const markerSelector = (id: string) => `[data-annotation-marker="${CSS.escape(id)}"]`;
@@ -212,13 +246,27 @@ export function AnnotationEditor({ sessionId, onSaved }: { sessionId: string | n
   const state = useEditor();
   const annotations = useResponseAnnotations(sessionId);
   const [, rerender] = useState(0);
+  // repositionAnnotationEditor 通知的是 useEditor 的订阅，state 没变也要重新渲染
+  useEffect(() => {
+    const l = () => rerender((n) => n + 1);
+    listeners.add(l);
+    return () => {
+      listeners.delete(l);
+    };
+  }, []);
   const boxRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const current = state?.mode === "edit" ? annotations.find((a) => a.id === state.id) : null;
   const [draft, setDraft] = useState("");
 
   // 打开时填好原来的回复、聚焦
-  const key = state ? (state.mode === "edit" ? state.id : `new:${state.source.messageId}:${state.source.startOffset}`) : null;
+  const key = state
+    ? state.mode === "edit"
+      ? state.id
+      : state.mode === "page"
+        ? `page:${state.seq}`
+        : `new:${state.source.messageId}:${state.source.startOffset}`
+    : null;
   useEffect(() => {
     if (!key) return;
     setDraft(current?.annotation ?? "");
@@ -275,8 +323,10 @@ export function AnnotationEditor({ sessionId, onSaved }: { sessionId: string | n
   const above = anchor.top > 180;
   const style = above ? { left, top: anchor.top - 8, transform: "translateY(-100%)" } : { left, top: anchor.bottom + 8 };
 
+  const editingPage = state.mode === "page" || !!current?.page;
   const save = () => {
-    if (state.mode === "new") addResponseAnnotation(sessionId, state.text, draft, state.source);
+    if (state.mode === "page") addPageAnnotation(sessionId, state.text, draft, state.page);
+    else if (state.mode === "new") addResponseAnnotation(sessionId, state.text, draft, state.source);
     else updateResponseAnnotation(sessionId, state.id, draft);
     setEditor(null);
     onSaved?.();
@@ -288,8 +338,8 @@ export function AnnotationEditor({ sessionId, onSaved }: { sessionId: string | n
         ref={textRef}
         rows={1}
         value={draft}
-        placeholder="添加可选回复…"
-        aria-label="回复"
+        placeholder={editingPage ? "写下要怎么改…" : "添加可选回复…"}
+        aria-label={editingPage ? "标注" : "回复"}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -298,7 +348,7 @@ export function AnnotationEditor({ sessionId, onSaved }: { sessionId: string | n
           }
         }}
       />
-      {state.mode === "new" ? (
+      {state.mode !== "edit" ? (
         <button className="annotation-editor-ok" title="添加" aria-label="添加" onClick={save}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="m3.5 8.5 3 3 6-7" />
@@ -411,6 +461,8 @@ function AnnotationMarkers({
 // ---------------------------------------------------------------------------
 // 输入框里的「N 条注释」
 
+const noteLabel = (a: SentResponseAnnotation) => (a.page ? `网页元素（${a.page.file}）：` : "所选文本：");
+
 /** 输入框里待发送的注释：鼠标移上去展开列表，每条可以编辑、删除；× 全部不发送 */
 export function NotesChip({ sessionId, annotations }: { sessionId: string; annotations: ResponseAnnotation[] }) {
   // 点了「编辑」后收起列表（编辑框在别处打开），鼠标移开后才恢复悬停展开
@@ -425,7 +477,7 @@ export function NotesChip({ sessionId, annotations }: { sessionId: string; annot
               <div key={a.id} className="notes-item">
                 <span className="notes-item-num">{i + 1}.</span>
                 <div className="notes-item-body">
-                  <div className="notes-item-label">所选文本：</div>
+                  <div className="notes-item-label">{noteLabel(a)}</div>
                   <div className="notes-item-text">{a.text}</div>
                   {a.annotation && (
                     <>
@@ -484,7 +536,7 @@ export function SentNotesChip({ annotations }: { annotations: SentResponseAnnota
           {annotations.map((a, i) => (
             <li key={i}>
               <button className="sent-note" disabled={!a.source} onClick={() => a.source && revealAnnotationSource(a.source)}>
-                <span className="notes-item-label">所选文本：</span>
+                <span className="notes-item-label">{noteLabel(a)}</span>
                 <span className="sent-note-text">{a.text}</span>
                 {a.annotation && (
                   <>
