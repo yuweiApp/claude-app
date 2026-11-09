@@ -394,7 +394,7 @@ function CompactLine({ item }: { item: CompactItem }) {
   }
   return (
     <div className="model-line compact-line">
-      <span>{item.status === "done" ? "上下文已压缩" : "压缩上下文未完成"}</span>
+      <span>{item.status === "failed" ? "压缩上下文未完成" : "上下文已压缩"}</span>
     </div>
   );
 }
