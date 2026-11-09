@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type MarketPlugin, type MarketPluginPage } from "../api";
 import { Avatar } from "./CapabilityPicker";
-import { PAGE_SIZE, Pager } from "./Pager";
+import { Pager, PROBE_SIZE, useFitPageSize } from "./Pager";
 import { Select } from "./Select";
 
 /** 安装次数：一万以上写成「18.4 万」 */
@@ -57,6 +57,13 @@ export function PluginDirectory({
   }, [search]);
   // 设置页点「刷新」会重新挂载这个组件：只有挂载后的第一次请求让网关先更新市场
   const refreshPending = useRef(refresh);
+  // 每页条数：第一次显示时按可见区域算（见 useFitPageSize），算出来之前先取 PROBE_SIZE 条用来量。
+  // 请求里用 ref 读，算出来时不重新取：第一页已经取回来的够了，只是少显示一些
+  const gridRef = useRef<HTMLDivElement>(null);
+  const pageSize = useFitPageSize(gridRef, (result?.plugins.length ?? 0) > 0);
+  const size = pageSize ?? PROBE_SIZE;
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
 
   // 网关按条件筛好只返回这一页，带总数；翻页、换条件时再取
   useEffect(() => {
@@ -65,7 +72,7 @@ export function PluginDirectory({
     const wantRefresh = refreshPending.current;
     refreshPending.current = false;
     api
-      .pluginMarket({ refresh: wantRefresh, search: keyword, marketplace: market, category, offset: page * PAGE_SIZE, limit: PAGE_SIZE })
+      .pluginMarket({ refresh: wantRefresh, search: keyword, marketplace: market, category, offset: page * sizeRef.current, limit: sizeRef.current })
       .then(
         (next) => {
           if (cancelled) return;
@@ -130,8 +137,8 @@ export function PluginDirectory({
         </div>
       )}
       {result && result.plugins.length > 0 ? (
-        <div className={`market-grid${loading ? " loading" : ""}`} aria-busy={loading}>
-          {result.plugins.map((plugin) => {
+        <div ref={gridRef} className={`market-grid${loading ? " loading" : ""}`} aria-busy={loading}>
+          {result.plugins.slice(0, size).map((plugin) => {
             const meta = [
               marketLabel(plugin.marketplace),
               plugin.author,
@@ -183,7 +190,7 @@ export function PluginDirectory({
       ) : (
         <div className="settings-empty">{loading ? "加载中…（第一次要从网上取市场）" : !result ? "插件市场加载失败" : "没有匹配的插件"}</div>
       )}
-      {result && <Pager page={page} total={result.total} loading={loading} onPage={setPage} />}
+      {result && <Pager page={page} total={result.total} pageSize={size} loading={loading} onPage={setPage} />}
     </>
   );
 }

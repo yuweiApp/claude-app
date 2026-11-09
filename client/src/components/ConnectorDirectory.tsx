@@ -1,14 +1,14 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type ConnectorEntry, type McpServerInfo } from "../api";
 import { Avatar } from "./CapabilityPicker";
 import { McpAuthDialog } from "./McpAuthDialog";
-import { PAGE_SIZE, Pager, pageOf } from "./Pager";
+import { Pager, pageOf, PROBE_SIZE, useFitPageSize } from "./Pager";
 import { Select } from "./Select";
 
 /**
  * 设置 → 连接器 → 连接器市场：MCP 官方注册表里有远程地址的服务器。不搜索时是网关配置里推荐的，搜索时查整个注册表。
  * 添加后直接进入登录（不用登录的连上就关掉）；要填请求头、地址变量的先填表。
- * 卡片网格，每页 PAGE_SIZE 个；搜索结果网关一次给 100 条，翻到取回来的最后一页再往后时取下一批
+ * 卡片网格，每页的个数第一次显示时按可见区域算（useFitPageSize）；搜索结果网关一次给 100 条，翻到取回来的最后一页再往后时取下一批
  */
 export function ConnectorDirectory({ search, servers, onChanged }: { search: string; servers: McpServerInfo[]; onChanged: () => void }) {
   const [entries, setEntries] = useState<ConnectorEntry[] | null>(null);
@@ -20,6 +20,9 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
   const [adding, setAdding] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [page, setPage] = useState(0);
+  // 每页条数：第一次显示时按可见区域算（见 useFitPageSize），算出来之前先显示 PROBE_SIZE 条用来量
+  const gridRef = useRef<HTMLDivElement>(null);
+  const size = useFitPageSize(gridRef, (entries?.length ?? 0) > 0) ?? PROBE_SIZE;
 
   // 搜索词停下来 400ms 再查
   const keyword = search.trim();
@@ -65,7 +68,7 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
   };
 
   const turn = (next: number) => {
-    if (entries && next * PAGE_SIZE >= entries.length && nextCursor) void more().then(() => setPage(next));
+    if (entries && next * size >= entries.length && nextCursor) void more().then(() => setPage(next));
     else setPage(next);
   };
 
@@ -91,8 +94,8 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
     <>
       {error && <div className="settings-error">{error}</div>}
       {entries && entries.length > 0 ? (
-        <div className={`market-grid${loading ? " loading" : ""}`} aria-busy={loading}>
-          {pageOf(entries, page).map((entry) => {
+        <div ref={gridRef} className={`market-grid${loading ? " loading" : ""}`} aria-busy={loading}>
+          {pageOf(entries, page, size).map((entry) => {
             const name = existing(entry);
             return (
               <div key={entry.id} className="market-card">
@@ -134,7 +137,7 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
       ) : (
         <div className="settings-empty">{loading || !entries ? "加载中…" : keyword ? "注册表里没有匹配的连接器" : "没有推荐的连接器，搜索试试"}</div>
       )}
-      {entries && entries.length > 0 && <Pager page={page} total={entries.length} hasMore={nextCursor !== undefined} loading={loading} onPage={turn} />}
+      {entries && entries.length > 0 && <Pager page={page} total={entries.length} pageSize={size} hasMore={nextCursor !== undefined} loading={loading} onPage={turn} />}
       {filling && <ConnectorForm entry={filling} onAdded={added} onCancel={() => setFilling(null)} />}
       {signingIn && (
         <McpAuthDialog
