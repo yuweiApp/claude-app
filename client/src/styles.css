@@ -151,8 +151,7 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .section-icon { display: inline-flex; }
 .section-label { font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
 .section-toggle:hover .section-label { color: var(--text); }
-.section-toggle .caret { opacity: 0; transition: opacity 0.12s, transform 0.12s; }
-.section-head:hover .caret, .section-toggle[aria-expanded="false"] .caret { opacity: 1; }
+.section-toggle .caret { opacity: 1; transition: transform 0.12s; }
 .section-spacer { flex: 1; }
 .section-count {
   display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
@@ -164,6 +163,7 @@ pre { white-space: pre-wrap; word-break: break-word; }
 /* 文件夹（项目）一行：悬停整行变色，右边出现「在此项目中新建会话」（同 codex-app-server 的 .group-head / .group-actions） */
 .group-head { position: relative; display: flex; align-items: center; border-radius: 8px; }
 .group-head:hover { background: var(--frame-hover); }
+.group-head.active, .group-head.active:hover { background: var(--bg); box-shadow: var(--raised-shadow); }
 .group-actions { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); display: flex; gap: 2px; opacity: 0; pointer-events: none; }
 .group-head.menu-open { background: var(--frame-hover); }
 .group-head:hover .group-actions, .group-head.menu-open .group-actions, .group-actions:focus-within { opacity: 1; pointer-events: auto; }

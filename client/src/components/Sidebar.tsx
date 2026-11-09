@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { SessionListItem } from "../api";
 import { useDismiss } from "./ComposerPickers";
 import { SidebarToggle } from "./SidebarToggle";
@@ -58,6 +58,27 @@ interface Props {
 
 export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, onDelete, onCollapse, width }: Props) {
   const [collapsed, setCollapsed] = useState(loadCollapsed);
+  const current = sessions.find((session) => session.sessionId === currentId);
+  useEffect(() => {
+    if (!current) return;
+
+    const section = current.chat ? SECTION_CHATS : SECTION_PROJECTS;
+    const keysToOpen = [section, ...(!current.chat ? [current.cwd || workspaceDir] : [])];
+    setCollapsed((previous) => {
+      const next = new Set(previous);
+      let changed = false;
+      for (const key of keysToOpen) changed = next.delete(key) || changed;
+      if (changed) {
+        try {
+          localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+        } catch {
+          // 写不了就只在这次打开里生效
+        }
+      }
+      return changed ? next : previous;
+    });
+  }, [current?.sessionId, current?.chat, current?.cwd, workspaceDir]);
+
   const toggle = (key: string) =>
     setCollapsed((cur) => {
       const next = new Set(cur);
@@ -108,7 +129,18 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
       {projectsOpen &&
         projects.map((g) => {
           const open = !collapsed.has(g.cwd);
-          return <ProjectGroup key={g.cwd} group={g} open={open} onToggle={() => toggle(g.cwd)} onNew={onNew} onDelete={deleteProject} row={row} />;
+          return (
+            <ProjectGroup
+              key={g.cwd}
+              group={g}
+              open={open}
+              active={g.sessions.some((session) => session.sessionId === currentId)}
+              onToggle={() => toggle(g.cwd)}
+              onNew={onNew}
+              onDelete={deleteProject}
+              row={row}
+            />
+          );
         })}
 
       <SectionHead
@@ -224,8 +256,12 @@ function SectionHead({ className, menu: items, children }: { className?: string;
 /** 一个会话：悬停时右边出现「…」（运行中的转圈让位），点它或右键弹出菜单 */
 function SessionRow({ session: s, active, onSelect, onDelete }: { session: SessionListItem; active: boolean; onSelect: (id: string) => void; onDelete: (s: SessionListItem) => void }) {
   const menu = useRowMenu();
+  const rowRef = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (active) rowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [active]);
   return (
-    <li className={`session-item${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
+    <li ref={rowRef} className={`session-item${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
       <button
         className={`session-row${active ? " active" : ""}${s.state === "running" ? " running" : ""}`}
         onClick={() => onSelect(s.sessionId)}
@@ -245,6 +281,7 @@ function SessionRow({ session: s, active, onSelect, onDelete }: { session: Sessi
 function ProjectGroup({
   group: g,
   open,
+  active,
   onToggle,
   onNew,
   onDelete,
@@ -252,6 +289,7 @@ function ProjectGroup({
 }: {
   group: FolderGroup;
   open: boolean;
+  active: boolean;
   onToggle: () => void;
   onNew: (cwd?: string) => void;
   onDelete: (g: FolderGroup) => void;
@@ -260,7 +298,7 @@ function ProjectGroup({
   const menu = useRowMenu();
   return (
     <div className="group">
-      <div className={`group-head${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
+      <div className={`group-head${active ? " active" : ""}${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
         <button className="group-toggle" onClick={onToggle} title={g.cwd}>
           <CaretIcon open={open} />
           <FolderIcon />
