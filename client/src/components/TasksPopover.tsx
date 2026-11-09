@@ -114,7 +114,7 @@ function TaskCard({ sessionId, task, selected, detailsId, onSelect, onError }: {
     <article className={`task-item ${task.status}${selected ? " selected" : ""}`}>
       <button className="task-card-main" aria-expanded={selected} aria-controls={selected ? detailsId : undefined} onClick={() => onSelect(task.taskId)} title={task.description}>
         <span className="task-card-top">
-          <span className="task-kind"><TerminalIcon /></span>
+          <span className="task-kind" title={selected ? "已选中任务" : undefined}>{selected ? <CheckIcon /> : <TerminalIcon />}</span>
           <span className="task-status"><span className="task-status-dot" />{taskStatus(task)}</span>
         </span>
         <span className="task-name">{task.description}</span>

@@ -950,12 +950,12 @@ main {
   overflow: hidden; border: 1px solid color-mix(in srgb, var(--task-tone) 25%, var(--border)); border-radius: 12px;
   background: color-mix(in srgb, var(--task-tone) 5%, var(--bg));
 }
-.task-item.completed, .task-details-panel.completed { --task-tone: var(--task-green); }
-.task-item.failed, .task-details-panel.failed { --task-tone: var(--task-red); }
-.task-item.stopped, .task-details-panel.stopped { --task-tone: var(--task-amber); }
-.task-item { position: relative; min-width: 0; box-shadow: inset 0 3px color-mix(in srgb, var(--task-tone) 75%, transparent); transition: background 0.15s, border-color 0.15s; }
-.task-item:hover { border-color: color-mix(in srgb, var(--task-tone) 45%, var(--border)); background: color-mix(in srgb, var(--task-tone) 8%, var(--bg)); }
-.task-item.selected { border-color: color-mix(in srgb, var(--task-tone) 65%, var(--border)); background: color-mix(in srgb, var(--task-tone) 9%, var(--bg)); }
+.task-item.selected.completed, .task-details-panel.completed { --task-tone: var(--task-green); }
+.task-item.selected.failed, .task-details-panel.failed { --task-tone: var(--task-red); }
+.task-item.selected.stopped, .task-details-panel.stopped { --task-tone: var(--task-amber); }
+.task-item { --task-tone: var(--muted); position: relative; min-width: 0; border-color: var(--border); background: var(--bg); transition: background 0.15s, border-color 0.15s; }
+.task-item:hover { border-color: color-mix(in srgb, var(--muted) 35%, var(--border)); background: var(--panel); }
+.task-item.selected { --task-tone: var(--task-blue); border-color: var(--task-tone); background: color-mix(in srgb, var(--task-tone) 10%, var(--bg)); box-shadow: inset 0 3px var(--task-tone); }
 .task-card-main { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 10px; border: none; border-radius: 0; background: none; text-align: left; }
 .task-card-main:hover { background: none; }
 .task-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -964,7 +964,10 @@ main {
 .task-name { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 13px; font-weight: 550; line-height: 1.5; overflow-wrap: anywhere; }
 .task-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 5px; border-top: 1px solid color-mix(in srgb, var(--task-tone) 18%, var(--border)); color: var(--muted); font-size: 11px; }
 .task-card-action { display: inline-flex; align-items: center; gap: 3px; color: var(--task-tone); }
-.task-status { display: inline-flex; align-items: center; gap: 5px; padding: 2px 6px; border-radius: 5px; background: color-mix(in srgb, var(--task-tone) 10%, var(--bg)); color: var(--task-tone); }
+.task-status { --task-status-tone: var(--task-blue); display: inline-flex; align-items: center; gap: 5px; padding: 2px 6px; border-radius: 5px; background: color-mix(in srgb, var(--task-status-tone) 10%, var(--bg)); color: var(--task-status-tone); }
+.task-item.completed .task-status { --task-status-tone: var(--task-green); }
+.task-item.failed .task-status { --task-status-tone: var(--task-red); }
+.task-item.stopped .task-status { --task-status-tone: var(--task-amber); }
 .task-status-dot { flex: none; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .task-time { flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .task-chevron { flex: none; transition: transform 0.15s; }
@@ -973,7 +976,8 @@ main {
   position: absolute; top: 10px; right: 10px; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0;
   border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--muted);
 }
-.task-stop:hover { background: color-mix(in srgb, var(--err) 20%, transparent); color: var(--err); }
+.task-stop:hover { background: var(--panel); color: var(--text); }
+.task-item.selected .task-stop:hover { background: color-mix(in srgb, var(--task-red) 20%, var(--bg)); color: var(--task-red); }
 .task-details-panel { margin-top: 18px; background: var(--bg); }
 .task-details-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid color-mix(in srgb, var(--task-tone) 20%, var(--border)); background: color-mix(in srgb, var(--task-tone) 7%, var(--bg)); }
 .task-details-label { color: var(--task-tone); font-size: 11px; }
