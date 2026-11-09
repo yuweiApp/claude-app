@@ -115,6 +115,30 @@ export async function submitMcpAuthCallback(name: string, url: string): Promise<
   return view(flow);
 }
 
+/**
+ * 断开：清除 Claude Code 存的这个服务器的令牌（mcp_clear_auth 控制请求，类型定义里同样没写），再重连一次看结果。
+ * 令牌同一个配置目录下的会话共用，所以对所有会话生效。返回清除后的状态：不是靠登录连上的服务器（地址不要认证、令牌写在请求头里）仍是 connected
+ */
+export async function clearMcpAuth(name: string, cwd: string): Promise<string> {
+  cancelMcpAuth(name);
+  const q = inspectQuery(cwd);
+  try {
+    const servers = await settledMcpStatus(q, await q.mcpServerStatus());
+    if (!servers.some((s) => s.name === name)) throw new McpAuthError(`找不到 MCP 服务器「${name}」`);
+    const clear = (q as unknown as { mcpClearAuth?: (serverName: string) => Promise<unknown> }).mcpClearAuth;
+    if (typeof clear !== "function") throw new McpAuthError("当前版本的 Claude Agent SDK 不支持清除 MCP 登录");
+    await clear.call(q, name).catch((err: Error) => {
+      throw new McpAuthError(err.message);
+    });
+    await q.reconnectMcpServer(name).catch(() => {});
+    const after = await settledMcpStatus(q, await q.mcpServerStatus());
+    return after.find((s) => s.name === name)?.status ?? "pending";
+  } finally {
+    q.close();
+    clearCapabilitiesCache();
+  }
+}
+
 /** 放弃正在进行的登录 */
 export function cancelMcpAuth(name: string): void {
   const flow = flows.get(name);

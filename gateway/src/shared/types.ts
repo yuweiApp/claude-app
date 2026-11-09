@@ -81,8 +81,11 @@ export interface BackgroundTask {
 export interface Capabilities {
   /** managed：导入的，可以删除；enabled：false 时新会话里模型看不到、也调用不了；builtin：Claude Code 自带的 */
   skills: { name: string; description: string; managed: boolean; enabled: boolean; builtin: boolean }[];
-  /** builtin：Claude Code 自带的（source 是 名字@builtin） */
-  plugins: { name: string; source?: string; version?: string; managed: boolean; builtin: boolean }[];
+  /**
+   * builtin：Claude Code 自带的（source 是 名字@builtin）；description、author 取自插件的 .claude-plugin/plugin.json。
+   * 插件带的技能叫「插件名:技能名」，带的 MCP 服务器叫「plugin:插件名:服务器名」
+   */
+  plugins: { name: string; source?: string; version?: string; description?: string; author?: string; managed: boolean; builtin: boolean }[];
   mcpServers: McpServerInfo[];
 }
 

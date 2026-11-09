@@ -281,6 +281,11 @@ main {
 .settings-row-open:hover { background: none; }
 .settings-row-open:hover .settings-row-name { color: var(--accent); }
 .settings-row-sub.wrap { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.5; white-space: normal; }
+.settings-back { align-self: flex-start; margin: -6px 0 14px; padding: 4px 0; border: none; background: none; color: var(--muted); font-size: 13px; }
+.settings-back:hover, .settings-back:hover:not(:disabled) { background: none; color: var(--text); }
+.plugin-head { display: flex; align-items: center; gap: 12px; }
+.plugin-description { margin: 14px 0 18px; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.plugin-head + .settings-tabs { margin-top: 18px; }
 .skill-dialog { width: 720px; max-height: 85vh; }
 .skill-dialog-head { display: flex; align-items: center; gap: 12px; }
 .skill-dialog-path { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }

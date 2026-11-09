@@ -10,7 +10,7 @@ import { clearCapabilitiesCache, listCapabilities } from "../../agent/capabiliti
 import { ExtensionError, importPlugin, importSkill, readSkill, removePlugin, removeSkill, setSkillEnabled } from "../../agent/extensions.js";
 import { removeMcpServer, saveMcpServer, setMcpServerEnabled } from "../../agent/mcp-config.js";
 import { addConnector, ConnectorError, listConnectors } from "../../agent/connectors.js";
-import { cancelMcpAuth, getMcpAuth, McpAuthError, startMcpAuth, submitMcpAuthCallback } from "../../agent/mcp-auth.js";
+import { cancelMcpAuth, clearMcpAuth, getMcpAuth, McpAuthError, startMcpAuth, submitMcpAuthCallback } from "../../agent/mcp-auth.js";
 import { config } from "../../config.js";
 
 const permissionModes = ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"];
@@ -138,6 +138,14 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
   app.delete<{ Params: { name: string } }>("/mcp-servers/:name/auth", async (req) => {
     cancelMcpAuth(req.params.name);
     return { ok: true };
+  });
+
+  /** 断开：清除保存的登录令牌，返回清除后的状态；开着的会话重连这个服务器 */
+  app.post<{ Params: { name: string }; Body: { cwd?: string } | undefined }>("/mcp-servers/:name/logout", async (req): Promise<{ status: string }> => {
+    const { name } = req.params;
+    const status = await mcpAuth(() => clearMcpAuth(name, req.body?.cwd || config.workspaceDir));
+    sessions.reconnectMcpServer(name);
+    return { status };
   });
 
   app.post<{
@@ -330,8 +338,8 @@ function activeOr404(sessions: SessionManager, id: string) {
   return session;
 }
 
-/** 登录失败（服务器不支持注册客户端、回调网址不对等）是 400，带着 Claude Code 给的原因 */
-async function mcpAuth(run: () => Promise<McpAuthState>): Promise<McpAuthState> {
+/** 登录、断开失败（服务器不支持注册客户端、回调网址不对等）是 400，带着 Claude Code 给的原因 */
+async function mcpAuth<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (err) {

@@ -109,6 +109,20 @@ function subdirectories(root: string): string[] {
 export const importedSkills = () => subdirectories(skillsDir());
 export const importedPluginNames = () => subdirectories(pluginsDir());
 
+/** 插件 .claude-plugin/plugin.json 里的描述和作者（author 可以是字符串或 { name }）；读不到时为空 */
+export function pluginManifest(dir: string): { description?: string; author?: string } {
+  try {
+    const manifest = JSON.parse(readFileSync(path.join(dir, ".claude-plugin", "plugin.json"), "utf8")) as { description?: unknown; author?: unknown };
+    const author = typeof manifest.author === "string" ? manifest.author : (manifest.author as { name?: unknown } | undefined)?.name;
+    return {
+      ...(typeof manifest.description === "string" && manifest.description ? { description: manifest.description } : {}),
+      ...(typeof author === "string" && author ? { author } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
 /** 传给 query 的 plugins */
 export const importedPlugins = () => importedPluginNames().map((name) => ({ type: "local" as const, path: path.join(pluginsDir(), name) }));
 

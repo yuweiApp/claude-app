@@ -2,7 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { query, type McpServerStatus, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { agentEnv } from "../config.js";
 import type { Capabilities, McpServerInfo } from "../shared/types.js";
-import { disabledSkills, importedPluginNames, importedPlugins, importedSkills } from "./extensions.js";
+import { disabledSkills, importedPluginNames, importedPlugins, importedSkills, pluginManifest } from "./extensions.js";
 import { enabledMcpServers, readMcpServers, type McpConfig } from "./mcp-config.js";
 import { noInput } from "./models.js";
 
@@ -98,10 +98,11 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
         enabled: !disabledSkills().includes(name),
         builtin: builtin === true,
       })),
-      plugins: plugins.map(({ name, source, version }) => ({
+      plugins: plugins.map(({ name, source, version, path }) => ({
         name,
         source,
         version,
+        ...pluginManifest(path),
         managed: importedPluginNames().includes(name),
         builtin: source?.endsWith("@builtin") === true,
       })),

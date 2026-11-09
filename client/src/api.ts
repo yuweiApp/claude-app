@@ -153,6 +153,8 @@ export const api = {
   mcpAuth: (name: string) => request<McpAuthState>("GET", `/mcp-servers/${encodeURIComponent(name)}/auth`),
   submitMcpAuthCallback: (name: string, url: string) => request<McpAuthState>("POST", `/mcp-servers/${encodeURIComponent(name)}/auth/callback`, { url }),
   cancelMcpAuth: (name: string) => request("DELETE", `/mcp-servers/${encodeURIComponent(name)}/auth`),
+  /** 断开：清除保存的登录令牌，返回清除后的状态 */
+  logoutMcpServer: (name: string) => request<{ status: string }>("POST", `/mcp-servers/${encodeURIComponent(name)}/logout`, {}).then((r) => r.status),
   /** 会话的后台任务 */
   tasks: (id: string) => request<{ tasks: BackgroundTask[] }>("GET", `/sessions/${id}/tasks`).then((r) => r.tasks),
   /** 后台任务输出的最后一段（64 KB） */

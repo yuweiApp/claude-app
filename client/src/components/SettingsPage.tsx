@@ -35,6 +35,8 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
   /** 目录的「刷新」：换个 key 让目录重新加载 */
   const [directoryKey, setDirectoryKey] = useState(0);
   const [viewing, setViewing] = useState<Capabilities["skills"][number] | null>(null);
+  /** 插件页里打开详情的插件名 */
+  const [openPlugin, setOpenPlugin] = useState<string | null>(null);
 
   const load = (refresh: boolean) => {
     setLoading(true);
@@ -54,6 +56,7 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
     setSearch("");
     setOrigin("mine");
     setConnectorTab("added");
+    setOpenPlugin(null);
   }, [section]);
   useEffect(() => setSearch(""), [origin, connectorTab]);
 
@@ -65,6 +68,7 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
   const count = (items: { builtin: boolean }[] | undefined, builtin: boolean) => items?.filter((i) => i.builtin === builtin).length ?? 0;
   const servers = (data?.mcpServers ?? []).filter((m) => match(m.name, m.target, m.connector?.title));
   const browsing = section === "mcp" && connectorTab === "directory";
+  const detail = section === "plugins" ? (data?.plugins.find((p) => p.name === openPlugin) ?? null) : null;
   const label = SECTIONS.find((s) => s.key === section)!.label;
 
   return (
@@ -90,7 +94,7 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
                 `连接器（MCP 服务器）把 Figma、Notion、GitHub 等外部服务接进对话，提供工具和数据。已添加 ${data?.mcpServers.length ?? 0} 个，已启用 ${data?.mcpServers.filter((m) => m.enabled).length ?? 0} 个。`}
             </p>
           </div>
-          <input className="settings-search" value={search} placeholder={browsing ? "在 MCP 注册表里搜索" : `搜索${label}`} onChange={(e) => setSearch(e.target.value)} />
+          <input className="settings-search" hidden={detail !== null} value={search} placeholder={browsing ? "在 MCP 注册表里搜索" : `搜索${label}`} onChange={(e) => setSearch(e.target.value)} />
           <button
             disabled={loading}
             onClick={() => {
@@ -104,7 +108,7 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
           {section === "skills" && <ImportButton kind="skills" onImported={() => load(false)} onError={setError} />}
           {section === "mcp" && <AddServerButton onAdded={() => load(false)} />}
         </header>
-        {(section === "plugins" || section === "skills") && (
+        {(section === "plugins" || section === "skills") && !detail && (
           <div className="settings-tabs" role="tablist">
             {(["mine", "builtin"] as const).map((o) => (
               <button key={o} role="tab" aria-selected={o === origin} className={`settings-tab${o === origin ? " active" : ""}`} onClick={() => setOrigin(o)}>
@@ -126,13 +130,31 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
           </div>
         )}
         {error && <div className="settings-error">{error}</div>}
-        {section === "plugins" && (
+        {detail && data && (
+          <PluginDetail
+            plugin={detail}
+            data={data}
+            onBack={() => setOpenPlugin(null)}
+            onViewSkill={setViewing}
+            onChanged={() => load(false)}
+            onDeleted={() => {
+              setOpenPlugin(null);
+              load(false);
+            }}
+            onError={setError}
+          />
+        )}
+        {section === "plugins" && !detail && (
           <List empty={data ? (keyword ? "没有匹配的插件" : origin === "mine" ? "还没有个人插件，点右上角导入" : "没有内置插件") : "加载中…"}>
-            {plugins.map((p) => (
-              <Row key={p.name} name={p.name} sub={[p.source, p.version].filter(Boolean).join(" · ")}>
-                {p.managed && <DeleteButton kind="plugins" name={p.name} onDeleted={() => load(false)} onError={setError} />}
-              </Row>
-            ))}
+            {plugins.map((p) => {
+              const parts = pluginParts(p.name, data!);
+              const meta = [`${parts.skills.length} 个技能`, `${parts.servers.length} 个连接器`, p.version && `版本 ${p.version}`].filter(Boolean).join(" · ");
+              return (
+                <Row key={p.name} name={p.name} sub={p.description ?? p.source} wrap meta={meta} onOpen={() => setOpenPlugin(p.name)}>
+                  {p.managed && <DeleteButton kind="plugins" name={p.name} onDeleted={() => load(false)} onError={setError} />}
+                </Row>
+              );
+            })}
           </List>
         )}
         {section === "skills" && (
@@ -162,7 +184,90 @@ function List({ empty, children }: { empty: string; children: ReactNode[] }) {
   return children.length ? <div className="settings-list">{children}</div> : <div className="settings-empty">{empty}</div>;
 }
 
-function Row({ name, sub, wrap, tag, onOpen, children }: { name: string; sub?: string; wrap?: boolean; tag?: string; onOpen?: () => void; children?: ReactNode }) {
+/** 插件带的技能（插件名:技能名）和 MCP 服务器（plugin:插件名:服务器名） */
+function pluginParts(name: string, data: Capabilities) {
+  return {
+    skills: data.skills.filter((s) => s.name.startsWith(`${name}:`)),
+    servers: data.mcpServers.filter((m) => m.name.startsWith(`plugin:${name}:`)),
+  };
+}
+
+/** 插件详情（同 Claude 桌面版）：描述、作者、版本，下面分「技能」「连接器」两个标签 */
+function PluginDetail({
+  plugin,
+  data,
+  onBack,
+  onViewSkill,
+  onChanged,
+  onDeleted,
+  onError,
+}: {
+  plugin: Capabilities["plugins"][number];
+  data: Capabilities;
+  onBack: () => void;
+  onViewSkill: (skill: Capabilities["skills"][number]) => void;
+  onChanged: () => void;
+  onDeleted: () => void;
+  onError: (message: string) => void;
+}) {
+  const { skills, servers } = pluginParts(plugin.name, data);
+  const [tab, setTab] = useState<"skills" | "connectors">(skills.length === 0 && servers.length > 0 ? "connectors" : "skills");
+  const meta = [plugin.author && `作者：${plugin.author}`, plugin.version && `版本 ${plugin.version}`, plugin.source].filter(Boolean).join(" · ");
+
+  return (
+    <>
+      <button className="settings-back" onClick={onBack}>
+        ← 全部插件
+      </button>
+      <div className="plugin-head">
+        <Avatar name={plugin.name} />
+        <div className="settings-row-main">
+          <div className="settings-row-name">
+            {plugin.name}
+            {plugin.builtin && <span className="settings-tag">内置</span>}
+          </div>
+          {meta && <div className="settings-row-sub">{meta}</div>}
+        </div>
+        {plugin.managed && <DeleteButton kind="plugins" name={plugin.name} onDeleted={onDeleted} onError={onError} />}
+      </div>
+      {plugin.description && <p className="plugin-description">{plugin.description}</p>}
+      <div className="settings-tabs" role="tablist">
+        {(["skills", "connectors"] as const).map((t) => (
+          <button key={t} role="tab" aria-selected={t === tab} className={`settings-tab${t === tab ? " active" : ""}`} onClick={() => setTab(t)}>
+            {t === "skills" ? "技能" : "连接器"}
+            <span className="settings-tab-count">{t === "skills" ? skills.length : servers.length}</span>
+          </button>
+        ))}
+      </div>
+      {tab === "skills" && (
+        <List empty="这个插件没有技能">
+          {skills.map((s) => (
+            // 都是这个插件的，名称去掉「插件名:」，描述去掉 Claude Code 加的「(插件名) 」
+            <Row
+              key={s.name}
+              name={s.name.slice(plugin.name.length + 1)}
+              sub={s.description.replace(`(${plugin.name}) `, "")}
+              wrap
+              tag={s.enabled ? undefined : "已停用"}
+              onOpen={() => onViewSkill(s)}
+            >
+              <SkillMenu skill={s} onChanged={onChanged} onError={onError} />
+            </Row>
+          ))}
+        </List>
+      )}
+      {tab === "connectors" && (
+        <List empty="这个插件没有连接器">
+          {servers.map((server) => (
+            <ServerRow key={server.name} server={server} onChanged={onChanged} onError={onError} />
+          ))}
+        </List>
+      )}
+    </>
+  );
+}
+
+function Row({ name, sub, wrap, tag, meta, onOpen, children }: { name: string; sub?: string; wrap?: boolean; tag?: string; meta?: string; onOpen?: () => void; children?: ReactNode }) {
   const text = (
     <>
       <div className="settings-row-name">
@@ -170,6 +275,7 @@ function Row({ name, sub, wrap, tag, onOpen, children }: { name: string; sub?: s
         {tag && <span className="settings-tag">{tag}</span>}
       </div>
       {sub && <div className={`settings-row-sub${wrap ? " wrap" : ""}`} title={sub}>{sub}</div>}
+      {meta && <div className="settings-row-status">{meta}</div>}
     </>
   );
   return (
@@ -398,7 +504,23 @@ function ServerRow({ server, onChanged, onError }: { server: McpServerInfo; onCh
   const [toolsOpen, setToolsOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
+  const [loggingOut, setLoggingOut] = useState<"confirm" | "running" | null>(null);
   const run = (action: Promise<unknown>) => action.then(onChanged, (e: Error) => onError(e.message));
+  /** 远程服务器连上的可以断开（清除登录令牌）；不是靠登录连上的，清除后仍然连着，提示一下 */
+  const remote = server.type === "http" || server.type === "sse";
+  const logout = () => {
+    setLoggingOut("running");
+    api
+      .logoutMcpServer(server.name)
+      .then(
+        (status) => {
+          if (status === "connected") onError(`「${server.name}」没有保存的登录信息，清除后仍然连着`);
+          onChanged();
+        },
+        (e: Error) => onError(`断开失败：${e.message}`),
+      )
+      .finally(() => setLoggingOut(null));
+  };
 
   return (
     <div className="settings-row">
@@ -438,11 +560,16 @@ function ServerRow({ server, onChanged, onError }: { server: McpServerInfo; onCh
           </ul>
         )}
       </div>
-      {(server.managed || server.status === "needs-auth") && (
+      {(server.managed || server.status === "needs-auth" || (remote && server.status === "connected")) && (
         <div className="settings-row-actions">
           {server.status === "needs-auth" && (
             <button className="primary" onClick={() => setSigningIn(true)}>
               登录
+            </button>
+          )}
+          {remote && server.status === "connected" && (
+            <button disabled={loggingOut === "running"} onClick={() => setLoggingOut("confirm")}>
+              {loggingOut === "running" ? "断开中…" : "断开"}
             </button>
           )}
           {server.managed && (
@@ -471,6 +598,15 @@ function ServerRow({ server, onChanged, onError }: { server: McpServerInfo; onCh
             setConfirming(false);
             void run(api.deleteMcpServer(server.name));
           }}
+        />
+      )}
+      {loggingOut === "confirm" && (
+        <ConfirmDialog
+          title="断开连接器"
+          message={`将清除「${server.name}」保存的登录信息，所有会话都要重新登录才能用它，开着的会话会重连这个服务器。`}
+          confirmLabel="断开"
+          onCancel={() => setLoggingOut(null)}
+          onConfirm={logout}
         />
       )}
       {signingIn && (
