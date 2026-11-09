@@ -1,7 +1,7 @@
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { listModels } from "../../agent/models.js";
 import type { FastifyInstance } from "fastify";
-import type { ConnectorEntry, ConnectorInput, MarketPlugin, McpAuthState, McpServerInput } from "../../shared/types.js";
+import type { ConnectorEntry, ConnectorInput, MarketPluginPage, McpAuthState, McpServerInput } from "../../shared/types.js";
 import { AttachmentError } from "../../agent/attachments.js";
 import { BadRequestError, NotFoundError, type SessionManager } from "../../agent/session-manager.js";
 import type { EventHub } from "../../events/event-hub.js";
@@ -11,7 +11,7 @@ import { ExtensionError, importPlugin, importSkill, readSkill, removePlugin, rem
 import { removeMcpServer, saveMcpServer, setMcpServerEnabled } from "../../agent/mcp-config.js";
 import { addConnector, ConnectorError, listConnectors } from "../../agent/connectors.js";
 import { cancelMcpAuth, clearMcpAuth, getMcpAuth, McpAuthError, startMcpAuth, submitMcpAuthCallback } from "../../agent/mcp-auth.js";
-import { installMarketPlugin, listMarketPlugins, PluginMarketError, uninstallMarketPlugin, updateMarketPlugin } from "../../agent/plugin-market.js";
+import { installMarketPlugin, PluginMarketError, queryMarketPlugins, uninstallMarketPlugin, updateMarketPlugin } from "../../agent/plugin-market.js";
 import { config } from "../../config.js";
 
 const permissionModes = ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"];
@@ -79,10 +79,23 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     return { ok: true };
   });
 
-  /** 插件市场：config.yml 里配置的市场的插件；refresh=1 先更新市场 */
-  app.get<{ Querystring: { refresh?: string } }>("/plugin-market", async (req): Promise<{ plugins: MarketPlugin[] }> => {
-    return { plugins: await market(() => listMarketPlugins(req.query.refresh === "1")) };
-  });
+  /** 插件市场：config.yml 里配置的市场的插件，按搜索词、来源、分类筛过后的一页；refresh=1 先更新市场 */
+  app.get<{ Querystring: { refresh?: string; search?: string; marketplace?: string; category?: string; offset?: string; limit?: string } }>(
+    "/plugin-market",
+    async (req): Promise<MarketPluginPage> => {
+      const { refresh, search, marketplace, category, offset, limit } = req.query;
+      return market(() =>
+        queryMarketPlugins({
+          refresh: refresh === "1",
+          search,
+          marketplace,
+          category,
+          offset: offset ? Number(offset) || 0 : undefined,
+          limit: limit ? Number(limit) || undefined : undefined,
+        }),
+      );
+    },
+  );
 
   /** 安装、卸载、更新市场里的插件：id 是「插件名@市场名」。对新会话和子进程重启后的会话生效 */
   app.post<{ Body: { id: string } }>("/plugin-market/install", async (req) => {

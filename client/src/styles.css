@@ -266,6 +266,7 @@ main {
 .settings-row-sub { margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .settings-row-target { margin-top: 3px; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 .settings-row-status { margin-top: 3px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.settings-row-status a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .settings-tag { padding: 0 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; font-weight: 500; line-height: 18px; }
 .mcp-status.connected { color: var(--ok); }
 .mcp-status.failed { color: var(--err); }

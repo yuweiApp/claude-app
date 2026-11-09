@@ -79,9 +79,11 @@ connectors:
     - com.paypal.mcp/mcp
     - com.cloudflare.mcp/mcp
 
-# 插件市场（设置页「插件」→「插件市场」）：市场的 git 仓库地址，交给 Claude Code 自己克隆、安装（要有 git），见 docs/README.md「插件市场」。
-# 写完整的 https 地址：GitHub 的简写（owner/repo）Claude Code 会用 SSH 克隆，没配 SSH 密钥的电脑会失败。
-# Claude Code 另有内置的 anthropic-plugin-directory（三千多个，含合作伙伴的），不在这里列就不显示。
+# 插件市场（设置页「插件」→「插件市场」），交给 Claude Code 自己克隆、安装（要有 git），见 docs/README.md「插件市场」。
+# 每项是市场的 git 仓库地址，或 Claude Code 内置市场的名称。git 仓库写完整的 https 地址：GitHub 的简写（owner/repo）Claude Code 会用 SSH 克隆，没配 SSH 密钥的电脑会失败。
+# anthropic-plugin-directory 是 Claude Code 内置的插件目录（三千六百多个，多数是第三方仓库、未经审核），不用登录。
+# 同名插件只显示排在前面的市场的（已经装了的除外）。
 plugins:
   marketplaces:
     - https://github.com/anthropics/claude-plugins-official.git
+    - anthropic-plugin-directory

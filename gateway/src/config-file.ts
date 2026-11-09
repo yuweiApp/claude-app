@@ -25,5 +25,11 @@ export const desktopEnabled: boolean = configFile?.desktop?.enabled === true;
 export const connectorRegistry: string = (configFile?.connectors?.registry ?? "https://registry.modelcontextprotocol.io").replace(/\/+$/, "");
 export const featuredConnectors: string[] = configFile?.connectors?.featured ?? [];
 
-/** 插件市场（设置页「插件」→「插件市场」）：市场的 git 仓库地址（config.yml 的 plugins.marketplaces），见 agent/plugin-market.ts */
-export const pluginMarketplaces: string[] = configFile?.plugins?.marketplaces ?? ["https://github.com/anthropics/claude-plugins-official.git"];
+/**
+ * 插件市场（设置页「插件」→「插件市场」）：config.yml 的 plugins.marketplaces，git 仓库地址，
+ * 或 Claude Code 内置市场的名称（anthropic-plugin-directory），见 agent/plugin-market.ts
+ */
+export const pluginMarketplaces: string[] = configFile?.plugins?.marketplaces ?? [
+  "https://github.com/anthropics/claude-plugins-official.git",
+  "anthropic-plugin-directory",
+];

@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, MarketPlugin, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, MarketPlugin, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo };
+export type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -138,8 +138,18 @@ export const api = {
   /** 导入技能、插件：path 是网关机器上的文件夹 */
   importExtension: (kind: "skills" | "plugins", path: string) => request<{ name: string }>("POST", `/${kind}/import`, { path }),
   deleteExtension: (kind: "skills" | "plugins", name: string) => request("DELETE", `/${kind}/${encodeURIComponent(name)}`),
-  /** 插件市场里的插件；refresh 时网关先更新市场（git 拉取） */
-  pluginMarket: (refresh = false) => request<{ plugins: MarketPlugin[] }>("GET", `/plugin-market${refresh ? "?refresh=1" : ""}`).then((r) => r.plugins),
+  /** 插件市场里按搜索词、来源、分类筛过的一页，带总数和筛选的选项；refresh 时网关先更新市场 */
+  pluginMarket: (query: { refresh?: boolean; search?: string; marketplace?: string; category?: string; offset: number; limit: number }) => {
+    const params = new URLSearchParams({
+      offset: String(query.offset),
+      limit: String(query.limit),
+      ...(query.refresh ? { refresh: "1" } : {}),
+      ...(query.search ? { search: query.search } : {}),
+      ...(query.marketplace ? { marketplace: query.marketplace } : {}),
+      ...(query.category ? { category: query.category } : {}),
+    });
+    return request<MarketPluginPage>("GET", `/plugin-market?${params}`);
+  },
   /** 安装、卸载、更新市场里的插件：id 是「插件名@市场名」 */
   installPlugin: (id: string) => request("POST", "/plugin-market/install", { id }),
   uninstallPlugin: (id: string) => request("POST", "/plugin-market/uninstall", { id }),

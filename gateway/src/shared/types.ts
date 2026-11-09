@@ -136,7 +136,22 @@ export interface MarketPlugin {
   version?: string;
   /** 市场给的安装次数（只有一部分市场有） */
   installCount?: number;
+  /** 内置目录（anthropic-plugin-directory）里的审核情况：Anthropic 审核过、合作伙伴审核过；没有是未审核或市场不提供 */
+  review?: "anthropic" | "partner";
+  /** 插件代码所在的仓库（内置目录的插件大多在第三方仓库） */
+  repository?: string;
   installed: boolean;
+}
+
+/** GET /plugin-market 的一页：按搜索词、来源、分类筛过之后的一段 */
+export interface MarketPluginPage {
+  plugins: MarketPlugin[];
+  /** 筛过之后的总数 */
+  total: number;
+  /** 配置里的市场名称，按配置顺序（来源的选项） */
+  marketplaces: string[];
+  /** 当前来源里出现过的分类（分类的选项，不受搜索词和分类本身影响） */
+  categories: string[];
 }
 
 export interface ConnectorRef {

@@ -2,9 +2,9 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { agentEnv } from "../config.js";
+import { agentEnv, config } from "../config.js";
 import { pluginMarketplaces } from "../config-file.js";
-import type { MarketPlugin } from "../shared/types.js";
+import type { MarketPlugin, MarketPluginPage } from "../shared/types.js";
 import { clearCapabilitiesCache } from "./capabilities.js";
 import { importedPluginNames } from "./extensions.js";
 
@@ -94,12 +94,24 @@ const sameRepo = (a: string, b: string) => {
   return normalize(a) === normalize(b);
 };
 
-/** 配置里的市场没加过的先加（git 克隆）；返回配置里这些市场 */
+/** 配置里写的是地址（git 仓库）还是 Claude Code 内置市场的名称 */
+const isUrl = (source: string) => source.includes("://");
+
+/**
+ * Claude Code 内置的插件目录：不在 marketplace list 里，不用 add，列表、安装、更新照常用名称。
+ * 不用登录（没有任何凭据时也能列出、安装），数据由 Claude Code 从网上取，缓存在配置目录的 plugins/ 下
+ */
+const BUILTIN_DIRECTORY = "anthropic-plugin-directory";
+
+/** 配置里的 git 市场没加过的先加（git 克隆）；返回配置里这些市场，顺序同配置 */
 async function marketplaces(): Promise<Marketplace[]> {
   const list = async () => JSON.parse(await cli(["marketplace", "list", "--json"])) as Marketplace[];
   let known = await list();
-  const find = (source: string) => known.find((m) => (m.url && sameRepo(m.url, source)) || (m.repo && sameRepo(`https://github.com/${m.repo}`, source)));
-  const missing = pluginMarketplaces.filter((source) => !find(source));
+  const find = (source: string) =>
+    isUrl(source)
+      ? known.find((m) => (m.url && sameRepo(m.url, source)) || (m.repo && sameRepo(`https://github.com/${m.repo}`, source)))
+      : (known.find((m) => m.name === source) ?? { name: source, source: "builtin" });
+  const missing = pluginMarketplaces.filter((source) => isUrl(source) && !find(source));
   if (missing.length) {
     for (const source of missing) await cliJson(["marketplace", "add", source]);
     known = await list();
@@ -107,20 +119,62 @@ async function marketplaces(): Promise<Marketplace[]> {
   return pluginMarketplaces.flatMap((source) => find(source) ?? []);
 }
 
-/** marketplace.json 里命令行列表没给的字段：分类、作者、主页 */
+/** 命令行列表没给的字段：分类、作者、主页、审核情况等 */
 interface ManifestEntry {
   name: string;
   displayName?: string;
   category?: string;
   author?: { name?: string } | string;
   homepage?: string;
+  review?: "anthropic" | "partner";
 }
 
+/** git 市场：仓库里的 .claude-plugin/marketplace.json */
 function manifestEntries(location: string | undefined): Map<string, ManifestEntry> {
   if (!location) return new Map();
   try {
     const manifest = JSON.parse(readFileSync(path.join(location, ".claude-plugin", "marketplace.json"), "utf8")) as { plugins?: ManifestEntry[] };
     return new Map((manifest.plugins ?? []).map((p) => [p.name, p]));
+  } catch {
+    return new Map();
+  }
+}
+
+/** 内置目录在 plugins/plugin-directory-cache-v2.json 里的一项（只取用得到的字段） */
+interface DirectoryListing {
+  id: string;
+  name?: string;
+  publisher?: { name?: string };
+  links?: { documentation?: string };
+  checks?: { review?: { state?: string; by?: { type?: string } | null } };
+}
+
+/**
+ * 内置目录：命令行列表里只有插件名和简介，显示名称、发布者、文档链接、审核情况从 Claude Code 的缓存文件里补；
+ * 这是 Claude Code 内部的文件，格式变了或读不到就只显示命令行给的
+ */
+function directoryEntries(): Map<string, ManifestEntry> {
+  try {
+    const cache = JSON.parse(readFileSync(path.join(config.claudeConfigDir, "plugins", "plugin-directory-cache-v2.json"), "utf8")) as {
+      listings?: DirectoryListing[];
+      entryNames?: Record<string, string>;
+    };
+    const names = cache.entryNames ?? {};
+    const entries = new Map<string, ManifestEntry>();
+    for (const listing of cache.listings ?? []) {
+      const name = names[listing.id];
+      if (!name) continue;
+      const review = listing.checks?.review;
+      const by = review?.state === "done" ? review.by?.type : undefined;
+      entries.set(name, {
+        name,
+        ...(listing.name && listing.name !== name ? { displayName: listing.name } : {}),
+        ...(listing.publisher?.name ? { author: listing.publisher.name } : {}),
+        ...(listing.links?.documentation ? { homepage: listing.links.documentation } : {}),
+        ...(by === "anthropic" || by === "partner" ? { review: by } : {}),
+      });
+    }
+    return entries;
   } catch {
     return new Map();
   }
@@ -133,6 +187,14 @@ interface Available {
   marketplaceName: string;
   version?: string;
   installCount?: number;
+  source?: { source?: string; url?: string; repo?: string };
+}
+
+/** 插件代码所在的仓库：git 地址去掉 .git，GitHub 简写补成网址 */
+function repositoryOf(source: Available["source"]): string | undefined {
+  if (source?.url && /^https?:\/\//.test(source.url)) return source.url.replace(/\.git$/, "");
+  if (source?.repo) return `https://github.com/${source.repo}`;
+  return undefined;
 }
 
 let cache: { at: number; value: Promise<MarketPlugin[]> } | null = null;
@@ -142,13 +204,16 @@ async function load(refresh: boolean): Promise<MarketPlugin[]> {
   if (refresh) for (const m of markets) await cliJson(["marketplace", "update", m.name]).catch(() => undefined);
   const { available, installed } = JSON.parse(await cli(["list", "--available", "--json"])) as { available: Available[]; installed: { id: string }[] };
   const installedIds = new Set(installed.map((p) => p.id));
-  const extra = new Map(markets.map((m) => [m.name, manifestEntries(m.installLocation)]));
-  return available
+  // 内置目录的缓存文件在上面的 list 之后读，第一次时它刚取下来
+  const extra = new Map(markets.map((m) => [m.name, m.source === "builtin" ? directoryEntries() : manifestEntries(m.installLocation)]));
+  const order = markets.map((m) => m.name);
+  const plugins = available
     .filter((p) => extra.has(p.marketplaceName))
-    .map((p): MarketPlugin => {
+    .map((p, index) => {
       const more = extra.get(p.marketplaceName)?.get(p.name);
       const author = typeof more?.author === "string" ? more.author : more?.author?.name;
-      return {
+      const repository = repositoryOf(p.source);
+      const plugin: MarketPlugin = {
         id: p.pluginId,
         name: p.name,
         ...(more?.displayName ? { title: more.displayName } : {}),
@@ -159,19 +224,70 @@ async function load(refresh: boolean): Promise<MarketPlugin[]> {
         ...(more?.homepage ? { homepage: more.homepage } : {}),
         ...(p.version ? { version: p.version } : {}),
         ...(p.installCount !== undefined ? { installCount: p.installCount } : {}),
+        ...(more?.review ? { review: more.review } : {}),
+        ...(repository ? { repository } : {}),
         installed: installedIds.has(p.pluginId),
       };
-    })
-    .sort((a, b) => (b.installCount ?? 0) - (a.installCount ?? 0) || a.name.localeCompare(b.name));
+      return { plugin, index };
+    });
+  // 同名插件（官方市场的大多也在内置目录里）只留一个：已经装了的那个，都没装用配置里排在前面的市场的。两个同名插件不能同时装（技能、MCP 服务器名称冲突）
+  const rank = ({ plugin }: (typeof plugins)[number]) => (plugin.installed ? -1 : order.indexOf(plugin.marketplace));
+  const byName = new Map<string, (typeof plugins)[number]>();
+  for (const entry of plugins) {
+    const kept = byName.get(entry.plugin.name);
+    if (!kept || rank(entry) < rank(kept)) byName.set(entry.plugin.name, entry);
+  }
+  // 按配置里市场的顺序；同一个市场里有安装次数的按次数，没有的（内置目录）保持 Claude Code 给的顺序
+  return [...byName.values()]
+    .sort(
+      (a, b) =>
+        order.indexOf(a.plugin.marketplace) - order.indexOf(b.plugin.marketplace) ||
+        (b.plugin.installCount ?? 0) - (a.plugin.installCount ?? 0) ||
+        a.index - b.index,
+    )
+    .map(({ plugin }) => plugin);
 }
 
-/** 市场里的插件，按安装次数排序；缓存 10 分钟，refresh 时先更新市场（git 拉取） */
-export function listMarketPlugins(refresh = false): Promise<MarketPlugin[]> {
+/** 市场里的插件（同名的只留一个），按市场、安装次数排序；缓存 10 分钟，refresh 时先更新市场 */
+function listMarketPlugins(refresh: boolean): Promise<MarketPlugin[]> {
   if (!refresh && cache && Date.now() - cache.at < LIST_TTL_MS) return cache.value;
   const value = load(refresh);
   cache = { at: Date.now(), value };
   value.catch(() => cache?.value === value && (cache = null));
   return value;
+}
+
+export interface MarketQuery {
+  refresh?: boolean;
+  /** 搜索词：名称、显示名称、简介、分类、作者里包含（不分大小写） */
+  search?: string;
+  /** 来源市场名称，空是全部 */
+  marketplace?: string;
+  category?: string;
+  offset?: number;
+  limit?: number;
+}
+
+const MAX_PAGE = 100;
+
+/** 一页插件：完整列表在网关里缓存，按条件筛过再取 offset 起的 limit 条，带总数和筛选的选项 */
+export async function queryMarketPlugins(query: MarketQuery): Promise<MarketPluginPage> {
+  const all = await listMarketPlugins(query.refresh === true);
+  const inMarket = query.marketplace ? all.filter((p) => p.marketplace === query.marketplace) : all;
+  const keyword = query.search?.trim().toLowerCase() ?? "";
+  const matched = inMarket.filter(
+    (p) =>
+      (!query.category || p.category === query.category) &&
+      (!keyword || [p.name, p.title, p.description, p.category, p.author].join(" ").toLowerCase().includes(keyword)),
+  );
+  const offset = Math.max(0, Math.floor(query.offset ?? 0));
+  const limit = Math.min(MAX_PAGE, Math.max(1, Math.floor(query.limit ?? 20)));
+  return {
+    plugins: matched.slice(offset, offset + limit),
+    total: matched.length,
+    marketplaces: [...new Set(all.map((p) => p.marketplace))],
+    categories: [...new Set(inMarket.flatMap((p) => p.category ?? []))].sort(),
+  };
 }
 
 /** 装上、卸载、更新之后，列表和能力列表都要重新读 */

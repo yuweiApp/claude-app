@@ -60,8 +60,10 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
 - 导入技能和插件：技能文件夹要有 `SKILL.md`，复制到 `$CLAUDE_CONFIG_DIR/skills/<名称>/`，Claude Code 自己发现；插件文件夹要有 `.claude-plugin/plugin.json`，复制到 `$CLAUDE_CONFIG_DIR/gateway-plugins/<名称>/`，通过 `options.plugins` 加载，它的技能叫 `插件名:技能名`。桌面版用系统对话框选文件夹，网页用 `GET /folders` 浏览。
 - 插件详情：设置页「插件」点一个插件进详情（同 Claude 桌面版），显示 `plugin.json` 里的描述和作者（`GET /capabilities` 按 SDK 返回的插件 `path` 读），下面分「技能」「连接器」两个标签。插件和它带的东西不另外记对应关系，按名称认：技能是 `插件名:技能名`，MCP 服务器是 `plugin:插件名:服务器名`。技能的启停、查看和连接器的登录、查看工具和「技能」「连接器」页里的一样。
 - 插件市场（`gateway/src/agent/plugin-market.ts`、`client/src/components/PluginDirectory.tsx`）：设置页「插件」第三个标签「插件市场」。整个交给 SDK 自带的 Claude Code 命令行做（`claude plugin …`，`CLAUDE_CONFIG_DIR` 是网关的配置目录，可执行文件和 SDK 一样按平台包名 `@anthropic-ai/claude-agent-sdk-<平台>-<架构>` 找），网关不自己解析插件来源、不自己拉代码。
-  - 市场是一个 git 仓库，`.claude-plugin/marketplace.json` 列出插件。地址在 `config.yml` 的 `plugins.marketplaces`，默认 Anthropic 官方的 `claude-plugins-official`（三百多个）；第一次打开目录时没加过的先 `marketplace add`（克隆到 `plugins/marketplaces/` 下，记进 `settings.json` 的 `extraKnownMarketplaces`）。要写完整的 https 地址：`owner/repo` 简写 Claude Code 用 SSH 克隆，没配 SSH 密钥就失败。
-  - 列表用 `plugin list --available --json`（有安装次数），只留配置里的市场，再从 `marketplace.json` 补分类、作者、主页；按安装次数排序，缓存 10 分钟，设置页「刷新」先 `marketplace update`（git 拉取）。一次全部返回，搜索、分类在网页里筛，分页显示（每页 20 条，`client/src/components/Pager.tsx`）。Claude Code 还内置一个 `anthropic-plugin-directory`（三千多个，含合作伙伴的），不在配置里就不显示。
+  - 市场在 `config.yml` 的 `plugins.marketplaces`，每项是 git 仓库地址或 Claude Code 内置市场的名称，默认两个：Anthropic 官方的 `claude-plugins-official`（三百多个）和 Claude Code 内置的 `anthropic-plugin-directory`（三千六百多个）。
+    - git 市场：`.claude-plugin/marketplace.json` 列出插件，第一次打开目录时没加过的先 `marketplace add`（克隆到 `plugins/marketplaces/` 下，记进 `settings.json` 的 `extraKnownMarketplaces`）。要写完整的 https 地址：`owner/repo` 简写 Claude Code 用 SSH 克隆，没配 SSH 密钥就失败。
+    - 内置目录：不在 `marketplace list` 里、不用 `add`，列表、安装、更新照常用名称；数据由 Claude Code 从网上取，缓存在配置目录的 `plugins/plugin-directory-cache-v2.json`。不需要 Claude 订阅或 API key：实测没有任何凭据时也能列出、安装，接 OpenAI 中转的会话照常加载装上的插件。插件代码大多在第三方 GitHub 仓库，装的时候要能访问 GitHub；四百多个经过审核（Anthropic 或合作伙伴），其余未审核。
+  - 列表用 `plugin list --available --json`，只留配置里的市场。git 市场从 `marketplace.json` 补分类、作者、主页，有安装次数；内置目录从上面的缓存文件补显示名称、发布者、文档链接、审核情况（Claude Code 内部的文件，读不到就只显示命令行给的），没有安装次数和分类。两个市场有两百多个同名插件，同名的只留一个（已经装了的那个，都没装用配置里排在前面的市场的），两个同名插件不能同时装。按配置里市场的顺序排，同一个市场里有安装次数的按次数，内置目录保持 Claude Code 给的顺序。完整列表在网关里缓存 10 分钟（Claude Code 一次给出全部，取一次要几秒），设置页「刷新」先 `marketplace update`（git 拉取，内置目录重新取）。接口按搜索词、来源、分类筛过后只返回一页（`offset`、`limit`，最多 100 条），带总数、来源和分类的选项；网页每页 20 条（`client/src/components/Pager.tsx`），翻页、换条件时再取，搜索词停 300ms 再查。每项显示来源市场、审核情况和代码仓库链接。
   - 安装、卸载、更新是 `plugin install / uninstall / update <插件名@市场名> --json`（不加 `-y`：要执行市场声明的命令的插件会失败并报原因）。插件按来源（市场仓库里的目录、别的 git 仓库或其中的子目录）拉到 `plugins/cache/` 下，记进 `settings.json` 的 `enabledPlugins`，会话按 `settingSources` 的 `user` 加载，对新会话和子进程重启后的会话生效。插件来源是 git 仓库的要有 git（Windows 上 Claude Code 本来就要 Git for Windows）。
   - 能力列表里插件的 source 是 `插件名@市场名` 的算从市场装的（`marketplace` 字段），列表和详情里「删除」换成「卸载」，详情多一个「检查更新」，显示 Claude Code 的说明。已经手动导入了同名插件的不让装（两个同名插件的技能、MCP 服务器名称冲突），目录里显示「已导入」。
 - 停用技能：停用的名称存在 `$CLAUDE_CONFIG_DIR/gateway-disabled-skills.json`。有停用的技能时，网关把其余技能作为 `options.skills` 白名单传给 SDK，模型看不到停用的技能，调 Skill 工具也会被拒绝；这个白名单管不到用户自己输入的 `/技能名`，所以网关在新建和发送时再拦一次，返回 400。白名单在拉起 claude 进程时确定，已经活跃的会话要等进程重启才更新，`/技能名` 的拦截立即生效。内置技能只能停用；删除只针对导入的技能，是删文件，SDK 没有对应接口。
@@ -234,7 +236,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | GET | `/capabilities?cwd=&refresh=` | 工作目录下可用的技能、插件和 MCP 服务器状态（临时 query 的 `reloadSkills()`、`reloadPlugins()`，不调模型接口，缓存 1 分钟，`refresh=1` 不用缓存） |
 | GET | `/skills/:name` | 技能的 `SKILL.md`（导入的、项目里的、导入插件里的 `插件名:技能名`）；内置技能没有文件，返回 404 |
 | POST | `/skills/import`、`/plugins/import` | 导入：`{ path }` 是网关机器上的文件夹，复制到配置目录，已有同名的不覆盖 |
-| GET | `/plugin-market?refresh=` | 插件市场里的插件（`MarketPlugin[]`），按安装次数排序，缓存 10 分钟；`refresh=1` 先更新市场 |
+| GET | `/plugin-market?search=&marketplace=&category=&offset=&limit=&refresh=` | 插件市场里筛过的一页（`MarketPluginPage`：`plugins`、`total`、`marketplaces`、`categories`），同名的只留一个，按市场、安装次数排序，完整列表缓存 10 分钟；`refresh=1` 先更新市场 |
 | POST | `/plugin-market/install`、`/uninstall`、`/update` | `{ id }`（插件名@市场名），交给 Claude Code 安装、卸载、更新；更新返回 `{ message }` |
 | PATCH | `/skills/:name` | 启用、停用技能：`{ enabled }` |
 | DELETE | `/skills/:name`、`/plugins/:name` | 删除导入的技能、插件和它们的文件 |
