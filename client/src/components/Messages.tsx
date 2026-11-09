@@ -394,6 +394,10 @@ function CompactLine({ item }: { item: CompactItem }) {
   }
   return (
     <div className="model-line compact-line">
+      {/* 图标同 codex-app-server 的「压缩会话」（icons/compact.svg）：两条竖线之间夹着几条横线 */}
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M3.5 8h9M3.5 4.5h9M3.5 11.5h9M2 2v12M14 2v12" />
+      </svg>
       <span>{item.status === "failed" ? "压缩上下文未完成" : "上下文已压缩"}</span>
     </div>
   );
