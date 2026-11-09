@@ -373,8 +373,13 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
     const switched = local ? /^Set model to (\S+)/.exec(local)?.[1] : undefined;
     if (switched && !parent) {
       // 回放的、已经从历史推出来的切换（换到的就是现在的模型）不再显示
-      if (view.shownModel !== switched) pushItem(view, null, { kind: "model", uuid, from: view.shownModel ?? "", to: switched });
-      else view.seen = new Set(view.seen).add(uuid);
+      // 空闲时换的模型，Claude Code 等下一条消息开始处理时才发这条，排在那条用户消息后面：
+      // 这一轮还没有回复时放到这一轮开头前面，和历史里推出来的位置一致；这一轮进行中换的才接在最后
+      if (view.shownModel !== switched) {
+        const item: Item = { kind: "model", uuid, from: view.shownModel ?? "", to: switched };
+        if (turnHasReply(view)) pushItem(view, null, item);
+        else insertBeforeTurn(view, item);
+      } else view.seen = new Set(view.seen).add(uuid);
       view.shownModel = switched;
       return;
     }
@@ -509,6 +514,12 @@ function resultText(content: unknown): string {
 }
 
 /** 插到主线程当前这一轮的开头（最后一条用户消息或后台任务通知）前面 */
+/** 最近一轮（最后一条用户消息或后台任务通知之后）是不是已经有了主线程的回复；还没有任何一轮时算有 */
+function turnHasReply(view: SessionView): boolean {
+  const start = view.items.findLastIndex((i) => i.kind === "user" || i.kind === "task");
+  return start < 0 || view.items.slice(start + 1).some((i) => i.kind === "assistant");
+}
+
 function insertBeforeTurn(view: SessionView, item: Item): void {
   if (view.seen.has(item.uuid)) return;
   view.seen = new Set(view.seen).add(item.uuid);
