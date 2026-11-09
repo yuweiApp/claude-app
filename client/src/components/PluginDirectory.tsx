@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type MarketPlugin, type MarketPluginPage } from "../api";
 import { Avatar } from "./CapabilityPicker";
+import { DirectoryLoading } from "./DirectoryLoading";
 import { Pager, PROBE_SIZE, useFitPageSize } from "./Pager";
 import { Select } from "./Select";
 
@@ -188,7 +189,11 @@ export function PluginDirectory({
           })}
         </div>
       ) : (
-        <div className="settings-empty">{loading ? "加载中…（第一次要从网上取市场）" : !result ? "插件市场加载失败" : "没有匹配的插件"}</div>
+        loading ? (
+          <DirectoryLoading label="正在加载插件市场" hint="首次加载时需要从网上获取市场数据" />
+        ) : (
+          <div className="settings-empty">{!result ? "插件市场加载失败" : "没有匹配的插件"}</div>
+        )
       )}
       {result && <Pager page={page} total={result.total} pageSize={size} loading={loading} onPage={setPage} />}
     </>

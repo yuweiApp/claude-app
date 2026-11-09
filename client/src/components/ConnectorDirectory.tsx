@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type ConnectorEntry, type McpServerInfo } from "../api";
 import { Avatar } from "./CapabilityPicker";
+import { DirectoryLoading } from "./DirectoryLoading";
 import { McpAuthDialog } from "./McpAuthDialog";
 import { Pager, pageOf, PROBE_SIZE, useFitPageSize } from "./Pager";
 import { Select } from "./Select";
@@ -13,7 +14,7 @@ import { Select } from "./Select";
 export function ConnectorDirectory({ search, servers, onChanged }: { search: string; servers: McpServerInfo[]; onChanged: () => void }) {
   const [entries, setEntries] = useState<ConnectorEntry[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | undefined>();
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filling, setFilling] = useState<ConnectorEntry | null>(null);
   const [signingIn, setSigningIn] = useState<string | null>(null);
@@ -135,7 +136,13 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
           })}
         </div>
       ) : (
-        <div className="settings-empty">{loading || !entries ? "加载中…" : keyword ? "注册表里没有匹配的连接器" : "没有推荐的连接器，搜索试试"}</div>
+        loading ? (
+          <DirectoryLoading label="正在加载连接器市场" hint={keyword ? "正在 MCP 注册表中查找连接器" : "正在读取推荐连接器"} />
+        ) : (
+          <div className="settings-empty">
+            {!entries ? "连接器市场加载失败" : keyword ? "注册表里没有匹配的连接器" : "没有推荐的连接器，搜索试试"}
+          </div>
+        )
       )}
       {entries && entries.length > 0 && <Pager page={page} total={entries.length} pageSize={size} hasMore={nextCursor !== undefined} loading={loading} onPage={turn} />}
       {filling && <ConnectorForm entry={filling} onAdded={added} onCancel={() => setFilling(null)} />}
