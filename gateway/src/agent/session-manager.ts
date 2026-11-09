@@ -7,7 +7,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   deleteSession,
   getSessionInfo,
-  getSessionMessages,
   listSessions,
   renameSession,
   type EffortLevel,
@@ -28,6 +27,7 @@ import { generateTitle } from "./title.js";
 import { readOutputTail, TaskList } from "./tasks.js";
 import { disposeRepls } from "../browser/tool.js";
 import { disposeDesktopSession } from "../desktop/guard.js";
+import { sessionHistory } from "./history.js";
 import { createScratchDir, isChatCwd, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
@@ -135,8 +135,9 @@ export class SessionManager {
     return stored.sort((a, b) => b.lastModified - a.lastModified);
   }
 
+  /** 历史消息：压缩上下文之前的也接上（见 history.ts） */
   async messages(sessionId: string) {
-    return getSessionMessages(sessionId);
+    return sessionHistory(sessionId);
   }
 
   async rename(sessionId: string, title: string): Promise<void> {
