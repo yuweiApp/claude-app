@@ -31,7 +31,7 @@ function loadCollapsed(): Set<string> {
   }
 }
 
-/** 按文件夹分组，最近有活动的组排前面（sessions 已按 lastModified 倒序） */
+/** 按文件夹分组，最近有活动的组排前面（sessions 已按 lastResponseAt 倒序） */
 export function groupByFolder(sessions: SessionListItem[], workspaceDir: string): FolderGroup[] {
   const groups: FolderGroup[] = [];
   for (const s of sessions) {
@@ -177,7 +177,8 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
               key={g.cwd}
               group={g}
               open={open}
-              active={g.sessions.some((session) => session.sessionId === currentId)}
+              // 展开时当前会话那一行已经高亮，项目行只在折叠、看不到当前会话时高亮
+              active={!open && g.sessions.some((session) => session.sessionId === currentId)}
               onToggle={() => toggle(g.cwd)}
               onNew={onNew}
               onDelete={deleteProject}
@@ -311,7 +312,7 @@ function SessionRow({ session: s, active, onSelect, onDelete }: { session: Sessi
         title={sessionTitle(s)}
       >
         <span className="session-title">{sessionTitle(s)}</span>
-        <span className="session-meta">{relativeTime(s.lastModified)}</span>
+        <span className="session-meta">{relativeTime(s.lastResponseAt)}</span>
         {s.state === "running" && <span className="session-spinner" aria-label="运行中" />}
       </button>
       <MoreButton className="row-more" label={`「${sessionTitle(s)}」的更多操作`} menu={menu} />

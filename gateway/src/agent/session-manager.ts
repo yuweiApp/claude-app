@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -28,6 +28,7 @@ import { readOutputTail, TaskList } from "./tasks.js";
 import { disposeRepls } from "../browser/tool.js";
 import { disposeDesktopSession } from "../desktop/guard.js";
 import { sessionHistory } from "./history.js";
+import { lastCustomTitle, lastResponseAt, sessionRecordFiles } from "./session-records.js";
 import { createScratchDir, isChatCwd, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
@@ -37,7 +38,7 @@ export class SessionManager {
    * 会话的自定义标题（生成、改名时，列表里读到时记下）。SDK 列会话只读记录文件开头和结尾各 64 KB 找标题，
    * 标题那一行在文件开头之后，网页快照、截图、工具结果把文件撑大，它就不在结尾那段里了。网关设的标题 Claude Code 不一定补写到末尾
    * （实测 Windows 上 718 KB 的会话，标题在第 125 KB，一直没补写，网关重启后显示成第一条提问）。
-   * 所以每轮结束、打开会话时检查一遍，读不到就在末尾再写一次（keepTitle）；还没写回去之前列表里用这里记的
+   * 列表里优先用这里记的；网关没记着（重启过）、SDK 也读不到时，从整个记录文件里找最后一次设的标题再记下。不往记录文件里补写
    */
   private readonly titles = new Map<string, string>();
   /** 每个会话的后台任务，子进程回收后还留着；记录写在 claude-home/gateway-tasks/<会话 id>.json，网关重启后读回来 */
@@ -120,49 +121,39 @@ export class SessionManager {
 
   async list(): Promise<SessionListItem[]> {
     // 不传 dir：所有工作目录（项目）的会话
-    const stored: SessionListItem[] = (await listSessions()).map((info) => {
-      if (info.customTitle) this.titles.set(info.sessionId, info.customTitle);
-      const customTitle = info.customTitle || this.titles.get(info.sessionId);
-      return { ...info, ...(customTitle ? { customTitle } : {}), chat: isChatCwd(info.cwd), state: this.active.get(info.sessionId)?.state };
-    });
+    const [infos, files] = await Promise.all([listSessions(), sessionRecordFiles()]);
+    const stored: SessionListItem[] = await Promise.all(
+      infos.map(async (info) => {
+        const file = files.get(info.sessionId);
+        // SDK 读到的可能是开头那段里的旧标题（改过名），网关记着的更新
+        let customTitle = this.titles.get(info.sessionId) || info.customTitle;
+        if (!customTitle && file) {
+          customTitle = await lastCustomTitle(file);
+          if (customTitle) this.titles.set(info.sessionId, customTitle);
+        }
+        const responded = file ? await lastResponseAt(file) : undefined;
+        return {
+          ...info,
+          ...(customTitle ? { customTitle } : {}),
+          chat: isChatCwd(info.cwd),
+          state: this.active.get(info.sessionId)?.state,
+          lastResponseAt: responded ?? info.createdAt ?? info.lastModified,
+        };
+      }),
+    );
     // 刚建的会话第一轮还没落盘时也要出现在列表里，字段按 SDKSessionInfo 补
     for (const session of this.active.values()) {
       if (!stored.some((s) => s.sessionId === session.id)) {
         const customTitle = this.titles.get(session.id);
-        stored.push({ sessionId: session.id, summary: customTitle ?? "", ...(customTitle ? { customTitle } : {}), lastModified: session.lastActiveAt, cwd: session.cwd, chat: isChatCwd(session.cwd), state: session.state });
+        stored.push({ sessionId: session.id, summary: customTitle ?? "", ...(customTitle ? { customTitle } : {}), lastModified: session.lastActiveAt, lastResponseAt: session.lastActiveAt, cwd: session.cwd, chat: isChatCwd(session.cwd), state: session.state });
       }
     }
-    return stored.sort((a, b) => b.lastModified - a.lastModified);
+    return stored.sort((a, b) => b.lastResponseAt - a.lastResponseAt);
   }
 
-  /** 历史消息：压缩上下文之前的也接上（见 history.ts）。打开会话时顺便把读不到的标题写回末尾 */
+  /** 历史消息：压缩上下文之前的也接上（见 history.ts） */
   async messages(sessionId: string) {
-    void this.keepTitle(sessionId);
     return sessionHistory(sessionId);
-  }
-
-  /**
-   * 标题不在 SDK 读得到的范围里（列表里没有标题，或者读到的是旧标题）时，在记录文件末尾再写一次。
-   * 网关没记着这个会话的标题时（网关重启过），从整个记录文件里找最后一次设的标题
-   */
-  private async keepTitle(sessionId: string): Promise<void> {
-    try {
-      const info = await getSessionInfo(sessionId);
-      if (!info) return;
-      let title = this.titles.get(sessionId);
-      if (!title) {
-        if (info.customTitle) return void this.titles.set(sessionId, info.customTitle);
-        title = await lastCustomTitle(sessionId);
-        if (!title) return;
-        this.titles.set(sessionId, title);
-        this.hub.publish(sessionId, { type: "title", title });
-      }
-      if (info.customTitle === title) return;
-      await renameSession(sessionId, title);
-      this.log.info({ sessionId, title }, "会话标题不在列表读得到的范围里，写回记录文件末尾");
-    } catch (err) {
-      this.log.warn({ sessionId, err }, "检查会话标题失败");
-    }
   }
 
   async rename(sessionId: string, title: string): Promise<void> {
@@ -276,7 +267,6 @@ export class SessionManager {
       },
       this.terminals,
       this.browser,
-      (ended) => void this.keepTitle(ended.id),
     );
     this.active.set(sessionId, session);
     this.log.info({ sessionId, resume, cwd: opts.cwd }, "启动 claude 会话");
@@ -324,20 +314,3 @@ export class NotFoundError extends Error {}
 export class BadRequestError extends Error {}
 export class BusyError extends Error {}
 
-/** 记录文件里最后一次设的标题（custom-title 行）；整个文件都读，只在列表读不到标题时用 */
-async function lastCustomTitle(sessionId: string): Promise<string | undefined> {
-  const dir = await sessionRecordDir(sessionId);
-  if (!dir) return undefined;
-  const text = await readFile(path.join(dir, `${sessionId}.jsonl`), "utf8").catch(() => "");
-  let title: string | undefined;
-  for (const line of text.split("\n")) {
-    if (!line.includes('"custom-title"')) continue;
-    try {
-      const entry = JSON.parse(line) as { type?: string; customTitle?: string };
-      if (entry.type === "custom-title" && entry.customTitle?.trim()) title = entry.customTitle.trim();
-    } catch {
-      // 写到一半的行
-    }
-  }
-  return title;
-}
