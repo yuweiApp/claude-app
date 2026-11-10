@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell, type OpenDialogOptions, type Rectangle } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell, type MenuItemConstructorOptions, type OpenDialogOptions, type Rectangle } from "electron";
 import { GatewayBridge } from "./browser/bridge.js";
 import { BrowserViews, FAVICON_SCHEME, tabInfo } from "./browser/views.js";
 import { findCaptureSource } from "./capture.js";
@@ -116,6 +116,24 @@ function createWindow(): BrowserWindow {
     if (!external(url)) return;
     event.preventDefault();
     void shell.openExternal(url);
+  });
+  // Electron 窗口默认没有右键菜单：输入框给编辑菜单，选中文字给「复制」。网页自己画了菜单的地方（会话列表、目录树）会拦下右键，不走这里
+  win.webContents.on("context-menu", (_e, p) => {
+    let items: MenuItemConstructorOptions[] = [];
+    if (p.isEditable) {
+      items = [
+        { label: "撤销", role: "undo", enabled: p.editFlags.canUndo },
+        { label: "重做", role: "redo", enabled: p.editFlags.canRedo },
+        { type: "separator" },
+        { label: "剪切", role: "cut", enabled: p.editFlags.canCut },
+        { label: "复制", role: "copy", enabled: p.editFlags.canCopy },
+        { label: "粘贴", role: "paste", enabled: p.editFlags.canPaste },
+        { label: "全选", role: "selectAll", enabled: p.editFlags.canSelectAll },
+      ];
+    } else if (p.selectionText.trim()) {
+      items = [{ label: "复制", role: "copy" }];
+    }
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
   });
   void win.loadURL(clientUrl);
   return win;
