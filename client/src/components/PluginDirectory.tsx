@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type MarketPlugin, type MarketPluginPage } from "../api";
 import { Avatar } from "./CapabilityPicker";
+import { Card, CardGrid } from "./CardGrid";
 import { DirectoryLoading } from "./DirectoryLoading";
 import { Pager, PROBE_SIZE, useFitPageSize } from "./Pager";
 import { Select } from "./Select";
@@ -138,7 +139,7 @@ export function PluginDirectory({
         </div>
       )}
       {result && result.plugins.length > 0 ? (
-        <div ref={gridRef} className={`market-grid${loading ? " loading" : ""}`} aria-busy={loading}>
+        <CardGrid gridRef={gridRef} loading={loading}>
           {result.plugins.slice(0, size).map((plugin) => {
             const meta = [
               marketLabel(plugin.marketplace),
@@ -149,45 +150,43 @@ export function PluginDirectory({
             ]
               .filter(Boolean)
               .join(" · ");
-            const title = plugin.title ?? plugin.name;
             return (
-              <div key={plugin.id} className="market-card">
-                <div className="market-card-head">
-                  <Avatar name={plugin.name} />
-                  <div className="market-card-title" title={title}>
-                    {title}
-                  </div>
-                </div>
-                <div className="market-card-desc" title={plugin.description}>
-                  {plugin.description}
-                </div>
-                <div className="market-card-meta">
-                  {meta}
-                  {plugin.repository && (
-                    <>
-                      {" · "}
-                      <a href={plugin.repository} target="_blank" rel="noreferrer" title={plugin.repository}>
-                        代码仓库
-                      </a>
-                    </>
-                  )}
-                </div>
-                <div className="market-card-foot">
-                  {plugin.category ? <span className="settings-tag">{plugin.category}</span> : <span />}
-                  {plugin.installed || imported.includes(plugin.name) ? (
-                    <button className="connector-added settings-link" title="打开插件详情" onClick={() => onOpen(plugin.name)}>
-                      {plugin.installed ? "已安装" : "已导入"}
-                    </button>
-                  ) : (
-                    <button className="primary" disabled={installing !== null} onClick={() => install(plugin)}>
-                      {installing === plugin.id ? "安装中…" : "安装"}
-                    </button>
-                  )}
-                </div>
-              </div>
+              <Card
+                key={plugin.id}
+                icon={<Avatar name={plugin.name} />}
+                title={plugin.title ?? plugin.name}
+                description={plugin.description}
+                meta={
+                  <>
+                    {meta}
+                    {plugin.repository && (
+                      <>
+                        {" · "}
+                        <a href={plugin.repository} target="_blank" rel="noreferrer" title={plugin.repository}>
+                          代码仓库
+                        </a>
+                      </>
+                    )}
+                  </>
+                }
+                foot={
+                  <>
+                    {plugin.category ? <span className="settings-tag">{plugin.category}</span> : <span />}
+                    {plugin.installed || imported.includes(plugin.name) ? (
+                      <button className="connector-added settings-link" title="打开插件详情" onClick={() => onOpen(plugin.name)}>
+                        {plugin.installed ? "已安装" : "已导入"}
+                      </button>
+                    ) : (
+                      <button className="primary" disabled={installing !== null} onClick={() => install(plugin)}>
+                        {installing === plugin.id ? "安装中…" : "安装"}
+                      </button>
+                    )}
+                  </>
+                }
+              />
             );
           })}
-        </div>
+        </CardGrid>
       ) : (
         loading ? (
           <DirectoryLoading label="正在加载插件市场" hint="首次加载时需要从网上获取市场数据" />

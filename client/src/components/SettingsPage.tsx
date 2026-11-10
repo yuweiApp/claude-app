@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { api, type Capabilities, type McpServerInfo, type McpServerInput, type SkillDetail } from "../api";
 import { desktop } from "../desktop";
 import { Avatar } from "./CapabilityPicker";
+import { Card, CardGrid } from "./CardGrid";
 import { useDismiss } from "./ComposerPickers";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ConnectorDirectory, ConnectorIcon } from "./ConnectorDirectory";
@@ -316,37 +317,23 @@ function SkillGrid({
 }) {
   if (!skills.length) return <div className="settings-empty">{empty}</div>;
   return (
-    <div className="market-grid">
+    <CardGrid>
       {skills.map((s) => {
         const name = plugin ? s.name.slice(plugin.length + 1) : s.name;
-        const description = plugin ? s.description.replace(`(${plugin}) `, "") : s.description;
         return (
-          <div key={s.name} className={`market-card skill-card${s.enabled ? "" : " disabled"}`} onClick={() => onOpen(s)}>
-            <div className="market-card-head">
-              <Avatar name={name} />
-              <button
-                className="market-card-title skill-card-open"
-                title={name}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpen(s);
-                }}
-              >
-                {name}
-              </button>
-              {!s.enabled && <span className="settings-tag">已停用</span>}
-              {/* 菜单、确认框里的点击不冒泡到卡片上，不然会一起打开详情 */}
-              <span className="skill-card-menu" onClick={(e) => e.stopPropagation()}>
-                <SkillMenu skill={s} onChanged={onChanged} onError={onError} />
-              </span>
-            </div>
-            <div className="market-card-desc" title={description}>
-              {description}
-            </div>
-          </div>
+          <Card
+            key={s.name}
+            icon={<Avatar name={name} />}
+            title={name}
+            badge={!s.enabled && <span className="settings-tag">已停用</span>}
+            menu={<SkillMenu skill={s} onChanged={onChanged} onError={onError} />}
+            description={plugin ? s.description.replace(`(${plugin}) `, "") : s.description}
+            dimmed={!s.enabled}
+            onOpen={() => onOpen(s)}
+          />
         );
       })}
-    </div>
+    </CardGrid>
   );
 }
 

@@ -361,7 +361,7 @@ main {
 /* 连接器市场：注册表里的图标（大小同首字母头像），已添加的标记；插件、连接器市场的分页 */
 .connector-icon { object-fit: contain; background: #fff; padding: 2px; }
 .connector-added { color: var(--muted); font-size: 13px; white-space: nowrap; }
-/* 插件市场、连接器市场：卡片从左往右排，放不下换行 */
+/* 卡片网格（CardGrid）：插件市场、连接器市场、技能，卡片从左往右排，放不下换行 */
 .market-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; transition: opacity 120ms; }
 /* 换页、搜索的请求还没回来：旧的卡片变淡 */
 .market-grid.loading { opacity: 0.5; }
@@ -380,13 +380,13 @@ main {
 .market-card-target > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .market-card-meta a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .market-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
-/* 技能卡片：整张卡片可以点开详情；标题是按钮（键盘能选中），悬停时变色；停用的整体变淡 */
-.skill-card { cursor: pointer; }
-.skill-card-open { padding: 0; border: none; border-radius: 0; background: none; color: inherit; text-align: left; font: inherit; font-size: 14px; font-weight: 600; }
-.skill-card-open:hover { background: none; }
-.skill-card:hover .skill-card-open { color: var(--accent); }
-.skill-card.disabled .market-card-desc, .skill-card.disabled .capability-avatar { opacity: 0.6; }
-.skill-card-menu { flex: none; display: flex; margin: -4px -6px -4px 0; }
+/* 能点开详情的卡片（技能）：整张卡片可以点，标题是按钮，悬停时变色；停用的图标和描述变淡；右上角的菜单按钮贴着角 */
+.market-card.openable { cursor: pointer; }
+.market-card-open { padding: 0; border: none; border-radius: 0; background: none; color: inherit; text-align: left; font: inherit; font-size: 14px; font-weight: 600; }
+.market-card-open:hover { background: none; }
+.market-card.openable:hover .market-card-open { color: var(--accent); }
+.market-card.dimmed .market-card-desc, .market-card.dimmed .capability-avatar { opacity: 0.6; }
+.market-card-menu { flex: none; display: flex; margin: -4px -6px -4px 0; }
 /* 设置页主区域是纵向 flex：margin-top: auto 让分页栏在内容不满一屏时贴着底部，间距改用 padding-top，内容超出时照样留 16px 空隙 */
 .pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin-top: auto; padding-top: 16px; color: var(--muted); font-size: 13px; }
 .pager-btn {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type ConnectorEntry, type McpServerInfo } from "../api";
 import { Avatar } from "./CapabilityPicker";
+import { Card, CardGrid } from "./CardGrid";
 import { DirectoryLoading } from "./DirectoryLoading";
 import { McpAuthDialog } from "./McpAuthDialog";
 import { Pager, pageOf, PROBE_SIZE, useFitPageSize } from "./Pager";
@@ -95,46 +96,45 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
     <>
       {error && <div className="settings-error">{error}</div>}
       {entries && entries.length > 0 ? (
-        <div ref={gridRef} className={`market-grid${loading ? " loading" : ""}`} aria-busy={loading}>
+        <CardGrid gridRef={gridRef} loading={loading}>
           {pageOf(entries, page, size).map((entry) => {
             const name = existing(entry);
             return (
-              <div key={entry.id} className="market-card">
-                <div className="market-card-head">
-                  <ConnectorIcon name={entry.title} icon={entry.icon} />
-                  <div className="market-card-title" title={entry.title}>
-                    {entry.title}
+              <Card
+                key={entry.id}
+                icon={<ConnectorIcon name={entry.title} icon={entry.icon} />}
+                title={entry.title}
+                description={entry.description}
+                meta={
+                  <div className="market-card-target">
+                    <div title={entry.id}>{entry.id}</div>
+                    <div title={entry.url}>{entry.url}</div>
                   </div>
-                </div>
-                <div className="market-card-desc" title={entry.description}>
-                  {entry.description}
-                </div>
-                <div className="market-card-meta market-card-target">
-                  <div title={entry.id}>{entry.id}</div>
-                  <div title={entry.url}>{entry.url}</div>
-                </div>
-                <div className="market-card-foot">
-                  {entry.type === "sse" ? <span className="settings-tag">SSE</span> : <span />}
-                  {name ? (
-                    status(name) === "needs-auth" ? (
-                      <button className="primary" title={`已添加为 ${name}，需要登录`} onClick={() => setSigningIn(name)}>
-                        登录
-                      </button>
+                }
+                foot={
+                  <>
+                    {entry.type === "sse" ? <span className="settings-tag">SSE</span> : <span />}
+                    {name ? (
+                      status(name) === "needs-auth" ? (
+                        <button className="primary" title={`已添加为 ${name}，需要登录`} onClick={() => setSigningIn(name)}>
+                          登录
+                        </button>
+                      ) : (
+                        <span className="connector-added" title={`已添加为 ${name}`}>
+                          已添加
+                        </span>
+                      )
                     ) : (
-                      <span className="connector-added" title={`已添加为 ${name}`}>
-                        已添加
-                      </span>
-                    )
-                  ) : (
-                    <button className="primary" disabled={adding === entry.id} onClick={() => add(entry)}>
-                      {adding === entry.id ? "添加中…" : "添加"}
-                    </button>
-                  )}
-                </div>
-              </div>
+                      <button className="primary" disabled={adding === entry.id} onClick={() => add(entry)}>
+                        {adding === entry.id ? "添加中…" : "添加"}
+                      </button>
+                    )}
+                  </>
+                }
+              />
             );
           })}
-        </div>
+        </CardGrid>
       ) : (
         loading ? (
           <DirectoryLoading label="正在加载连接器市场" hint={keyword ? "正在 MCP 注册表中查找连接器" : "正在读取推荐连接器"} />
