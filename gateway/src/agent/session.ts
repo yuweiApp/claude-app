@@ -48,6 +48,8 @@ export interface PermissionReply {
 export class AgentSession {
   state: SessionState = "starting";
   model: string | undefined;
+  /** 启动和 setModel 时传给 Claude Code 的模型（模型列表里的 value，没指定时 undefined），resume 时原样再传 */
+  modelOption: string | undefined;
   effort: EffortLevel | undefined;
   readonly cwd: string;
   permissionMode: PermissionMode;
@@ -80,6 +82,7 @@ export class AgentSession {
     private readonly browser?: BrowserHost,
   ) {
     this.model = opts.model ?? config.model;
+    this.modelOption = opts.model;
     this.effort = opts.effort;
     this.cwd = opts.cwd;
     this.permissionMode = opts.permissionMode;
@@ -154,6 +157,7 @@ export class AgentSession {
   /** model 是模型列表里的 value（default / opus 等别名），记下的是它解析出的实际模型名，和 init 消息里的一致 */
   async setModel(model: string | undefined): Promise<void> {
     await this.query.setModel(model);
+    this.modelOption = model;
     const info = model ? (await listModels().catch(() => [])).find((m) => m.value === model) : undefined;
     this.model = info?.resolvedModel?.replace(/\[1m\]$/i, "") ?? model ?? config.model;
     this.publishState();

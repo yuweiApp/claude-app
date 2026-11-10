@@ -600,8 +600,9 @@ function Chat({
           <ModelPicker
             models={models}
             model={
+              // 网关重启后子进程没起来的会话没有 state 事件：按历史里最后一次回复的模型，resume 时网关也用它
               sessionId
-                ? (resolveModel(models, switching?.model) ?? view.model ?? config.model ?? undefined)
+                ? (resolveModel(models, switching?.model) ?? view.model ?? view.shownModel ?? config.model ?? undefined)
                 : (resolveModel(models, newModel) ?? config.model ?? undefined)
             }
             effort={sessionId ? (switching?.effort ?? view.effort ?? config.effort) : newEffort}

@@ -28,7 +28,7 @@ import { readOutputTail, TaskList } from "./tasks.js";
 import { disposeRepls } from "../browser/tool.js";
 import { disposeDesktopSession } from "../desktop/guard.js";
 import { sessionHistory } from "./history.js";
-import { lastCustomTitle, lastResponseAt, sessionRecordFiles } from "./session-records.js";
+import { lastCustomTitle, lastResponseAt, lastResponseModel, sessionRecordFiles } from "./session-records.js";
 import { createScratchDir, isChatCwd, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
@@ -41,6 +41,11 @@ export class SessionManager {
    * 列表里优先用这里记的；网关没记着（重启过）、SDK 也读不到时，从整个记录文件里找最后一次设的标题再记下。不往记录文件里补写
    */
   private readonly titles = new Map<string, string>();
+  /**
+   * 子进程回收时会话用着的模型和推理强度，resume 时沿用（不传的话 Claude Code 用默认模型，切换过的模型就丢了）。
+   * 网关重启后没有这里的记录，模型按记录文件里最后一次回复用的，推理强度回到默认
+   */
+  private readonly lastSettings = new Map<string, { model?: string; effort?: EffortLevel }>();
   /** 每个会话的后台任务，子进程回收后还留着；记录写在 claude-home/gateway-tasks/<会话 id>.json，网关重启后读回来 */
   private readonly tasks = new Map<string, TaskList>();
   private readonly sweeper: NodeJS.Timeout;
@@ -109,7 +114,14 @@ export class SessionManager {
     if (session) return session;
     const info = await getSessionInfo(sessionId);
     if (!info) throw new NotFoundError(`会话不存在：${sessionId}`);
-    return this.launch(sessionId, true, { cwd: info.cwd || config.workspaceDir });
+    const settings = this.lastSettings.get(sessionId) ?? { model: await this.recordedModel(sessionId) };
+    return this.launch(sessionId, true, { cwd: info.cwd || config.workspaceDir, ...settings });
+  }
+
+  /** 记录文件里最后一次回复用的模型 */
+  private async recordedModel(sessionId: string): Promise<string | undefined> {
+    const dir = await sessionRecordDir(sessionId);
+    return dir ? lastResponseModel(path.join(dir, `${sessionId}.jsonl`)) : undefined;
   }
 
   /** 会话的工作目录；没有这个会话时 null */
@@ -176,6 +188,7 @@ export class SessionManager {
     const recordDir = info ? await sessionRecordDir(sessionId) : undefined;
     // 刚建的会话第一轮还没落盘时只有子进程，没有文件可删
     this.titles.delete(sessionId);
+    this.lastSettings.delete(sessionId);
     if (info) await deleteSession(sessionId);
     else if (!session) throw new NotFoundError(`会话不存在：${sessionId}`);
     // close() 只等到消息流结束，子进程退出时还会往 jsonl 写最后几条记录，把删掉的文件又建出来，所以再查几次
@@ -266,6 +279,7 @@ export class SessionManager {
       this.taskList(sessionId),
       (closed) => {
         if (this.active.get(closed.id) === closed) this.active.delete(closed.id);
+        this.lastSettings.set(closed.id, { model: closed.modelOption, effort: closed.effort });
       },
       this.terminals,
       this.browser,
