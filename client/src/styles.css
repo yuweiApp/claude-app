@@ -1056,6 +1056,19 @@ main {
 .task-item.selected .task-name { white-space: normal; overflow-wrap: anywhere; }
 .task-meta { color: var(--muted); font-size: 11px; line-height: 1.45; font-variant-numeric: tabular-nums; }
 .task-meta-status { color: var(--task-tone); }
+/* 运行中的一行状态（MCP 服务器报的、子代理的进度摘要） */
+.task-progress { overflow: hidden; color: var(--muted); font-size: 11.5px; line-height: 1.45; white-space: nowrap; text-overflow: ellipsis; }
+.task-item.selected .task-progress { white-space: normal; overflow-wrap: anywhere; }
+/* MCP 任务的工具：服务器 / 工具名 */
+.task-tool { display: flex; align-items: baseline; gap: 6px; padding: 8px 10px; font-size: 12.5px; overflow-wrap: anywhere; }
+.task-tool-server { font-weight: 500; }
+.task-tool-sep { color: var(--muted); }
+.task-tool code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+/* MCP 任务按引用返回的文件 */
+.task-links { margin: 0; padding: 6px 10px 8px; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.task-links li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.task-links a, .task-links .md-link-off { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-link-meta { flex: none; color: var(--muted); font-size: 11px; }
 .task-chevron { flex: none; color: var(--muted); transition: transform 0.15s; }
 .task-item.selected .task-chevron { transform: rotate(90deg); }
 .task-stop {

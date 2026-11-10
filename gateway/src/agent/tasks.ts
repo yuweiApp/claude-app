@@ -30,6 +30,8 @@ export class TaskList {
   private readonly codes = new Map<string, string>();
   /** Agent 工具调用的任务说明（input.prompt）：task_started 一般自己带着，没带时按 tool_use_id 补 */
   private readonly prompts = new Map<string, string>();
+  /** 工具调用的工具名：MCP 任务（mcp_task）的开始消息里只有说明，按 tool_use_id 补上是哪个服务器的哪个工具 */
+  private readonly toolNames = new Map<string, string>();
   /** 转到了后台的工具调用（tool_use_id）：结果里写着 moved to the background */
   private readonly backgroundedCalls = new Map<string, true>();
   /** 工具调用发出的时间：跑久了才转到后台的（MCP 调用跑满 20 秒），开始时间按调用发出时算，不按转后台的时候 */
@@ -97,6 +99,7 @@ export class TaskList {
         for (const block of message.message.content) {
           if (block.type === "tool_use") {
             remember(this.toolStarts, block.id, Date.now());
+            remember(this.toolNames, block.id, block.name);
             const code = (block.input as { code?: unknown } | null)?.code;
             if (typeof code === "string") remember(this.codes, block.id, code);
           }
@@ -162,7 +165,17 @@ export class TaskList {
         if (message.prompt) task.prompt = message.prompt;
         if (task.status !== "running") {
           // 结束过又开始（恢复的子代理）：重新算一次
-          Object.assign(task, { status: "running", startedAt: Date.now(), endedAt: undefined, summary: undefined, result: undefined, resultIsError: undefined, exitCode: undefined });
+          Object.assign(task, {
+            status: "running",
+            startedAt: Date.now(),
+            endedAt: undefined,
+            summary: undefined,
+            progress: undefined,
+            resourceLinks: undefined,
+            result: undefined,
+            resultIsError: undefined,
+            exitCode: undefined,
+          });
         }
         if (message.is_backgrounded || this.liveBackground.has(message.task_id)) task.backgrounded = true;
         return true;
@@ -186,9 +199,19 @@ export class TaskList {
         const { status, description, end_time, is_backgrounded } = message.patch;
         if (status === "completed" || status === "failed") task.status = status;
         else if (status === "killed") task.status = "stopped";
+        if (task.status !== "running") task.progress = undefined;
         if (end_time) task.endedAt = end_time;
         if (description) task.description = description;
         if (is_backgrounded !== undefined) task.backgrounded = is_backgrounded;
+        return true;
+      }
+      case "task_progress": {
+        // 一行状态：MCP 任务是服务器自己报的（每变一次发一次），子代理是进度摘要。只在变了时更新，
+        // 子代理的进度消息很频繁（用量每次都变），不然每条都要推一次任务列表
+        const task = this.tasks.get(message.task_id);
+        const summary = message.summary?.trim();
+        if (!task || task.status !== "running" || !summary || summary === task.progress) return false;
+        task.progress = summary;
         return true;
       }
       case "task_notification": {
@@ -201,6 +224,10 @@ export class TaskList {
         }
         task.status = message.status;
         task.summary = message.summary;
+        task.progress = undefined;
+        if (message.resource_links?.length) {
+          task.resourceLinks = message.resource_links.map(({ uri, name, title, mimeType, size }) => ({ uri, name, ...(title ? { title } : {}), ...(mimeType ? { mimeType } : {}), ...(size !== undefined ? { size } : {}) }));
+        }
         task.outputFile = message.output_file || task.outputFile;
         task.endedAt ??= Date.now();
         const exit = /exit code (-?\d+)/.exec(message.summary);
@@ -224,6 +251,7 @@ export class TaskList {
     if (type) task.type ??= type;
     if (toolUseId && !task.toolUseId) {
       task.toolUseId = toolUseId;
+      task.tool ??= this.toolNames.get(toolUseId);
       task.startedAt = this.toolStarts.get(toolUseId) ?? task.startedAt;
       task.command ??= this.commands.get(toolUseId);
       task.code ??= this.codes.get(toolUseId);
