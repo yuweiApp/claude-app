@@ -692,11 +692,34 @@ main {
   background: var(--panel); cursor: zoom-in;
 }
 .image-thumb img { display: block; max-width: 220px; max-height: 160px; object-fit: cover; }
+/* 大图查看（ImageThumb.tsx 的 ImageViewer，同 codex-app-server）：滚轮、捏合缩放，放大后拖动平移，底部一排缩放按钮 */
 .image-viewer {
   position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
-  padding: 24px; background: rgba(0, 0, 0, 0.75); cursor: zoom-out;
+  overflow: hidden; background: rgba(0, 0, 0, 0.75); cursor: zoom-out;
+  /* 双指捏合交给页面自己处理，不让浏览器缩放整个页面 */
+  touch-action: none; -webkit-app-region: no-drag;
 }
-.image-viewer img { max-width: 100%; max-height: 100%; border-radius: 8px; cursor: default; }
+.image-viewer-frame { display: flex; flex-shrink: 0; transition: transform 0.12s ease-out; }
+.image-viewer-frame.dragging { transition: none; }
+.image-viewer img {
+  max-width: calc(100vw - 48px); max-height: calc(100vh - 48px); object-fit: contain;
+  border-radius: 8px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4); cursor: zoom-in; user-select: none;
+}
+.image-viewer img.zoomed { cursor: grab; }
+.image-viewer img.dragging { cursor: grabbing; }
+.image-viewer-tools {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 1;
+  display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55); cursor: default;
+}
+.image-viewer-tools button {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 36px; height: 32px; padding: 0 8px;
+  border: none; border-radius: 999px; background: transparent; color: #fff; font-size: 18px; line-height: 1;
+}
+.image-viewer-tools button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.2); }
+.image-viewer-tools button:disabled { opacity: 0.4; }
+.image-viewer-tools .image-viewer-percent { min-width: 64px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.image-viewer-sep { width: 1px; height: 20px; margin: 0 4px; background: rgba(255, 255, 255, 0.25); }
 .image-chip { position: relative; display: inline-flex; }
 .image-chip-thumb {
   display: block; width: 56px; height: 56px; padding: 0; border: 1px solid var(--border); border-radius: 10px;
