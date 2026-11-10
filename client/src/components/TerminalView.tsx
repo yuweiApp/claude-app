@@ -3,6 +3,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
 import { api, type TerminalEvent } from "../api";
+import { isDark, subscribeTheme } from "../theme";
 
 const LIGHT: ITheme = {
   background: "#faf9f7",
@@ -18,8 +19,6 @@ const DARK: ITheme = {
   cursor: "#ecebe7",
   selectionBackground: "#c9644255",
 };
-
-const dark = () => window.matchMedia("(prefers-color-scheme: dark)").matches;
 
 /**
  * 输入按顺序发：一个请求在路上时攒着，回来了再把攒下的一起发（并发的请求可能乱序到达）
@@ -60,7 +59,7 @@ export function TerminalView({ terminalId, active }: { terminalId: string; activ
       cursorBlink: true,
       scrollback: 5000,
       allowProposedApi: false,
-      theme: dark() ? DARK : LIGHT,
+      theme: isDark() ? DARK : LIGHT,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -108,12 +107,10 @@ export function TerminalView({ terminalId, active }: { terminalId: string; activ
       first = true;
     };
 
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onTheme = () => (term.options.theme = media.matches ? DARK : LIGHT);
-    media.addEventListener("change", onTheme);
+    const offTheme = subscribeTheme(() => (term.options.theme = isDark() ? DARK : LIGHT));
 
     return () => {
-      media.removeEventListener("change", onTheme);
+      offTheme();
       source.close();
       ro.disconnect();
       clearTimeout(timer);

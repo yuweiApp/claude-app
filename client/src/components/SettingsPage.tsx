@@ -12,15 +12,17 @@ import { PluginDirectory } from "./PluginDirectory";
 import { McpAuthDialog } from "./McpAuthDialog";
 import { FolderPickerDialog } from "./FolderPickerDialog";
 import { IosIcon } from "./IosIcon";
+import { AppearancePage } from "./AppearancePage";
 
-type Section = "plugins" | "skills" | "mcp";
+type Section = "appearance" | "plugins" | "skills" | "mcp";
 /** 技能、插件页顶部的标签：个人（导入的、项目里的、导入插件带的、从市场装的）和 Claude Code 自带的；插件页还有插件市场 */
 type Origin = "mine" | "builtin" | "directory";
 /** 连接器页顶部的标签：已经添加的（设置页添加的、插件和配置文件带来的）和连接器市场（MCP 注册表） */
 type ConnectorTab = "added" | "directory";
 
-const SECTIONS: { key: Section; label: string; icon: ReactNode }[] = [
-  { key: "plugins", label: "插件", icon: <IosIcon tone="blue"><PluginIcon /></IosIcon> },
+const SECTIONS: { key: Section; label: string; icon: ReactNode; group?: string }[] = [
+  { key: "appearance", label: "外观", icon: <IosIcon tone="orange"><AppearanceIcon /></IosIcon>, group: "个人" },
+  { key: "plugins", label: "插件", icon: <IosIcon tone="blue"><PluginIcon /></IosIcon>, group: "集成" },
   { key: "skills", label: "技能", icon: <IosIcon tone="purple"><SkillIcon /></IosIcon> },
   { key: "mcp", label: "连接器", icon: <IosIcon tone="pink"><McpIcon /></IosIcon> },
 ];
@@ -79,122 +81,128 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
     <div className="settings">
       <nav className="settings-nav" aria-label="设置" hidden={navCollapsed}>
         <h2>设置</h2>
-        <div className="settings-group">集成</div>
-        {SECTIONS.map((s) => (
+        {SECTIONS.map((s) => [
+          s.group && <div key={s.group} className="settings-group">{s.group}</div>,
           <button key={s.key} className={`settings-nav-item${s.key === section ? " active" : ""}`} aria-current={s.key === section ? "page" : undefined} onClick={() => setSection(s.key)}>
             {s.icon}
             {s.label}
-          </button>
-        ))}
+          </button>,
+        ])}
       </nav>
-      <main className="settings-main">
-        <header className="settings-head">
-          <div className="settings-title">
-            <h1>{label}</h1>
-            <p>
-              {section === "plugins" && `已安装 ${data?.plugins.length ?? 0} 个插件。`}
-              {section === "skills" && `共 ${data?.skills.length ?? 0} 个技能，已启用 ${data?.skills.filter((s) => s.enabled).length ?? 0} 个，启停对新会话生效。`}
-              {section === "mcp" &&
-                `连接器（MCP 服务器）把 Figma、Notion、GitHub 等外部服务接进对话，提供工具和数据。已添加 ${data?.mcpServers.length ?? 0} 个，已启用 ${data?.mcpServers.filter((m) => m.enabled).length ?? 0} 个。`}
-            </p>
-          </div>
-          <input className="settings-search" hidden={detail !== null} value={search} placeholder={browsing ? "在 MCP 注册表里搜索" : marketBrowsing ? "搜索插件市场" : `搜索${label}`} onChange={(e) => setSearch(e.target.value)} />
-          <button
-            disabled={loading}
-            onClick={() => {
-              load(true);
-              if (browsing || marketBrowsing) setDirectoryKey((k) => k + 1);
-            }}
-          >
-            {loading ? "刷新中…" : "刷新"}
-          </button>
-          {section === "plugins" && <ImportButton kind="plugins" onImported={() => load(false)} onError={setError} />}
-          {section === "skills" && <ImportButton kind="skills" onImported={() => load(false)} onError={setError} />}
-          {section === "mcp" && <AddServerButton onAdded={() => load(false)} />}
-        </header>
-        {(section === "plugins" || section === "skills") && !detail && (
-          <div className="settings-tabs" role="tablist">
-            {(section === "plugins" ? (["mine", "builtin", "directory"] as const) : (["mine", "builtin"] as const)).map((o) => (
-              <button key={o} role="tab" aria-selected={o === origin} className={`settings-tab${o === origin ? " active" : ""}`} onClick={() => setOrigin(o)}>
-                {o === "directory" ? (
-                  "插件市场"
-                ) : (
-                  <>
-                    {o === "mine" ? "个人" : "内置"}
-                    {label}
-                    <span className="settings-tab-count">{count(section === "skills" ? data?.skills : data?.plugins, o === "builtin")}</span>
-                  </>
-                )}
-              </button>
-            ))}
-          </div>
-        )}
-        {section === "mcp" && (
-          <div className="settings-tabs" role="tablist">
-            {(["added", "directory"] as const).map((t) => (
-              <button key={t} role="tab" aria-selected={t === connectorTab} className={`settings-tab${t === connectorTab ? " active" : ""}`} onClick={() => setConnectorTab(t)}>
-                {t === "added" ? "已添加" : "连接器市场"}
-                {t === "added" && <span className="settings-tab-count">{data?.mcpServers.length ?? 0}</span>}
-              </button>
-            ))}
-          </div>
-        )}
-        {error && <div className="settings-error">{error}</div>}
-        {detail && data && (
-          <PluginDetail
-            plugin={detail}
-            data={data}
-            onBack={() => setOpenPlugin(null)}
-            onViewSkill={setViewing}
-            onChanged={() => load(false)}
-            onDeleted={() => {
-              setOpenPlugin(null);
-              load(false);
-            }}
-            onError={setError}
-          />
-        )}
-        {marketBrowsing && !detail && (
-          <PluginDirectory
-            key={directoryKey}
-            refresh={directoryKey > 0}
-            search={search}
-            imported={(data?.plugins ?? []).filter((p) => p.managed && !p.marketplace).map((p) => p.name)}
-            onChanged={() => load(false)}
-            onOpen={setOpenPlugin}
-          />
-        )}
-        {section === "plugins" && !detail && !marketBrowsing && (
-          <List empty={data ? (keyword ? "没有匹配的插件" : origin === "mine" ? "还没有个人插件，在「插件市场」里安装，或点右上角导入" : "没有内置插件") : "加载中…"}>
-            {plugins.map((p) => {
-              const parts = pluginParts(p.name, data!);
-              const meta = [`${parts.skills.length} 个技能`, `${parts.servers.length} 个连接器`, p.version && `版本 ${p.version}`].filter(Boolean).join(" · ");
-              return (
-                <Row key={p.name} name={p.name} sub={p.description ?? p.source} wrap meta={meta} onOpen={() => setOpenPlugin(p.name)}>
-                  {p.managed && <PluginDeleteButton plugin={p} onDeleted={() => load(false)} onError={setError} />}
-                </Row>
-              );
-            })}
-          </List>
-        )}
-        {section === "skills" && (
-          <SkillGrid
-            skills={skills}
-            empty={data ? (keyword ? "没有匹配的技能" : origin === "mine" ? "还没有个人技能，点右上角导入，或放在项目的 .claude/skills 里" : "没有内置技能") : "加载中…"}
-            onOpen={setViewing}
-            onChanged={() => load(false)}
-            onError={setError}
-          />
-        )}
-        {browsing && <ConnectorDirectory key={directoryKey} search={search} servers={data?.mcpServers ?? []} onChanged={() => load(false)} />}
-        {section === "mcp" && !browsing && (
-          <List empty={data ? (keyword ? "没有匹配的连接器" : "还没有连接器，在「连接器市场」里添加，或点右上角手动添加") : "加载中…"}>
-            {servers.map((server) => (
-              <ServerRow key={server.name} server={server} onChanged={() => load(false)} onError={setError} />
-            ))}
-          </List>
-        )}
-      </main>
+      {section === "appearance" ? (
+        <main className="settings-main">
+          <AppearancePage />
+        </main>
+      ) : (
+        <main className="settings-main">
+          <header className="settings-head">
+            <div className="settings-title">
+              <h1>{label}</h1>
+              <p>
+                {section === "plugins" && `已安装 ${data?.plugins.length ?? 0} 个插件。`}
+                {section === "skills" && `共 ${data?.skills.length ?? 0} 个技能，已启用 ${data?.skills.filter((s) => s.enabled).length ?? 0} 个，启停对新会话生效。`}
+                {section === "mcp" &&
+                  `连接器（MCP 服务器）把 Figma、Notion、GitHub 等外部服务接进对话，提供工具和数据。已添加 ${data?.mcpServers.length ?? 0} 个，已启用 ${data?.mcpServers.filter((m) => m.enabled).length ?? 0} 个。`}
+              </p>
+            </div>
+            <input className="settings-search" hidden={detail !== null} value={search} placeholder={browsing ? "在 MCP 注册表里搜索" : marketBrowsing ? "搜索插件市场" : `搜索${label}`} onChange={(e) => setSearch(e.target.value)} />
+            <button
+              disabled={loading}
+              onClick={() => {
+                load(true);
+                if (browsing || marketBrowsing) setDirectoryKey((k) => k + 1);
+              }}
+            >
+              {loading ? "刷新中…" : "刷新"}
+            </button>
+            {section === "plugins" && <ImportButton kind="plugins" onImported={() => load(false)} onError={setError} />}
+            {section === "skills" && <ImportButton kind="skills" onImported={() => load(false)} onError={setError} />}
+            {section === "mcp" && <AddServerButton onAdded={() => load(false)} />}
+          </header>
+          {(section === "plugins" || section === "skills") && !detail && (
+            <div className="settings-tabs" role="tablist">
+              {(section === "plugins" ? (["mine", "builtin", "directory"] as const) : (["mine", "builtin"] as const)).map((o) => (
+                <button key={o} role="tab" aria-selected={o === origin} className={`settings-tab${o === origin ? " active" : ""}`} onClick={() => setOrigin(o)}>
+                  {o === "directory" ? (
+                    "插件市场"
+                  ) : (
+                    <>
+                      {o === "mine" ? "个人" : "内置"}
+                      {label}
+                      <span className="settings-tab-count">{count(section === "skills" ? data?.skills : data?.plugins, o === "builtin")}</span>
+                    </>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+          {section === "mcp" && (
+            <div className="settings-tabs" role="tablist">
+              {(["added", "directory"] as const).map((t) => (
+                <button key={t} role="tab" aria-selected={t === connectorTab} className={`settings-tab${t === connectorTab ? " active" : ""}`} onClick={() => setConnectorTab(t)}>
+                  {t === "added" ? "已添加" : "连接器市场"}
+                  {t === "added" && <span className="settings-tab-count">{data?.mcpServers.length ?? 0}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+          {error && <div className="settings-error">{error}</div>}
+          {detail && data && (
+            <PluginDetail
+              plugin={detail}
+              data={data}
+              onBack={() => setOpenPlugin(null)}
+              onViewSkill={setViewing}
+              onChanged={() => load(false)}
+              onDeleted={() => {
+                setOpenPlugin(null);
+                load(false);
+              }}
+              onError={setError}
+            />
+          )}
+          {marketBrowsing && !detail && (
+            <PluginDirectory
+              key={directoryKey}
+              refresh={directoryKey > 0}
+              search={search}
+              imported={(data?.plugins ?? []).filter((p) => p.managed && !p.marketplace).map((p) => p.name)}
+              onChanged={() => load(false)}
+              onOpen={setOpenPlugin}
+            />
+          )}
+          {section === "plugins" && !detail && !marketBrowsing && (
+            <List empty={data ? (keyword ? "没有匹配的插件" : origin === "mine" ? "还没有个人插件，在「插件市场」里安装，或点右上角导入" : "没有内置插件") : "加载中…"}>
+              {plugins.map((p) => {
+                const parts = pluginParts(p.name, data!);
+                const meta = [`${parts.skills.length} 个技能`, `${parts.servers.length} 个连接器`, p.version && `版本 ${p.version}`].filter(Boolean).join(" · ");
+                return (
+                  <Row key={p.name} name={p.name} sub={p.description ?? p.source} wrap meta={meta} onOpen={() => setOpenPlugin(p.name)}>
+                    {p.managed && <PluginDeleteButton plugin={p} onDeleted={() => load(false)} onError={setError} />}
+                  </Row>
+                );
+              })}
+            </List>
+          )}
+          {section === "skills" && (
+            <SkillGrid
+              skills={skills}
+              empty={data ? (keyword ? "没有匹配的技能" : origin === "mine" ? "还没有个人技能，点右上角导入，或放在项目的 .claude/skills 里" : "没有内置技能") : "加载中…"}
+              onOpen={setViewing}
+              onChanged={() => load(false)}
+              onError={setError}
+            />
+          )}
+          {browsing && <ConnectorDirectory key={directoryKey} search={search} servers={data?.mcpServers ?? []} onChanged={() => load(false)} />}
+          {section === "mcp" && !browsing && (
+            <List empty={data ? (keyword ? "没有匹配的连接器" : "还没有连接器，在「连接器市场」里添加，或点右上角手动添加") : "加载中…"}>
+              {servers.map((server) => (
+                <ServerRow key={server.name} server={server} onChanged={() => load(false)} onError={setError} />
+              ))}
+            </List>
+          )}
+        </main>
+      )}
       {viewing && <SkillDialog skill={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
@@ -977,6 +985,17 @@ function McpIcon() {
   return (
     <svg className="ic ic-mcp" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="m2.5 8 5-5a2 2 0 0 1 2.8 2.8L6.5 9.6M5 10.5l5.5-5.5a2 2 0 0 1 2.8 2.8l-5 5a1 1 0 0 0 0 1.4M7.5 11 11 7.5" />
+    </svg>
+  );
+}
+
+function AppearanceIcon() {
+  return (
+    <svg className="ic" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 2a6 6 0 1 0 0 12c.9 0 1.3-.6 1.3-1.2 0-.7-.5-1-.5-1.6 0-.6.5-1 1.1-1H11a3 3 0 0 0 3-3C14 4.4 11.3 2 8 2Z" />
+      <circle cx="5.2" cy="7.2" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="7.6" cy="4.9" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="10.6" cy="5.8" r="0.9" fill="currentColor" stroke="none" />
     </svg>
   );
 }

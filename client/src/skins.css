@@ -1,0 +1,176 @@
+/* ---------- 皮肤（见 skin.ts，参照 codex-app-server 的换肤） ----------
+   <html data-skin> 时生效，只改外观。每款皮肤的变量同时写给设置页里它的预览卡片，预览不受当前皮肤影响。
+   深浅色仍由 <html data-theme> 决定（theme.ts），每款皮肤都有两套。 */
+
+/* 「无」的预览：原来的配色（styles.css 的 :root），当前选了别的皮肤时也照原样显示 */
+.skin-preview-none {
+  --bg: #fbfaf8;
+  --frame: #efede7;
+  --border: #dedad2;
+  --accent: #c96442;
+}
+:root[data-theme="dark"] .skin-preview-none {
+  --bg: #232220;
+  --frame: #191817;
+  --border: #383632;
+}
+
+/* ---------- 暖白画布：浅色像维米尔的暖白墙面，深色像伦勃朗的暗部；实色，外框带一点画布颗粒 ---------- */
+:root[data-skin="warm-canvas"],
+.skin-preview-warm-canvas {
+  --bg: #fbf9f5;
+  --frame: #efe9df;
+  --panel: #f2eee6;
+  --text: #2a2620;
+  --muted: #786f63;
+  --border: #e3dccf;
+  --accent: var(--skin-accent);
+  --accent-text: #fbf9f5;
+  --code-bg: #f1ece3;
+  --user-bubble: #eee7dc;
+  --err: #a84a3c;
+  --ok: #5b7a4e;
+  --warn: #a8762f;
+  --skin-shadow: 58 44 28;
+  --raised-shadow: 0 0 0 1px rgb(var(--skin-shadow) / 0.07), 0 1px 2px rgb(var(--skin-shadow) / 0.08);
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .32 0 0 0 0 .24 0 0 0 0 .14 0 0 0 1.6 -.55'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.22'/%3E%3C/svg%3E");
+}
+:root[data-skin="warm-canvas"][data-theme="dark"],
+:root[data-theme="dark"] .skin-preview-warm-canvas {
+  --bg: #1d1b18;
+  --frame: #151311;
+  --panel: #282520;
+  --text: #e9e2d4;
+  --muted: #9e9586;
+  --border: #36312a;
+  --accent: var(--skin-accent-dark);
+  --accent-text: #1d1a15;
+  --code-bg: #24211d;
+  --user-bubble: #2e2922;
+  --err: #cf6f5e;
+  --ok: #8fa97a;
+  --warn: #d3a251;
+  --skin-shadow: 6 4 2;
+  --raised-shadow: 0 0 0 1px rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.4);
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .95 0 0 0 0 .88 0 0 0 0 .74 0 0 0 1.6 -.55'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.09'/%3E%3C/svg%3E");
+}
+:root[data-skin="warm-canvas"] {
+  & body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  & ::selection { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+  & :is(.titlebar, .app) { background-image: var(--grain); }
+  & .settings-nav { background: color-mix(in srgb, var(--panel) 70%, transparent); }
+  & :is(.settings-title h1, .settings-nav h2, .empty) { font-family: var(--font-display); letter-spacing: 0.01em; }
+  & .composer {
+    box-shadow: 0 1px 2px rgb(var(--skin-shadow) / 0.04), 0 8px 24px -12px rgb(var(--skin-shadow) / 0.18);
+  }
+  & .composer:focus-within {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent), 0 8px 28px -12px rgb(var(--skin-shadow) / 0.22);
+  }
+  & .user { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 5%, transparent); }
+  & .dialog { box-shadow: 0 28px 70px -12px rgb(var(--skin-shadow) / 0.28), 0 2px 8px rgb(var(--skin-shadow) / 0.08); }
+  & .rail-btn.active { color: var(--accent); }
+}
+.skin-preview-warm-canvas .skin-preview-side { background-image: var(--grain); }
+
+/* ---------- 极光：紫、青、蓝三团光晕加点阵星光铺在整个窗口底下，外框和内容区半透明透出来 ---------- */
+:root[data-skin="aurora"],
+.skin-preview-aurora {
+  --bg: #fbfaf8;
+  --frame: #efede7;
+  --border: #dedad2;
+  --accent: var(--skin-accent);
+  --accent-text: #fff;
+  --user-bubble: color-mix(in srgb, var(--skin-accent) 14%, var(--bg));
+  --skin-glow: 58%;
+  --skin-glass: 62%;
+  /* 内容区（对话、设置页）盖在光晕上的底色浓度 */
+  --skin-veil: 40%;
+}
+:root[data-skin="aurora"][data-theme="dark"],
+:root[data-theme="dark"] .skin-preview-aurora {
+  --bg: #16151c;
+  --frame: #100f15;
+  --panel: #201e28;
+  --border: #302d3a;
+  --code-bg: #1f1d27;
+  --accent: var(--skin-accent-dark);
+  --accent-text: #15131c;
+  --user-bubble: color-mix(in srgb, var(--skin-accent) 26%, var(--bg));
+  --skin-glow: 42%;
+  --skin-glass: 66%;
+  --skin-veil: 45%;
+}
+:root[data-skin="aurora"] body,
+.skin-preview.skin-preview-aurora {
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--skin-c3) 55%, transparent) 0 1px, transparent 1.8px) 0 0 / 71px 71px,
+    radial-gradient(circle, color-mix(in srgb, var(--skin-c2) 45%, transparent) 0 1px, transparent 1.8px) 27px 33px / 89px 89px,
+    radial-gradient(circle at 88% 4%, color-mix(in srgb, var(--skin-c1) var(--skin-glow), transparent), transparent 42%),
+    radial-gradient(circle at 10% 12%, color-mix(in srgb, var(--skin-c2) calc(var(--skin-glow) * 0.8), transparent), transparent 36%),
+    radial-gradient(circle at 68% 100%, color-mix(in srgb, var(--skin-c3) calc(var(--skin-glow) * 0.8), transparent), transparent 46%),
+    var(--bg);
+}
+:root[data-skin="aurora"] body { background-attachment: fixed; }
+:root[data-skin="aurora"] {
+  /* 外框（标题栏、图标栏、侧边栏）各自铺半透明的外框色，.app 本身透明，内容区底下直接是光晕 */
+  & .app { background: transparent; }
+  & :is(.titlebar, .app-rail, .sidebar) { background: color-mix(in srgb, color-mix(in srgb, var(--skin-accent) 6%, var(--frame)) var(--skin-glass), transparent); }
+  /* 侧边栏顶部一行吸顶，底下滚过的会话要遮住：不另铺底色（会和侧边栏的半透明叠成一条深色），改成模糊 */
+  & .sidebar-top { background: transparent; backdrop-filter: blur(18px); }
+  & :is(main, .settings) { background: color-mix(in srgb, var(--bg) var(--skin-veil), transparent); }
+  & :is(.side-panel, .file-tree) { background: color-mix(in srgb, var(--bg) calc(var(--skin-veil) + 30%), transparent); }
+  & .settings-nav { background: transparent; }
+  & :is(.sidebar, main, .settings, .sidebar-resizer + main, .sidebar-resizer + .settings, .app-rail + main, .app-rail + .settings) {
+    border-color: color-mix(in srgb, var(--skin-accent) 18%, var(--divider));
+  }
+  /* 输入框：毛玻璃放在 ::before 上，不给输入框本身加 backdrop-filter（那会让里面 position: fixed 的弹层相对它定位） */
+  & .composer {
+    isolation: isolate;
+    background: transparent;
+    border-color: color-mix(in srgb, var(--skin-accent) 28%, var(--border));
+    box-shadow: 0 8px 28px color-mix(in srgb, var(--skin-accent) 14%, transparent);
+  }
+  & .composer::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background: color-mix(in srgb, var(--bg) calc(var(--skin-glass) + 20%), transparent);
+    backdrop-filter: blur(18px) saturate(140%);
+  }
+  & .composer:focus-within { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+  & :is(.session-row.active, .group-head.active, .rail-btn.active) {
+    background: color-mix(in srgb, var(--skin-accent) 16%, var(--bg));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--skin-accent) 36%, transparent);
+  }
+  & .settings-nav-item.active { background: color-mix(in srgb, var(--skin-accent) 18%, transparent); }
+}
+
+/* ---------- 设置页「外观」的皮肤卡片 ---------- */
+.skin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.skin-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 8px 10px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg); color: var(--text); text-align: left;
+}
+.skin-card:hover { background: var(--bg); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.skin-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.skin-preview {
+  position: relative; height: 96px; margin-bottom: 4px; overflow: hidden; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg);
+}
+/* 预览里的迷你界面：左边侧边栏，下面输入框，右上角强调色圆点 */
+.skin-preview-side {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 30%;
+  background-color: color-mix(in srgb, var(--frame) 80%, transparent); border-right: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.skin-preview-box {
+  position: absolute; left: 38%; right: 8%; bottom: 12px; height: 22px; border-radius: 6px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.skin-preview-dot { position: absolute; right: 6px; top: 6px; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); }
+.skin-card-name { display: flex; align-items: center; gap: 6px; padding: 0 2px; font-size: 14px; font-weight: 600; }
+.skin-check { margin-left: auto; color: var(--accent); }
+.skin-card-desc { padding: 0 2px; color: var(--muted); font-size: 12px; line-height: 1.4; }

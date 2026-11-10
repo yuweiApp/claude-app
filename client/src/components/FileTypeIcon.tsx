@@ -1,4 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
+import { useIsDark } from "../theme";
 
 /**
  * 文件、文件夹图标（文件树、@ 引用文件的候选、面板标签页共用），同 codex-app-server 的 fileIcons.tsx：
@@ -30,17 +31,11 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
-const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
-function subscribeDark(listener: () => void) {
-  darkQuery.addEventListener("change", listener);
-  return () => darkQuery.removeEventListener("change", listener);
-}
-
 /** 图标主题（还没加载好时 null）和当前是不是深色界面（浅色界面有的图标换浅色版） */
 function useIconTheme() {
   useEffect(loadTheme, []);
   const t = useSyncExternalStore(subscribe, () => theme);
-  const dark = useSyncExternalStore(subscribeDark, () => darkQuery.matches);
+  const dark = useIsDark();
   return { theme: t, dark };
 }
 

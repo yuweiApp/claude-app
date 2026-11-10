@@ -41,32 +41,31 @@
   font-size: 15px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #232220;
-    --frame: #191817;
-    --panel: #2b2a27;
-    --text: #ecebe7;
-    --muted: #9a968d;
-    --border: #383632;
-    --code-bg: #2c2b28;
-    --raised-shadow: 0 0 0 1px rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.4);
-    --warn: #e0a84a;
-    --skill: #84b4f0;
-    --ic-settings: #a5a8fb;
-    --ic-compose: #e38b6a;
-    --ic-project: #f2a33a;
-    --ic-folder: #f0c040;
-    --ic-chat: #3cc8b8;
-    --ic-skill: #c084fc;
-    --ic-plugin: #79a6ff;
-    --ic-tab: #34d399;
-    --ic-desktop: #38bdf8;
-    --ic-mcp: #f472b6;
-    --ic-tasks-from: #38bdf8;
-    --ic-tasks-to: #a78bfa;
-    color-scheme: dark;
-  }
+/* 深色：<html data-theme="dark">（theme.ts 按颜色模式设置，跟随系统时按系统算） */
+:root[data-theme="dark"] {
+  --bg: #232220;
+  --frame: #191817;
+  --panel: #2b2a27;
+  --text: #ecebe7;
+  --muted: #9a968d;
+  --border: #383632;
+  --code-bg: #2c2b28;
+  --raised-shadow: 0 0 0 1px rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.4);
+  --warn: #e0a84a;
+  --skill: #84b4f0;
+  --ic-settings: #a5a8fb;
+  --ic-compose: #e38b6a;
+  --ic-project: #f2a33a;
+  --ic-folder: #f0c040;
+  --ic-chat: #3cc8b8;
+  --ic-skill: #c084fc;
+  --ic-plugin: #79a6ff;
+  --ic-tab: #34d399;
+  --ic-desktop: #38bdf8;
+  --ic-mcp: #f472b6;
+  --ic-tasks-from: #38bdf8;
+  --ic-tasks-to: #a78bfa;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -247,6 +246,17 @@ main {
 .settings-nav[hidden] { display: none; }
 .settings-nav h2 { margin: 0 6px 12px; font-size: 16px; }
 .settings-group { padding: 4px 8px; color: var(--muted); font-size: 12px; }
+.settings-nav-item + .settings-group { margin-top: 12px; }
+/* 设置页「外观」（AppearancePage）：分节标题，下面一张圆角卡片，一行一项；皮肤卡片在 skins.css */
+.appearance { max-width: 760px; }
+.appearance-section { margin-bottom: 32px; }
+.appearance-section h2 { margin: 0 0 12px; font-size: 15px; font-weight: 500; }
+.appearance-card { border: 1px solid var(--border); border-radius: 12px; }
+.appearance-row { display: flex; align-items: center; gap: 16px; padding: 13px 18px; }
+.appearance-row + .appearance-row { border-top: 1px solid var(--border); }
+.appearance-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.appearance-row-label { font-size: 14px; }
+.appearance-row-desc { color: var(--muted); font-size: 12.5px; }
 .settings-nav-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 6px 8px; border: none; border-radius: 10px; background: none; font-size: 14px; text-align: left; }
 .settings-nav-item svg { flex: none; color: var(--muted); }
 .settings-nav-item:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
@@ -974,9 +984,7 @@ main {
   border: 1px solid var(--border); border-radius: 12px; background: var(--bg);
   box-shadow: 0 12px 36px rgb(0 0 0 / 0.14), 0 2px 8px rgb(0 0 0 / 0.06);
 }
-@media (prefers-color-scheme: dark) {
-  .tasks-popover { --task-blue: #78a7ff; --task-green: #65c994; --task-amber: #e6b45f; --task-red: #ef8b82; }
-}
+:root[data-theme="dark"] .tasks-popover { --task-blue: #78a7ff; --task-green: #65c994; --task-amber: #e6b45f; --task-red: #ef8b82; }
 .tasks-head { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--border); }
 .tasks-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
 .tasks-close { width: 26px; height: 26px; color: var(--muted); }

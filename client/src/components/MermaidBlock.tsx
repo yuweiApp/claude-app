@@ -1,4 +1,5 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
+import { useIsDark } from "../theme";
 import { ImageViewer } from "./ImageThumb";
 import { CopyAction } from "./MessageActions";
 
@@ -11,12 +12,6 @@ function loadMermaid() {
   return loading;
 }
 
-const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
-const subscribeDark = (cb: () => void) => {
-  darkQuery.addEventListener("change", cb);
-  return () => darkQuery.removeEventListener("change", cb);
-};
-const isDark = () => darkQuery.matches;
 
 /** 图的配色：跟页面一样的暖灰（styles.css 的 --bg / --panel / --border / --text / --muted） */
 const PALETTE = {
@@ -139,7 +134,7 @@ const RENDER_DELAY_MS = 300;
  * 展开；点图也能展开看大图。源码有错（包括流式输出还没写完）时显示源码和错误原因
  */
 export function MermaidBlock({ code }: { code: string }) {
-  const dark = useSyncExternalStore(subscribeDark, isDark);
+  const dark = useIsDark();
   const [result, setResult] = useState<{ code: string; dark: boolean; svg?: string; error?: string } | null>(() => {
     const svg = done.get(cacheKey(code, dark));
     return svg ? { code, dark, svg } : null;

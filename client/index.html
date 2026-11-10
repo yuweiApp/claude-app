@@ -5,6 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <title>Claude App</title>
+    <!-- 在样式生效前定下深浅色和皮肤，刷新时不先闪一下别的配色；逻辑与 src/theme.ts、src/skin.ts 一致 -->
+    <script>
+      try {
+        var r = document.documentElement;
+        var t = localStorage.getItem("theme");
+        if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        r.dataset.theme = t;
+        var skins = {
+          "warm-canvas": ["#3f5b7d", "#c9a46a"],
+          aurora: ["#7c5cff", "#a18bff", "#7c5cff", "#2dd4bf", "#60a5fa"],
+        };
+        var id = localStorage.getItem("skin");
+        var v = skins[id];
+        if (v) {
+          r.dataset.skin = id;
+          r.style.setProperty("--skin-accent", v[0]);
+          r.style.setProperty("--skin-accent-dark", v[1]);
+          for (var i = 2; i < v.length; i++) r.style.setProperty("--skin-c" + (i - 1), v[i]);
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>
