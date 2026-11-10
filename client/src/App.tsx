@@ -126,6 +126,17 @@ export function App() {
     refresh();
   };
 
+  /** 先在列表里换上新标题，失败时报错并按网关的列表改回来 */
+  const renameSession = async (id: string, title: string) => {
+    setSessions((all) => all.map((s) => (s.sessionId === id ? { ...s, customTitle: title } : s)));
+    try {
+      await api.renameSession(id, title);
+    } catch (e) {
+      setError(`重命名失败：${(e as Error).message}`);
+    }
+    refresh();
+  };
+
   const refresh = useCallback(() => {
     api.listSessions().then(setSessions, (e: Error) => setError(e.message));
   }, []);
@@ -185,6 +196,7 @@ export function App() {
                   onSelect={select}
                   onNew={startNew}
                   onDelete={(ids) => void deleteSessions(ids)}
+                  onRename={(id, title) => void renameSession(id, title)}
                   // 桌面版的收起按钮在标题栏上
                   onCollapse={desktop ? undefined : toggleSidebar}
                   width={sidebarWidth}

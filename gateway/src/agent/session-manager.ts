@@ -156,9 +156,11 @@ export class SessionManager {
     return sessionHistory(sessionId);
   }
 
+  /** 用户改标题：写成自定义标题，打开这个会话的页面通过 title 事件跟着变 */
   async rename(sessionId: string, title: string): Promise<void> {
     await renameSession(sessionId, title);
-    this.titles.set(sessionId, title.trim());
+    this.titles.set(sessionId, title);
+    this.hub.publish(sessionId, { type: "title", title });
   }
 
   async closeSession(sessionId: string): Promise<void> {

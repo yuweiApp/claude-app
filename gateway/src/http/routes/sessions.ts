@@ -250,7 +250,9 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
       },
     },
     async (req) => {
-      await sessions.rename(req.params.id, req.body.title);
+      const title = req.body.title.trim();
+      if (!title) throw new BadRequestError("标题不能为空");
+      await sessions.rename(req.params.id, title);
       return { ok: true };
     },
   );

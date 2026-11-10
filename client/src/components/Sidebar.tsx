@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { SessionListItem } from "../api";
 import { useDismiss } from "./ComposerPickers";
 import { SidebarToggle } from "./SidebarToggle";
@@ -53,12 +53,14 @@ interface Props {
   onNew: (cwd?: string) => void;
   /** 删除这些会话（不弹确认） */
   onDelete: (ids: string[]) => void;
+  /** 改会话标题（已去掉首尾空白，非空且和原来不同） */
+  onRename: (id: string, title: string) => void;
   /** 收起侧边栏；不传时不显示按钮（桌面版的在标题栏上） */
   onCollapse?: () => void;
   width: number;
 }
 
-export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, onDelete, onCollapse, width }: Props) {
+export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, onDelete, onRename, onCollapse, width }: Props) {
   const [collapsed, setCollapsed] = useState(loadCollapsed);
   const current = sessions.find((session) => session.sessionId === currentId);
   useEffect(() => {
@@ -103,7 +105,9 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
   const deleteSession = (s: SessionListItem) => onDelete([s.sessionId]);
   const deleteProject = (g: FolderGroup) => onDelete(g.sessions.map((s) => s.sessionId));
 
-  const row = (s: SessionListItem) => <SessionRow key={s.sessionId} session={s} active={s.sessionId === currentId} onSelect={onSelect} onDelete={deleteSession} />;
+  const row = (s: SessionListItem) => (
+    <SessionRow key={s.sessionId} session={s} active={s.sessionId === currentId} onSelect={onSelect} onDelete={deleteSession} onRename={onRename} />
+  );
 
   /** 「会话」和各个项目当前列出的会话数（键是 SECTION_CHATS 或项目文件夹），没记的是默认个数；不保存，刷新后都回到默认 */
   const [shownCounts, setShownCounts] = useState<Map<string, number>>(() => new Map());
@@ -297,27 +301,97 @@ function SectionHead({ className, menu: items, children }: { className?: string;
   );
 }
 
-/** 一个会话：悬停时右边出现「…」（运行中的转圈让位），点它或右键弹出菜单 */
-function SessionRow({ session: s, active, onSelect, onDelete }: { session: SessionListItem; active: boolean; onSelect: (id: string) => void; onDelete: (s: SessionListItem) => void }) {
+/** 一个会话：悬停时右边出现「…」（运行中的转圈让位），点它或右键弹出菜单；重命名时这一行换成输入框，双击标题也能改 */
+function SessionRow({
+  session: s,
+  active,
+  onSelect,
+  onDelete,
+  onRename,
+}: {
+  session: SessionListItem;
+  active: boolean;
+  onSelect: (id: string) => void;
+  onDelete: (s: SessionListItem) => void;
+  onRename: (id: string, title: string) => void;
+}) {
   const menu = useRowMenu();
   const rowRef = useRef<HTMLLIElement>(null);
+  const [renaming, setRenaming] = useState(false);
   useEffect(() => {
     if (active) rowRef.current?.scrollIntoView({ block: "nearest" });
   }, [active]);
+  const title = sessionTitle(s);
+  if (renaming)
+    return (
+      <li ref={rowRef} className="session-item">
+        <TitleInput
+          initial={title}
+          onDone={(next) => {
+            setRenaming(false);
+            const trimmed = next?.trim();
+            if (trimmed && trimmed !== title) onRename(s.sessionId, trimmed);
+          }}
+        />
+      </li>
+    );
   return (
     <li ref={rowRef} className={`session-item${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
       <button
         className={`session-row${active ? " active" : ""}${s.state === "running" ? " running" : ""}`}
         onClick={() => onSelect(s.sessionId)}
-        title={sessionTitle(s)}
+        onDoubleClick={() => setRenaming(true)}
+        title={title}
       >
-        <span className="session-title">{sessionTitle(s)}</span>
+        <span className="session-title">{title}</span>
         <span className="session-meta">{relativeTime(s.lastResponseAt)}</span>
         {s.state === "running" && <span className="session-spinner" aria-label="运行中" />}
       </button>
-      <MoreButton className="row-more" label={`「${sessionTitle(s)}」的更多操作`} menu={menu} />
-      <MenuPopup menu={menu} items={[{ label: "删除", danger: true, onClick: () => onDelete(s) }]} />
+      <MoreButton className="row-more" label={`「${title}」的更多操作`} menu={menu} />
+      <MenuPopup
+        menu={menu}
+        items={[
+          { label: "重命名", onClick: () => setRenaming(true) },
+          { label: "删除", danger: true, onClick: () => onDelete(s) },
+        ]}
+      />
     </li>
+  );
+}
+
+/** 会话标题输入框：打开时全选；回车或点到别处是确定（onDone 给输入的内容），Esc 是取消（onDone(null)） */
+function TitleInput({ initial, onDone }: { initial: string; onDone: (title: string | null) => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  useLayoutEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  // 回车之后输入框卸掉还会触发一次 blur，只算第一次
+  const finish = (title: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(title);
+  };
+  return (
+    <input
+      ref={ref}
+      className="session-title-input"
+      aria-label="会话标题"
+      defaultValue={initial}
+      spellCheck={false}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          finish(e.currentTarget.value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          finish(null);
+        }
+      }}
+      onBlur={(e) => finish(e.currentTarget.value)}
+    />
   );
 }
 

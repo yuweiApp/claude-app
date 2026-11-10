@@ -185,6 +185,8 @@ export const api = {
   stopTask: (id: string, taskId: string) => request("POST", `/sessions/${id}/tasks/${encodeURIComponent(taskId)}/stop`),
   /** 清掉已经结束的后台任务 */
   clearTasks: (id: string) => request("DELETE", `/sessions/${id}/tasks`),
+  /** 改会话标题（写成自定义标题） */
+  renameSession: (id: string, title: string) => request("PATCH", `/sessions/${id}`, { title }),
   /** 删除会话，会话记录一起删，不能恢复 */
   deleteSession: (id: string) => request("DELETE", `/sessions/${id}`),
   setPermissionMode: (id: string, mode: PermissionMode) => request("POST", `/sessions/${id}/permission-mode`, { mode }),
