@@ -54,50 +54,39 @@ async function copyImage(src: string) {
 const ICON = { width: 15, height: 15, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true } as const;
 
 /**
- * 看大图：铺满窗口，挂在 body 上，不受所在位置的滚动、裁剪影响（同 codex-app-server 的 ImageViewer，去掉了编辑）。
- * 滚轮以鼠标处为中心缩放，双指捏合缩放，放大后拖动平移，双击在适应窗口和 2 倍之间切换；
- * 键盘 + / - 缩放、0 复位、Esc 关闭，Ctrl/⌘+C 复制、Ctrl/⌘+S 下载；点图片以外的地方关闭（拖动、捏合后松手不算）
+ * 图片缩放、平移：滚轮以鼠标处为中心缩放，双指捏合缩放，放大后拖动平移。
+ * stageRef 是放图片的区域，scale=1 时图片在其中适应大小、居中；imgRef 用来算相对原图的百分比
  */
-export function ImageViewer({ src, alt = "图片", onClose }: { src: string; alt?: string; onClose: () => void }) {
+export function useZoomPan() {
   const [view, setView] = useState<View>(FIT);
-  /** 复制、下载的结果，按钮上短暂显示勾或叉 */
-  const [copyState, setCopyState] = useState<"idle" | "done" | "error">("idle");
-  const [saveState, setSaveState] = useState<"idle" | "error">("idle");
-  useEffect(() => {
-    if (copyState === "idle" && saveState === "idle") return;
-    const t = setTimeout(() => (setCopyState("idle"), setSaveState("idle")), 1500);
-    return () => clearTimeout(t);
-  }, [copyState, saveState]);
-  const copy = () => copyImage(src).then(() => setCopyState("done"), () => setCopyState("error"));
-  const save = () => downloadImage(src, alt).catch(() => setSaveState("error"));
-  const actionsRef = useRef({ copy, save });
-  actionsRef.current = { copy, save };
   const [dragging, setDragging] = useState(false);
-  /** 适应窗口时的显示宽度 / 原图宽度，用来显示相对原图的百分比 */
+  /** 适应区域时的显示宽度 / 原图宽度，用来显示相对原图的百分比 */
   const [fitRatio, setFitRatio] = useState<number | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const viewRef = useRef(view);
   viewRef.current = view;
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
   /** 按下的指针：一个是拖动，两个是捏合 */
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef({ moved: false, pinch: null as number | null, startX: 0, startY: 0 });
 
-  /** 以窗口里的 (px, py) 为中心缩放到 next，这个点下面的内容保持不动；不大于适应窗口时居中 */
+  /** 以窗口坐标 (px, py) 为中心缩放到 next，这个点下面的内容保持不动；不大于适应区域时居中 */
   const zoomAt = (next: number, px?: number, py?: number) => {
+    const rect = stageRef.current?.getBoundingClientRect();
     setView((v) => {
       const scale = Math.abs(next - 1) < 0.02 ? 1 : clamp(next);
       if (scale <= 1) return { scale, x: 0, y: 0 };
-      const cx = window.innerWidth / 2;
-      const cy = window.innerHeight / 2;
+      const cx = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+      const cy = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
       const ax = (px ?? cx) - cx;
       const ay = (py ?? cy) - cy;
       const k = scale / v.scale;
       return { scale, x: ax - (ax - v.x) * k, y: ay - (ay - v.y) * k };
     });
   };
+  const zoomIn = () => zoomAt(viewRef.current.scale * STEP);
+  const zoomOut = () => zoomAt(viewRef.current.scale / STEP);
+  const reset = () => setView(FIT);
 
   // React 的 onWheel 是被动监听，不能 preventDefault，直接挂在舞台上
   useEffect(() => {
@@ -109,29 +98,20 @@ export function ImageViewer({ src, alt = "图片", onClose }: { src: string; alt
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 区域大小变了（窗口、面板拉宽拉窄），适应大小时的显示尺寸也跟着变
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
-        const key = e.key.toLowerCase();
-        // 选中了文字时 Ctrl+C 照常复制文字
-        if (key === "c" && !window.getSelection()?.toString()) void actionsRef.current.copy();
-        else if (key === "s") void actionsRef.current.save();
-        else return;
-        e.preventDefault();
-        return;
-      }
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key === "Escape") closeRef.current();
-      else if (e.key === "+" || e.key === "=") zoomAt(viewRef.current.scale * STEP);
-      else if (e.key === "-" || e.key === "_") zoomAt(viewRef.current.scale / STEP);
-      else if (e.key === "0") setView(FIT);
-      else return;
-      e.preventDefault();
+    const img = imgRef.current;
+    if (!img) return;
+    const update = () => {
+      if (img.naturalWidth && img.offsetWidth) setFitRatio(img.offsetWidth / img.naturalWidth);
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    const ro = new ResizeObserver(update);
+    ro.observe(img);
+    img.addEventListener("load", update);
+    return () => (ro.disconnect(), img.removeEventListener("load", update));
   }, []);
 
   const pinchDistance = () => {
@@ -184,57 +164,160 @@ export function ImageViewer({ src, alt = "图片", onClose }: { src: string; alt
     if (pointers.current.size === 0) setDragging(false);
   };
 
-  const onClick = (e: ReactMouseEvent) => {
-    if (gesture.current.moved) return;
-    const target = e.target as HTMLElement;
-    if (target === imgRef.current || target.closest(".image-viewer-tools")) return;
-    onClose();
-  };
-
+  /** 双击图片在适应大小和 2 倍之间切换 */
   const onDoubleClick = (e: ReactMouseEvent) => {
     if (e.target !== imgRef.current) return;
     if (viewRef.current.scale === 1) zoomAt(2, e.clientX, e.clientY);
     else setView(FIT);
   };
 
-  const percent = Math.round(view.scale * (fitRatio ?? 1) * 100);
+  return {
+    view,
+    dragging,
+    stageRef,
+    imgRef,
+    zoomIn,
+    zoomOut,
+    reset,
+    /** 刚才这次按下是不是拖动或捏合了（松手后的 click 不当点击） */
+    moved: () => gesture.current.moved,
+    percent: Math.round(view.scale * (fitRatio ?? 1) * 100),
+    canZoomIn: view.scale < MAX_SCALE,
+    canZoomOut: view.scale > MIN_SCALE,
+    frameStyle: { transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` },
+    stageHandlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp, onDoubleClick },
+  };
+}
 
-  return createPortal(
+/** 缩放按钮：缩小、百分比（点了复位）、放大 */
+function ZoomButtons({ z }: { z: ReturnType<typeof useZoomPan> }) {
+  return (
+    <>
+      <button title="缩小（-）" aria-label="缩小" disabled={!z.canZoomOut} onClick={z.zoomOut}>
+        −
+      </button>
+      <button className="image-viewer-percent" title="适应大小（0）" onClick={z.reset}>
+        {z.percent}%
+      </button>
+      <button title="放大（+）" aria-label="放大" disabled={!z.canZoomIn} onClick={z.zoomIn}>
+        ＋
+      </button>
+    </>
+  );
+}
+
+/** 键盘 + / - 缩放、0 复位；处理了返回 true */
+function zoomKey(z: ReturnType<typeof useZoomPan>, e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  if (e.key === "+" || e.key === "=") z.zoomIn();
+  else if (e.key === "-" || e.key === "_") z.zoomOut();
+  else if (e.key === "0") z.reset();
+  else return false;
+  return true;
+}
+
+/**
+ * 嵌在面板里的图片预览（文件查看器）：图片适应区域大小，可缩放、拖动，底部一排缩放按钮；
+ * 焦点在区域里时键盘 + / - 缩放、0 复位
+ */
+export function ZoomableImage({ src, alt }: { src: string; alt?: string }) {
+  const z = useZoomPan();
+  return (
     <div
-      ref={stageRef}
-      className="image-viewer"
-      role="dialog"
-      aria-label={alt}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      onClick={onClick}
-      onDoubleClick={onDoubleClick}
+      ref={z.stageRef}
+      className="zoom-stage"
+      tabIndex={0}
+      {...z.stageHandlers}
+      onKeyDown={(e) => {
+        if (zoomKey(z, e)) e.preventDefault();
+      }}
     >
-      <div className={`image-viewer-frame${dragging ? " dragging" : ""}`} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
+      <div className={`zoom-frame${z.dragging ? " dragging" : ""}`} style={z.frameStyle}>
         <img
-          ref={imgRef}
+          ref={z.imgRef}
           src={src}
           alt={alt}
           draggable={false}
-          className={`${view.scale > 1 ? "zoomed" : ""}${dragging ? " dragging" : ""}`}
-          onLoad={(e) => {
-            const el = e.currentTarget;
-            if (el.naturalWidth && el.clientWidth) setFitRatio(el.clientWidth / el.naturalWidth);
-          }}
+          className={`${z.view.scale > 1 ? "zoomed" : ""}${z.dragging ? " dragging" : ""}`}
         />
       </div>
       <div className="image-viewer-tools">
-        <button title="缩小（-）" aria-label="缩小" disabled={view.scale <= MIN_SCALE} onClick={() => zoomAt(view.scale / STEP)}>
-          −
-        </button>
-        <button className="image-viewer-percent" title="适应窗口（0）" onClick={() => setView(FIT)}>
-          {percent}%
-        </button>
-        <button title="放大（+）" aria-label="放大" disabled={view.scale >= MAX_SCALE} onClick={() => zoomAt(view.scale * STEP)}>
-          ＋
-        </button>
+        <ZoomButtons z={z} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 看大图：铺满窗口，挂在 body 上，不受所在位置的滚动、裁剪影响（同 codex-app-server 的 ImageViewer，去掉了编辑）。
+ * 滚轮以鼠标处为中心缩放，双指捏合缩放，放大后拖动平移，双击在适应窗口和 2 倍之间切换；
+ * 键盘 + / - 缩放、0 复位、Esc 关闭，Ctrl/⌘+C 复制、Ctrl/⌘+S 下载；点图片以外的地方关闭（拖动、捏合后松手不算）
+ */
+export function ImageViewer({ src, alt = "图片", onClose }: { src: string; alt?: string; onClose: () => void }) {
+  const z = useZoomPan();
+  const zRef = useRef(z);
+  zRef.current = z;
+  /** 复制、下载的结果，按钮上短暂显示勾或叉 */
+  const [copyState, setCopyState] = useState<"idle" | "done" | "error">("idle");
+  const [saveState, setSaveState] = useState<"idle" | "error">("idle");
+  useEffect(() => {
+    if (copyState === "idle" && saveState === "idle") return;
+    const t = setTimeout(() => (setCopyState("idle"), setSaveState("idle")), 1500);
+    return () => clearTimeout(t);
+  }, [copyState, saveState]);
+  const copy = () => copyImage(src).then(() => setCopyState("done"), () => setCopyState("error"));
+  const save = () => downloadImage(src, alt).catch(() => setSaveState("error"));
+  const actionsRef = useRef({ copy, save });
+  actionsRef.current = { copy, save };
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        const key = e.key.toLowerCase();
+        // 选中了文字时 Ctrl+C 照常复制文字
+        if (key === "c" && !window.getSelection()?.toString()) void actionsRef.current.copy();
+        else if (key === "s") void actionsRef.current.save();
+        else return;
+        e.preventDefault();
+        return;
+      }
+      if (e.key === "Escape" && !e.ctrlKey && !e.metaKey && !e.altKey) closeRef.current();
+      else if (!zoomKey(zRef.current, e)) return;
+      e.preventDefault();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  const onClick = (e: ReactMouseEvent) => {
+    if (z.moved()) return;
+    const target = e.target as HTMLElement;
+    if (target === z.imgRef.current || target.closest(".image-viewer-tools")) return;
+    onClose();
+  };
+
+  return createPortal(
+    <div
+      ref={z.stageRef}
+      className="image-viewer"
+      role="dialog"
+      aria-label={alt}
+      {...z.stageHandlers}
+      onClick={onClick}
+    >
+      <div className={`image-viewer-frame${z.dragging ? " dragging" : ""}`} style={z.frameStyle}>
+        <img
+          ref={z.imgRef}
+          src={src}
+          alt={alt}
+          draggable={false}
+          className={`${z.view.scale > 1 ? "zoomed" : ""}${z.dragging ? " dragging" : ""}`}
+        />
+      </div>
+      <div className="image-viewer-tools">
+        <ZoomButtons z={z} />
         <span className="image-viewer-sep" />
         <button
           title={copyState === "done" ? "已复制" : copyState === "error" ? "复制失败" : "复制图片（Ctrl/⌘+C）"}

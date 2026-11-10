@@ -5,6 +5,7 @@ import { useDismiss } from "./ComposerPickers";
 import { CodeEditor, type LineRange } from "./CodeEditor";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FileTypeIcon, FolderTypeIcon } from "./FileTypeIcon";
+import { ZoomableImage } from "./ImageThumb";
 import { MarkdownLiveEditor } from "./MarkdownLiveEditor";
 import { PATH_DRAG_TYPE } from "./MentionText";
 import { closePageAnnotation, editAnnotationAt, repositionAnnotationEditor, startPageAnnotation } from "./ResponseAnnotations";
@@ -1032,7 +1033,7 @@ function FileViewer({
   else if (content.kind === "image")
     body = (
       <div className="viewer-image">
-        <img src={api.rawFileUrl(cwd, path, content.mtimeMs)} alt={path} />
+        <ZoomableImage key={path} src={api.rawFileUrl(cwd, path, content.mtimeMs)} alt={path} />
       </div>
     );
   else if (content.kind === "binary") body = <div className="panel-empty">二进制文件，无法预览（{formatBytes(content.size)}）</div>;
