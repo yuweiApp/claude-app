@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'">
+  <title>登录 · 树屿森 SYS</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; --bg: #efede7; --card: #fbfaf8; --text: #1f1e1c; --muted: #77736b; --border: #dedad2; --accent: #c96442; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #191817; --card: #232220; --text: #ecebe7; --muted: #9a968d; --border: #383632; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); }
+    header { height: 40px; display: flex; justify-content: flex-end; -webkit-app-region: drag; }
+    header button { -webkit-app-region: no-drag; border: 0; border-radius: 0; background: transparent; width: 46px; color: var(--muted); cursor: pointer; }
+    header button:hover { background: var(--border); }
+    header button:last-child:hover { background: #c0392b; color: white; }
+    main { min-height: calc(100vh - 40px); display: grid; place-items: center; padding: 36px 24px 64px; }
+    form { width: min(100%, 380px); padding: 36px; border: 1px solid var(--border); border-radius: 20px; background: var(--card); box-shadow: 0 12px 48px #00000006; }
+    .brand { display: flex; gap: 10px; align-items: center; font-size: 15px; font-weight: 600; }
+    .brand img { width: 30px; height: 30px; border-radius: 8px; }
+    h1 { margin: 28px 0 8px; font-size: 28px; font-weight: 600; }
+    p { margin: 0 0 28px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+    label { display: block; margin: 18px 0 7px; font-size: 13px; font-weight: 500; }
+    input { width: 100%; height: 44px; padding: 0 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; color: var(--text); font: inherit; font-size: 14px; outline: none; }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #c9644218; }
+    #error { color: #d34c3e; font-size: 13px; line-height: 1.5; margin-top: 16px; overflow-wrap: anywhere; }
+    #submit { width: 100%; height: 44px; margin-top: 22px; border: 0; border-radius: 9px; background: var(--accent); color: white; font: inherit; font-size: 14px; cursor: pointer; }
+    button:disabled, input:disabled { opacity: .6; cursor: default; }
+    #back { display: block; margin: 14px auto 0; border: 0; background: none; color: var(--muted); cursor: pointer; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header id="controls"><button id="minimize" aria-label="最小化">—</button><button id="maximize" aria-label="最大化">□</button><button id="close" aria-label="关闭">×</button></header>
+  <main>
+    <form id="form">
+      <div class="brand"><img src="assets/icon.png" alt="">树屿森 SYS</div>
+      <h1>欢迎回来</h1>
+      <p id="intro">登录账号，继续与你的助手协作。</p>
+      <div id="credentials">
+        <label for="username">用户名或邮箱</label>
+        <input id="username" name="username" autocomplete="username" placeholder="输入用户名或邮箱" maxlength="254" required autofocus>
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="输入密码" required>
+      </div>
+      <div id="verification" hidden>
+        <label for="code">二次验证码或恢复码</label>
+        <input id="code" name="code" autocomplete="one-time-code" disabled>
+      </div>
+      <div id="error" role="alert" aria-live="polite"></div>
+      <button id="submit" type="submit">登录</button>
+      <button id="back" type="button" hidden>返回账号登录</button>
+    </form>
+  </main>
+  <script>
+  (() => {
+    const $ = (id) => document.getElementById(id);
+    const desktop = window.desktop;
+    let twoFactor = false;
+    let busy = false;
+    if (desktop?.platform === "darwin") $("controls").hidden = true;
+    $("minimize").onclick = () => desktop.minimize();
+    $("maximize").onclick = () => desktop.toggleMaximize();
+    $("close").onclick = () => desktop.close();
+    $("error").textContent = new URLSearchParams(location.search).get("error") || "";
+    function setMode(verify) {
+      twoFactor = verify;
+      $("credentials").hidden = verify;
+      $("verification").hidden = !verify;
+      $("back").hidden = !verify;
+      $("username").disabled = verify;
+      $("password").disabled = verify;
+      $("code").disabled = !verify;
+      $("code").required = verify;
+      $("code").value = "";
+      $("submit").textContent = verify ? "验证并登录" : "登录";
+      $("intro").textContent = verify ? "此账号已开启二次验证，请输入验证码。" : "登录账号，继续与你的助手协作。";
+      $(verify ? "code" : "username").focus();
+    }
+    $("back").onclick = () => { setMode(false); $("error").textContent = ""; };
+    $("form").onsubmit = async (event) => {
+      event.preventDefault();
+      if (busy) return;
+      busy = true;
+      $("submit").disabled = true;
+      $("back").disabled = true;
+      $("submit").textContent = "正在登录…";
+      $("error").textContent = "";
+      try {
+        const result = await desktop.account.login($("username").value, $("password").value, twoFactor ? $("code").value : undefined);
+        if (result.error) throw new Error(result.error);
+        $("password").value = "";
+        if (result.need2fa) setMode(true);
+      } catch (error) {
+        $("error").textContent = error.message || "登录失败，请重试";
+      } finally {
+        busy = false;
+        $("submit").disabled = false;
+        $("back").disabled = false;
+        $("submit").textContent = twoFactor ? "验证并登录" : "登录";
+      }
+    };
+  })();
+  </script>
+</body>
+</html>

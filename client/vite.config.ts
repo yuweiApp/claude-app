@@ -3,9 +3,10 @@ import { defineConfig, loadEnv } from "vite";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
-  const target = env.VITE_PROXY_TARGET || "http://127.0.0.1:8788";
+  const target = process.env.VITE_PROXY_TARGET || env.VITE_PROXY_TARGET || "http://127.0.0.1:8788";
   return {
     plugins: [react()],
+    build: { sourcemap: false },
     server: {
       port: 5180,
       strictPort: true,

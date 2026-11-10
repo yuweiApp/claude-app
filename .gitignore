@@ -11,3 +11,6 @@ conversation-*.jsonl
 # 编辑器交换文件、Claude Code 本机设置
 *.swp
 .claude/settings.local.json
+# 安装包与发布暂存目录
+desktop/build/
+desktop/release/

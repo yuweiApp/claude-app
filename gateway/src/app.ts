@@ -1,5 +1,6 @@
 import multipart from "@fastify/multipart";
 import websocket from "@fastify/websocket";
+import staticFiles from "@fastify/static";
 import { BrowserHost } from "./browser/host.js";
 import { externalTabs } from "./browser/external.js";
 import { browserRoutes } from "./http/routes/browsers.js";
@@ -35,6 +36,8 @@ export interface App {
 
 export function buildApp(): App {
   const app = Fastify({
+    // 安装版直接提供 /api/*；开发版由 Vite 去掉 /api 前缀。
+    rewriteUrl: (req) => config.staticDir && req.url?.startsWith("/api/") ? req.url.slice(4) : req.url || "/",
     logger: {
       level: process.env.LOG_LEVEL || "info",
       stream: prettyStream,
@@ -57,6 +60,8 @@ export function buildApp(): App {
     app.addHook("onRequest", async (req, reply) => {
       // 网页预览靠地址里的随机 id，见 http/routes/files.ts
       if (req.url === "/health" || req.url.startsWith(PAGE_PREFIX)) return;
+      // 只公开前端静态文件，实际 API 路由仍需访问凭证。
+      if (config.staticDir && (req.routeOptions.url === "/*" || req.routeOptions.url === "/")) return;
       const header = req.headers.authorization;
       const token = header?.startsWith("Bearer ") ? header.slice(7) : (req.query as { token?: string }).token;
       if (token !== config.apiToken) await reply.code(401).send({ error: "未授权" });
@@ -73,6 +78,7 @@ export function buildApp(): App {
   });
 
   app.get("/health", async () => ({ ok: true }));
+  if (config.staticDir) void app.register(staticFiles, { root: config.staticDir, index: ["index.html"], dotfiles: "deny" });
 
   app.get("/config", async () => ({
     workspaceDir: config.workspaceDir,

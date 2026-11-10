@@ -19,6 +19,7 @@ import { FileLinkContext } from "./components/ReplyMarkdown";
 import { TasksPopover } from "./components/TasksPopover";
 import { DesktopTargetFloat } from "./components/DesktopTargetFloat";
 import { TitleBar } from "./components/TitleBar";
+import { AccountMenu } from "./components/AccountMenu";
 import { desktop } from "./desktop";
 import { useBrowserTabs } from "./state/browserTabs";
 import { TabPicker } from "./components/TabPicker";
@@ -212,6 +213,7 @@ export function App() {
               <GearGlyph />
             </IosIcon>
           </button>
+          {desktop && <AccountMenu />}
         </nav>
         {/* 桌面版标题栏上的收起按钮在设置页里收起左边的导航；网页版设置页里没有这个按钮，导航一直显示 */}
         {settingsOpen && <SettingsPage navCollapsed={!!desktop && collapsed} />}

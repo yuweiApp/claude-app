@@ -1,21 +1,26 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { createServer } from "node:net";
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell, type MenuItemConstructorOptions, type OpenDialogOptions, type Rectangle } from "electron";
 import { GatewayBridge } from "./browser/bridge.js";
 import { BrowserViews, FAVICON_SCHEME, tabInfo } from "./browser/views.js";
 import { findCaptureSource } from "./capture.js";
+import { accountEnv, accountInfo, loadAccount, loginAccount, logoutAccount } from "./account.js";
 
-// 桌面版：拉起网关和网页（Vite），在窗口里打开网页。已经在跑的（比如 VS Code 里先启动了「启动网页」）直接复用
+// 桌面版：登录后拉起当前账号独立的网关和网页（Vite），在窗口里打开网页。
 const root = path.resolve(import.meta.dirname, "..", "..");
-const gatewayUrl = process.env.DESKTOP_GATEWAY_URL || "http://127.0.0.1:8788";
-const clientUrl = process.env.DESKTOP_CLIENT_URL || "http://localhost:5180";
+const desktopRoot = app.isPackaged ? app.getAppPath() : path.join(root, "desktop");
+const loginFile = path.join(desktopRoot, "login.html");
+let gatewayUrl = process.env.DESKTOP_GATEWAY_URL || "http://127.0.0.1:8788";
+let clientUrl = process.env.DESKTOP_CLIENT_URL || "http://localhost:5180";
 /** 拉起子进程用的 node，默认取 PATH 里的（Electron 自带的 Node 版本和网关要求的不一定一致） */
-const nodeBin = process.env.DESKTOP_NODE || "node";
+const nodeBin = app.isPackaged ? path.join(process.resourcesPath, "runtime", process.platform === "win32" ? "node.exe" : "node") : process.env.DESKTOP_NODE || "node";
 const readyTimeoutMs = 60_000;
-/** 网关设了 API_TOKEN 时，外壳连网关（内置浏览器）也要带上 */
-const gatewayToken = process.env.DESKTOP_GATEWAY_TOKEN || process.env.API_TOKEN || "";
-const iconPath = path.join(root, "desktop", "assets", "icon.png");
+/** 每次启动独立生成的网关访问凭证，供网页和内置浏览器桥接使用 */
+const gatewayToken = randomBytes(24).toString("hex");
+const iconPath = path.join(desktopRoot, "assets", "icon.png");
 
 // 开发时指定单独的数据目录，可以和已经开着的桌面版同时运行（单实例锁、登录状态都按数据目录分开）
 if (process.env.DESKTOP_USER_DATA) app.setPath("userData", path.resolve(process.env.DESKTOP_USER_DATA));
@@ -73,9 +78,28 @@ async function waitFor(url: string, service: Service): Promise<void> {
   }
 }
 
-async function ensure(url: string, launch: () => Service): Promise<void> {
-  if (await reachable(url)) return;
-  await waitFor(url, launch());
+async function serviceUrl(configured: string | undefined, preferred: number): Promise<string> {
+  const url = new URL(configured || `http://127.0.0.1:${preferred}`);
+  if (url.protocol !== "http:" || !["localhost", "127.0.0.1"].includes(url.hostname) || url.pathname !== "/" || url.search || url.hash || url.username || url.password) {
+    throw new Error("账号登录模式的后台服务地址必须是本机 HTTP 地址");
+  }
+  const requested = Number(url.port || 80);
+  const port = await new Promise<number>((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE" && !configured) {
+        const fallback = createServer();
+        fallback.once("error", reject);
+        fallback.listen(0, "127.0.0.1", () => {
+          const address = fallback.address();
+          fallback.close(() => typeof address === "object" && address ? resolve(address.port) : reject(new Error("无法分配后台端口")));
+        });
+      } else reject(new Error(`后台端口 ${requested} 已被占用，请关闭对应服务或修改桌面服务地址`));
+    });
+    probe.listen(requested, "127.0.0.1", () => probe.close(() => resolve(requested)));
+  });
+  url.port = String(port);
+  return url.origin;
 }
 
 function stopAll(): void {
@@ -101,7 +125,7 @@ function createWindow(): BrowserWindow {
     // 不要系统标题栏：网页自己画（client/src/components/TitleBar.tsx），按钮通过 preload 调下面的 window:* 消息。
     // macOS 保留左上角的红绿灯按钮
     ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : { frame: false }),
-    webPreferences: { preload: path.join(import.meta.dirname, "preload.cjs") },
+    webPreferences: { preload: path.join(import.meta.dirname, "preload.cjs"), devTools: !app.isPackaged },
   });
   win.once("ready-to-show", () => win.show());
   win.on("maximize", () => win.webContents.send("window:maximized", true));
@@ -135,7 +159,6 @@ function createWindow(): BrowserWindow {
     }
     if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
   });
-  void win.loadURL(clientUrl);
   return win;
 }
 
@@ -156,6 +179,36 @@ const browserViews = new BrowserViews(() => mainWindow);
 // 内置浏览器标签页的图标（views.ts 的 fetchFavicon 取下来的）：界面的 <img> 用 favicon://icon/<编号> 加载。要在 ready 之前注册
 protocol.registerSchemesAsPrivileged([{ scheme: FAVICON_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const fromUi = (sender: Electron.WebContents) => !!mainWindow && !mainWindow.isDestroyed() && sender === mainWindow.webContents;
+let startingSession = false;
+let uiReady = false;
+let startSession: (() => Promise<void>) | undefined;
+ipcMain.handle("account:info", (e) => fromUi(e.sender) ? accountInfo() : null);
+ipcMain.handle("account:gateway-token", (e) => fromUi(e.sender) && uiReady ? gatewayToken : null);
+ipcMain.handle("account:login", async (e, credentials: { username?: unknown; password?: unknown; code?: unknown } = {}) => {
+  if (!fromUi(e.sender) || uiReady || startingSession) return { error: "当前无法登录，请稍后重试" };
+  startingSession = true;
+  try {
+    const result = await loginAccount(credentials.username, credentials.password, credentials.code);
+    if (!result.need2fa) await startSession?.();
+    return result;
+  } catch (err) {
+    stopAll();
+    services.length = 0;
+    return { error: (err as Error).message };
+  } finally { startingSession = false; }
+});
+ipcMain.handle("account:logout", async (e) => {
+  if (!fromUi(e.sender) || !uiReady) return;
+  uiReady = false;
+  try { await logoutAccount(); }
+  catch (err) { uiReady = true; throw err; }
+  browserViews.hide();
+  browserViews.freeze();
+  stopAll();
+  // 重启外壳，彻底释放旧账号的后台进程、浏览器视图和内存凭证，随后显示登录页。
+  app.relaunch();
+  app.quit();
+});
 let tabsPush: NodeJS.Timeout | undefined;
 const pushTabs = () => {
   tabsPush ??= setTimeout(() => {
@@ -230,20 +283,48 @@ if (!app.requestSingleInstanceLock()) {
     // 开发时直接跑 electron，macOS 程序坞默认是 Electron 自己的图标。放在等网关、网页之前，启动的这几秒也是新图标
     if (process.platform === "darwin") app.dock?.setIcon(iconPath);
     try {
-      // 网关的 .env.local 按工作目录读，所以 cwd 设成 gateway/；输出接到管道上不是终端，LOG_PRETTY 让日志仍然按行格式化
-      await ensure(`${gatewayUrl}/health`, () =>
-        start("网关", path.join(root, "gateway"), ["--import", "tsx", "src/index.ts"], { LOG_PRETTY: "1" }),
-      );
-      await ensure(clientUrl, () => start("网页", path.join(root, "client"), ["node_modules/vite/bin/vite.js"]));
-      await browserViews.init();
-      session.defaultSession.protocol.handle(FAVICON_SCHEME, (request) => browserViews.faviconResponse(request.url));
       mainWindow = createWindow();
       mainWindow.on("close", () => browserViews.freeze());
       mainWindow.on("closed", () => app.quit());
-      const ws = new URL("/browser/host", gatewayUrl.replace(/^http/, "ws"));
-      if (gatewayToken) ws.searchParams.set("token", gatewayToken);
-      bridge = new GatewayBridge(ws.toString(), browserViews, (message) => console.log(message));
-      bridge.start();
+      let browserInitialized = false;
+      startSession = async () => {
+        gatewayUrl = await serviceUrl(app.isPackaged ? undefined : process.env.DESKTOP_GATEWAY_URL, app.isPackaged ? 18788 : 8788);
+        clientUrl = app.isPackaged ? gatewayUrl : await serviceUrl(process.env.DESKTOP_CLIENT_URL, 5180);
+        const env = accountEnv();
+        const gatewayRoot = app.isPackaged ? path.join(process.resourcesPath, "gateway") : path.join(root, "gateway");
+        const gateway = start("网关", app.isPackaged ? app.getPath("userData") : gatewayRoot, app.isPackaged ? [path.join(gatewayRoot, "dist", "index.js")] : ["--import", "tsx", "src/index.ts"], {
+          ...env, LOG_PRETTY: app.isPackaged ? "0" : "1", HOST: "127.0.0.1", PORT: new URL(gatewayUrl).port, API_TOKEN: gatewayToken,
+          ...(app.isPackaged ? { NODE_ENV: "production", STATIC_DIR: path.join(process.resourcesPath, "client"), LOG_DIR: path.join(app.getPath("userData"), "logs") } : {}),
+        });
+        await waitFor(`${gatewayUrl}/health`, gateway);
+        if (!app.isPackaged) {
+          const client = start("网页", path.join(root, "client"), ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", new URL(clientUrl).port], { VITE_PROXY_TARGET: gatewayUrl });
+          await waitFor(clientUrl, client);
+        }
+        if (!browserInitialized) {
+          await browserViews.init(path.dirname(env.CLAUDE_CONFIG_DIR!));
+          browserInitialized = true;
+          session.defaultSession.protocol.handle(FAVICON_SCHEME, (request) => browserViews.faviconResponse(request.url));
+        }
+        const ws = new URL("/browser/host", gatewayUrl.replace(/^http/, "ws"));
+        ws.searchParams.set("token", gatewayToken);
+        bridge?.stop();
+        bridge = new GatewayBridge(ws.toString(), browserViews, (message) => console.log(message));
+        bridge.start();
+        uiReady = true;
+        try { await mainWindow!.loadURL(clientUrl); }
+        catch (err) { uiReady = false; throw err; }
+      };
+      await mainWindow.loadFile(loginFile);
+      if (loadAccount()) {
+        startingSession = true;
+        try { await startSession(); }
+        catch (err) {
+          stopAll();
+          services.length = 0;
+          await mainWindow.loadFile(loginFile, { query: { error: (err as Error).message } });
+        } finally { startingSession = false; }
+      }
     } catch (err) {
       dialog.showErrorBox("Claude App 启动失败", (err as Error).message);
       app.quit();

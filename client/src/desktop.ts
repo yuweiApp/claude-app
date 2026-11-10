@@ -1,6 +1,11 @@
 /** 桌面版（Electron）预加载脚本注入的窗口接口，见 desktop/src/preload.cts；普通浏览器里没有 */
 export interface DesktopApi {
   platform: string;
+  account: {
+    info(): Promise<{ userId: number; username: string; displayName: string } | null>;
+    logout(): Promise<void>;
+    gatewayToken(): Promise<string | null>;
+  };
   minimize(): void;
   toggleMaximize(): void;
   close(): void;

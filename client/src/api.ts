@@ -4,11 +4,14 @@ import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, Connecto
 export type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
+let desktopToken: string | null = null;
+export function setDesktopToken(value: string | null): void { desktopToken = value; }
 
 /** 设置页改了外部浏览器（启用、添加、删除）时在 window 上发这个事件，App 重新取启用着的浏览器 */
 export const BROWSERS_CHANGED = "claude-app:browsers-changed";
 
 function token(): string | null {
+  if (desktopToken) return desktopToken;
   try {
     return localStorage.getItem("apiToken");
   } catch {

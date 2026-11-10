@@ -6,6 +6,12 @@ const { contextBridge, ipcRenderer } = electron;
 
 contextBridge.exposeInMainWorld("desktop", {
   platform: process.platform,
+  account: {
+    login: (username: string, password: string, code?: string) => ipcRenderer.invoke("account:login", { username, password, code }),
+    info: () => ipcRenderer.invoke("account:info"),
+    logout: () => ipcRenderer.invoke("account:logout"),
+    gatewayToken: () => ipcRenderer.invoke("account:gateway-token"),
+  },
   minimize: () => ipcRenderer.send("window:minimize"),
   toggleMaximize: () => ipcRenderer.send("window:toggle-maximize"),
   close: () => ipcRenderer.send("window:close"),

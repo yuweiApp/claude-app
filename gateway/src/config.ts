@@ -5,9 +5,12 @@ import { parseEnv } from "node:util";
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 
 // 按优先级从低到高覆盖：.env.local > .env > 系统环境变量
+const desktopAccountEnv = process.env.DESKTOP_ACCOUNT_AUTH === "true" ? { ...process.env } : null;
 for (const file of [".env", ".env.local"]) {
   if (existsSync(file)) Object.assign(process.env, parseEnv(readFileSync(file, "utf8")));
 }
+// 登录账号注入的密钥、模型、数据目录和本机服务端口，优先于开发环境里的旧账号配置。
+if (desktopAccountEnv) Object.assign(process.env, desktopAccountEnv);
 
 const env = process.env;
 const gatewayRoot = path.resolve(import.meta.dirname, "..");
@@ -72,6 +75,8 @@ export const config = {
   port: int("PORT", 8788),
   /** 设置后所有接口要求 Authorization: Bearer <token>（SSE 用 ?token=） */
   apiToken: env.API_TOKEN?.trim() || undefined,
+  /** 安装版由网关托管构建后的前端，不依赖 Vite */
+  staticDir: env.STATIC_DIR ? path.resolve(env.STATIC_DIR) : undefined,
 
   /** 普通会话（没选文件夹）的工作目录都建在这下面，上传的附件也在这里，默认是用户数据目录下的 claude-app/workspace（见 userDataDir） */
   workspaceDir: path.resolve(env.WORKSPACE_DIR || path.join(userDataDir(), "claude-app", "workspace")),

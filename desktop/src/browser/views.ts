@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
@@ -174,9 +174,9 @@ function sniffImage(b: Buffer): string | null {
   return null;
 }
 
-async function fetchInSession(url: string): Promise<{ type: string; bytes: Buffer } | null> {
+async function fetchInSession(url: string, browserSession: Session): Promise<{ type: string; bytes: Buffer } | null> {
   try {
-    const res = await session.fromPartition(PARTITION).fetch(url, { signal: AbortSignal.timeout(8000) });
+    const res = await browserSession.fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
     return iconOf(res.headers.get("content-type") ?? "", Buffer.from(await res.arrayBuffer()));
   } catch {
@@ -246,9 +246,11 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   private nextFaviconId = 1;
   /** 正在为截图保持渲染的标签页 → 计数 */
   private rendering = new Map<string, number>();
-  readonly history = new BrowserHistory(path.join(app.getPath("userData"), "browser-history.json"));
+  history = new BrowserHistory(path.join(app.getPath("userData"), "browser-history.json"));
+  private partition = PARTITION;
   /** 开着的标签页（会话、网址、标题、是不是留下的），重启后恢复 */
-  private readonly tabsFile = path.join(app.getPath("userData"), "browser-tabs.json");
+  private tabsFile = path.join(app.getPath("userData"), "browser-tabs.json");
+  private initialized = false;
   private saveTimer: NodeJS.Timeout | undefined;
   /** 正在恢复上次的标签页：恢复完再存，免得存下一半 */
   private restoring = false;
@@ -262,13 +264,19 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
 
   /** 所有标签页共用的 Electron 会话（cookie、缓存都在这里），CDP 代理的 Storage.*Cookies 用它 */
   get browserSession(): Session {
-    return session.fromPartition(PARTITION);
+    return session.fromPartition(this.partition);
   }
 
   /** app ready 之后调用一次 */
-  async init(): Promise<void> {
+  async init(accountDir?: string): Promise<void> {
+    if (accountDir) {
+      this.history = new BrowserHistory(path.join(accountDir, "browser-history.json"));
+      this.tabsFile = path.join(accountDir, "browser-tabs.json");
+      this.partition = `${PARTITION}-${createHash("sha256").update(accountDir).digest("hex").slice(0, 16)}`;
+    }
+    this.initialized = true;
     app.userAgentFallback = chromeUserAgent(app.userAgentFallback);
-    this.setupSession(session.fromPartition(PARTITION));
+    this.setupSession(this.browserSession);
     // 后台标签页的停放窗口：Linux、Windows 放在屏幕外显示着；macOS 会把屏幕外的窗口挪回来，所以保持隐藏，截图时靠 capturePage 出画面
     this.park = new BrowserWindow({
       x: -4000,
@@ -288,7 +296,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
 
   /** 退出前调用（主窗口关闭、应用退出）：先存一次，之后视图销毁引起的关闭不再改动记录 */
   freeze(): void {
-    if (this.frozen) return;
+    if (this.frozen || !this.initialized) return;
     clearTimeout(this.saveTimer);
     this.save();
     this.frozen = true;
@@ -343,7 +351,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   private newView(): WebContentsView {
     const view = new WebContentsView({
       // nodeIntegrationInSubFrames：预加载脚本（tab-preload.cts）在 iframe 里也跑；沙箱照开，网页拿不到 Node
-      webPreferences: { partition: PARTITION, backgroundThrottling: false, sandbox: true, contextIsolation: true, nodeIntegrationInSubFrames: true },
+      webPreferences: { partition: this.partition, backgroundThrottling: false, sandbox: true, contextIsolation: true, nodeIntegrationInSubFrames: true },
     });
     this.park!.contentView.addChildView(view);
     view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
@@ -749,7 +757,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     if (url.startsWith("data:image/")) return url;
     const cached = this.favicons.get(url);
     if (cached !== undefined) return cached;
-    const icon = (await fetchInSession(url)) ?? (await fetchInPage(url, wc));
+    const icon = (await fetchInSession(url, this.browserSession)) ?? (await fetchInPage(url, wc));
     let result: string | null = null;
     if (icon) {
       const id = String(this.nextFaviconId++);

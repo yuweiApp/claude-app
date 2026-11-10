@@ -10,12 +10,22 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepare:release": "node scripts/prepare.mjs",
+    "verify:release": "node scripts/verify-release.mjs",
+    "verify:package": "node scripts/verify-package.mjs",
+    "pack": "npm run prepare:release && npm run verify:release && electron-builder --config electron-builder.config.cjs --win --x64 --dir && npm run verify:package",
+    "dist": "npm run prepare:release && npm run verify:release && electron-builder --config electron-builder.config.cjs --win nsis --x64 && node scripts/verify-package.mjs --installer",
+    "test": "node --test tests/*.test.cjs",
+    "test:ui": "npm run build && electron tests/login-ui.cjs",
     "start": "tsc -p tsconfig.json && electron .",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@electron/asar": "^4.3.1",
     "@types/node": "^26.6.6",
     "electron": "44.9.0",
+    "electron-builder": "^26.18.0",
+    "javascript-obfuscator": "^5.10.0",
     "typescript": "^7.0.2"
   }
 }
