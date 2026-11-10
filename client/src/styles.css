@@ -1227,7 +1227,12 @@ main {
 
 /* 右侧面板的内置浏览器（只有桌面版有）：画面区域是空的，网页是外壳叠放上来的原生视图 */
 .browser-tab { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.browser-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.browser-toolbar { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.browser-progress { position: absolute; left: 0; bottom: -1px; height: 2px; width: 0; border-radius: 0 1px 1px 0; background: var(--accent); pointer-events: none; animation: browser-progress 10s cubic-bezier(0.08, 0.75, 0.25, 1) forwards; }
+.browser-progress.done { width: 100%; opacity: 0; animation: browser-progress-done 0.4s ease-out forwards; }
+@keyframes browser-progress { 0% { width: 0; } 8% { width: 35%; } 100% { width: 90%; } }
+@keyframes browser-progress-done { 0% { width: var(--from); opacity: 1; } 50% { width: 100%; opacity: 1; } 100% { width: 100%; opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .browser-progress, .browser-progress.done { animation: none; width: 100%; opacity: 0.6; } }
 .browser-btn { flex: none; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
 .browser-btn:hover:not(:disabled) { color: var(--text); }
 .browser-btn:disabled { opacity: 0.4; cursor: default; }

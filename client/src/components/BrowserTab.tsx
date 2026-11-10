@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from "react";
 import type { BrowserSuggestion, BrowserTabInfo, DesktopBrowserApi } from "../desktop";
 
 interface Props {
@@ -208,6 +208,7 @@ export function BrowserToolbar({ info, inputRef, address, onAddress, onReset, on
   };
   return (
     <div className="browser-toolbar">
+      <LoadingBar loading={!!info?.loading} />
       <div className="browser-nav">
         <button className="icon-btn browser-btn" title="后退（Alt+←）" aria-label="后退" disabled={!onGo || !info?.canGoBack} onClick={() => onGo?.("back")}>
           <ArrowIcon dir="left" />
@@ -265,6 +266,42 @@ export function BrowserToolbar({ info, inputRef, address, onAddress, onReset, on
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * 地址栏下边的加载进度条。拿不到网页加载的真实进度，按时间走：开始时走得快、越往后越慢，停在九成左右；
+ * 加载完（成功或失败）补满再淡出。重新开始加载时换个 key 从头走
+ */
+function LoadingBar({ loading }: { loading: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [phase, setPhase] = useState<"idle" | "loading" | "done">(loading ? "loading" : "idle");
+  const [run, setRun] = useState(0);
+  /** 加载完时走到的宽度，补满的动画从这里开始（撤掉动画时过渡不会从动画中途的宽度开始） */
+  const [from, setFrom] = useState("0px");
+  useEffect(() => {
+    if (loading) {
+      setRun((n) => n + 1);
+      setPhase("loading");
+    } else if (ref.current) {
+      setFrom(getComputedStyle(ref.current).width);
+      setPhase("done");
+    }
+  }, [loading]);
+  useEffect(() => {
+    if (phase !== "done") return;
+    const t = setTimeout(() => setPhase("idle"), 450);
+    return () => clearTimeout(t);
+  }, [phase]);
+  if (phase === "idle") return null;
+  return (
+    <div
+      ref={ref}
+      key={run}
+      className={`browser-progress${phase === "done" ? " done" : ""}`}
+      style={{ "--from": from } as CSSProperties}
+      aria-hidden="true"
+    />
   );
 }
 
