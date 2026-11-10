@@ -100,7 +100,8 @@ snapshot s191jb6hk0gciz（mousepad，窗口 w-1.1895-…）
 
 - 成功：`data` 的 JSON，不缩进。
 - 失败：留 `code`、`message`、`details`、`disposition`（`delivery` 送没送到、`retry` 能不能重试，都是事实），去掉上游的 `suggestion`、`recovery`（「先 focus-window 再重试」这类是做法，同 CLAUDE.md 的约定）。
-- 网关自己的错误（被拦、超时）写清楚因为什么，用模型看得到的东西说（run、工具名、本应用），不提网关（模型不知道有网关）：「这是本应用（claude-app）的窗口，桌面工具不能读取或操作它」「命令超过 timeout_ms 被终止，动作可能已经生效」「run 不接受 --force」。
+- 参数解析错误（`INVALID_ARGS`，`message` 是命令行解析器的原话 `error: unexpected argument '--timeout-ms' found` 这样，命令名本身不认识时 `command` 是 `unknown` 除外）：后面附这条命令的 `--help`（同一版本，去掉 run 不接受的那几个参数的行，Usage 里的可执行文件名统一写成 agent-desktop）。上游的参数名不统一（snapshot 的 `--timeout-ms`、wait 的 `--timeout`、`--wait-for` 的 `--wait-timeout`），模型照着 snapshot 的写法给 wait 传 `--timeout-ms`，只拿到「参数不认识」不知道该叫什么。命令没执行（`not_delivered`），再跑一次 `--help` 没有副作用。这是「反馈」（这条命令接受哪些参数），不是做法。
+- 网关自己的错误（被拦、超时）写清楚因为什么，用模型看得到的东西说（run、工具名、本应用），不提网关（模型不知道有网关）：「这是本应用（claude-app）的窗口，桌面工具不能读取或操作它」「命令运行超过 60000 毫秒被终止，动作可能已经生效」「run 不接受 --force」。
 
 ### 说明（instructions）
 
@@ -186,7 +187,8 @@ desktop:
 
 ### 7.3 超时、中断、转后台
 
-- `timeout_ms` 默认 60 秒（`wait` 上游最多 30 秒）。到时间就杀进程，报「命令超过 timeout_ms 被终止，动作可能已经生效」（第 4 节）。
+- `timeout_ms` 默认 60 秒、最多 10 分钟。到时间就杀进程，报「命令运行超过 N 毫秒被终止，动作可能已经生效」（第 4 节）。
+- 命令自己会等的（`wait` 的 `[MS]` 和 `--timeout`，上游默认 30 秒、最多 24 小时；任何命令带 `--wait-for` / `--wait-for-gone` 时的 `--wait-timeout`，默认 30 秒）：进程期限取 `timeout_ms` 和「等待时限 + 5 秒」里大的那个（同样不超过 10 分钟），写在 run 的工具描述里。不然 `wait --timeout 60000` 配默认的 `timeout_ms` 60000，上游等满正要返回 `TIMEOUT`（`details.kind: wait_timeout`，带最后看到的窗口标题）时进程被杀，模型拿到的是「被终止，动作可能已经生效」。
 - MCP 请求的 `signal` 中断时也杀进程。
 - 超过 20 秒转后台，沿用现在的 `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`，不用另做。
 

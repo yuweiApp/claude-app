@@ -8,7 +8,7 @@ import { MCP_AUTO_BACKGROUND_MS } from "../config.js";
 import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
 import { rememberResult } from "../browser/tool.js";
 import { runCli, type CliResult, type Envelope } from "./cli.js";
-import { deniedReason, flagValues, isReadOnly } from "./commands.js";
+import { deniedReason, flagValues, helpForRun, isParseError, isReadOnly, upstreamWaitMs } from "./commands.js";
 import type { DesktopTarget } from "../shared/types.js";
 import { beginWrite, checkTarget, describeRefs, listDisplays, listWindows, noteTarget, othersSince, recordOperation, registerRefsIn, registerSnapshot, stripOwn } from "./guard.js";
 import { renderSnapshot, type SnapshotData } from "./render.js";
@@ -26,6 +26,8 @@ export const DESKTOP_RUN_TOOL = full("run");
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_TIMEOUT_MS = 10 * 60_000;
+/** run 里命令自己要等（wait 的 --timeout 等，见 upstreamWaitMs）时，进程期限至少比它多这么久 */
+const WAIT_MARGIN_MS = 5_000;
 /** 截图原始大小上限：模型接口的单张图片上限是 base64 后 5MB */
 const MAX_IMAGE_BYTES = 3_750_000;
 /**
@@ -66,7 +68,7 @@ const INSTRUCTIONS = [
   "- snapshot 返回一个窗口的无障碍树，元素带 [ref=@快照编号:eN]。ref 只在产生它的快照里有效；界面变了，用旧 ref 的命令返回 STALE_REF 或 AMBIGUOUS_TARGET。",
   `- ${REF_RULE}`,
   "- screenshot 返回一个窗口或一块屏幕的图片。",
-  '- run 执行一条 agent-desktop 命令，args[0] 是命令名，返回它的 JSON 结果：成功时是 data；失败时是 error，其中 disposition.delivery 表示动作送到没有，disposition.retry 为 safe 表示重复执行不会重复生效。["<命令>", "--help"] 返回这条命令的参数说明。',
+  '- run 执行一条 agent-desktop 命令，args[0] 是命令名，返回它的 JSON 结果：成功时是 data；失败时是 error，其中 disposition.delivery 表示动作送到没有，disposition.retry 为 safe 表示重复执行不会重复生效；参数解析出错（INVALID_ARGS）时，error 后面附这条命令的参数说明。["<命令>", "--help"] 返回这条命令的参数说明。',
   "- run 的命令：",
   "  读取：find（按角色、名字、值、文字找元素）、get（读元素属性）、is（查元素状态）、list-apps、list-windows、list-displays、list-surfaces、list-notifications、wait（等时间、元素、窗口、文字、菜单、通知）、status、permissions、version、skills",
   "  按 ref 操作：click、double-click、triple-click、right-click、type、set-value、clear、focus、select、toggle、check、uncheck、expand、collapse、scroll、scroll-to",
@@ -103,7 +105,7 @@ function withoutAdvice(data: unknown): unknown {
 
 /** 没有拿到 agent-desktop 的 JSON 结果时的说明（被终止、输出不是 JSON），有 JSON 结果返回 null */
 function failure(result: CliResult, timeoutMs: number): string | null {
-  if (result.killed === "timeout") return `命令超过 timeout_ms（${timeoutMs} 毫秒）被终止，动作可能已经生效`;
+  if (result.killed === "timeout") return `命令运行超过 ${timeoutMs} 毫秒被终止，动作可能已经生效`;
   if (result.killed === "abort") return "调用被中断，命令被终止，动作可能已经生效";
   if (result.envelope) return null;
   return result.stdout.trim() || `agent-desktop 没有输出结果${result.stderr.trim() ? `：${result.stderr.trim().slice(0, 2000)}` : ""}`;
@@ -260,7 +262,8 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
     ),
     tool(
       "run",
-      `执行一条 agent-desktop 命令（args[0] 是命令名），返回它的 JSON 结果；["<命令>", "--help"] 返回参数说明。timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}、最大 ${MAX_TIMEOUT_MS}。`,
+      `执行一条 agent-desktop 命令（args[0] 是命令名），返回它的 JSON 结果；["<命令>", "--help"] 返回参数说明，参数解析出错（INVALID_ARGS）时结果后面附这条命令的参数说明。` +
+        `timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}、最大 ${MAX_TIMEOUT_MS}；命令自己的等待时限（wait 的 [MS] 和 --timeout，--wait-for 的 --wait-timeout）加 ${WAIT_MARGIN_MS / 1000} 秒超过 timeout_ms 时，按前者计（同样不超过 ${MAX_TIMEOUT_MS}）。`,
       {
         args: z.array(z.string()).min(1).describe('命令和参数，如 ["click", "@s8f3k2p9:e3"]'),
         headed: z.boolean().optional().describe("用真实的鼠标键盘（会移动鼠标、切换前台窗口），默认 false"),
@@ -278,7 +281,7 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
         const readOnly = isReadOnly(args);
         if (args[0] !== "launch") note(args);
         const endWrite = readOnly ? null : beginWrite();
-        const timeoutMs = timeout_ms ?? DEFAULT_TIMEOUT_MS;
+        const timeoutMs = Math.min(MAX_TIMEOUT_MS, Math.max(timeout_ms ?? DEFAULT_TIMEOUT_MS, upstreamWaitMs(args) + WAIT_MARGIN_MS));
         let result: CliResult;
         try {
           result = await runCli(args, { session: sessionId, headed, timeoutMs, signal: signalOf(extra) });
@@ -291,7 +294,17 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
         const failed = failure(result, timeoutMs);
         if (failed) return done(failed, Boolean(result.killed) || !result.stdout.trim());
         const envelope = result.envelope!;
-        if (!envelope.ok) return done(formatError(envelope.error!), true);
+        if (!envelope.ok) {
+          const err = envelope.error!;
+          // 参数解析错误只说哪个参数不对，附上这条命令的 --help（同一版本的），命令没执行（not_delivered），再跑一次 --help 没有副作用
+          if (isParseError(err, envelope.command)) {
+            const help = await runCli([args[0]!, "--help"], { timeoutMs: 10_000, signal: signalOf(extra) });
+            if (!help.envelope && !help.killed && help.stdout.trim()) {
+              return done(`${formatError(err)}\n\n${args[0]} 的参数说明（${args[0]} --help）：\n${helpForRun(help.stdout)}`, true);
+            }
+          }
+          return done(formatError(err), true);
+        }
         registerRefsIn(sessionId, result.stdout, flagValues(args, "--app")[0]);
         return done(JSON.stringify(withoutAdvice(stripOwn(envelope.data)) ?? null), false);
       },

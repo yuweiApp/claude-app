@@ -135,3 +135,58 @@ export function pointsIn(args: string[]): { x: number; y: number }[] {
   if (xs.length || ys.length) points.push({ x: Number(xs[0]), y: Number(ys[0]) });
   return points;
 }
+
+/** agent-desktop 等待类参数的默认时限（1.2.0 的 --help：wait 的 --timeout、--wait-for 的 --wait-timeout 都是 30000） */
+const UPSTREAM_WAIT_DEFAULT_MS = 30_000;
+/** 不带值的参数：它后面的数字是位置参数（wait 的 [MS]），不是它的值 */
+const BOOLEAN_FLAGS = new Set(["--menu", "--menu-closed", "--notification", "-v", "--verbose", "--debug", "--trace-strict", "--headed"]);
+
+const toMs = (v: string | undefined) => {
+  const n = Number(v);
+  return v !== undefined && Number.isFinite(n) && n >= 0 ? n : undefined;
+};
+
+/**
+ * 这条命令在 agent-desktop 里自己最多会等多久（毫秒），没有等待返回 0：
+ * wait 的 [MS]（停多久）和 --timeout（等元素、窗口、文字的时限，默认 30000），任何命令带 --wait-for / --wait-for-gone 时的 --wait-timeout（默认 30000）。
+ * run 的进程期限至少比它长一点，agent-desktop 等满时限后自己的结果（TIMEOUT 等）才能返回，不被提前杀掉
+ */
+export function upstreamWaitMs(args: string[]): number {
+  let ms = 0;
+  if (args[0] === "wait") {
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i] ?? "";
+      const prev = args[i - 1] ?? "";
+      const positional = i === 1 || !prev.startsWith("-") || prev.includes("=") || BOOLEAN_FLAGS.has(prev);
+      if (/^\d+$/.test(arg) && positional) ms = Math.max(ms, Number(arg));
+    }
+    ms = Math.max(ms, toMs(flagValues(args, "--timeout").at(-1)) ?? UPSTREAM_WAIT_DEFAULT_MS);
+  }
+  if (args.some((a) => ["--wait-for", "-w", "--wait-for-gone"].includes(flagName(a)))) {
+    ms = Math.max(ms, toMs(flagValues(args, "--wait-timeout").at(-1)) ?? UPSTREAM_WAIT_DEFAULT_MS);
+  }
+  return ms;
+}
+
+/**
+ * agent-desktop 的参数解析错误（参数名不认识、缺值、缺必填参数）：INVALID_ARGS，message 是命令行解析器的原话，以 "error: " 开头。
+ * 命令名本身不认识时 command 是 unknown，没有这条命令的 --help 可附
+ */
+export function isParseError(err: { code: string; message: string }, command: string): boolean {
+  return err.code === "INVALID_ARGS" && err.message.startsWith("error: ") && command !== "unknown";
+}
+
+/**
+ * 附在参数错误后面的 --help：去掉 run 不接受的参数那几行（DENIED_FLAGS），Usage 里的可执行文件名（按平台不同）统一写成 agent-desktop
+ */
+export function helpForRun(help: string): string {
+  return help
+    .split(/\r?\n/)
+    .filter((line) => {
+      const m = /^\s+(?:-\w, )?(--[\w-]+)/.exec(line);
+      return !(m && m[1] && DENIED_FLAGS[m[1]]);
+    })
+    .map((line) => line.replace(/^Usage: \S+/, "Usage: agent-desktop"))
+    .join("\n")
+    .trim();
+}
