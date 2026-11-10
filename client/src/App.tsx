@@ -13,7 +13,7 @@ import { Sidebar, folderName, groupByFolder, sessionTitle } from "./components/S
 import { DEFAULT_SIDEBAR_WIDTH, SidebarResizer } from "./components/SidebarResizer";
 import { SidebarToggle } from "./components/SidebarToggle";
 import { SettingsPage } from "./components/SettingsPage";
-import { revealInTree } from "./components/FileBrowser";
+import { revealInTree, type LineRange } from "./components/FileBrowser";
 import { newPanelState, PanelIcon, SidePanel, withFileOpen, withFolderTab, type PanelState } from "./components/SidePanel";
 import { FileLinkContext } from "./components/ReplyMarkdown";
 import { TasksPopover } from "./components/TasksPopover";
@@ -106,10 +106,10 @@ export function App() {
       panelCwd
         ? {
             cwd: panelCwd,
-            open: (path: string, root?: string) => {
+            open: (path: string, root?: string, line?: LineRange | null) => {
               setPanels((all) => {
                 const state = panelOf(all, panelCwd);
-                return { ...all, [panelCwd]: withFileOpen(state, state.active, path, false, root) };
+                return { ...all, [panelCwd]: withFileOpen(state, state.active, path, false, root, line) };
               });
               showPanel(true);
             },

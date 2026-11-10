@@ -8,6 +8,12 @@ import { MarkdownLiveEditor } from "./MarkdownLiveEditor";
 import { closePageAnnotation, editAnnotationAt, repositionAnnotationEditor, startPageAnnotation } from "./ResponseAnnotations";
 import { useResponseAnnotations, type PageAnnotationTarget } from "../state/responseAnnotations";
 
+/** 文件里的行范围（从 1 开始，含 end），回复里的链接带了行号时面板滚到并选中这几行 */
+export interface LineRange {
+  start: number;
+  end: number;
+}
+
 /**
  * 右侧面板的文件工具（同 codex-app-server 的 FileBrowser）：上面是切换文件树、文件名、复制路径和操作按钮，
  * 下面左边是目录树（可以收起）、右边是文件内容。没选文件时是「打开文件」：提示从目录树里选。
@@ -18,6 +24,8 @@ export function FileBrowser({
   cwd,
   sessionId,
   path,
+  line = null,
+  reveal = 0,
   active,
   onSelectFile,
   onEdited,
@@ -29,6 +37,9 @@ export function FileBrowser({
   sessionId: string | null;
   /** 打开的文件（相对项目文件夹）；null 是「打开文件」 */
   path: string | null;
+  /** 要定位的行；reveal 变了（再点一次同一个链接）重新定位 */
+  line?: LineRange | null;
+  reveal?: number;
   /** 这个标签页在前面：轮询文件有没有被改 */
   active: boolean;
   /** 在目录树里选了文件；pin 是双击（固定打开），否则是预览打开 */
@@ -82,6 +93,8 @@ export function FileBrowser({
       cwd={cwd}
       sessionId={sessionId}
       path={path}
+      line={line}
+      reveal={reveal}
       active={active}
       treeToggle={treeToggle}
       tree={tree}
@@ -188,7 +201,8 @@ const nameError = (name: string) => (name === "." || name === ".." || /[\\/\0]/.
 /**
  * 目录树（同 codex-app-server 的 FileTree）：顶部「筛选文件…」（在整个项目里按名字搜），没在筛选时是刷新按钮；
  * 单击文件预览打开，双击固定打开，点文件夹展开、收起；右边缘拖动调宽度。
- * 右键：空白处和第一行（工作目录）新建文件、文件夹，文件夹还能在里面新建；文件、文件夹能重命名（F2）、删除（Delete）。
+ * 右键：空白处和第一行（工作目录）新建文件、文件夹，文件夹还能在里面新建；复制绝对路径（文件、文件夹还能复制相对路径）；
+ * 文件、文件夹能重命名（F2）、删除（Delete）。
  * 拖动文件、文件夹到别的文件夹（拖到文件上是放进它所在的文件夹，拖到空白处或第一行是放到根目录），悬停在收起的文件夹上一会儿自动展开
  */
 function FileTree({
@@ -476,12 +490,21 @@ function FileTree({
   const menuRef = useRef<HTMLDivElement>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   useDismiss(menuRef, menu !== null, closeMenu);
+  // 菜单按实际大小放进窗口里（项数随右键的是文件、文件夹还是空白处变）
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el || !menu) return;
+    const r = el.getBoundingClientRect();
+    const left = Math.max(8, Math.min(menu.x, window.innerWidth - r.width - 8));
+    const top = Math.max(8, Math.min(menu.y, window.innerHeight - r.height - 8));
+    if (left !== menu.x || top !== menu.y) setMenu({ ...menu, x: left, y: top });
+  }, [menu]);
   const openMenu = (e: MouseEvent, entry: ProjectEntry | null) => {
     e.preventDefault();
     e.stopPropagation();
     // 筛选结果里没有目录结构，新建的输入框没地方放
     if (hits !== null || editing) return;
-    setMenu({ x: Math.min(e.clientX, window.innerWidth - 170), y: Math.min(e.clientY, window.innerHeight - 170), entry });
+    setMenu({ x: e.clientX, y: e.clientY, entry });
   };
   const menuItems = (entry: ProjectEntry | null) => {
     const dir = entry ? (entry.dir ? entry.path : null) : "";
@@ -491,6 +514,16 @@ function FileTree({
         { label: "新建文件", onClick: () => startNew(dir, false) },
         { label: "新建文件夹", onClick: () => startNew(dir, true) },
       ]);
+    // 复制路径：文件夹的不带末尾的 /；空白处和第一行是工作目录本身
+    const rel = entry ? trimSlash(entry.path) : "";
+    groups.push(
+      entry
+        ? [
+            { label: "复制路径", onClick: () => void copyText(absolutePath(cwd, rel)) },
+            { label: "复制相对路径", onClick: () => void copyText(rel) },
+          ]
+        : [{ label: "复制路径", onClick: () => void copyText(absolutePath(cwd, "")) }],
+    );
     if (entry)
       groups.push([
         { label: "重命名", onClick: () => startRename(entry) },
@@ -862,6 +895,8 @@ function FileViewer({
   cwd,
   sessionId,
   path,
+  line,
+  reveal,
   active,
   treeToggle,
   tree,
@@ -871,6 +906,8 @@ function FileViewer({
   cwd: string;
   sessionId: string | null;
   path: string;
+  line: LineRange | null;
+  reveal: number;
   active: boolean;
   treeToggle: ReactNode;
   tree: ReactNode;
@@ -881,8 +918,15 @@ function FileViewer({
   const [content, setContent] = useState<FileContent | { error: string } | null>(null);
   const markdown = MARKDOWN.test(path);
   const html = HTML.test(path);
-  // Markdown 默认显示渲染效果，开关切到源代码
-  const [rendered, setRendered] = useState(true);
+  // Markdown 默认显示渲染效果，开关切到源代码；要定位到行时显示源代码（行号对的是源代码）
+  const [rendered, setRendered] = useState(line === null);
+  // Ctrl/⌘+F：每按一次加一，文本编辑器打开查找栏（Markdown 渲染模式先切到源代码，行和查找都对着源代码）
+  const [findRequest, setFindRequest] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (line) setRendered(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reveal]);
   // HTML 的标注模式；网页里的标注脚本连上了才能开
   const [annotating, setAnnotating] = useState(false);
   const [pageReady, setPageReady] = useState(false);
@@ -911,6 +955,23 @@ function FileViewer({
 
   const ok = content && !("error" in content) ? content : null;
   const editable = ok?.kind === "text" && ok.size <= EDITABLE_MAX_BYTES;
+  const findable = ok?.kind === "text" && !html;
+  const openFind = () => {
+    if (!findable) return;
+    setRendered(false);
+    setFindRequest((n) => n + 1);
+  };
+  // 焦点在这个文件的查看器里（目录树、编辑器、查找栏）时按 Ctrl/⌘+F
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "f") return;
+      if (!findable || !rootRef.current?.contains(document.activeElement)) return;
+      e.preventDefault();
+      openFind();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
   const saved = ok?.text ?? "";
   const value = getDraft(cwd, path) ?? saved;
 
@@ -979,10 +1040,23 @@ function FileViewer({
         onOpenFile={onOpenFile}
       />
     );
-  else body = <TextEditor value={value} readOnly={!editable} placeholder={markdown ? "使用 Markdown 编写…" : "写点什么…"} onChange={change} onSave={() => void save()} />;
+  else
+    body = (
+      <TextEditor
+        value={value}
+        readOnly={!editable}
+        placeholder={markdown ? "使用 Markdown 编写…" : "写点什么…"}
+        line={line}
+        reveal={reveal}
+        findRequest={findRequest}
+        onChange={change}
+        onSave={() => void save()}
+      />
+    );
 
   return (
-    <div className="viewer">
+    // 能获得焦点：点了行号栏、空白处，焦点也落在查看器里，Ctrl/⌘+F 才认得出是对着它按的
+    <div className="viewer" ref={rootRef} tabIndex={-1}>
       <div className="viewer-head">
         <div className="file-head">
           {treeToggle}
@@ -1023,7 +1097,7 @@ function FileViewer({
               <AnnotateIcon />
             </button>
           )}
-          <FileOptionsMenu text={ok?.kind === "text" ? value : null} onReload={dirty ? undefined : load} />
+          <FileOptionsMenu text={ok?.kind === "text" ? value : null} onFind={findable ? openFind : undefined} onReload={dirty ? undefined : load} />
         </div>
       </div>
       <div className="viewer-split">
@@ -1226,27 +1300,66 @@ function pageFile(pathname: unknown): string | null {
   }
 }
 
-/** 带行号的编辑器（同 codex-app-server）：不自动换行，行号和每一行对齐；Ctrl/⌘+S 保存 */
+/**
+ * 带行号的编辑器（同 codex-app-server）：不自动换行，行号和每一行对齐；Ctrl/⌘+S 保存。
+ * line：打开时（和 reveal 变了时）选中这几行，滚到上方三分之一处；超出文件末尾的部分不算
+ */
 function TextEditor({
   value,
   readOnly,
   placeholder,
+  line,
+  reveal,
+  findRequest,
   onChange,
   onSave,
 }: {
   value: string;
   readOnly: boolean;
   placeholder: string;
+  line: LineRange | null;
+  reveal: number;
+  /** 变了（Ctrl/⌘+F）就打开查找栏，焦点放进去；选中了一行以内的文字时拿它当查找内容 */
+  findRequest: number;
   onChange: (value: string) => void;
   onSave: () => void;
 }) {
   const lines = value.split("\n");
+  const find = useFind(value, findRequest, () => editorRef.current);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const gutterRef = useRef<HTMLPreElement>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const ta = editorRef.current;
+    const scroller = scrollRef.current;
+    if (!line || !ta || !scroller || line.start > lines.length) return;
+    const first = line.start - 1;
+    const last = Math.min(line.end, lines.length) - 1;
+    let from = 0;
+    for (let i = 0; i < first; i++) from += lines[i]!.length + 1;
+    let to = from;
+    for (let i = first; i <= last; i++) to += lines[i]!.length + (i < last ? 1 : 0);
+    ta.focus({ preventScroll: true });
+    ta.setSelectionRange(from, to);
+    // 行高取行号栏的（和文本框一样）；行号栏顶端到这一行的距离就是第几行乘行高
+    const gutter = gutterRef.current;
+    const lineHeight = gutter ? parseFloat(getComputedStyle(gutter).lineHeight) || 20 : 20;
+    const offset = (gutter?.getBoundingClientRect().top ?? 0) - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    scroller.scrollTop = Math.max(0, offset + first * lineHeight - scroller.clientHeight / 3);
+    // 只在打开、再点同一个链接时定位，不随编辑、文件被改重新定位
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reveal, line?.start, line?.end]);
   return (
-    <div className="viewer-edit">
-      <pre className="viewer-edit-gutter" aria-hidden="true">
+    <>
+      {find.bar}
+      <div className="viewer-edit" ref={scrollRef}>
+      <pre className="viewer-edit-gutter" ref={gutterRef} aria-hidden="true">
         {lines.map((_, i) => i + 1).join("\n")}
       </pre>
+      <div className="viewer-edit-area">
+      {find.layer}
       <textarea
+        ref={editorRef}
         className="viewer-editor"
         value={value}
         wrap="off"
@@ -1270,8 +1383,149 @@ function TextEditor({
           }
         }}
       />
+      </div>
+      </div>
+    </>
+  );
+}
+
+/** 查找结果最多标这么多处 */
+const MAX_MATCHES = 5000;
+
+/**
+ * 文本编辑器里的查找（同 codex-app-server）：不分大小写；Enter / Shift+Enter 下一个、上一个，Esc 关闭；
+ * 关闭时把当前这处选中在编辑器里。bar 是查找栏，layer 是和文本框对齐的高亮层（文字透明，只显示匹配处的底色）
+ */
+function useFind(value: string, request: number, editor: () => HTMLTextAreaElement | null) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [index, setIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const layerRef = useRef<HTMLPreElement>(null);
+  const matches = useMemo(() => {
+    if (!open || !query) return [];
+    const hay = value.toLowerCase();
+    const needle = query.toLowerCase();
+    const out: number[] = [];
+    for (let i = hay.indexOf(needle); i >= 0 && out.length < MAX_MATCHES; i = hay.indexOf(needle, i + needle.length)) out.push(i);
+    return out;
+  }, [open, query, value]);
+  const current = matches.length ? Math.min(index, matches.length - 1) : -1;
+  const step = (d: number) => matches.length && setIndex((i) => (Math.min(i, matches.length - 1) + d + matches.length) % matches.length);
+
+  // 打开（再按一次也是）：选中的一行以内的文字作为查找内容，焦点放进查找框并全选
+  useEffect(() => {
+    if (!request) return;
+    const ta = editor();
+    const sel = ta && document.activeElement === ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : "";
+    if (sel && !sel.includes("\n")) {
+      setQuery(sel);
+      setIndex(0);
+    }
+    setOpen(true);
+    setFocusTick((n) => n + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request]);
+  // 查找栏渲染出来后把焦点放进去并全选（再按一次也是）
+  const [focusTick, setFocusTick] = useState(0);
+  useEffect(() => {
+    if (!focusTick) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [focusTick]);
+  // 当前这处滚到看得见
+  useEffect(() => {
+    if (current < 0) return;
+    layerRef.current?.querySelector<HTMLElement>("mark.current")?.scrollIntoView({ block: "center", inline: "nearest" });
+  }, [current, query]);
+
+  const close = () => {
+    setOpen(false);
+    const ta = editor();
+    if (!ta) return;
+    ta.focus({ preventScroll: true });
+    const at = current >= 0 ? matches[current]! : -1;
+    if (at >= 0) ta.setSelectionRange(at, at + query.length);
+  };
+
+  const bar = open && (
+    <div className="viewer-find">
+      <input
+        ref={inputRef}
+        aria-label="在文件中查找"
+        placeholder="在文件中查找…"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setIndex(0);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            step(e.shiftKey ? -1 : 1);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            close();
+          }
+        }}
+      />
+      <span className="viewer-find-count">
+        {query ? (matches.length ? `${current + 1} / ${matches.length}${matches.length >= MAX_MATCHES ? "+" : ""}` : "无结果") : ""}
+      </span>
+      <button className="icon-btn" title="上一个（Shift+Enter）" aria-label="上一个结果" disabled={!matches.length} onClick={() => step(-1)}>
+        <Chevron open up />
+      </button>
+      <button className="icon-btn" title="下一个（Enter）" aria-label="下一个结果" disabled={!matches.length} onClick={() => step(1)}>
+        <Chevron open />
+      </button>
+      <button className="icon-btn" title="关闭（Esc）" aria-label="关闭查找" onClick={close}>
+        ×
+      </button>
     </div>
   );
+
+  let layer: ReactNode = null;
+  if (matches.length) {
+    const parts: ReactNode[] = [];
+    let at = 0;
+    matches.forEach((m, i) => {
+      parts.push(value.slice(at, m));
+      parts.push(
+        <mark key={m} className={i === current ? "current" : undefined}>
+          {value.slice(m, m + query.length)}
+        </mark>,
+      );
+      at = m + query.length;
+    });
+    parts.push(value.slice(at), "\n");
+    layer = (
+      <pre className="viewer-find-layer" ref={layerRef} aria-hidden="true">
+        {parts}
+      </pre>
+    );
+  }
+  return { bar, layer };
+}
+
+/**
+ * 项目里的路径（/ 分隔，相对 cwd；空是 cwd 本身）的绝对路径。cwd 是 Windows 的路径（C:\…、C:/…、\\server\share）时
+ * 整个用 \ 分隔（回复链接打开的工作目录外的文件夹记的是 / 分隔的）。根目录（/、C:\）本身以分隔符结尾，不再多加
+ */
+function absolutePath(cwd: string, rel: string): string {
+  const joined = !rel ? cwd : /[\\/]$/.test(cwd) ? cwd + rel : `${cwd}/${rel}`;
+  return /^[a-z]:[\\/]/i.test(cwd) || /^[\\/]{2}/.test(cwd) ? joined.replaceAll("/", "\\") : joined;
+}
+
+/** 复制到剪贴板，失败时提示原因；成功返回 true */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (err) {
+    window.alert(`复制失败：${(err as Error).message}`);
+    return false;
+  }
 }
 
 /** 复制路径：按钮复制相对项目的路径，旁边的下拉可以选绝对路径 */
@@ -1280,17 +1534,12 @@ function CopyPath({ cwd, path }: { cwd: string; path: string }) {
   const [copied, setCopied] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
-  const sep = cwd.includes("\\") && !cwd.includes("/") ? "\\" : "/";
-  const absolute = `${cwd.replace(/[\\/]+$/, "")}${sep}${sep === "\\" ? path.replaceAll("/", "\\") : path}`;
+  const absolute = absolutePath(cwd, path);
   const copy = async (text: string) => {
     setOpen(false);
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch (err) {
-      window.alert(`复制失败：${(err as Error).message}`);
-    }
+    if (!(await copyText(text))) return;
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   };
   return (
     <div className="file-copy-path" ref={ref}>
@@ -1314,8 +1563,8 @@ function CopyPath({ cwd, path }: { cwd: string; path: string }) {
   );
 }
 
-/** 顶部的「…」：复制文件内容、重新加载 */
-function FileOptionsMenu({ text, onReload }: { text: string | null; onReload?: () => void }) {
+/** 顶部的「…」：复制文件内容、查找、重新加载 */
+function FileOptionsMenu({ text, onFind, onReload }: { text: string | null; onFind?: () => void; onReload?: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
@@ -1337,6 +1586,20 @@ function FileOptionsMenu({ text, onReload }: { text: string | null; onReload?: (
           >
             <span className="menu-item-name">复制文件内容</span>
           </button>
+          {onFind && (
+            <button
+              className="menu-item"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onFind();
+              }}
+            >
+              <span className="menu-item-name">
+                查找<span className="menu-item-key">{/mac/i.test(navigator.platform) ? "⌘F" : "Ctrl+F"}</span>
+              </span>
+            </button>
+          )}
           <button
             className="menu-item"
             role="menuitem"
@@ -1382,9 +1645,10 @@ export function FoldersIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-function Chevron({ open }: { open: boolean }) {
+/** 向右的箭头；open 时朝下，up 时朝上 */
+function Chevron({ open, up = false }: { open: boolean; up?: boolean }) {
   return (
-    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: open ? "rotate(90deg)" : undefined }}>
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: up ? "rotate(-90deg)" : open ? "rotate(90deg)" : undefined }}>
       <path d="M3.5 2 6.5 5l-3 3" />
     </svg>
   );

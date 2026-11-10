@@ -4,7 +4,7 @@ import { desktop, type BrowserTabInfo } from "../desktop";
 import { BrowserTab, BrowserToolbar, GlobeIcon, SiteIcon } from "./BrowserTab";
 import { getDraft, setDraft, useHasDraft } from "../state/fileDrafts";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { FileBrowser } from "./FileBrowser";
+import { FileBrowser, type LineRange } from "./FileBrowser";
 import { FileTypeIcon } from "./FileTypeIcon";
 
 // xterm 体积大，打开终端时再加载
@@ -18,7 +18,8 @@ const TerminalView = lazy(() => import("./TerminalView").then((m) => ({ default:
 export type PanelTab =
   | { id: string; kind: "new" }
   /** root：工作目录外的文件、文件夹（回复里的链接）用它所在的文件夹做根（绝对路径），path 相对它；没有就是会话的工作目录 */
-  | { id: string; kind: "files"; path: string | null; transient: boolean; root?: string }
+  /** line：回复里的链接带了行号，打开后滚到并选中这几行；reveal 每次点链接都换，再点同一个链接也重新定位 */
+  | { id: string; kind: "files"; path: string | null; transient: boolean; root?: string; line?: LineRange; reveal?: number }
   | { id: string; kind: "terminal"; terminalId: string; label: string }
   /**
    * 内置浏览器（只有桌面版有）：标签页属于对话会话，面板里只显示当前会话的。
@@ -41,11 +42,12 @@ export function newPanelState(): PanelState {
  * 在面板里打开文件（同 codex-app-server）：已经开着就切过去；from 这个标签是「新标签页」「打开文件」或预览打开的，就在这个标签里换；
  * 否则换掉别处预览打开的那个，没有就接在 from 后面新开一个。from 是目录树所在的标签，或者（回复里的链接）当前标签
  */
-export function withFileOpen(s: PanelState, from: string, path: string, pin: boolean, root?: string): PanelState {
+export function withFileOpen(s: PanelState, from: string, path: string, pin: boolean, root?: string, line?: LineRange | null): PanelState {
   const open = s.tabs.find((t) => t.kind === "files" && t.path === path && t.root === root);
   const set = (id: string, tab: PanelTab) => ({ tabs: s.tabs.map((t) => (t.id === id ? tab : t)), active: id });
-  if (open) return set(open.id, { ...open, transient: open.kind === "files" && open.transient && !pin } as PanelTab);
-  const files = (id: string): PanelTab => ({ id, kind: "files", path, transient: !pin, ...(root !== undefined && { root }) });
+  const at = line ? { line, reveal: Date.now() } : {};
+  if (open) return set(open.id, { ...open, transient: open.kind === "files" && open.transient && !pin, ...at } as PanelTab);
+  const files = (id: string): PanelTab => ({ id, kind: "files", path, transient: !pin, ...(root !== undefined && { root }), ...at });
   const here = s.tabs.find((t) => t.id === from);
   if (here?.kind === "new" || (here?.kind === "files" && (here.path === null || here.transient))) return set(here.id, files(here.id));
   const preview = s.tabs.find((t) => t.kind === "files" && t.transient);
@@ -467,6 +469,8 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
                 cwd={tab.root ?? cwd}
                 sessionId={sessionId}
                 path={tab.path}
+                line={tab.line}
+                reveal={tab.reveal}
                 active={tab.id === activeId}
                 onSelectFile={(path, pinned) => openFile(tab.id, path, pinned, tab.root)}
                 onEdited={() => pin(tab.id)}

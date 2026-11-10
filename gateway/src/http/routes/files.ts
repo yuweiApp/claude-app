@@ -81,7 +81,7 @@ export function fileRoutes(app: FastifyInstance): void {
     const q = (req.query.q ?? "").trim();
     if (!q || q.endsWith("/")) {
       const dir = path.resolve(cwd, q);
-      if (dir === cwd || dir.startsWith(cwd + path.sep)) {
+      if (isInside(cwd, dir)) {
         const listed = await listDir(cwd, dir);
         if (listed) return { entries: listed };
       }
@@ -93,20 +93,32 @@ export function fileRoutes(app: FastifyInstance): void {
   app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/list", async (req) => {
     const { cwd, abs } = resolveInProject(req.query.cwd, req.query.path);
     const entries = await listDir(cwd, abs, true);
-    if (!entries) throw new BadRequestError("不是文件夹");
-    return { entries };
+    if (entries) return { entries };
+    // 列不出来：报出原因（不存在、没有权限、不是文件夹）
+    const info = await stat(abs).catch((err: NodeJS.ErrnoException) => {
+      throw new BadRequestError(fsError(err, "文件夹"));
+    });
+    if (!info.isDirectory()) throw new BadRequestError("不是文件夹");
+    await readdir(abs).catch((err: NodeJS.ErrnoException) => {
+      throw new BadRequestError(fsError(err, "文件夹"));
+    });
+    throw new BadRequestError("文件夹读取失败");
   });
 
   // 右侧面板查看文件：文本直接给内容，图片让网页用 /files/raw 取
   app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/read", async (req): Promise<FileContent> => {
     const { abs } = resolveInProject(req.query.cwd, req.query.path);
-    const info = await stat(abs).catch(() => null);
-    if (!info?.isFile()) throw new BadRequestError("文件不存在");
+    const info = await stat(abs).catch((err: NodeJS.ErrnoException) => {
+      throw new BadRequestError(fsError(err, "文件"));
+    });
+    if (!info.isFile()) throw new BadRequestError(info.isDirectory() ? "是文件夹，不是文件" : "不是普通文件");
     const rel = req.query.path ?? "";
     const meta = { path: rel, size: info.size, mtimeMs: info.mtimeMs };
     if (IMAGE_TYPES[path.extname(abs).toLowerCase()]) return { ...meta, kind: "image" };
     if (info.size > MAX_TEXT_BYTES) return { ...meta, kind: "too-large" };
-    const handle = await open(abs, "r");
+    const handle = await open(abs, "r").catch((err: NodeJS.ErrnoException) => {
+      throw new BadRequestError(fsError(err, "文件"));
+    });
     try {
       const buf = await handle.readFile();
       // 前 8KB 里有 0 字节就当二进制
@@ -157,7 +169,7 @@ export function fileRoutes(app: FastifyInstance): void {
     if (from === to) return {};
     const src = await stat(from).catch(() => null);
     if (!src) throw new BadRequestError("文件不存在");
-    if (to.startsWith(from + path.sep)) throw new BadRequestError("不能把文件夹移到它自己里面");
+    if (isInside(from, to)) throw new BadRequestError("不能把文件夹移到它自己里面");
     // 目标存在就不改；但大小写不敏感的文件系统上只改大小写时，目标就是它自己，照样改
     const dst = await stat(to).catch(() => null);
     if (dst && !(dst.ino === src.ino && dst.dev === src.dev)) throw new BadRequestError("目标位置已经有同名的文件或文件夹");
@@ -232,8 +244,35 @@ function resolveInProject(cwd: string | undefined, rel: string | undefined): { c
   if (!cwd || !path.isAbsolute(cwd)) throw new BadRequestError("缺少项目文件夹");
   const root = path.resolve(cwd);
   const abs = path.resolve(root, rel ?? "");
-  if (abs !== root && !abs.startsWith(root + path.sep)) throw new BadRequestError("路径不在项目里");
+  if (!isInside(root, abs)) throw new BadRequestError("路径不在项目里");
   return { cwd: root, abs };
+}
+
+/**
+ * abs 是 root 本身或者在它里面（都是解析过的绝对路径）。不用「root + 分隔符」做前缀比较：
+ * 根目录（/、C:\、\\server\share\）本身以分隔符结尾，拼出来的前缀多一个分隔符，里面的路径都对不上
+ */
+function isInside(root: string, abs: string): boolean {
+  const rel = path.relative(root, abs);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+/** 读文件、文件夹失败的原因，显示在右侧面板里；what 是「文件」或「文件夹」 */
+function fsError(err: NodeJS.ErrnoException, what: string): string {
+  switch (err.code) {
+    case "ENOENT":
+      return `${what}不存在`;
+    case "ENOTDIR":
+      return "路径中有一级不是文件夹";
+    case "EACCES":
+    case "EPERM":
+      // macOS 的桌面、文稿、下载、iCloud 等文件夹受隐私保护，没授权的应用读不了（报 EPERM）
+      return process.platform === "darwin"
+        ? `没有权限读取这个${what}。桌面、文稿、下载等文件夹受 macOS 隐私保护，要在「系统设置 › 隐私与安全性 › 文件与文件夹」（或「完全磁盘访问权限」）里允许运行网关的应用`
+        : `没有权限读取这个${what}`;
+    default:
+      return `${what}读取失败：${err.code ?? err.message}`;
+  }
 }
 
 /** 同 resolveInProject，但不能是项目文件夹本身（新建、删除、改名用），名字里不能有 \0 */

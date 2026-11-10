@@ -2,18 +2,20 @@ import { createContext, isValidElement, useContext, useRef, type AnchorHTMLAttri
 import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "../api";
+import type { LineRange } from "./FileBrowser";
 import { useFileExists } from "../state/fileExists";
 import { MermaidBlock } from "./MermaidBlock";
 import { CopyAction } from "./MessageActions";
 
 /**
  * Claude 回复里的链接指向本地文件时，在右侧面板打开：cwd 是会话的工作目录，open 打开相对它的路径的文件，
+ * line 是链接里的行号（a.ts:12、a.ts:12-20、a.ts#L12-L20），面板滚到并选中这几行；
  * openFolder 在目录树里定位文件夹；工作目录外的传 root（绝对路径），路径相对它，面板里以它为根。
  * 没有（新会话页，还没有工作目录）时本地文件链接点了没反应
  */
 export const FileLinkContext = createContext<{
   cwd: string;
-  open: (path: string, root?: string) => void;
+  open: (path: string, root?: string, line?: LineRange | null) => void;
   openFolder: (path: string, root?: string) => void;
 } | null>(null);
 
@@ -77,7 +79,7 @@ function codeText(children: ReactNode): string {
 }
 
 /** 像文件路径的行内代码：没有空白和引号、括号这些，带扩展名（可以带 :行号）；网址不算 */
-const PATH_LIKE = /^(?:[a-z]:[\\/]|\\\\|\.{0,2}[\\/])?[^\s`'"<>|*?()[\]{}]*[^\s`'"<>|*?()[\]{}\\/.]\.[a-z\d]{1,10}(?::\d+(?::\d+)?)?$/i;
+const PATH_LIKE = /^(?:[a-z]:[\\/]|\\\\|\.{0,2}[\\/])?[^\s`'"<>|*?()[\]{}]*[^\s`'"<>|*?()[\]{}\\/.]\.[a-z\d]{1,10}(?::\d+(?:[:-]\d+)?)?$/i;
 
 function ReplyCode({ children, ...rest }: HTMLAttributes<HTMLElement> & { children?: ReactNode }) {
   const inBlock = useContext(InCodeBlock);
@@ -108,12 +110,13 @@ function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorE
     e.preventDefault();
     if (!files || (path === null && !outside)) return;
     const { cwd, open, openFolder } = files;
+    const line = linkLine(href);
     // 链接看不出是文件还是文件夹：是文件就打开；能列出内容的是文件夹，在目录树里定位；都不是也当文件打开（面板里显示原因）
     // 文件：root 下的 rel；文件夹：dirRoot 下的 dirRel
     const t =
       path !== null
-        ? { root: cwd, rel: path, dirRoot: cwd, dirRel: path, file: () => open(path), folder: () => openFolder(path) }
-        : { root: outside!.parent, rel: outside!.name, dirRoot: outside!.abs, dirRel: "", file: () => open(outside!.name, outside!.parent), folder: () => openFolder("", outside!.abs) };
+        ? { root: cwd, rel: path, dirRoot: cwd, dirRel: path, file: () => open(path, undefined, line), folder: () => openFolder(path) }
+        : { root: outside!.parent, rel: outside!.name, dirRoot: outside!.abs, dirRel: "", file: () => open(outside!.name, outside!.parent, line), folder: () => openFolder("", outside!.abs) };
     void api
       .filesExist(t.root, [t.rel])
       .catch(() => [t.rel])
@@ -137,7 +140,7 @@ function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorE
 // ---------------------------------------------------------------------------
 // 链接地址解析（同 codex-app-server 的 Markdown.tsx）
 
-/** 本地文件路径：C:\a.png、C:/a.png、/home/a.png、file:///C:/a.png；返回去掉 file:// 的路径，不是返回 null */
+/** 本地文件路径：C:\a.png、C:/a.png、/home/a.png、\\server\share\a.png、file:///C:/a.png、file://server/share/a.png；返回去掉 file:// 的路径，不是返回 null */
 function localPath(raw: string): string | null {
   // Markdown 解析后链接地址已经过百分号编码（\ → %5C、中文 → %E8…）
   let url = raw;
@@ -147,8 +150,9 @@ function localPath(raw: string): string | null {
     // 不是合法编码，按原样处理
   }
   if (/^file:\/\//i.test(url)) {
-    let p = url.replace(/^file:\/\/(localhost)?/i, "");
+    let p = url.replace(/^file:\/\/(localhost(?=\/|$))?/i, "");
     if (/^\/[a-z]:/i.test(p)) p = p.slice(1); // file:///C:/x → C:/x
+    else if (p && !p.startsWith("/") && !/^[a-z]:/i.test(p)) p = `//${p}`; // file://server/share/x → //server/share/x（Windows 的网络共享）
     return p;
   }
   if (/^\/[a-z]:[\\/]/i.test(url)) return url.slice(1); // /C:/x → C:/x
@@ -162,12 +166,35 @@ function isLocalLink(href: string): boolean {
   return localPath(href) !== null || !/^(?:[a-z][a-z\d+.-]*:|[#?]|\/\/)/i.test(href);
 }
 
+/**
+ * 路径末尾的行号：a.ts:12、a.ts:12-20、a.ts:12:5（第 5 列，不算）、a.ts#L12、a.ts#L12-L20、a.ts#L12C3-L20C1。
+ * 返回去掉行号的路径和行范围（没有时 null）
+ */
+const LINE_SUFFIX = /(?:#L(\d+)(?:C\d+)?(?:-L?(\d+)(?:C\d+)?)?|:(\d+)(?:-(\d+)|:\d+)?)$/i;
+function splitLine(p: string): { path: string; line: LineRange | null } {
+  const m = LINE_SUFFIX.exec(p);
+  if (!m) return { path: p, line: null };
+  const start = Number(m[1] ?? m[3]);
+  if (!start) return { path: p.slice(0, m.index), line: null };
+  const end = Number(m[2] ?? m[4] ?? start);
+  return { path: p.slice(0, m.index), line: { start, end: Math.max(start, end) } };
+}
+
+/** 链接里的行号 */
+function linkLine(href: string): LineRange | null {
+  try {
+    return splitLine(decodeURIComponent(href)).line;
+  } catch {
+    return splitLine(href).line;
+  }
+}
+
 /** 链接指向的文件相对工作目录的路径（/ 分隔，去掉行号、查询参数和锚点）；不在工作目录里返回 null */
 function projectPath(cwd: string, href: string): string | null {
   const abs = localPath(href);
   let rel: string;
   if (abs !== null) {
-    const norm = abs.replaceAll("\\", "/");
+    const norm = splitLine(abs.replaceAll("\\", "/")).path;
     const root = `${cwd.replaceAll("\\", "/").replace(/\/+$/, "")}/`;
     // Windows 的路径不分大小写
     const win = /^[a-z]:\//i.test(root) || root.startsWith("//");
@@ -180,10 +207,8 @@ function projectPath(cwd: string, href: string): string | null {
     } catch {
       rel = href;
     }
-    rel = rel.replace(/[?#].*$/, "");
+    rel = splitLine(rel).path.replace(/[?#].*$/, "");
   }
-  // 行号（a.ts:12、a.ts#L12）：面板不定位到行，去掉
-  rel = rel.replace(/:\d+(?::\d+)?$/, "");
   const parts: string[] = [];
   for (const seg of rel.split(/[\\/]/)) {
     if (seg === "" || seg === ".") continue;
@@ -207,9 +232,9 @@ function absolutePath(cwd: string, href: string): { abs: string; parent: string;
     } catch {
       // 不是合法编码，按原样处理
     }
-    p = `${cwd.replace(/[\\/]+$/, "")}/${rel.replace(/[?#].*$/, "")}`;
+    p = `${cwd.replace(/[\\/]+$/, "")}/${splitLine(rel).path.replace(/[?#].*$/, "")}`;
   }
-  p = p.replaceAll("\\", "/").replace(/:\d+(?::\d+)?$/, "");
+  p = splitLine(p.replaceAll("\\", "/")).path;
   // 开头：Windows 盘符、UNC（//server）或者 /
   const head = /^[a-z]:\//i.exec(p)?.[0] ?? (p.startsWith("//") ? "//" : "/");
   const parts: string[] = [];

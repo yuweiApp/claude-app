@@ -1213,7 +1213,20 @@ main {
 .viewer-edit { flex: 1; min-height: 0; display: flex; align-items: flex-start; overflow: auto; padding: 8px 0 24px;
   font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.6; }
 .viewer-edit-gutter { position: sticky; left: 0; z-index: 2; flex: none; min-width: 48px; margin: 0; padding: 0 12px 0 8px; background: var(--bg); text-align: right; color: var(--muted); font: inherit; user-select: none; }
-.viewer-editor { flex: 1; min-width: 0; display: block; tab-size: 4; margin: 0; padding: 0 12px 0 0; border: none; outline: none; resize: none; background: transparent; color: var(--text); font: inherit; line-height: inherit; white-space: pre; field-sizing: content; overflow: hidden; }
+/* 查找（FileBrowser.tsx 的 useFind，同 codex-app-server）：查找栏在编辑器上方不随内容滚动；高亮层和文本框同样的字体、位置，
+   垫在文本框下面（文本框背景透明），文字透明只显示匹配处的底色 */
+.viewer:focus { outline: none; }
+.viewer-find { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--bg); }
+.viewer-find input { flex: 1; min-width: 72px; height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; }
+.viewer-find input:focus { outline: none; border-color: var(--accent); }
+.viewer-find-count { flex: 0 1 auto; min-width: 0; overflow: hidden; font-size: 12px; color: var(--muted); text-align: right; white-space: nowrap; }
+.viewer-find .icon-btn { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.viewer-edit-area { position: relative; flex: 1 0 auto; min-width: 0; }
+.viewer-find-layer { position: absolute; inset: 0; margin: 0; padding: 0 12px 0 0; font: inherit; line-height: inherit; tab-size: 4; white-space: pre; color: transparent; overflow: hidden; pointer-events: none; }
+.viewer-find-layer mark { color: transparent; border-radius: 2px; background: color-mix(in srgb, #d9b45a 40%, transparent); }
+.viewer-find-layer mark.current { background: color-mix(in srgb, #e0a030 75%, transparent); }
+.menu-item-key { margin-left: 16px; font-size: 12px; color: var(--muted); }
+.viewer-editor { position: relative; z-index: 1; min-width: 100%; display: block; tab-size: 4; margin: 0; padding: 0 12px 0 0; border: none; outline: none; resize: none; background: transparent; color: var(--text); font: inherit; line-height: inherit; white-space: pre; field-sizing: content; overflow: hidden; }
 .viewer-image { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto;
   background: repeating-conic-gradient(color-mix(in srgb, var(--text) 6%, transparent) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
 .viewer-frame { flex: 1; min-height: 0; width: 100%; border: none; background: #fff; }
