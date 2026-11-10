@@ -46,6 +46,22 @@ export const PATH_DRAG_TYPE = "application/x-claude-app-path";
 /** 插入输入框的文件引用：带空白的路径加引号 */
 export const fileMention = (path: string) => (/\s/.test(path) ? `@"${path}"` : `@${path}`);
 
+/** 从目录树拖进输入框时显示成缩略图的图片：模型能直接看的格式 */
+export const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
+
+/**
+ * 拖进输入框的图片发送时写在消息最后一段（@绝对路径，空格隔开，见 Composer 的 submit）：
+ * 消息里拆出来显示成缩略图。最后一段全是图片的绝对路径引用才算，手打在句子里的不动
+ */
+export function splitImageRefs(text: string): { text: string; paths: string[] } {
+  const m = /(^|\n\n)((?:@(?:"[^"\n]+"|\S+) ?)+)$/.exec(text);
+  if (!m) return { text, paths: [] };
+  const paths = [...m[2]!.matchAll(/@("[^"\n]+"|\S+)/g)].map((t) => fileRefParts(t[1]!).path);
+  const absolute = (p: string) => p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith("\\\\");
+  if (!paths.every((p) => absolute(p) && IMAGE_EXT.test(p))) return { text, paths: [] };
+  return { text: text.slice(0, m.index), paths };
+}
+
 /** 文件引用（@ 后面的部分，可能带引号）拆成路径、文件名（带后缀）和是不是文件夹（以分隔符结尾） */
 export function fileRefParts(ref: string): { path: string; base: string; dir: boolean } {
   const path = ref.replace(/^"(.*)"$/, "$1");

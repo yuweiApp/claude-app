@@ -4,7 +4,7 @@ import { AddMenu } from "./AddMenu";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { MentionMenu, type MentionOption } from "./MentionMenu";
-import { fileMention, fileRefParts, findMentions, MentionText, browserMention, PATH_DRAG_TYPE, MentionNamesContext, tabMention, tabToken, type Mention, type MentionSource } from "./MentionText";
+import { fileMention, fileRefParts, findMentions, IMAGE_EXT, MentionText, browserMention, PATH_DRAG_TYPE, MentionNamesContext, tabMention, tabToken, type Mention, type MentionSource } from "./MentionText";
 
 /** 输入框下方的附件：选中后立刻上传，发送时只传 id */
 interface PendingFile {
@@ -18,7 +18,12 @@ interface PendingFile {
   preview?: string;
   /** 大段粘贴的文字转成的附件：卡片上显示开头一行和「粘贴的文本」 */
   pastedText?: string;
+  /** 从目录树拖进来的图片：不上传，发送时在文字末尾写成 @绝对路径，由 Claude Code 读给模型；preview 是网关的 /files/raw 地址 */
+  path?: string;
 }
+
+/** 释放本地预览地址（拖进来的图片用的是网关地址，不用释放） */
+const revokePreview = (f: PendingFile) => f.preview?.startsWith("blob:") && URL.revokeObjectURL(f.preview);
 
 /** 粘贴的文字超过这么多字时存成附件（同 codex-app-server），输入框里只留自己要说的话 */
 const PASTE_AS_FILE_CHARS = 5000;
@@ -214,12 +219,15 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     if (!canSend) return;
     setSending(true);
     try {
-      await onSend(expandPaths(expandTabs(text.trim(), pickedTabs), pickedPaths), ready.map((f) => f.attachment!.id));
+      // 拖进来的图片写在最后一段：@绝对路径，空格隔开（消息里据此显示成缩略图，见 splitImageRefs）
+      const body = expandPaths(expandTabs(text.trim(), pickedTabs), pickedPaths);
+      const refs = ready.flatMap((f) => (f.path ? [fileMention(f.path)] : [])).join(" ");
+      await onSend([body, refs].filter(Boolean).join("\n\n"), ready.flatMap((f) => (f.attachment ? [f.attachment.id] : [])));
       setText("");
       setPicked([]);
       setPickedPaths([]);
       setPickedTabs([]);
-      files.forEach((f) => f.preview && URL.revokeObjectURL(f.preview));
+      files.forEach(revokePreview);
       setFiles([]);
     } finally {
       setSending(false);
@@ -314,18 +322,29 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     e.preventDefault();
     setDragging(false);
     const path = e.dataTransfer.getData(PATH_DRAG_TYPE);
-    if (path) {
-      const { base, dir } = fileRefParts(path);
-      const full = fileMention(path);
-      const tokenOf = (label: string) => fileMention(dir ? `${label}/` : label);
-      let label = base;
-      for (let n = 2; pickedPaths.some((p) => p.token === tokenOf(label) && p.full !== full); n++) label = `${base} (${n})`;
-      const token = tokenOf(label);
-      setPickedPaths((prev) => (prev.some((p) => p.token === token) ? prev : [...prev, { token, full }]));
-      insertAtCaret(token);
+    if (!path) {
+      addFiles([...e.dataTransfer.files]);
       return;
     }
-    addFiles([...e.dataTransfer.files]);
+    // 图片：输入框里显示缩略图（和上传的图片一样），不上传，发送时写成 @绝对路径
+    if (IMAGE_EXT.test(path)) {
+      if (!files.some((f) => f.path === path)) {
+        setFiles((prev) => [...prev, { key: crypto.randomUUID(), name: fileRefParts(path).base, size: 0, status: "done", preview: api.rawFileUrl(path, ""), path }]);
+      }
+      return;
+    }
+    mentionPath(path);
+  };
+  // 拖进来的文件、文件夹插成引用：输入框里只显示 @文件名（见 pickedPaths）
+  const mentionPath = (path: string) => {
+    const { base, dir } = fileRefParts(path);
+    const full = fileMention(path);
+    const tokenOf = (label: string) => fileMention(dir ? `${label}/` : label);
+    let label = base;
+    for (let n = 2; pickedPaths.some((p) => p.token === tokenOf(label) && p.full !== full); n++) label = `${base} (${n})`;
+    const token = tokenOf(label);
+    setPickedPaths((prev) => (prev.some((p) => p.token === token) ? prev : [...prev, { token, full }]));
+    insertAtCaret(token);
   };
 
   return (
@@ -349,13 +368,13 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
         <div className="chips">
           {files.map((f) => {
             const remove = () => {
-              if (f.preview) URL.revokeObjectURL(f.preview);
+              revokePreview(f);
               setFiles((prev) => prev.filter((p) => p.key !== f.key));
             };
             // 图片显示缩略图（同 codex-app-server 输入框里的图片附件），其他文件是文件名加大小
             if (f.preview) {
               return (
-                <span key={f.key} className={`image-chip ${f.status}`} title={f.error ?? f.name}>
+                <span key={f.key} className={`image-chip ${f.status}`} title={f.error ?? f.path ?? f.name}>
                   <ImageThumb src={f.preview} alt={f.name} className="image-chip-thumb" />
                   {f.status === "uploading" && <span className="image-chip-state">上传中…</span>}
                   {/* 缩略图只有 56px，完整的错误信息在悬停提示（title）里 */}

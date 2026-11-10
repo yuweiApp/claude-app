@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { api } from "../api";
 import type { Item, SessionView, TaskItem } from "../state/session";
 import { Attachments } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
@@ -6,7 +7,7 @@ import { CopyAction, MessageActions } from "./MessageActions";
 import { StepGroup, stepImages, ToolIcon, ToolStep, type ToolUse } from "./Steps";
 import { StepThumbs } from "./StepThumbs";
 import { formatShortDuration } from "./TasksPopover";
-import { MentionText } from "./MentionText";
+import { MentionText, splitImageRefs } from "./MentionText";
 import { AnnotatableText, SentNotesChip } from "./ResponseAnnotations";
 import { ReplyMarkdown } from "./ReplyMarkdown";
 
@@ -349,20 +350,24 @@ function UnitView({ unit, view }: { unit: Unit; view: SessionView }) {
 
 function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
   switch (item.kind) {
-    case "user":
+    case "user": {
+      // 拖进来的图片是消息末尾的 @绝对路径，和上传的图片一样显示成缩略图（图片从网关按路径取）
+      const { text, paths } = splitImageRefs(item.text);
+      const images = [...item.images, ...paths.map((p) => api.rawFileUrl(p, ""))];
       return (
         <div className="user">
-          {item.images.length > 0 && (
+          {images.length > 0 && (
             <div className="user-images">
-              {item.images.map((src, i) => (
+              {images.map((src, i) => (
                 <ImageThumb key={i} src={src} />
               ))}
             </div>
           )}
           {item.attachments.length > 0 && <Attachments items={item.attachments} />}
-          <MentionText text={item.text} compact />
+          {text && <MentionText text={text} compact />}
         </div>
       );
+    }
     case "result":
       // 一轮的用时显示在过程的折叠条上；子代理里出现的 result 只在出错时显示
       return item.isError ? <div className="result error">出错：{item.text}</div> : null;
