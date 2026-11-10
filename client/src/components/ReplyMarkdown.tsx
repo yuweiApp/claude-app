@@ -1,7 +1,8 @@
-import { createContext, useContext, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
+import { createContext, useContext, useRef, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useFileExists } from "../state/fileExists";
+import { CopyAction } from "./MessageActions";
 
 /**
  * Claude 回复里的链接指向本地文件时，在右侧面板打开：cwd 是会话的工作目录（面板的文件只能是它里面的），
@@ -21,11 +22,7 @@ export function ReplyMarkdown({ children }: { children: string }) {
       urlTransform={urlTransform}
       components={{
         a: ({ node: _node, ...props }) => <ReplyLink {...props} />,
-        pre: ({ node: _node, ...props }) => (
-          <InCodeBlock.Provider value={true}>
-            <pre {...props} />
-          </InCodeBlock.Provider>
-        ),
+        pre: ({ node: _node, ...props }) => <CodeBlock {...props} />,
         code: ({ node: _node, ...props }) => <ReplyCode {...props} />,
       }}
     >
@@ -36,6 +33,19 @@ export function ReplyMarkdown({ children }: { children: string }) {
 
 /** 在代码块（```）里：里面的 code 不当文件路径 */
 const InCodeBlock = createContext(false);
+
+/** 代码块：右上角常驻复制按钮（同 codex-app-server 的 MdCodeBlock），复制的是代码原文 */
+function CodeBlock(props: HTMLAttributes<HTMLPreElement>) {
+  const ref = useRef<HTMLPreElement>(null);
+  return (
+    <InCodeBlock.Provider value={true}>
+      <div className="md-code">
+        <pre ref={ref} {...props} />
+        <CopyAction className="md-code-copy" title="复制代码" text={() => (ref.current?.textContent ?? "").replace(/\n$/, "")} />
+      </div>
+    </InCodeBlock.Provider>
+  );
+}
 
 /** 像文件路径的行内代码：没有空白和引号、括号这些，带扩展名（可以带 :行号）；网址不算 */
 const PATH_LIKE = /^(?:[a-z]:[\\/]|\\\\|\.{0,2}[\\/])?[^\s`'"<>|*?()[\]{}]*[^\s`'"<>|*?()[\]{}\\/.]\.[a-z\d]{1,10}(?::\d+(?::\d+)?)?$/i;

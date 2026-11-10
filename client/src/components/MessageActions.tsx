@@ -5,8 +5,11 @@ export function MessageActions({ children, align }: { children: ReactNode; align
   return <div className={`msg-actions msg-actions-${align}`}>{children}</div>;
 }
 
-/** 复制按钮：点后短暂显示勾（同 codex-app-server 的 CopyAction，图标是它的 turn-view-copy / turn-view-check） */
-export function CopyAction({ text, title }: { text: string; title: string }) {
+/**
+ * 复制按钮：点后短暂显示勾（同 codex-app-server 的 CopyAction，图标是它的 turn-view-copy / turn-view-check）。
+ * text 可以是函数，点击时再取（代码块从 DOM 里读文字）
+ */
+export function CopyAction({ text, title, className }: { text: string | (() => string); title: string; className?: string }) {
   const [state, setState] = useState<"idle" | "done" | "error">("idle");
   useEffect(() => {
     if (state === "idle") return;
@@ -15,10 +18,10 @@ export function CopyAction({ text, title }: { text: string; title: string }) {
   }, [state]);
   return (
     <button
-      className="msg-action"
+      className={className ? `msg-action ${className}` : "msg-action"}
       title={state === "done" ? "已复制" : state === "error" ? "复制失败" : title}
       aria-label={title}
-      onClick={() => navigator.clipboard.writeText(text).then(() => setState("done"), () => setState("error"))}
+      onClick={() => navigator.clipboard.writeText(typeof text === "function" ? text() : text).then(() => setState("done"), () => setState("error"))}
     >
       {state === "done" ? (
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

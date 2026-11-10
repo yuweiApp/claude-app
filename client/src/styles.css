@@ -464,6 +464,11 @@ main {
 .assistant > :first-child, .annotatable > [data-response-annotation-target] > :first-child { margin-top: 0; }
 .assistant pre, .permission pre { background: var(--code-bg); padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--border) 60%, transparent); border-radius: 10px; font-size: 13px; line-height: 1.6; }
 .assistant code { font-size: 0.9em; }
+/* 代码块外框：右上角的复制按钮不随代码滚动（ReplyMarkdown.tsx 的 CodeBlock，同 codex-app-server 的 .md-code） */
+.md-code { position: relative; margin: 1em 0; }
+.md-code > pre { margin: 0; padding-right: 40px; }
+.md-code-copy { position: absolute; top: 6px; right: 6px; }
+.md-code-copy:hover { background: color-mix(in srgb, var(--border) 70%, transparent); }
 /* Markdown 表格：细边框、表头浅底；列多时表格自己横向滚动，不撑宽对话 */
 .assistant table {
   display: block; width: max-content; max-width: 100%; overflow-x: auto; margin: 0.6em 0;
