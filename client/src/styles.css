@@ -251,6 +251,18 @@ main {
 .appearance { max-width: 760px; }
 .appearance-section { margin-bottom: 32px; }
 .appearance-section h2 { margin: 0 0 12px; font-size: 15px; font-weight: 500; }
+/* 设置里的「浏览器」：每行左边是浏览器图标，展开「设置」后是配置、token 这些字段 */
+.browsers-row { align-items: center; }
+.browsers-icon { flex: none; display: grid; place-items: center; width: 28px; height: 28px; }
+.browsers-icon > span { width: 24px; height: 24px; }
+.browsers-detail { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.browsers-field { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.browsers-field-label { flex: none; width: 84px; color: var(--muted); font-size: 12.5px; }
+.browsers-field input { flex: 1; min-width: 160px; max-width: 360px; }
+.browsers-path { flex: 1; min-width: 0; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.browsers-field button.danger { border-color: var(--err); color: var(--err); background: none; }
+.browsers-hint { margin: 0 0 0 92px; color: var(--muted); font-size: 12px; }
+.browsers-notice { margin-bottom: 12px; color: var(--warn); font-size: 13px; }
 .appearance-card { border: 1px solid var(--border); border-radius: 12px; }
 .appearance-row { display: flex; align-items: center; gap: 16px; padding: 13px 18px; }
 .appearance-row + .appearance-row { border-top: 1px solid var(--border); }
@@ -359,7 +371,7 @@ main {
 .settings-form input:focus, .settings-form select:focus, .settings-form textarea:focus { border-color: var(--accent); }
 /* 添加 MCP 服务器：类型是两个胶囊按钮，右边「从 JSON 导入」；参数、环境变量、JSON 用等宽字体 */
 .mcp-dialog { width: 560px; gap: 14px; padding: 20px 22px; }
-.settings-form textarea.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.55; }
+.settings-form input.mono, .settings-form textarea.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.55; }
 .mcp-type-row { display: flex; align-items: center; gap: 8px; }
 .mcp-type { display: flex; gap: 4px; }
 .mcp-type button { padding: 6px 14px; border: 1px solid transparent; border-radius: 999px; background: none; color: var(--muted); font-size: 14px; }
@@ -1278,13 +1290,13 @@ main {
 .mention-tab { display: inline-flex; align-items: center; gap: 3px; vertical-align: bottom; }
 /* 输入框里的标签页引用：字不能少（要和 textarea 对齐），@ 和方括号透明占位，@ 的位置叠地球图标 */
 .mention-tab-at { position: relative; color: transparent; }
-.mention-tab-at > svg, .mention-tab-at > .chrome-logo, .mention-tab-at > .edge-logo, .mention-tab-at > .inapp-logo { position: absolute; top: 50%; left: 50%; width: 0.95em; height: 0.95em; transform: translate(-50%, -50%); }
+.mention-tab-at > svg, .mention-tab-at > .chrome-logo, .mention-tab-at > .edge-logo, .mention-tab-at > .letter-logo, .mention-tab-at > .inapp-logo { position: absolute; top: 50%; left: 50%; width: 0.95em; height: 0.95em; transform: translate(-50%, -50%); }
 .mention-tab-at > svg { color: var(--skill); }
 .mention-tab-at > .file-type-icon { position: absolute; top: 50%; left: 50%; width: 0.9em; height: 0.9em; transform: translate(-50%, -50%); }
 .mention-tab-src { color: var(--muted); }
 .mention-tab-bracket { color: transparent; }
 .mention-tab > svg { width: 13px; height: 13px; flex: none; }
-.mention-tab > .chrome-logo, .mention-tab > .edge-logo, .mention-tab > .inapp-logo { width: 13px; height: 13px; }
+.mention-tab > .chrome-logo, .mention-tab > .edge-logo, .mention-tab > .letter-logo, .mention-tab > .inapp-logo { width: 13px; height: 13px; }
 .mention-tab > .file-type-icon { width: 14px; height: 14px; flex: none; }
 /* 外部浏览器（用户的 Chrome、Edge）的标签页引用：标题前标上浏览器名 */
 .mention-tab-source { color: var(--muted); font-size: 0.9em; }
@@ -1309,7 +1321,7 @@ main {
 /* 浏览器那一行的图标：和「技能」「插件」的头像一样大的圆角块；内置浏览器是品牌色底白图标，Chrome、Edge 是彩色标志 */
 .tab-picker-badge { flex: none; display: grid; place-items: center; width: 22px; height: 22px; }
 .tab-picker-badge .inapp-logo { width: 22px; height: 22px; }
-.tab-picker-badge .chrome-logo, .tab-picker-badge .edge-logo { width: 19px; height: 19px; }
+.tab-picker-badge .chrome-logo, .tab-picker-badge .edge-logo, .tab-picker-badge .letter-logo { width: 19px; height: 19px; }
 /* 「Computer Use」里桌面那一行：和内置浏览器的图标块一个做法，底色用桌面的图标色 */
 .desktop-badge { border-radius: 23%; color: #fff; background: linear-gradient(180deg, color-mix(in srgb, var(--ic-desktop) 78%, #fff), var(--ic-desktop)); }
 .desktop-badge svg { width: 15px; height: 15px; }
@@ -1329,6 +1341,10 @@ main {
   display: inline-block; flex: none; width: 13px; height: 13px;
   background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><defs><linearGradient id='g' x1='0' y1='1' x2='.9' y2='.1'><stop offset='0' stop-color='%233ad37a'/><stop offset='.5' stop-color='%231aa5e0'/><stop offset='1' stop-color='%230b5fc6'/></linearGradient><linearGradient id='w'><stop offset='0' stop-color='%230a4fa8'/><stop offset='1' stop-color='%230c3f8a'/></linearGradient><mask id='m'><rect width='16' height='16' fill='%23fff'/><path d='M6.2 10.4c0-1.9 1.9-3.1 4.1-3.1 1.9 0 3.6.9 4.4 2.3-.3 1.3-1 2.4-1.9 3.2-.5-1.3-1.7-2.1-3.2-2.1-1.3 0-2.4.6-2.9 1.6-.3-.6-.5-1.2-.5-1.9z'/></mask></defs><g mask='url(%23m)'><circle cx='8' cy='8' r='7.5' fill='url(%23g)'/><path d='M.6 8.4C1 4.2 4.4 1.2 8.4 1.2c3.6 0 6.4 2.6 6.9 5.8-1.2-1.6-3.3-2.6-5.6-2.6C6 4.4 2.6 6 .6 8.4z' fill='url(%23w)' opacity='.85'/></g></svg>") center / contain no-repeat;
 }
+/* 其他外部浏览器（Brave、Vivaldi、手动添加的…）：浏览器的颜色（由网关给，写在 style 上）的圆里白色首字母；字用 SVG 画，跟着图标大小缩放 */
+.letter-logo { display: inline-block; flex: none; width: 13px; height: 13px; border-radius: 50%; color: #fff; }
+.letter-logo svg { display: block; width: 100%; height: 100%; }
+.letter-logo text { fill: currentColor; font-size: 10px; font-weight: 700; font-family: system-ui, sans-serif; }
 .tab-picker-hint { flex: none; margin-left: auto; color: var(--muted); font-size: 12px; }
 .tab-picker-tab { padding-left: 40px; }
 .tab-picker-empty { padding: 4px 8px 8px 40px; font-size: 12px; }
@@ -1359,6 +1375,7 @@ svg.ic-mcp { color: var(--ic-mcp); }
 .ios-icon-blue { background: linear-gradient(180deg, #3d9bff, #0a6cf0); }
 .ios-icon-purple { background: linear-gradient(180deg, #c77df5, #9b45d6); }
 .ios-icon-pink { background: linear-gradient(180deg, #ff5a7e, #f0244f); }
+.ios-icon-green { background: linear-gradient(180deg, #4cd97b, #1fae4f); }
 /* 功能栏里的设置：图标块本身就是按钮的样子，悬停、当前页时整块亮一点，不再垫底色 */
 .rail-btn:has(.ios-icon), .rail-btn.active:has(.ios-icon) { background: none; box-shadow: none; }
 .rail-btn:has(.ios-icon):hover .ios-icon { filter: brightness(1.08); }

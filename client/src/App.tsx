@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { GearGlyph, HomeGlyph, IosIcon } from "./components/IosIcon";
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import { api, subscribe, type Capabilities, type GatewayConfig, type SessionListItem } from "./api";
+import { api, BROWSERS_CHANGED, subscribe, type Capabilities, type ExternalBrowserInfo, type GatewayConfig, type SessionListItem } from "./api";
 import { CapabilityPicker } from "./components/CapabilityPicker";
 import { MentionNamesContext } from "./components/MentionText";
 import { Composer, type ComposerHandle } from "./components/Composer";
@@ -416,9 +416,21 @@ function Chat({
   useEffect(() => {
     api.capabilities(cwd ?? undefined).then(setCapabilities, () => setCapabilities(null));
   }, [cwd]);
+  // 启用着的外部浏览器（设置页「浏览器」）：引用的名字、图标和输入框上面的「浏览器」菜单用。设置页改了会发 BROWSERS_CHANGED
+  const [externalBrowsers, setExternalBrowsers] = useState<ExternalBrowserInfo[]>([]);
+  useEffect(() => {
+    const load = () => api.externalTabs().then((list) => setExternalBrowsers(list.map(({ id, name, logo }) => ({ id, name, logo }))), () => undefined);
+    load();
+    window.addEventListener(BROWSERS_CHANGED, load);
+    return () => window.removeEventListener(BROWSERS_CHANGED, load);
+  }, []);
   const mentionNames = useMemo(
-    () => ({ plugins: capabilities?.plugins.map((p) => p.name) ?? [], skills: capabilities?.skills.filter((s) => s.enabled).map((s) => s.name) ?? [] }),
-    [capabilities],
+    () => ({
+      plugins: capabilities?.plugins.map((p) => p.name) ?? [],
+      skills: capabilities?.skills.filter((s) => s.enabled).map((s) => s.name) ?? [],
+      browsers: externalBrowsers,
+    }),
+    [capabilities, externalBrowsers],
   );
 
   // 先连事件流再拉历史，两边按 uuid 去重，见 docs/README.md「客户端归并规则」
@@ -616,13 +628,14 @@ function Chat({
             <CapabilityPicker kind="插件" items={capabilities?.plugins.filter((p) => !p.builtin) ?? []} onPick={(name) => composerRef.current?.mention(name)} />
             <TabPicker
               inapp={browserTabs}
+              external={externalBrowsers}
               onPick={(tab, source) => composerRef.current?.mentionTab(tab.title, tab.url, source)}
-              onPickBrowser={(source) => composerRef.current?.mentionBrowser(source)}
+              onPickBrowser={(b) => composerRef.current?.mentionBrowser(b?.name ?? "内置浏览器")}
             />
             <DesktopPicker
               enabled={config.desktop}
               onPick={(w) => composerRef.current?.mentionTab(w.title || w.app, `window:${w.id}`, "desktop")}
-              onPickDesktop={() => composerRef.current?.mentionBrowser("desktop")}
+              onPickDesktop={() => composerRef.current?.mentionBrowser("桌面")}
             />
           </>
         }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from "react";
-import type { ExternalBrowserId } from "../api";
+import type { BrowserLogo } from "../api";
 import type { BrowserSuggestion, BrowserTabInfo, DesktopBrowserApi } from "../desktop";
 
 interface Props {
@@ -408,12 +408,22 @@ export function SiteIcon({ src }: { src?: string }) {
 }
 
 /**
- * 引用整个浏览器（@内置浏览器、@Chrome、@Edge）的图标，「浏览器」菜单、输入框、消息里都用这一个。
- * 内置浏览器（不传 source）：品牌色圆角方块里白色的「左边对话、右边面板」窗口（就是这个应用的样子，见 .inapp-logo）；
- * Chrome、Edge：各自的彩色标志（见 .chrome-logo、.edge-logo）
+ * 引用整个浏览器（@内置浏览器、@Chrome、@Brave…）的图标，「浏览器」菜单、输入框、消息、设置页里都用这一个。
+ * 内置浏览器（不传 logo）：品牌色圆角方块里白色的「左边对话、右边面板」窗口（就是这个应用的样子，见 .inapp-logo）；
+ * Chrome、Edge 系列：各自的彩色标志（见 .chrome-logo、.edge-logo）；其他外部浏览器：这个颜色的圆里写名字的首字母（.letter-logo）
  */
-export function BrowserIcon({ source }: { source?: ExternalBrowserId }) {
-  if (source) return <span className={`${source}-logo`} aria-hidden="true" />;
+export function BrowserIcon({ logo, name }: { logo?: BrowserLogo; name?: string }) {
+  if (logo?.kind === "chrome" || logo?.kind === "edge") return <span className={`${logo.kind}-logo`} aria-hidden="true" />;
+  if (logo)
+    return (
+      <span className="letter-logo" style={{ background: logo.color }} aria-hidden="true">
+        <svg viewBox="0 0 16 16">
+          <text x="8" y="8" textAnchor="middle" dominantBaseline="central">
+            {(name ?? "").trim().charAt(0).toUpperCase()}
+          </text>
+        </svg>
+      </span>
+    );
   return (
     <span className="inapp-logo" aria-hidden="true">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

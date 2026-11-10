@@ -6,26 +6,21 @@ import { parse } from "yaml";
 const file = path.resolve(import.meta.dirname, "..", "config.yml");
 const configFile = existsSync(file) ? parse(readFileSync(file, "utf8")) : null;
 
-/** 常驻的 MCP 工具全名（config.yml 的 tools.alwaysLoad） */
-const alwaysLoad: string[] = configFile?.tools?.alwaysLoad ?? [];
+/**
+ * 常驻的 MCP 工具全名（config.yml 的 tools.alwaysLoad）。* 代替服务器名里的一段（不含下划线），
+ * 外部浏览器的服务器名跟着设置页「浏览器」走（mcp__chrome__…、mcp__brave__…），用 mcp__*__browser_run_code 这样写
+ */
+const alwaysLoad: RegExp[] = ((configFile?.tools?.alwaysLoad ?? []) as string[]).map(
+  (name) => new RegExp(`^${name.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^_]+")}$`),
+);
 
-export const isAlwaysLoad = (fullName: string) => alwaysLoad.includes(fullName);
+export const isAlwaysLoad = (fullName: string) => alwaysLoad.some((pattern) => pattern.test(fullName));
 
 /** MCP 工具的常驻标记：tools/list 里的 _meta（SDK 的 tool({ alwaysLoad }) 也是写这个） */
 export const ALWAYS_LOAD_META = "anthropic/alwaysLoad";
 
-/** 外部浏览器（用户自己的 Chrome、Edge，经 Playwright 扩展连接）：config.yml 的 externalBrowser.enabled，默认开（只有写成 false 才关），见 browser/external.ts */
-export const externalBrowserEnabled: boolean = configFile?.externalBrowser?.enabled !== false;
-
-/**
- * 外部浏览器连接时扩展建不建标签页组（config.yml 的 externalBrowser.tabGroup），默认不建（只有写成 true 才建）：
- * 扩展每连一次建一个新组，Chrome 会把组保存下来固定到书签栏，网关重启几次书签栏上就是一排同名的组
- */
-export const externalBrowserTabGroup: boolean = configFile?.externalBrowser?.tabGroup === true;
-
 /** 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 的 desktop.enabled，默认关（只有写成 true 才开），见 desktop/tool.ts */
 export const desktopEnabled: boolean = configFile?.desktop?.enabled === true;
-
 
 /** 连接器市场：MCP 注册表的地址和不搜索时列出的推荐连接器（config.yml 的 connectors），见 agent/connectors.ts */
 export const connectorRegistry: string = (configFile?.connectors?.registry ?? "https://registry.modelcontextprotocol.io").replace(/\/+$/, "");

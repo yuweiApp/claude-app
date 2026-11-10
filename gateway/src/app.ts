@@ -2,6 +2,7 @@ import multipart from "@fastify/multipart";
 import websocket from "@fastify/websocket";
 import { BrowserHost } from "./browser/host.js";
 import { externalTabs } from "./browser/external.js";
+import { browserRoutes } from "./http/routes/browsers.js";
 import { desktopEnabled } from "./config-file.js";
 import { listWindows, stripOwn } from "./desktop/guard.js";
 import { setDesktopLog } from "./desktop/log.js";
@@ -92,8 +93,9 @@ export function buildApp(): App {
   fileRoutes(app);
   terminalRoutes(app, terminals);
 
-  // 开着的外部浏览器（用户的 Chrome、Edge）和交给 Playwright 的标签页，输入框 @ 引用用；还没连上时 tabs 是空的
+  // 启用着的外部浏览器（用户的 Chrome、Edge 等）和交给 Playwright 的标签页，输入框 @ 引用用；还没连上时 tabs 是空的
   app.get("/external/tabs", async () => ({ browsers: await externalTabs() }));
+  browserRoutes(app);
 
   // 桌面工具（agent-desktop）能看到的窗口，输入框上面「Computer Use」引用用；本应用自己的窗口去掉
   app.get("/desktop/windows", async () => {

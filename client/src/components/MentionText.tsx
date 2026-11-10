@@ -1,5 +1,5 @@
 import { createContext, useContext, type ReactNode } from "react";
-import type { ExternalBrowserId } from "../api";
+import type { BrowserLogo, ExternalBrowserInfo } from "../api";
 import { BrowserIcon, GlobeIcon } from "./BrowserTab";
 import { MonitorIcon } from "./DesktopTargetFloat";
 import { FileTypeIcon, FolderTypeIcon } from "./FileTypeIcon";
@@ -13,32 +13,43 @@ const AT_MENTION = /(^|\s)@("[^"\n]+"|\S+)/g;
 /** 看着像路径：有 /、\ 或带扩展名（@README.md、@src/、@D:\a\b）；@someone 不算 */
 const PATH_LIKE = /[/\\]|\.\w+$/;
 /**
- * 标签页的引用：内置浏览器的 @[标题](网址)，外部浏览器（用户的 Chrome、Edge）的 @chrome[标题](网址)、@edge[标题](网址)，见 tabMention；
+ * 标签页的引用：内置浏览器的 @[标题](网址)，外部浏览器的 @浏览器 id[标题](网址)（如 @chrome[…]、@brave[…]，id 见网关的 browser/catalog.ts），见 tabMention；
  * 桌面上的窗口（输入框上面「Computer Use」里选的）也用这个格式：@desktop[标题](window:窗口 id)
  */
-const TAB_MENTION = /(^|\s)@(chrome|edge|desktop)?\[([^\]\n]*)\]\(([a-z][\w+.-]*:[^\s)]+)\)/gi;
+const TAB_MENTION = /(^|\s)@([a-z][a-z0-9]*)?\[([^\]\n]*)\]\(([a-z][\w+.-]*:[^\s)]+)\)/gi;
 /** 输入框里不带网址的短格式（见 tabToken） */
-const TAB_TOKEN = /^@(chrome|edge|desktop)?\[([^\]\n]*)\]([\s\S]*)$/;
+const TAB_TOKEN = /^@([a-z][a-z0-9]*)?\[([^\]\n]*)\]([\s\S]*)$/;
 
-/** 引用来源：不写是内置浏览器，chrome、edge 是外部浏览器（用户自己的 Chrome、Edge），desktop 是桌面（桌面工具 agent-desktop） */
-export type MentionSource = ExternalBrowserId | "desktop";
+/** 引用来源：不写是内置浏览器，desktop 是桌面（桌面工具 agent-desktop），其余是外部浏览器的 id（用户自己的 Chrome、Edge、Brave…） */
+export type MentionSource = string;
 
-/** 来源显示的名字，也是引用整个浏览器（桌面）时 @ 后面写的 */
-const SOURCE_NAME: Record<MentionSource, string> = { chrome: "Chrome", edge: "Edge", desktop: "桌面" };
+/** 引用整个浏览器或桌面：@ 加名字，内置浏览器写成 @内置浏览器，外部浏览器写成 @Chrome、@Brave，桌面写成 @桌面；网关给各个浏览器、桌面工具的说明里写了这个写法指什么 */
+export const browserMention = (name: string) => `@${name}`;
+const INAPP_NAME = "内置浏览器";
+const DESKTOP_NAME = "桌面";
 
-/**
- * 引用整个浏览器或桌面：内置浏览器写成 @内置浏览器，外部浏览器写成 @Chrome、@Edge，桌面写成 @桌面，
- * 网关给各个浏览器、桌面工具的说明里写了这个写法指什么
- */
-export const browserMention = (source?: MentionSource) => `@${source ? SOURCE_NAME[source] : "内置浏览器"}`;
-const BROWSER_MENTION = /(^|\s)@(内置浏览器|Chrome|Edge|桌面)(?=\s|$)/g;
-const BROWSER_SOURCE: Record<string, MentionSource | undefined> = { Chrome: "chrome", Edge: "edge", 桌面: "desktop" };
+/** 消息里引用的外部浏览器现在不在列表里（停用了、换了电脑）时，按 id 猜名字和图标 */
+function browserOf(id: string, browsers: ExternalBrowserInfo[]): { name: string; logo: BrowserLogo } {
+  const found = browsers.find((b) => b.id === id);
+  if (found) return found;
+  if (id.startsWith("chrome")) return { name: "Chrome", logo: { kind: "chrome" } };
+  if (id.startsWith("edge")) return { name: "Edge", logo: { kind: "edge" } };
+  return { name: id, logo: { kind: "letter", color: "#8a8a96" } };
+}
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** 引用整个浏览器（桌面）的 @名字：内置浏览器、桌面和现在启用着的外部浏览器；名字可能带空格（@Chrome Beta），长的先匹配 */
+function browserMentionRegex(browsers: ExternalBrowserInfo[]): RegExp {
+  const names = [INAPP_NAME, DESKTOP_NAME, ...browsers.map((b) => b.name)].sort((a, b) => b.length - a.length).map(escapeRegExp);
+  return new RegExp(`(^|\\s)@(${names.join("|")})(?=\\s|$)`, "g");
+}
 
 /** 发给模型的标签页（窗口）引用：标题里的方括号、换行去掉 */
 export const tabMention = (title: string, url: string, source?: MentionSource) => `${tabToken(title || url, source)}(${url})`;
 
 /**
- * 输入框里的标签页引用只写 @[标题]、@chrome[标题]，不露网址；网址由输入框记着，发送时补成 tabMention 的完整格式。
+ * 输入框里的标签页引用只写 @[标题]、@chrome[标题] 这样，不露网址；网址由输入框记着，发送时补成 tabMention 的完整格式。
  * 标签页标题里的方括号、换行去掉
  */
 export const tabToken = (title: string, source?: MentionSource) => `@${source ?? ""}[${title.replace(/[[\]\n]/g, " ").trim()}]`;
@@ -95,10 +106,12 @@ function FileRefIcon({ base, dir }: { base: string; dir: boolean }) {
 }
 
 /** 当前工作目录可用的插件名、技能名，输入框和消息里据此高亮 @插件名、/技能名 */
-export const MentionNamesContext = createContext<MentionNames>({ plugins: [], skills: [] });
+export const MentionNamesContext = createContext<MentionNames>({ plugins: [], skills: [], browsers: [] });
 export interface MentionNames {
   plugins: string[];
   skills: string[];
+  /** 启用着的外部浏览器：引用整个浏览器的 @名字、标签页引用前面显示的名字和图标 */
+  browsers: ExternalBrowserInfo[];
 }
 
 /** 文字里的一个技能名或插件引用，[start, end) */
@@ -108,7 +121,7 @@ export interface Mention {
   kind: "skill" | "plugin" | "file" | "tab" | "browser";
   /** 标签页引用的标题（消息里只显示标题） */
   title?: string;
-  /** 标签页、浏览器的来源：外部浏览器（用户的 Chrome、Edge）、桌面；内置浏览器的没有 */
+  /** 标签页、浏览器的来源：外部浏览器的 id、桌面（desktop）；内置浏览器的没有 */
   source?: MentionSource;
 }
 
@@ -116,9 +129,9 @@ export interface Mention {
  * 找出技能名、插件引用和文件引用，按位置排好。
  * 技能名在开头的都算（Claude Code 会展开），在中间的要在技能列表里；插件要在插件列表里；文件是带引号的，再加上：输入框里传 files（选过的文件），
  * 消息里不传，看着像路径的都算（输入框里不这么猜，不然 @README.m 还没打完就成了整体）。
- * 输入框里还传 tabTokens：「浏览器」「Computer Use」里选过的 @[标题]、@chrome[标题]、@edge[标题]、@desktop[标题]（不带网址的短格式，见 tabToken）
+ * 输入框里还传 tabTokens：「浏览器」「Computer Use」里选过的 @[标题]、@chrome[标题]、@desktop[标题] 这样的（不带网址的短格式，见 tabToken）
  */
-export function findMentions(text: string, { plugins, skills }: MentionNames, files?: string[], tabTokens?: string[]): Mention[] {
+export function findMentions(text: string, { plugins, skills, browsers }: MentionNames, files?: string[], tabTokens?: string[]): Mention[] {
   const mentions: Mention[] = [];
   const skill = SKILL_PREFIX.exec(text);
   if (skill) mentions.push({ start: 0, end: skill[0].length, kind: "skill" });
@@ -136,7 +149,7 @@ export function findMentions(text: string, { plugins, skills }: MentionNames, fi
     tabs.push({ start, end: index + whole.length, kind: "tab", title, ...(source ? { source } : {}) });
   }
   for (const token of tabTokens ?? []) {
-    const [, source, title = ""] = /^@(chrome|edge|desktop)?\[(.*)\]$/.exec(token) as [string, MentionSource | undefined, string] | null ?? [];
+    const [, source, title = ""] = /^@([a-z][a-z0-9]*)?\[(.*)\]$/.exec(token) as [string, MentionSource | undefined, string] | null ?? [];
     for (let start = text.indexOf(token); start >= 0; start = text.indexOf(token, start + token.length)) {
       const end = start + token.length;
       // 前面是空白或开头；后面紧跟 ( 的是完整格式，上面已经算过
@@ -144,9 +157,9 @@ export function findMentions(text: string, { plugins, skills }: MentionNames, fi
       tabs.push({ start, end, kind: "tab", title, ...(source ? { source } : {}) });
     }
   }
-  for (const { index, 1: space = "", 2: name = "" } of text.matchAll(BROWSER_MENTION)) {
+  for (const { index, 1: space = "", 2: name = "" } of text.matchAll(browserMentionRegex(browsers))) {
     const start = index + space.length;
-    const source = BROWSER_SOURCE[name];
+    const source = name === INAPP_NAME ? undefined : name === DESKTOP_NAME ? "desktop" : browsers.find((b) => b.name === name)?.id;
     tabs.push({ start, end: start + 1 + name.length, kind: "browser", ...(source ? { source } : {}) });
   }
   const inTab = (pos: number) => tabs.some((t) => pos >= t.start && pos < t.end);
@@ -165,19 +178,22 @@ export function findMentions(text: string, { plugins, skills }: MentionNames, fi
  * compact：标签页引用只显示标题、文件引用只显示文件名（消息里）；输入框的镜像层要和输入的字一一对齐，不能省
  */
 export function MentionText({ text, files, tabTokens, compact }: { text: string; files?: string[]; tabTokens?: string[]; compact?: boolean }) {
-  const mentions = findMentions(text, useContext(MentionNamesContext), files, tabTokens);
+  const names = useContext(MentionNamesContext);
+  const mentions = findMentions(text, names, files, tabTokens);
   if (!mentions.length) return <>{text}</>;
   const parts: ReactNode[] = [];
   let pos = 0;
   for (const { start, end, kind, title, source } of mentions) {
     if (start > pos) parts.push(text.slice(pos, start));
     const desktop = source === "desktop";
+    /** 外部浏览器的名字和图标（内置浏览器、桌面没有） */
+    const external = source && !desktop ? browserOf(source, names.browsers) : null;
     if (kind === "browser") {
       // 输入框里 @ 透明占位、叠浏览器（桌面）图标（和 textarea 对齐）；消息里图标加名字
-      const icon = source === "desktop" ? <MonitorIcon className="" /> : <BrowserIcon source={source} />;
+      const icon = desktop ? <MonitorIcon className="" /> : <BrowserIcon logo={external?.logo} name={external?.name} />;
       parts.push(
         compact ? (
-          <span key={start} className="mention mention-tab" title={source === "desktop" ? "这台电脑的桌面" : source ? `用户自己的 ${SOURCE_NAME[source]}` : "右侧面板里的内置浏览器"}>
+          <span key={start} className="mention mention-tab" title={desktop ? "这台电脑的桌面" : external ? `用户自己的 ${external.name}` : "右侧面板里的内置浏览器"}>
             {icon}
             {text.slice(start + 1, end)}
           </span>
@@ -194,9 +210,9 @@ export function MentionText({ text, files, tabTokens, compact }: { text: string;
     if (kind === "tab" && compact) {
       const url = /\]\(([^)]*)\)$/.exec(text.slice(start, end))?.[1] ?? "";
       parts.push(
-        <span key={start} className="mention mention-tab" title={desktop ? "桌面上的窗口" : source ? `${SOURCE_NAME[source]}：${url}` : url}>
+        <span key={start} className="mention mention-tab" title={desktop ? "桌面上的窗口" : external ? `${external.name}：${url}` : url}>
           {desktop ? <MonitorIcon className="" /> : <GlobeIcon />}
-          {source && <span className="mention-tab-source">{SOURCE_NAME[source]}</span>}
+          {(desktop || external) && <span className="mention-tab-source">{desktop ? DESKTOP_NAME : external!.name}</span>}
           {title || url}
         </span>,
       );
@@ -204,7 +220,7 @@ export function MentionText({ text, files, tabTokens, compact }: { text: string;
       continue;
     }
     if (kind === "tab") {
-      // 输入框里：每个字都要留着（和 textarea 对齐），@ 和方括号透明，@ 的位置叠一个地球（桌面）图标；chrome、edge、desktop 字样淡一些
+      // 输入框里：每个字都要留着（和 textarea 对齐），@ 和方括号透明，@ 的位置叠一个地球（桌面）图标；chrome、desktop 这些来源字样淡一些
       const [, src = "", inner = "", rest = ""] = TAB_TOKEN.exec(text.slice(start, end)) ?? [];
       parts.push(
         <span key={start} className="mention mention-tab-input">

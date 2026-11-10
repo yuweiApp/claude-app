@@ -137,8 +137,8 @@ export function agentEnv(): Record<string, string | undefined> {
           ["ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"].map((k) => [k, env[k] || config.model]),
         )
       : {};
-  // 外部浏览器的扩展 token（Chrome 的、Edge 的，见 browser/external.ts）只给网关自己连浏览器用：模型拿到它就能在 Bash 里另起 Playwright
-  // 不经提示操作用户的浏览器，绕过 mcp__chrome__、mcp__edge__ 工具的权限卡片
+  // 外部浏览器的扩展 token（以前写在 .env.local 的 Chrome、Edge 的，现在在设置页填，见 browser/browser-settings.ts）只给网关自己连浏览器用：模型拿到它就能在 Bash 里另起 Playwright
+  // 不经提示操作用户的浏览器，绕过外部浏览器工具的权限卡片
   const { PLAYWRIGHT_MCP_EXTENSION_TOKEN: _token, PLAYWRIGHT_MCP_EDGE_EXTENSION_TOKEN: _edgeToken, ...inherited } = process.env;
   return {
     ...inherited,

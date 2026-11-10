@@ -52,15 +52,67 @@ export interface DesktopTarget {
   minimized?: boolean;
 }
 
-/** 外部浏览器（用户自己的 Chrome、Edge，经 Playwright 扩展连接），见 gateway/src/browser/external.ts */
-export type ExternalBrowserId = "chrome" | "edge";
+/**
+ * 外部浏览器（用户自己的 Chrome、Edge、Brave 等 Chromium 内核浏览器，经 Playwright 扩展连接）的 id，
+ * 也是 MCP 服务器名和引用里的来源（mcp__brave__…、@brave[标题](网址)），只有小写字母和数字。见 gateway/src/browser/external.ts
+ */
+export type ExternalBrowserId = string;
 
-/** GET /external/tabs：开着的外部浏览器和它们交给 Playwright 的标签页（还没连上时 tabs 是空的） */
-export interface ExternalBrowserTabs {
+/** 外部浏览器的图标：Chrome、Edge 系列用各自的标志，其他的是这个颜色的圆块里写名字的首字母 */
+export interface BrowserLogo {
+  kind: "chrome" | "edge" | "letter";
+  color?: string;
+}
+
+/** 启用着的外部浏览器（引用、图标用）；GET /external/tabs 再带上交给 Playwright 的标签页（还没连上时是空的） */
+export interface ExternalBrowserInfo {
   id: ExternalBrowserId;
-  /** 显示的名字：Chrome、Edge */
+  /** 显示的名字，也是引用整个浏览器时 @ 后面写的：@Chrome、@Brave */
   name: string;
+  logo: BrowserLogo;
+}
+
+export interface ExternalBrowserTabs extends ExternalBrowserInfo {
   tabs: { title: string; url: string }[];
+}
+
+/** 浏览器的一个配置（Default、Profile 1…）；dir 为空是没有这一层、目录本身就是配置的（Opera） */
+export interface BrowserProfile {
+  dir: string;
+  /** 用户起的名字（Local State 里的），没有就是 dir */
+  name: string;
+  /** 这个配置里装了 Playwright 扩展 */
+  extension: boolean;
+}
+
+/** 设置页「浏览器」里的一项：检测到的（表里的、这台电脑上装了的）和手动添加的 */
+export interface BrowserEntry extends ExternalBrowserInfo {
+  /** 手动添加的（可以删） */
+  custom: boolean;
+  executablePath: string;
+  userDataDir?: string;
+  /** 可执行文件还在 */
+  installed: boolean;
+  /** 看着是 Chromium 内核（手动添加的才可能是 false，只是提示） */
+  chromium: boolean;
+  profiles: BrowserProfile[];
+  /** 有配置装了扩展 */
+  extension: boolean;
+  /** 选定的配置（dir）；没选时连接用装了扩展的、最近用过的那个 */
+  profile?: string;
+  /** 实际是否启用：没手动开关过时，检测到的装了扩展才启用，手动添加的默认启用 */
+  enabled: boolean;
+  /** 填了扩展 token（不返回 token 本身） */
+  hasToken: boolean;
+}
+
+/** GET /browsers：设置页「浏览器」 */
+export interface BrowserSettingsView {
+  /** 连接时扩展建不建标签页组 */
+  tabGroup: boolean;
+  /** Playwright 扩展的安装地址 */
+  installUrl: string;
+  browsers: BrowserEntry[];
 }
 
 /** 会话的后台任务（Bash 后台命令、后台子代理等），见 gateway/src/agent/tasks.ts */

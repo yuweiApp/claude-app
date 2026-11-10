@@ -1,47 +1,30 @@
 # 网关功能上的配置，启动时读一次，改完要重启网关。
 # 端口、密钥、目录、默认模型这些部署相关的仍在 .env.local（见 src/config.ts）。
 
-# 网关自带的 MCP 工具：内置浏览器 mcp__inapp__…、外部浏览器 mcp__chrome__…、mcp__edge__…、终端 mcp__terminal__…、桌面 mcp__desktop__…
+# 网关自带的 MCP 工具：内置浏览器 mcp__inapp__…、外部浏览器 mcp__chrome__…、mcp__brave__… 这样（设置页「浏览器」里启用的）、终端 mcp__terminal__…、桌面 mcp__desktop__…
 tools:
   # 常驻的工具：第一轮就把完整定义给模型，不藏在 ToolSearch 后面；没列的照旧延迟加载，用到时模型先 ToolSearch。
-  # 写工具全名。只对上面这几个服务器生效，
+  # 写工具全名，* 代替服务器名（外部浏览器的服务器名跟着设置页走，写成 mcp__*__browser_run_code）。只对上面这几个服务器生效，
   # 设置页添加的 MCP 服务器和 Claude Code 自带的工具管不到。
   #
   # 常驻越多上下文越大。也不要都不常驻：GPT 类模型常在 ToolSearch 的 select: 里把工具名列了又列，
   # 写满输出上限才停，界面「思考中」两分多钟。
   # 浏览器只剩 browser_run_code（主力，同 Codex 的 js 工具）、browser_snapshot、browser_take_screenshot、browser_tabs，
-  # 内置浏览器多一个 browser_keep_tab，内置浏览器和 Chrome 全部常驻，工具定义一共约 5000 字符，每多一个外部浏览器多约 1000 字符（以前的 Playwright MCP 二十多个工具全部常驻约 5200 token）。
+  # 内置浏览器多一个 browser_keep_tab，内置浏览器和一个外部浏览器全部常驻，工具定义一共约 5000 字符，每多启用一个外部浏览器多约 1000 字符（以前的 Playwright MCP 二十多个工具全部常驻约 5200 token）。
   alwaysLoad:
-    - mcp__inapp__browser_run_code
-    - mcp__inapp__browser_snapshot
-    - mcp__inapp__browser_take_screenshot
-    - mcp__inapp__browser_tabs
+    # 内置浏览器（mcp__inapp__）和所有外部浏览器
+    - mcp__*__browser_run_code
+    - mcp__*__browser_snapshot
+    - mcp__*__browser_take_screenshot
+    - mcp__*__browser_tabs
     - mcp__inapp__browser_keep_tab
-    - mcp__chrome__browser_run_code
-    - mcp__chrome__browser_snapshot
-    - mcp__chrome__browser_take_screenshot
-    - mcp__chrome__browser_tabs
-    - mcp__edge__browser_run_code
-    - mcp__edge__browser_snapshot
-    - mcp__edge__browser_take_screenshot
-    - mcp__edge__browser_tabs
     # 桌面操作（下面 desktop.enabled 打开时才有）
     - mcp__desktop__snapshot
     - mcp__desktop__screenshot
     - mcp__desktop__run
 
-# 外部浏览器：操作用户自己的 Chrome、Edge（带着登录状态），见 docs/README.md 第 13 节。
-# 网关这台电脑上装了哪个（标准位置找得到）就挂哪个：Chrome 是 mcp__chrome__… 工具，Edge 是 mcp__edge__…，新装了浏览器要重启网关。
-# 要先在浏览器里装 Playwright Extension（Edge 也从 Chrome 应用商店装）；第一次调用工具时浏览器打开扩展的连接页，在里面允许。
-# 在 .env.local 里设扩展的 token（连接页上复制的那一行）就自动连上、不用批准（不会传给模型的子进程）：
-# Chrome 的是 PLAYWRIGHT_MCP_EXTENSION_TOKEN，Edge 的是 PLAYWRIGHT_MCP_EDGE_EXTENSION_TOKEN。
-# 指定浏览器配置（如 "Profile 1"，默认是装了扩展的、最近用过的那个）：PLAYWRIGHT_MCP_PROFILE_DIR_NAME、PLAYWRIGHT_MCP_EDGE_PROFILE_DIR_NAME。
-# 默认打开；不需要时改成 false。
-# tabGroup：扩展连接时建不建「Playwright · claude-app」标签页组，默认不建。建组时每连一次多一个组，
-# Chrome 会把它们保存、固定到书签栏，网关重启几次就是一排同名的组；改成 true 才建（可以把标签页拖进、拖出组来交给 AI 或收回）。
-externalBrowser:
-  enabled: true
-  tabGroup: false
+# 外部浏览器（操作用户自己的 Chrome、Edge 等）在设置页「浏览器」里管：检测到哪些、启用哪些、配置、扩展 token、建不建标签页组，
+# 存在 Claude Code 配置目录的 gateway-browsers.json，见 docs/README.md 第 13 节。
 
 # 桌面操作：模型多一组 mcp__desktop__… 工具，经 agent-desktop 读系统的无障碍树、操作网关所在电脑上的原生应用，见 docs/agent-desktop.md。
 # 能操作这台电脑上当前登录用户的所有窗口：快照、截图会发给模型接口；网关对外开放（设了 API_TOKEN）时等于让远程的人操作这台电脑的桌面。

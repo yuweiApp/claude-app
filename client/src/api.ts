@@ -1,9 +1,12 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, ExternalBrowserId, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, ExternalBrowserId, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo };
+export type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
+
+/** 设置页改了外部浏览器（启用、添加、删除）时在 window 上发这个事件，App 重新取启用着的浏览器 */
+export const BROWSERS_CHANGED = "claude-app:browsers-changed";
 
 function token(): string | null {
   try {
@@ -85,8 +88,17 @@ export const api = {
   files: (cwd: string, q: string) =>
     request<{ entries: ProjectEntry[] }>("GET", `/files?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(q)}`).then((r) => r.entries),
   desktopWindows: () => request<{ enabled: boolean; windows: { id: string; app: string; title: string }[] }>("GET", "/desktop/windows"),
-  /** 开着的外部浏览器（用户的 Chrome、Edge）和交给 Playwright 的标签页，输入框 @ 引用用；没有开着的时是空数组 */
+  /** 启用着的外部浏览器（用户的 Chrome、Edge 等）和交给 Playwright 的标签页，输入框 @ 引用用；没有启用的时是空数组 */
   externalTabs: () => request<{ browsers: ExternalBrowserTabs[] }>("GET", "/external/tabs").then((r) => r.browsers),
+  /** 设置页「浏览器」：每次都重新检测网关那台电脑上的浏览器 */
+  browsers: () => request<BrowserSettingsView>("GET", "/browsers"),
+  setBrowserTabGroup: (tabGroup: boolean) => request<BrowserSettingsView>("PATCH", "/browsers", { tabGroup }),
+  /** 改一个浏览器：开关、配置（null 是不指定）、扩展 token（空字符串或 null 是清掉） */
+  updateBrowser: (id: string, patch: { enabled?: boolean; profile?: string | null; token?: string | null }) =>
+    request<BrowserSettingsView>("PATCH", `/browsers/${encodeURIComponent(id)}`, patch),
+  addBrowser: (input: { name: string; executablePath: string; userDataDir?: string }) =>
+    request<{ id: string; chromium: boolean; view: BrowserSettingsView }>("POST", "/browsers", input),
+  removeBrowser: (id: string) => request<BrowserSettingsView>("DELETE", `/browsers/${encodeURIComponent(id)}`),
   /** 右侧面板：项目里一个文件夹的直接子项（path 相对项目文件夹，空是根） */
   listDir: (cwd: string, path: string) => request<{ entries: ProjectEntry[] }>("GET", `/files/list?${q({ cwd, path })}`).then((r) => r.entries),
   readFile: (cwd: string, path: string) => request<FileContent>("GET", `/files/read?${q({ cwd, path })}`),

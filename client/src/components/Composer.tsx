@@ -37,7 +37,7 @@ export interface ComposerHandle {
   /** 引用浏览器标签页（输入框上面的「浏览器」）或桌面上的窗口（「Computer Use」）：插在光标处，source 见 MentionSource */
   mentionTab: (title: string, url: string, source?: MentionSource) => void;
   /** 引用整个浏览器或桌面（「浏览器」「Computer Use」菜单的第一行）：插在光标处 */
-  mentionBrowser: (source?: MentionSource) => void;
+  mentionBrowser: (name: string) => void;
   /** 把焦点给输入框，光标留在原来的位置 */
   focus: () => void;
 }
@@ -177,7 +177,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
   useImperativeHandle(handle, () => ({
     mentionSkill: (name) => insertAtCaret(`/${name}`),
     mention: (name) => insertAtCaret(`@${name}`),
-    mentionBrowser: (source) => insertAtCaret(browserMention(source)),
+    mentionBrowser: (name) => insertAtCaret(browserMention(name)),
     mentionTab: (title, url, source) => {
       // 同名不同网址的标签页：标题后面加 (2)、(3) 区分
       const full = (t: string) => tabMention(t, url, source);
@@ -484,7 +484,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
   );
 }
 
-/** 发送前把输入框里的 @[标题]、@chrome[标题]、@edge[标题] 换成带网址的完整格式（模型按网址找标签页）；手打的、没选过的不动 */
+/** 发送前把输入框里的 @[标题]、@chrome[标题] 这样的换成带网址的完整格式（模型按网址找标签页）；手打的、没选过的不动 */
 function expandTabs(text: string, tabs: { token: string; full: string }[]): string {
   return tabs.reduce((acc, { token, full }) => {
     const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

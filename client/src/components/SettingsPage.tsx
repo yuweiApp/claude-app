@@ -13,8 +13,9 @@ import { McpAuthDialog } from "./McpAuthDialog";
 import { FolderPickerDialog } from "./FolderPickerDialog";
 import { IosIcon } from "./IosIcon";
 import { AppearancePage } from "./AppearancePage";
+import { BrowsersPage } from "./BrowsersPage";
 
-type Section = "appearance" | "plugins" | "skills" | "mcp";
+type Section = "appearance" | "plugins" | "skills" | "mcp" | "browsers";
 /** 技能、插件页顶部的标签：个人（导入的、项目里的、导入插件带的、从市场装的）和 Claude Code 自带的；插件页还有插件市场 */
 type Origin = "mine" | "builtin" | "directory";
 /** 连接器页顶部的标签：已经添加的（设置页添加的、插件和配置文件带来的）和连接器市场（MCP 注册表） */
@@ -25,6 +26,7 @@ const SECTIONS: { key: Section; label: string; icon: ReactNode; group?: string }
   { key: "plugins", label: "插件", icon: <IosIcon tone="blue"><PluginIcon /></IosIcon>, group: "集成" },
   { key: "skills", label: "技能", icon: <IosIcon tone="purple"><SkillIcon /></IosIcon> },
   { key: "mcp", label: "连接器", icon: <IosIcon tone="pink"><McpIcon /></IosIcon> },
+  { key: "browsers", label: "浏览器", icon: <IosIcon tone="green"><BrowsersIcon /></IosIcon> },
 ];
 
 /** 设置页（同 codex-app-server 的设置页）：左边分组导航，右边是列表；navCollapsed 时收起左边的导航（跟着侧边栏的收起状态） */
@@ -89,10 +91,8 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
           </button>,
         ])}
       </nav>
-      {section === "appearance" ? (
-        <main className="settings-main">
-          <AppearancePage />
-        </main>
+      {section === "appearance" || section === "browsers" ? (
+        <main className="settings-main">{section === "appearance" ? <AppearancePage /> : <BrowsersPage />}</main>
       ) : (
         <main className="settings-main">
           <header className="settings-head">
@@ -1014,6 +1014,16 @@ function AppearanceIcon() {
       <circle cx="5.2" cy="7.2" r="0.9" fill="currentColor" stroke="none" />
       <circle cx="7.6" cy="4.9" r="0.9" fill="currentColor" stroke="none" />
       <circle cx="10.6" cy="5.8" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/** 浏览器：地球（经线、纬线） */
+function BrowsersIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="6.25" />
+      <path d="M1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.8 2.5 6.25S9.7 12.45 8 14.25C6.3 12.45 5.5 10.45 5.5 8S6.3 3.55 8 1.75z" />
     </svg>
   );
 }
