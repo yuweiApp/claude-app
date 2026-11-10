@@ -14,7 +14,7 @@ import { DEFAULT_SIDEBAR_WIDTH, SidebarResizer } from "./components/SidebarResiz
 import { SidebarToggle } from "./components/SidebarToggle";
 import { SettingsPage } from "./components/SettingsPage";
 import { revealInTree, type LineRange } from "./components/FileBrowser";
-import { newPanelState, PanelIcon, SidePanel, withFileOpen, withFolderTab, type PanelState } from "./components/SidePanel";
+import { newPanelState, PanelIcon, SidePanel, withBrowserTab, withFileOpen, withFolderTab, type PanelState } from "./components/SidePanel";
 import { FileLinkContext } from "./components/ReplyMarkdown";
 import { TasksPopover } from "./components/TasksPopover";
 import { DesktopTargetFloat } from "./components/DesktopTargetFloat";
@@ -100,12 +100,33 @@ export function App() {
     }
   };
   const togglePanel = () => showPanel(!panelOpen);
-  // 回复里指向本地文件的链接：打开右侧面板，在文件标签里显示；指向文件夹的在目录树里定位。root 是工作目录外的，标签以它为根
+  // 回复里指向本地文件的链接：打开右侧面板，在文件标签里显示；指向文件夹的在目录树里定位。root 是工作目录外的，标签以它为根。
+  // 网址：桌面版给当前会话新建一个内置浏览器的标签页，打开右侧面板切过去
+  const browserSessionId = current?.sessionId ?? null;
   const fileLinks = useMemo(
     () =>
       panelCwd
         ? {
             cwd: panelCwd,
+            openUrl:
+              desktop?.browser && browserSessionId
+                ? async (url: string) => {
+                    let info;
+                    try {
+                      info = await desktop!.browser.create(browserSessionId, url);
+                    } catch (err) {
+                      // 常见于桌面版外壳还是旧的（同 SidePanel 的 openBrowser）
+                      window.alert(`打开网页失败：${(err as Error).message}\n\n如果刚更新过代码，请重启桌面版。`);
+                      return;
+                    }
+                    if (!info) return;
+                    setPanels((all) => {
+                      const state = panelOf(all, panelCwd);
+                      return { ...all, [panelCwd]: withBrowserTab(state, state.active, info) };
+                    });
+                    showPanel(true);
+                  }
+                : undefined,
             open: (path: string, root?: string, line?: LineRange | null) => {
               setPanels((all) => {
                 const state = panelOf(all, panelCwd);
@@ -124,7 +145,7 @@ export function App() {
           }
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [panelCwd],
+    [panelCwd, browserSessionId],
   );
 
   const deleteSessions = async (ids: string[]) => {

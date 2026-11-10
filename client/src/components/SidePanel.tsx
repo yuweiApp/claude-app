@@ -76,6 +76,23 @@ export function withFolderTab(s: PanelState, from: string, root?: string): Panel
   return { tabs, active: tab.id };
 }
 
+/**
+ * 刚建好的浏览器标签页放进面板并切过去：外壳推来的列表先到、已经补成了标签页的，切到那个；
+ * from（当前标签）是新标签页就在它里面换；否则接在 from 后面
+ */
+export function withBrowserTab(s: PanelState, from: string, info: BrowserTabInfo): PanelState {
+  const existing = s.tabs.find((t) => t.kind === "browser" && t.browserId === info.id);
+  if (existing) return { ...s, active: existing.id };
+  const browser = (id: string): PanelTab => ({ id, kind: "browser", browserId: info.id, sessionId: info.sessionId, key: info.key });
+  const here = s.tabs.find((t) => t.id === from);
+  if (here?.kind === "new") return { tabs: s.tabs.map((t) => (t.id === from ? browser(t.id) : t)), active: from };
+  const tab = browser(crypto.randomUUID());
+  const index = s.tabs.findIndex((t) => t.id === from);
+  const tabs = [...s.tabs];
+  tabs.splice(index < 0 ? tabs.length : index + 1, 0, tab);
+  return { tabs, active: tab.id };
+}
+
 const WIDTH_KEY = "sidePanelWidth";
 const MIN_WIDTH = 320;
 /** 打开面板时对话区至少留这么宽 */

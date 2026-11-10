@@ -1,26 +1,30 @@
-import { createContext, isValidElement, useContext, useRef, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
+import { createContext, isValidElement, useCallback, useContext, useRef, useState, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { createPortal } from "react-dom";
 import { api } from "../api";
 import type { LineRange } from "./FileBrowser";
 import { useFileExists } from "../state/fileExists";
 import { MermaidBlock } from "./MermaidBlock";
 import { CopyAction } from "./MessageActions";
+import { useDismiss } from "./ComposerPickers";
 
 /**
  * Claude 回复里的链接指向本地文件时，在右侧面板打开：cwd 是会话的工作目录，open 打开相对它的路径的文件，
  * line 是链接里的行号（a.ts:12、a.ts:12-20、a.ts#L12-L20），面板滚到并选中这几行；
  * openFolder 在目录树里定位文件夹；工作目录外的传 root（绝对路径），路径相对它，面板里以它为根。
+ * openUrl（桌面版、有会话时）在内置浏览器里打开网址，没有时网址在新窗口打开（桌面版是系统浏览器）。
  * 没有（新会话页，还没有工作目录）时本地文件链接点了没反应
  */
 export const FileLinkContext = createContext<{
   cwd: string;
+  openUrl?: (url: string) => void;
   open: (path: string, root?: string, line?: LineRange | null) => void;
   openFolder: (path: string, root?: string) => void;
 } | null>(null);
 
 /**
- * Claude 回复的 Markdown：GFM，本地文件链接点开在右侧面板，网址在新窗口打开。
+ * Claude 回复的 Markdown：GFM，本地文件链接点开在右侧面板，网址在内置浏览器（桌面版）或新窗口打开。
  * 行内代码像文件路径（`index.html`、`src/a.ts:12`）、又是工作目录里存在的文件时，显示成文件链接，
  * 同写成 [index.html](index.html)；只改显示，消息内容不变。```mermaid 代码块渲染成图
  */
@@ -96,6 +100,9 @@ function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorE
   const files = useContext(FileLinkContext);
   const local = href ? isLocalLink(href) : false;
   if (!href || !local) {
+    // http(s) 网址：桌面版在内置浏览器里开，右键可以选内置还是外部浏览器
+    const openUrl = /^https?:\/\//i.test(href ?? "") ? files?.openUrl : undefined;
+    if (openUrl) return <WebLink {...rest} href={href!} openUrl={openUrl}>{children}</WebLink>;
     return (
       <a {...rest} href={href} target="_blank" rel="noreferrer">
         {children}
@@ -134,6 +141,64 @@ function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorE
     <a {...rest} href={href} onClick={onClick} title={`在右侧面板打开 ${path ?? outside!.abs}`}>
       {children}
     </a>
+  );
+}
+
+/**
+ * 桌面版回复里的网址：单击在内置浏览器里开（按着 Ctrl、Shift 等点的交给系统浏览器）；
+ * 右键菜单：在内置浏览器中打开、在外部浏览器中打开（window.open，外壳交给系统浏览器）、复制链接
+ */
+function WebLink({ href, openUrl, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string; openUrl: (url: string) => void }) {
+  const [at, setAt] = useState<{ left: number; top: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setAt(null), []);
+  useDismiss(menuRef, at !== null, close);
+  const items = [
+    { label: "在内置浏览器中打开", run: () => openUrl(href) },
+    { label: "在外部浏览器中打开", run: () => void window.open(href, "_blank", "noopener") },
+    { label: "复制链接", run: () => void navigator.clipboard.writeText(href).catch(() => undefined) },
+  ];
+  return (
+    <>
+      <a
+        {...rest}
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        title={href}
+        onClick={(e) => {
+          if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+          e.preventDefault();
+          openUrl(href);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          // 菜单约 200×110，贴着窗口右边、下边时往里收
+          setAt({ left: Math.min(e.clientX, window.innerWidth - 210), top: Math.min(e.clientY, window.innerHeight - 120) });
+        }}
+      >
+        {children}
+      </a>
+      {at &&
+        createPortal(
+          <div ref={menuRef} className="menu context-menu" role="menu" style={{ left: at.left, top: at.top }}>
+            {items.map((item) => (
+              <button
+                key={item.label}
+                role="menuitem"
+                className="menu-item"
+                onClick={() => {
+                  close();
+                  item.run();
+                }}
+              >
+                <span className="menu-item-name">{item.label}</span>
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
