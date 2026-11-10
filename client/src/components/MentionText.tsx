@@ -8,8 +8,8 @@ const SKILL_PREFIX = /^\/([\w.-]+(?::[\w.-]+)?)(?=\s|$)/;
 const SKILL_ANYWHERE = /(^|\s)\/([\w.-]+(?::[\w.-]+)?)(?=\s|$)/g;
 /** 前后是空白或首尾的 @名字，带空格的路径用引号：@"a b.txt" */
 const AT_MENTION = /(^|\s)@("[^"\n]+"|\S+)/g;
-/** 看着像路径：有 / 或带扩展名（@README.md、@src/）；@someone 不算 */
-const PATH_LIKE = /\/|\.\w+$/;
+/** 看着像路径：有 /、\ 或带扩展名（@README.md、@src/、@D:\a\b）；@someone 不算 */
+const PATH_LIKE = /[/\\]|\.\w+$/;
 /**
  * 标签页的引用：内置浏览器的 @[标题](网址)，外部浏览器（用户的 Chrome）的 @chrome[标题](网址)，见 tabMention；
  * 桌面上的窗口（输入框上面「Computer Use」里选的）也用这个格式：@desktop[标题](window:窗口 id)
@@ -35,6 +35,12 @@ export const tabMention = (title: string, url: string, source?: MentionSource) =
  * 标签页标题里的方括号、换行去掉
  */
 export const tabToken = (title: string, source?: MentionSource) => `@${source ?? ""}[${title.replace(/[[\]\n]/g, " ").trim()}]`;
+
+/**
+ * 从右侧面板的目录树拖到输入框的文件、文件夹：拖动数据里放这个类型，值是绝对路径（文件夹以分隔符结尾），
+ * 输入框照原样插成文件引用（fileMention），发给模型的就是绝对路径
+ */
+export const PATH_DRAG_TYPE = "application/x-claude-app-path";
 
 /** 插入输入框的文件引用：带空白的路径加引号 */
 export const fileMention = (path: string) => (/\s/.test(path) ? `@"${path}"` : `@${path}`);

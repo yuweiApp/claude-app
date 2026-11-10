@@ -6,6 +6,7 @@ import { CodeEditor, type LineRange } from "./CodeEditor";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FileTypeIcon, FolderTypeIcon } from "./FileTypeIcon";
 import { MarkdownLiveEditor } from "./MarkdownLiveEditor";
+import { PATH_DRAG_TYPE } from "./MentionText";
 import { closePageAnnotation, editAnnotationAt, repositionAnnotationEditor, startPageAnnotation } from "./ResponseAnnotations";
 import { useResponseAnnotations, type PageAnnotationTarget } from "../state/responseAnnotations";
 
@@ -553,10 +554,24 @@ function FileTree({
     setDropDir(null);
     clearExpandTimer();
   };
+  // 拖到输入框里是引用（PATH_DRAG_TYPE，绝对路径，文件夹以分隔符结尾）；树里放下是移动
+  const setDragPath = (e: DragEvent, rel: string) => {
+    const abs = absolutePath(cwd, trimSlash(rel));
+    const dir = rel === "" || rel.endsWith("/");
+    const sep = isWindowsPath(cwd) ? "\\" : "/";
+    e.dataTransfer.setData(PATH_DRAG_TYPE, dir && !abs.endsWith(sep) ? abs + sep : abs);
+  };
   const onDragStart = (e: DragEvent, entry: ProjectEntry) => {
     dragging.current = entry.path;
-    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.effectAllowed = "copyMove";
     e.dataTransfer.setData("text/plain", entry.path);
+    setDragPath(e, entry.path);
+  };
+  // 筛选结果和第一行（工作目录）只能拖去输入框，不能在树里移动
+  const onDragStartRef = (e: DragEvent, rel: string) => {
+    dragging.current = null;
+    e.dataTransfer.effectAllowed = "copy";
+    setDragPath(e, rel);
   };
   const onDragOver = (e: DragEvent, dir: string) => {
     const from = dragging.current;
@@ -706,6 +721,8 @@ function FileTree({
         className={`files-row files-root${dropDir === "" ? " drop-target" : ""}${menu && !menu.entry ? " menu-open" : ""}`}
         style={{ paddingLeft: 10 }}
         title={cwd}
+        draggable
+        onDragStart={(e) => onDragStartRef(e, "")}
         onClick={() => toggle("")}
         onContextMenu={(e) => openMenu(e, null)}
         onDragOver={(e) => onDragOver(e, "")}
@@ -777,6 +794,8 @@ function FileTree({
                     key={hit.path}
                     className={`files-hit${i === cursor ? " active" : ""}${hit.path === activePath ? " selected" : ""}`}
                     title={hit.path}
+                    draggable
+                    onDragStart={(e) => onDragStartRef(e, hit.path)}
                     onMouseEnter={() => setCursor(i)}
                     onClick={() => pickHit(hit, false)}
                     onDoubleClick={() => pickHit(hit, true)}
@@ -1309,7 +1328,12 @@ function pageFile(pathname: unknown): string | null {
  */
 function absolutePath(cwd: string, rel: string): string {
   const joined = !rel ? cwd : /[\\/]$/.test(cwd) ? cwd + rel : `${cwd}/${rel}`;
-  return /^[a-z]:[\\/]/i.test(cwd) || /^[\\/]{2}/.test(cwd) ? joined.replaceAll("/", "\\") : joined;
+  return isWindowsPath(cwd) ? joined.replaceAll("/", "\\") : joined;
+}
+
+/** Windows 的路径：C:\…、C:/…、\\server\share */
+function isWindowsPath(path: string): boolean {
+  return /^[a-z]:[\\/]/i.test(path) || /^[\\/]{2}/.test(path);
 }
 
 /** 复制到剪贴板，失败时提示原因；成功返回 true */

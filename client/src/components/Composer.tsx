@@ -4,7 +4,7 @@ import { AddMenu } from "./AddMenu";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { MentionMenu, type MentionOption } from "./MentionMenu";
-import { fileMention, findMentions, MentionText, browserMention, MentionNamesContext, tabMention, tabToken, type Mention, type MentionSource } from "./MentionText";
+import { fileMention, findMentions, MentionText, browserMention, PATH_DRAG_TYPE, MentionNamesContext, tabMention, tabToken, type Mention, type MentionSource } from "./MentionText";
 
 /** 输入框下方的附件：选中后立刻上传，发送时只传 id */
 interface PendingFile {
@@ -304,9 +304,17 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     }
   };
 
+  // 右侧面板目录树里拖来的文件、文件夹：插成绝对路径的文件引用（见 PATH_DRAG_TYPE）；系统里拖来的文件上传成附件
+  const acceptsDrop = (e: DragEvent) => e.dataTransfer.types.includes(PATH_DRAG_TYPE) || e.dataTransfer.types.includes("Files");
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragging(false);
+    const path = e.dataTransfer.getData(PATH_DRAG_TYPE);
+    if (path) {
+      setPicked((prev) => (prev.includes(path) ? prev : [...prev, path]));
+      insertAtCaret(fileMention(path));
+      return;
+    }
     addFiles([...e.dataTransfer.files]);
   };
 
@@ -316,8 +324,9 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     <div
       className={dragging ? "composer dragging" : "composer"}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes("Files")) {
+        if (acceptsDrop(e)) {
           e.preventDefault();
+          if (e.dataTransfer.types.includes(PATH_DRAG_TYPE)) e.dataTransfer.dropEffect = "copy";
           setDragging(true);
         }
       }}
