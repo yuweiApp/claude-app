@@ -56,6 +56,22 @@ export function withFileOpen(s: PanelState, from: string, path: string, pin: boo
   return { tabs, active: tab.id };
 }
 
+/**
+ * 回复里的文件夹链接：切到「打开文件」标签（只有目录树，没打开文件）在树里定位。有就用开着的那个；
+ * from（当前标签）是新标签页就在它里面换；否则接在 from 后面新开一个，不动别的标签里打开的文件
+ */
+export function withFolderTab(s: PanelState, from: string): PanelState {
+  const open = s.tabs.find((t) => t.kind === "files" && t.path === null);
+  if (open) return { ...s, active: open.id };
+  const here = s.tabs.find((t) => t.id === from);
+  if (here?.kind === "new") return { tabs: s.tabs.map((t) => (t.id === from ? { id: t.id, kind: "files", path: null, transient: false } : t)), active: from };
+  const tab: PanelTab = { id: crypto.randomUUID(), kind: "files", path: null, transient: false };
+  const index = s.tabs.findIndex((t) => t.id === from);
+  const tabs = [...s.tabs];
+  tabs.splice(index < 0 ? tabs.length : index + 1, 0, tab);
+  return { tabs, active: tab.id };
+}
+
 const WIDTH_KEY = "sidePanelWidth";
 const MIN_WIDTH = 320;
 /** 打开面板时对话区至少留这么宽 */

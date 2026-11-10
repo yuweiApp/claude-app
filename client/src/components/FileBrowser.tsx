@@ -156,6 +156,30 @@ const TREE_CHANGED = "files-tree-changed";
  * 重命名或新建完（输入框换回按钮）。看得见的树画完后找到这一行就聚焦；只认 1 秒内的，免得以后别的时候抢焦点
  */
 let refocus: { cwd: string; path: string; at: number } | null = null;
+/** 回复里的文件夹链接要在目录树里定位的文件夹（以 / 结尾），每个项目一个；「打开文件」标签（没打开文件）的树把它标成选中 */
+const revealed = new Map<string, string>();
+/** 刚要定位、还没滚到的：看得见的树画出这一行后滚过去并聚焦；文件夹要现读，多给些时间 */
+let pendingReveal: { cwd: string; path: string; at: number } | null = null;
+const TREE_REVEAL = "files-tree-reveal";
+
+/** 在目录树里展开到 dir（相对工作目录）并选中它，目录树收着的话打开 */
+export function revealInTree(cwd: string, dir: string) {
+  const path = dir.endsWith("/") ? dir : `${dir}/`;
+  const cache = treeCache(cwd);
+  for (let d = path; d; d = parentOf(d)) cache.expanded.add(d);
+  cache.expanded.add("");
+  revealed.set(cwd, path);
+  pendingReveal = { cwd, path, at: Date.now() };
+  if (!readTreeOpen()) {
+    try {
+      localStorage.setItem(TREE_KEY, "1");
+    } catch {
+      // 忽略
+    }
+    window.dispatchEvent(new Event("files-tree-toggle"));
+  }
+  window.dispatchEvent(new CustomEvent(TREE_REVEAL, { detail: cwd }));
+}
 /** 新建、重命名时正在输入名字的那一行 */
 type Editing = { kind: "new"; dir: string; isDir: boolean } | { kind: "rename"; path: string };
 /** 文件名里不能有的：路径分隔符；也不能是 . 和 .. */
@@ -242,6 +266,31 @@ function FileTree({
       row.focus({ preventScroll: true });
     }
   });
+  // 定位文件夹（revealInTree）：展开的文件夹没读过的读出来，画出那一行后滚过去
+  useEffect(() => {
+    const onReveal = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== cwd) return;
+      for (const dir of cache.expanded) if (!cache.dirs[dir]) void load(dir);
+      update();
+    };
+    window.addEventListener(TREE_REVEAL, onReveal);
+    return () => window.removeEventListener(TREE_REVEAL, onReveal);
+  }, [cwd, load]);
+  useEffect(() => {
+    const r = pendingReveal;
+    if (!r || r.cwd !== cwd) return;
+    if (Date.now() - r.at > 5000) {
+      pendingReveal = null;
+      return;
+    }
+    const row = listRef.current?.querySelector<HTMLElement>(`[data-path="${CSS.escape(r.path)}"]`);
+    if (row && row.offsetParent !== null) {
+      pendingReveal = null;
+      row.scrollIntoView({ block: "center" });
+      row.focus({ preventScroll: true });
+    }
+  });
+  const revealedPath = activePath === null ? revealed.get(cwd) : undefined;
 
   const toggle = (dir: string) => {
     if (cache.expanded.has(dir)) cache.expanded.delete(dir);
@@ -582,7 +631,7 @@ function FileTree({
         continue;
       }
       const classes = ["files-row"];
-      if (entry.path === activePath) classes.push("selected");
+      if (entry.path === activePath || entry.path === revealedPath) classes.push("selected");
       if (entry.dir && dropDir === entry.path) classes.push("drop-target");
       if (menu?.entry?.path === entry.path) classes.push("menu-open");
       rows.push(
@@ -594,6 +643,7 @@ function FileTree({
           title={entry.path}
           draggable
           onClick={() => {
+            revealed.delete(cwd);
             if (entry.dir) return toggle(entry.path);
             // 换了文件树会重建，焦点要还回来
             if (entry.path !== activePath) refocus = { cwd, path: entry.path, at: Date.now() };

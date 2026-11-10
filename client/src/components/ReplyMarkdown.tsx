@@ -1,15 +1,16 @@
 import { createContext, isValidElement, useContext, useRef, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { api } from "../api";
 import { useFileExists } from "../state/fileExists";
 import { MermaidBlock } from "./MermaidBlock";
 import { CopyAction } from "./MessageActions";
 
 /**
  * Claude 回复里的链接指向本地文件时，在右侧面板打开：cwd 是会话的工作目录（面板的文件只能是它里面的），
- * open 打开相对它的路径。没有（新会话页，还没有工作目录）时本地文件链接点了没反应
+ * open 打开相对它的路径的文件，openFolder 在目录树里定位文件夹。没有（新会话页，还没有工作目录）时本地文件链接点了没反应
  */
-export const FileLinkContext = createContext<{ cwd: string; open: (path: string) => void } | null>(null);
+export const FileLinkContext = createContext<{ cwd: string; open: (path: string) => void; openFolder: (path: string) => void } | null>(null);
 
 /**
  * Claude 回复的 Markdown：GFM，本地文件链接点开在右侧面板，网址在新窗口打开。
@@ -98,10 +99,24 @@ function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorE
   const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
     // file:// 和相对路径在网页里打不开，不让它跳
     e.preventDefault();
-    if (path !== null) files?.open(path);
+    if (path === null || !files) return;
+    // 链接看不出是文件还是文件夹：是文件就打开；能列出内容的是文件夹，在目录树里定位；都不是也当文件打开（面板里显示原因）
+    const { cwd, open, openFolder } = files;
+    void api
+      .filesExist(cwd, [path])
+      .catch(() => [path])
+      .then((exists) => (exists.includes(path) ? open(path) : api.listDir(cwd, path).then(() => openFolder(path), () => open(path))));
   };
+  if (path === null) {
+    // 面板只能打开工作目录里的：照原样显示文字，不像链接那样能点
+    return (
+      <span className="md-link-off" title={files ? `不在会话的工作目录里，右侧面板打不开：${localPath(href) ?? href}` : (localPath(href) ?? href)}>
+        {children}
+      </span>
+    );
+  }
   return (
-    <a {...rest} href={href} onClick={onClick} title={path !== null ? `在右侧面板打开 ${path}` : `不在会话的工作目录里，打不开：${localPath(href) ?? href}`}>
+    <a {...rest} href={href} onClick={onClick} title={`在右侧面板打开 ${path}`}>
       {children}
     </a>
   );

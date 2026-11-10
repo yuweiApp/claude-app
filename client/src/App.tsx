@@ -13,7 +13,8 @@ import { Sidebar, folderName, groupByFolder, sessionTitle } from "./components/S
 import { DEFAULT_SIDEBAR_WIDTH, SidebarResizer } from "./components/SidebarResizer";
 import { SidebarToggle } from "./components/SidebarToggle";
 import { SettingsPage } from "./components/SettingsPage";
-import { newPanelState, PanelIcon, SidePanel, withFileOpen, type PanelState } from "./components/SidePanel";
+import { revealInTree } from "./components/FileBrowser";
+import { newPanelState, PanelIcon, SidePanel, withFileOpen, withFolderTab, type PanelState } from "./components/SidePanel";
 import { FileLinkContext } from "./components/ReplyMarkdown";
 import { TasksPopover } from "./components/TasksPopover";
 import { DesktopTargetFloat } from "./components/DesktopTargetFloat";
@@ -99,7 +100,7 @@ export function App() {
     }
   };
   const togglePanel = () => showPanel(!panelOpen);
-  // 回复里指向工作目录里文件的链接：打开右侧面板，在文件标签里显示
+  // 回复里指向工作目录里文件的链接：打开右侧面板，在文件标签里显示；指向文件夹的在目录树里定位
   const fileLinks = useMemo(
     () =>
       panelCwd
@@ -111,6 +112,14 @@ export function App() {
                 return { ...all, [panelCwd]: withFileOpen(state, state.active, path, false) };
               });
               showPanel(true);
+            },
+            openFolder: (path: string) => {
+              setPanels((all) => {
+                const state = panelOf(all, panelCwd);
+                return { ...all, [panelCwd]: withFolderTab(state, state.active) };
+              });
+              showPanel(true);
+              revealInTree(panelCwd, path);
             },
           }
         : null,
