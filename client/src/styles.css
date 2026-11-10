@@ -497,6 +497,13 @@ main {
   background: linear-gradient(var(--sb-angle), var(--sb-c3), var(--sb-c1) 50%, var(--sb-c2)); filter: brightness(1.1) saturate(1.1);
 }
 .scroll-bottom.running { animation: scroll-bottom-in 0.15s ease-out, scroll-bottom-flow 3s linear infinite; }
+/* 运行中外圈一道三色弧线转圈，和停止按钮的外圈一样，离按钮留 2px 空隙 */
+.scroll-bottom.running::before {
+  content: ""; position: absolute; inset: -5px; border-radius: 50%; pointer-events: none;
+  background: conic-gradient(from 0deg, transparent 0 15%, var(--sb-c3) 40%, var(--sb-c2) 70%, var(--sb-c1));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+  animation: send-stop-spin 1.2s linear infinite;
+}
 @keyframes scroll-bottom-in { from { opacity: 0; transform: translate(-50%, 6px); } }
 @keyframes scroll-bottom-flow { to { --sb-angle: 495deg; } }
 .scroll-bottom-dots { display: flex; gap: 3px; }
@@ -504,7 +511,7 @@ main {
 .scroll-bottom-dots span:nth-child(2) { animation-delay: 0.15s; }
 .scroll-bottom-dots span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes scroll-bottom-dot { 0%, 60%, 100% { opacity: 0.35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
-@media (prefers-reduced-motion: reduce) { .scroll-bottom, .scroll-bottom.running, .scroll-bottom-dots span { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .scroll-bottom, .scroll-bottom.running, .scroll-bottom.running::before, .scroll-bottom-dots span { animation: none; } }
 .scroll-content > * { max-width: var(--content-width); margin-left: auto; margin-right: auto; }
 .empty { text-align: center; color: var(--muted); margin-top: 20vh; font-size: 22px; }
 .empty-sub { font-size: 13px; margin-top: 8px; word-break: break-all; }
@@ -954,9 +961,15 @@ main {
   animation: send-stop-spin 1.2s linear infinite;
 }
 .send-stop::after { inset: 0; border: 1px solid var(--stop-c1); animation: send-stop-ripple 2s ease-out infinite; }
+/* 中间的核：不跟前景色（浅色强调色的皮肤上前景色是深色，成了一块黑），而是一颗发光的亮核——
+   左上一点白色高光，底下是三色调亮的渐变，外面一圈白光加彩色光晕，变形时光晕跟着一呼一吸 */
 .stop-core {
-  width: 11px; height: 11px; border-radius: 3px; background: currentColor;
-  box-shadow: 0 0 6px color-mix(in srgb, currentColor 55%, transparent);
+  --core-glow: 0 0 0 1px rgb(255 255 255 / 0.75), 0 0 6px 1px rgb(255 255 255 / 0.55), 0 0 10px 2px color-mix(in srgb, var(--stop-c2) 60%, transparent);
+  width: 11px; height: 11px; border-radius: 3px;
+  background:
+    radial-gradient(circle at 30% 25%, #fff 0 20%, transparent 65%),
+    conic-gradient(from 45deg, oklch(from var(--stop-c3) 0.93 calc(c * 0.6) h), oklch(from var(--stop-c1) 0.97 calc(c * 0.4) h), oklch(from var(--stop-c2) 0.93 calc(c * 0.6) h), oklch(from var(--stop-c3) 0.93 calc(c * 0.6) h));
+  box-shadow: var(--core-glow);
   animation: stop-core-morph 2.4s ease-in-out infinite;
 }
 @keyframes send-stop-spin { to { transform: rotate(1turn); } }
@@ -968,7 +981,10 @@ main {
 @keyframes send-stop-ripple { from { opacity: 0.45; transform: scale(1); } to { opacity: 0; transform: scale(1.8); } }
 @keyframes stop-core-morph {
   0% { transform: rotate(0deg) scale(1); border-radius: 3px; }
-  50% { transform: rotate(45deg) scale(0.8); border-radius: 5.5px 2px; }
+  50% {
+    transform: rotate(45deg) scale(0.8); border-radius: 5.5px 2px;
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.9), 0 0 9px 2px rgb(255 255 255 / 0.7), 0 0 16px 4px color-mix(in srgb, var(--stop-c2) 75%, transparent);
+  }
   100% { transform: rotate(90deg) scale(1); border-radius: 3px; }
 }
 @media (prefers-reduced-motion: reduce) {
