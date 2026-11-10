@@ -1,7 +1,8 @@
-import { createContext, useContext, useRef, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
+import { createContext, isValidElement, useContext, useRef, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useFileExists } from "../state/fileExists";
+import { MermaidBlock } from "./MermaidBlock";
 import { CopyAction } from "./MessageActions";
 
 /**
@@ -13,7 +14,7 @@ export const FileLinkContext = createContext<{ cwd: string; open: (path: string)
 /**
  * Claude 回复的 Markdown：GFM，本地文件链接点开在右侧面板，网址在新窗口打开。
  * 行内代码像文件路径（`index.html`、`src/a.ts:12`）、又是工作目录里存在的文件时，显示成文件链接，
- * 同写成 [index.html](index.html)；只改显示，消息内容不变
+ * 同写成 [index.html](index.html)；只改显示，消息内容不变。```mermaid 代码块渲染成图
  */
 export function ReplyMarkdown({ children }: { children: string }) {
   return (
@@ -22,7 +23,8 @@ export function ReplyMarkdown({ children }: { children: string }) {
       urlTransform={urlTransform}
       components={{
         a: ({ node: _node, ...props }) => <ReplyLink {...props} />,
-        pre: ({ node: _node, ...props }) => <CodeBlock {...props} />,
+        pre: ({ node: _node, ...props }) =>
+          codeLanguage(props.children) === "mermaid" ? <MermaidBlock code={codeText(props.children)} /> : <CodeBlock {...props} />,
         code: ({ node: _node, ...props }) => <ReplyCode {...props} />,
       }}
     >
@@ -45,6 +47,21 @@ function CodeBlock(props: HTMLAttributes<HTMLPreElement>) {
       </div>
     </InCodeBlock.Provider>
   );
+}
+
+/** 代码块的语言：<code> 的 class 里 language-xxx 的 xxx */
+function codeLanguage(children: ReactNode): string {
+  const code = Array.isArray(children) ? children[0] : children;
+  if (!isValidElement<{ className?: string }>(code)) return "";
+  return /(?:^|\s)language-(\S+)/.exec(code.props.className ?? "")?.[1]?.toLowerCase() ?? "";
+}
+
+/** 代码块的源码：<code> 里的文字 */
+function codeText(children: ReactNode): string {
+  const code = Array.isArray(children) ? children[0] : children;
+  if (!isValidElement<{ children?: ReactNode }>(code)) return "";
+  const text = code.props.children;
+  return typeof text === "string" ? text : Array.isArray(text) ? text.filter((t) => typeof t === "string").join("") : "";
 }
 
 /** 像文件路径的行内代码：没有空白和引号、括号这些，带扩展名（可以带 :行号）；网址不算 */

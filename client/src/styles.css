@@ -469,6 +469,15 @@ main {
 .md-code > pre { margin: 0; padding-right: 40px; }
 .md-code-copy { position: absolute; top: 6px; right: 6px; }
 .md-code-copy:hover { background: color-mix(in srgb, var(--border) 70%, transparent); }
+/* mermaid 图（MermaidBlock.tsx）：不加外框，图太宽时缩小到消息宽度；鼠标移上去右上角出现复制、下载、展开 */
+.md-mermaid { position: relative; margin: 1em 0; }
+.md-mermaid-svg { overflow-x: auto; text-align: center; cursor: zoom-in; line-height: normal; }
+.md-mermaid-svg:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
+.md-mermaid-svg svg { max-width: 100%; height: auto; }
+.md-mermaid-tools { position: absolute; top: 0; right: 0; display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; background: var(--bg); border-radius: 8px; }
+.md-mermaid:hover .md-mermaid-tools, .md-mermaid-tools:focus-within { opacity: 1; }
+@media (hover: none) { .md-mermaid-tools { opacity: 1; } }
+.md-mermaid-error { margin-top: 6px; color: var(--err); font-size: 12px; }
 /* Markdown 表格：细边框、表头浅底；列多时表格自己横向滚动，不撑宽对话 */
 .assistant table {
   display: block; width: max-content; max-width: 100%; overflow-x: auto; margin: 0.6em 0;
