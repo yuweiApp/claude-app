@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { query, type McpServerStatus, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { agentEnv } from "../config.js";
@@ -104,6 +105,7 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
         const marketplace = origin && origin !== "inline" && origin !== "builtin" ? origin : undefined;
         return {
           name,
+          ...(path && isAbsolute(path) ? { path } : {}),
           source,
           version,
           ...pluginManifest(path),

@@ -7,6 +7,8 @@ export interface DesktopApi {
   isMaximized(): Promise<boolean>;
   /** 弹系统的文件夹对话框，取消时返回 null */
   pickFolder(defaultPath?: string): Promise<string | null>;
+  /** 用系统的文件管理器打开所在的文件夹并选中它；文件不在这台机器上时返回 false */
+  showItemInFolder(path: string): Promise<boolean>;
   /** 返回取消订阅的函数 */
   onMaximizedChange(callback: (maximized: boolean) => void): () => void;
   /** 按标题找桌面上的窗口（桌面工具正在操作的那个），返回采集源，getUserMedia 用它的 id 取实时画面；找不到时 null。见 desktop/src/capture.ts */
@@ -74,3 +76,6 @@ export interface DesktopBrowserApi {
 }
 
 export const desktop: DesktopApi | undefined = (window as Window & { desktop?: DesktopApi }).desktop;
+
+/** 系统文件管理器的叫法 */
+export const fileManagerName = desktop?.platform === "darwin" ? "访达" : desktop?.platform === "win32" ? "资源管理器" : "文件管理器";

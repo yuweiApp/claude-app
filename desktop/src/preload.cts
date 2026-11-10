@@ -1,4 +1,4 @@
-// 预加载脚本：给网页提供窗口按钮（窗口没有系统边框，见 main.ts）、系统的文件夹对话框、内置浏览器和窗口采集。
+// 预加载脚本：给网页提供窗口按钮（窗口没有系统边框，见 main.ts）、系统的文件夹对话框和文件管理器、内置浏览器和窗口采集。
 // 沙箱里的预加载脚本只能是 CommonJS，所以是 .cts；接口类型和 client/src/desktop.ts 的 DesktopApi 一致
 import electron = require("electron");
 
@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("desktop", {
   close: () => ipcRenderer.send("window:close"),
   isMaximized: (): Promise<boolean> => ipcRenderer.invoke("window:is-maximized"),
   pickFolder: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke("dialog:pick-folder", defaultPath),
+  showItemInFolder: (target: string): Promise<boolean> => ipcRenderer.invoke("shell:show-item", target),
   onMaximizedChange: (callback: (maximized: boolean) => void) => {
     const listener = (_event: electron.IpcRendererEvent, maximized: boolean) => callback(maximized);
     ipcRenderer.on("window:maximized", listener);

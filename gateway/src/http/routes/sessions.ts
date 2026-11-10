@@ -44,9 +44,12 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     return listCapabilities(req.query.cwd || config.workspaceDir);
   });
 
-  /** 技能的 SKILL.md；内置技能没有文件，返回 404 */
+  /** 技能的 SKILL.md；内置技能没有文件，返回 404。插件里的技能到插件所在的文件夹里找 */
   app.get<{ Params: { name: string }; Querystring: { cwd?: string } }>("/skills/:name", async (req) => {
-    const skill = await readSkill(req.params.name, req.query.cwd || config.workspaceDir);
+    const cwd = req.query.cwd || config.workspaceDir;
+    const plugin = req.params.name.includes(":") ? req.params.name.split(":")[0] : undefined;
+    const pluginDir = plugin ? (await listCapabilities(cwd)).plugins.find((p) => p.name === plugin)?.path : undefined;
+    const skill = await readSkill(req.params.name, cwd, pluginDir);
     if (!skill) throw new NotFoundError("这个技能没有可查看的文件");
     return skill;
   });

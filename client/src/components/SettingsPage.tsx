@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type Reac
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, type Capabilities, type McpServerInfo, type McpServerInput, type SkillDetail } from "../api";
-import { desktop } from "../desktop";
+import { desktop, fileManagerName } from "../desktop";
 import { Avatar } from "./CapabilityPicker";
 import { Card, CardGrid } from "./CardGrid";
 import { useDismiss } from "./ComposerPickers";
@@ -535,11 +535,20 @@ function splitFrontmatter(content: string): { fields: [string, string][]; body: 
   return { fields, body: content.slice(match[0].length) };
 }
 
+/** 技能的来处：插件里的技能叫 插件名:技能名 */
+function skillOrigin(skill: Capabilities["skills"][number]): string {
+  if (skill.managed) return "已导入";
+  if (skill.builtin) return "内置";
+  const plugin = skill.name.includes(":") ? skill.name.split(":")[0] : undefined;
+  return plugin ? `插件 ${plugin}` : "项目或插件";
+}
+
 /** 技能详情：路径、字段和正文；内置技能没有文件，只显示描述 */
 function SkillDialog({ skill, onClose }: { skill: Capabilities["skills"][number]; onClose: () => void }) {
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [preview, setPreview] = useState(true);
+  const [revealFailed, setRevealFailed] = useState(false);
   useEffect(() => {
     api.skill(skill.name).then(setDetail, () => undefined).finally(() => setLoaded(true));
   }, [skill.name]);
@@ -557,7 +566,7 @@ function SkillDialog({ skill, onClose }: { skill: Capabilities["skills"][number]
           <Avatar name={skill.name} />
           <div className="settings-row-main">
             <div className="settings-row-name">{skill.name}</div>
-            <div className="settings-row-sub">{skill.managed ? "已导入" : skill.builtin ? "内置" : "项目或插件"}</div>
+            <div className="settings-row-sub">{skillOrigin(skill)}</div>
           </div>
           <button className="icon-btn" title="关闭" aria-label="关闭" onClick={onClose}>
             ×
@@ -566,6 +575,15 @@ function SkillDialog({ skill, onClose }: { skill: Capabilities["skills"][number]
         {detail && (
           <div className="skill-dialog-path">
             <code title={detail.path}>{detail.path}</code>
+            {desktop && (
+              <button
+                className="skill-reveal"
+                title={revealFailed ? "这台电脑上没有这个文件（网关在别的机器上）" : undefined}
+                onClick={() => void desktop!.showItemInFolder(detail.path).then((shown) => setRevealFailed(!shown))}
+              >
+                {revealFailed ? "找不到文件" : `在${fileManagerName}中显示`}
+              </button>
+            )}
             <label className="skill-preview">
               预览
               <button className={`switch${preview ? " on" : ""}`} role="switch" aria-checked={preview} aria-label="预览" onClick={() => setPreview((p) => !p)} />
@@ -577,7 +595,7 @@ function SkillDialog({ skill, onClose }: { skill: Capabilities["skills"][number]
           {loaded && !detail && (
             <>
               <p>{skill.description}</p>
-              <p className="settings-row-sub">这是 Claude Code 自带的技能，没有可查看的文件。</p>
+              <p className="settings-row-sub">{skill.builtin ? "这是 Claude Code 自带的技能，没有可查看的文件。" : "没有找到这个技能的 SKILL.md 文件。"}</p>
             </>
           )}
           {parsed && !preview && <pre className="skill-source">{detail!.content}</pre>}

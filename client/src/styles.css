@@ -321,6 +321,7 @@ main {
 .skill-dialog-head { display: flex; align-items: center; gap: 12px; }
 .skill-dialog-path { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
 .skill-dialog-path code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-reveal { flex: none; padding: 3px 10px; font-size: 12px; }
 .skill-preview { flex: none; display: flex; align-items: center; gap: 8px; }
 .skill-dialog-body { min-height: 0; overflow-y: auto; font-size: 14px; }
 .skill-source { margin: 0; padding: 12px; border-radius: 8px; background: var(--code-bg); font-size: 12px; white-space: pre-wrap; word-break: break-word; }

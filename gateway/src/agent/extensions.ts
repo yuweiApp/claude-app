@@ -126,17 +126,42 @@ export function pluginManifest(dir: string): { description?: string; author?: st
 /** 传给 query 的 plugins */
 export const importedPlugins = () => importedPluginNames().map((name) => ({ type: "local" as const, path: path.join(pluginsDir(), name) }));
 
-/** 技能详情：导入的和项目里的技能读 SKILL.md；内置技能没有文件，只有列表里的描述 */
-export async function readSkill(name: string, cwd: string): Promise<SkillDetail | null> {
-  // 插件里的技能叫 插件名:技能名
-  const [first, second] = name.split(":");
-  if (!first || !VALID_NAME.test(first) || (second !== undefined && !VALID_NAME.test(second))) return null;
-  const files = second
-    ? [path.join(pluginsDir(), first, "skills", second, "SKILL.md")]
-    : [path.join(skillsDir(), first, "SKILL.md"), path.join(cwd, ".claude", "skills", first, "SKILL.md")];
-  for (const file of files) {
-    const content = await readFile(file, "utf8").catch(() => null);
-    if (content !== null) return { name, path: file, content };
+/** 插件放技能的文件夹：plugin.json 的 skills（字符串或数组，相对插件根目录）和默认的 skills/ */
+function pluginSkillRoots(pluginDir: string): string[] {
+  let declared: unknown;
+  try {
+    declared = (JSON.parse(readFileSync(path.join(pluginDir, ".claude-plugin", "plugin.json"), "utf8")) as { skills?: unknown }).skills;
+  } catch {
+    declared = undefined;
+  }
+  const custom = (Array.isArray(declared) ? declared : [declared]).filter((entry): entry is string => typeof entry === "string" && entry !== "");
+  return [...new Set([...custom, "skills"].map((entry) => path.resolve(pluginDir, entry)))];
+}
+
+/** 技能文件夹里的 SKILL.md：文件夹名就是技能名，或 SKILL.md 的 name 是技能名；skills 也可以直接指向一个技能文件夹 */
+async function findSkillFile(roots: string[], skill: string): Promise<{ file: string; content: string } | null> {
+  for (const root of roots) {
+    const candidates = [path.join(root, skill, "SKILL.md"), path.join(root, "SKILL.md"), ...subdirectories(root).map((dir) => path.join(root, dir, "SKILL.md"))];
+    for (const file of candidates) {
+      const content = await readFile(file, "utf8").catch(() => null);
+      if (content === null) continue;
+      const direct = file === path.join(root, skill, "SKILL.md");
+      if (direct || frontmatter(content).name === skill || (file === path.join(root, "SKILL.md") && path.basename(root) === skill)) return { file, content };
+    }
   }
   return null;
+}
+
+/**
+ * 技能详情：导入的、项目里的和插件里的技能读 SKILL.md；内置技能没有文件，只有列表里的描述。
+ * 插件里的技能叫 插件名:技能名，pluginDir 是这个插件所在的文件夹（导入的插件不传也能找到）
+ */
+export async function readSkill(name: string, cwd: string, pluginDir?: string): Promise<SkillDetail | null> {
+  const [first, second] = name.split(":");
+  if (!first || !VALID_NAME.test(first) || (second !== undefined && !VALID_NAME.test(second))) return null;
+  const roots = second
+    ? pluginSkillRoots(pluginDir ?? path.join(pluginsDir(), first))
+    : [skillsDir(), path.join(cwd, ".claude", "skills")];
+  const found = await findSkillFile(roots, second ?? first);
+  return found && { name, path: found.file, content: found.content };
 }

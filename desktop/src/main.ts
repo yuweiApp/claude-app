@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell, type OpenDialogOptions, type Rectangle } from "electron";
 import { GatewayBridge } from "./browser/bridge.js";
@@ -176,6 +177,13 @@ ipcMain.handle("dialog:pick-folder", async (e, defaultPath: unknown) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
   return result.canceled ? null : (result.filePaths[0] ?? null);
+});
+
+// 技能详情等处的「在文件夹中显示」：用系统的文件管理器打开所在的文件夹并选中它；文件不在这台机器上时返回 false
+ipcMain.handle("shell:show-item", (e, target: unknown) => {
+  if (!fromUi(e.sender) || typeof target !== "string" || !path.isAbsolute(target) || !existsSync(target)) return false;
+  shell.showItemInFolder(target);
+  return true;
 });
 
 if (!app.requestSingleInstanceLock()) {

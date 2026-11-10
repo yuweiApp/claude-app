@@ -96,10 +96,11 @@ export interface Capabilities {
   /**
    * builtin：Claude Code 自带的（source 是 名字@builtin）；marketplace：从插件市场装的（source 是 名字@市场名），卸载用 source；
    * managed：导入的或从市场装的，可以删除。description、author 取自插件的 .claude-plugin/plugin.json。
-   * 插件带的技能叫「插件名:技能名」，带的 MCP 服务器叫「plugin:插件名:服务器名」
+   * 插件带的技能叫「插件名:技能名」，带的 MCP 服务器叫「plugin:插件名:服务器名」；path 是插件所在的文件夹（网关机器上的，内置插件没有）
    */
   plugins: {
     name: string;
+    path?: string;
     source?: string;
     version?: string;
     description?: string;
