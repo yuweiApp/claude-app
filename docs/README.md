@@ -196,6 +196,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 另外：
 
 - `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`：关掉遥测、错误上报、自动更新检查，不往 Anthropic 发东西。
+- `CLAUDE_CODE_MAX_CONTEXT_TOKENS`（默认 200000）：上下文大小。Claude Code 对不认识的模型名（不是 `claude-` 开头的，第三方模型都是）按这个值算，没设时也是 200000；Claude 官方模型按它自己的模型表（带 `[1m]` 的是 100 万），这个变量不管。快用满时自动压缩上下文（对话里的「上下文已压缩」），会提前留出回复的空间。网关写明默认值，要改在 `.env.local` 里设；所有第三方模型共用一个值，要和模型实际支持的一致，设大了请求会在模型那边超限报错。想更早压缩可以另设 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`（按它算什么时候压缩，不超过上下文大小）。（规则按 Claude Code 2.1.322 的程序核对。）
 - `WebSearch` 是 Anthropic 服务端工具，第三方模型用不了，默认放进 `disallowedTools`。
 - `WebFetch` 每次抓网页前会先请求 `api.anthropic.com/api/web/domain_info?domain=<域名>` 查域名黑名单，Anthropic 不支持的地区（如中国）这个接口一律返回 403，所有网址都报 "Unable to verify if domain … is safe to fetch"，网页本身其实能连上。网关在 SDK 的 `settings` 选项里设 `skipWebFetchPreflight: true` 跳过这一步。
 - Windows 上命令输出的编码：Claude Code 的 Bash 工具跑的是 Git Bash，模型在里面调 `powershell.exe`、`ipconfig` 等原生程序时，它们按控制台代码页输出（中文系统是 936，GBK），Claude Code 按 UTF-8 读，中文全是乱码。`agentEnv()` 在 Windows 上给子进程设 `BASH_ENV`，指向网关写在 `$CLAUDE_CONFIG_DIR/claude-app-bash-env.sh` 的脚本，每次起 bash 先 `chcp.com 65001`；环境里原来有 `BASH_ENV` 的放进 `CLAUDE_APP_USER_BASH_ENV`，脚本最后接着 source 它。Claude Code 自己的 PowerShell 工具（`CLAUDE_CODE_USE_POWERSHELL_TOOL=1`，预览）也是先 `chcp 65001` 再起 PowerShell。
