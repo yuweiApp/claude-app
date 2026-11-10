@@ -380,7 +380,8 @@ main {
 .market-card-target > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .market-card-meta a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .market-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
-.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; color: var(--muted); font-size: 13px; }
+/* 设置页主区域是纵向 flex：margin-top: auto 让分页栏在内容不满一屏时贴着底部，间距改用 padding-top，内容超出时照样留 16px 空隙 */
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin-top: auto; padding-top: 16px; color: var(--muted); font-size: 13px; }
 .pager-btn {
   display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 30px; padding: 0 8px;
   border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums;

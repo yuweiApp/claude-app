@@ -6,7 +6,7 @@ export const PAGE_SIZE = 10;
 /** 量每页条数时先渲染的卡片数，也是每页条数的上限 */
 export const PROBE_SIZE = 60;
 
-/** 分页栏占的高度：.pager 的 margin-top 16px + 按钮 30px */
+/** 分页栏占的高度：.pager 的 padding-top 16px + 按钮 30px */
 const PAGER_SPACE = 46;
 
 /** 第 page 页（从 0 开始）的条目 */
