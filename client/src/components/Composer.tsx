@@ -34,8 +34,8 @@ export interface ComposerHandle {
   mentionSkill: (name: string) => void;
   /** 引用插件：插在光标处 */
   mention: (name: string) => void;
-  /** 引用浏览器标签页（输入框上面的「浏览器」）或桌面上的窗口（「Computer Use」）：插在光标处，source 见 MentionSource */
-  mentionTab: (title: string, url: string, source?: MentionSource) => void;
+  /** 引用浏览器标签页（输入框上面的「浏览器」）或桌面上的窗口（「Computer Use」）：插在光标处，source 见 MentionSource；linkTitle 是桌面窗口的应用名，见 tabMention */
+  mentionTab: (title: string, url: string, source?: MentionSource, linkTitle?: string) => void;
   /** 引用整个浏览器或桌面（「浏览器」「Computer Use」菜单的第一行）：插在光标处 */
   mentionBrowser: (name: string) => void;
   /** 把焦点给输入框，光标留在原来的位置 */
@@ -178,9 +178,9 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     mentionSkill: (name) => insertAtCaret(`/${name}`),
     mention: (name) => insertAtCaret(`@${name}`),
     mentionBrowser: (name) => insertAtCaret(browserMention(name)),
-    mentionTab: (title, url, source) => {
+    mentionTab: (title, url, source, linkTitle) => {
       // 同名不同网址的标签页：标题后面加 (2)、(3) 区分
-      const full = (t: string) => tabMention(t, url, source);
+      const full = (t: string) => tabMention(t, url, source, linkTitle);
       let name = title || url;
       for (let n = 2; pickedTabs.some((p) => p.token === tabToken(name, source) && p.full !== full(name)); n++) name = `${title || url} (${n})`;
       const token = tabToken(name, source);

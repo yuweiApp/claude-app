@@ -634,7 +634,7 @@ function Chat({
             />
             <DesktopPicker
               enabled={config.desktop}
-              onPick={(w) => composerRef.current?.mentionTab(w.title || w.app, `window:${w.id}`, "desktop")}
+              onPick={(w) => composerRef.current?.mentionTab(w.title || w.app, `window:${w.id}`, "desktop", w.app)}
               onPickDesktop={() => composerRef.current?.mentionBrowser("桌面")}
             />
           </>

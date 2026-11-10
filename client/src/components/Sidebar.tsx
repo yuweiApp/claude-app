@@ -6,7 +6,7 @@ import { SidebarToggle } from "./SidebarToggle";
 /** 会话标题：网关在第一条消息时生成的 customTitle；没有时用第一条提问。不用 summary，它没有自定义标题时跟着最新一条提问变 */
 /** 会话标题；第一条消息里引用的标签页 @[标题](网址)、@chrome[标题](网址) 这样的只留标题 */
 export const sessionTitle = (s: SessionListItem) =>
-  (s.customTitle || s.firstPrompt || s.summary || "新会话").replace(/@(?:[a-z][a-z0-9]*)?\[([^\]\n]*)\]\([^\s)]+\)/g, "$1");
+  (s.customTitle || s.firstPrompt || s.summary || "新会话").replace(/@(?:[a-z][a-z0-9]*)?\[([^\]\n]*)\]\([^\s)]+(?: "[^"\n]*")?\)/g, "$1");
 
 /** 项目名：工作目录的最后一级 */
 export const folderName = (dir: string) => dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || dir;

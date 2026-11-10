@@ -14,9 +14,12 @@ const AT_MENTION = /(^|\s)@("[^"\n]+"|\S+)/g;
 const PATH_LIKE = /[/\\]|\.\w+$/;
 /**
  * 标签页的引用：内置浏览器的 @[标题](网址)，外部浏览器的 @浏览器 id[标题](网址)（如 @chrome[…]、@brave[…]，id 见网关的 browser/catalog.ts），见 tabMention；
- * 桌面上的窗口（输入框上面「Computer Use」里选的）也用这个格式：@desktop[标题](window:窗口 id)
+ * 桌面上的窗口（输入框上面「Computer Use」里选的）也用这个格式，地址后面用 Markdown 的链接标题带上应用名：
+ * @desktop[标题](window:窗口 id "应用名")。以前的没有链接标题，照样认
  */
-const TAB_MENTION = /(^|\s)@([a-z][a-z0-9]*)?\[([^\]\n]*)\]\(([a-z][\w+.-]*:[^\s)]+)\)/gi;
+const TAB_MENTION = /(^|\s)@([a-z][a-z0-9]*)?\[([^\]\n]*)\]\(([a-z][\w+.-]*:[^\s)]+)(?: "([^"\n]*)")?\)/gi;
+/** 完整格式末尾的地址和链接标题 */
+const TAB_TARGET = /\]\(([^\s)]+)(?: "([^"\n]*)")?\)$/;
 /** 输入框里不带网址的短格式（见 tabToken） */
 const TAB_TOKEN = /^@([a-z][a-z0-9]*)?\[([^\]\n]*)\]([\s\S]*)$/;
 
@@ -45,8 +48,14 @@ function browserMentionRegex(browsers: ExternalBrowserInfo[]): RegExp {
   return new RegExp(`(^|\\s)@(${names.join("|")})(?=\\s|$)`, "g");
 }
 
-/** 发给模型的标签页（窗口）引用：标题里的方括号、换行去掉 */
-export const tabMention = (title: string, url: string, source?: MentionSource) => `${tabToken(title || url, source)}(${url})`;
+/**
+ * 发给模型的标签页（窗口）引用：标题里的方括号、换行去掉；linkTitle（桌面窗口的应用名）写成 Markdown 的链接标题，
+ * 里面的双引号、换行去掉
+ */
+export const tabMention = (title: string, url: string, source?: MentionSource, linkTitle?: string) => {
+  const note = linkTitle?.replace(/["\n]/g, " ").trim();
+  return `${tabToken(title || url, source)}(${url}${note ? ` "${note}"` : ""})`;
+};
 
 /**
  * 输入框里的标签页引用只写 @[标题]、@chrome[标题] 这样，不露网址；网址由输入框记着，发送时补成 tabMention 的完整格式。
@@ -208,9 +217,9 @@ export function MentionText({ text, files, tabTokens, compact }: { text: string;
       continue;
     }
     if (kind === "tab" && compact) {
-      const url = /\]\(([^)]*)\)$/.exec(text.slice(start, end))?.[1] ?? "";
+      const [, url = "", linkTitle] = TAB_TARGET.exec(text.slice(start, end)) ?? [];
       parts.push(
-        <span key={start} className="mention mention-tab" title={desktop ? "桌面上的窗口" : external ? `${external.name}：${url}` : url}>
+        <span key={start} className="mention mention-tab" title={desktop ? `桌面上的窗口${linkTitle ? `（${linkTitle}）` : ""}` : external ? `${external.name}：${url}` : url}>
           {desktop ? <MonitorIcon className="" /> : <GlobeIcon />}
           {(desktop || external) && <span className="mention-tab-source">{desktop ? DESKTOP_NAME : external!.name}</span>}
           {title || url}

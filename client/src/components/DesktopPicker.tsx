@@ -20,7 +20,7 @@ interface Props {
 
 /**
  * 输入框上面的「Computer Use」：和「浏览器」一样点开搜索、选择，选中后插在输入框的光标处。
- * 第一行是桌面本身（写成 @桌面），下面是桌面工具（agent-desktop）能看到的窗口（@desktop[标题](window:窗口 id)），本应用自己的窗口网关已经去掉。
+ * 第一行是桌面本身（写成 @桌面），下面是桌面工具（agent-desktop）能看到的窗口（@desktop[标题](window:窗口 id "应用名")），本应用自己的窗口网关已经去掉。
  * 网关没开桌面工具（config.yml 的 desktop.enabled）时不显示按钮；开没开从网关的 /config 来，窗口打开菜单时才列
  */
 export function DesktopPicker({ enabled, onPick, onPickDesktop }: Props) {
