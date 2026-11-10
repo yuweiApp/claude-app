@@ -472,7 +472,7 @@ export class BrowserRepl implements Repl {
       void titleOf(page).then((title) => titles.set(page, title));
       page.once("close", () => {
         if (agentClosed.has(page)) return;
-        push({ who: "不是你关的标签页被关闭了（用户在 Chrome 里关的，或网页自己关的）", url: page.url(), title: titles.get(page) ?? "" });
+        push({ who: "不是你关的标签页被关闭了（用户在浏览器里关的，或网页自己关的）", url: page.url(), title: titles.get(page) ?? "" });
       });
     };
     context.pages().forEach(onClose);

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from "react";
+import type { ExternalBrowserId } from "../api";
 import type { BrowserSuggestion, BrowserTabInfo, DesktopBrowserApi } from "../desktop";
 
 interface Props {
@@ -405,11 +406,12 @@ export function SiteIcon({ src }: { src?: string }) {
 }
 
 /**
- * 引用整个浏览器（@内置浏览器、@Chrome）的图标，「浏览器」菜单、输入框、消息里都用这一个。
- * 内置浏览器：品牌色圆角方块里白色的「左边对话、右边面板」窗口（就是这个应用的样子，见 .inapp-logo）；Chrome：彩色的 Chrome 标志（见 .chrome-logo）
+ * 引用整个浏览器（@内置浏览器、@Chrome、@Edge）的图标，「浏览器」菜单、输入框、消息里都用这一个。
+ * 内置浏览器（不传 source）：品牌色圆角方块里白色的「左边对话、右边面板」窗口（就是这个应用的样子，见 .inapp-logo）；
+ * Chrome、Edge：各自的彩色标志（见 .chrome-logo、.edge-logo）
  */
-export function BrowserIcon({ chrome }: { chrome?: boolean }) {
-  if (chrome) return <span className="chrome-logo" aria-hidden="true" />;
+export function BrowserIcon({ source }: { source?: ExternalBrowserId }) {
+  if (source) return <span className={`${source}-logo`} aria-hidden="true" />;
   return (
     <span className="inapp-logo" aria-hidden="true">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

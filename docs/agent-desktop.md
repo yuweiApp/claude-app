@@ -8,7 +8,7 @@
 
 让模型操作**网关所在那台电脑**上的原生应用（记事本、Finder / 资源管理器、系统对话框、Office、各种 Electron 应用的原生部分）。[vercel-labs/agent-desktop](https://github.com/vercel-labs/agent-desktop) 读系统的无障碍树（macOS 是 AX API，Windows 是 UI Automation，Linux 是 AT-SPI），给出带 ref 的元素，按 ref 操作，不靠截图识别。
 
-- 网页还是第 12 节（内置浏览器）、第 13 节（用户的 Chrome）的事。agent-desktop 自己也不操作网页内容（它对 Chromium 应用的办法是 `launch --cdp` 后交给别的工具）；网关试过把这一步接上，没走通，已删除，见第 14 节。
+- 网页还是第 12 节（内置浏览器）、第 13 节（用户的 Chrome、Edge）的事。agent-desktop 自己也不操作网页内容（它对 Chromium 应用的办法是 `launch --cdp` 后交给别的工具）；网关试过把这一步接上，没走通，已删除，见第 14 节。
 - 不做：桌面画面的实时面板、录屏、多台电脑。
 
 ## 2. 为什么不直接挂 `agent-desktop mcp`

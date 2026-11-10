@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, ExternalBrowserId, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo };
+export type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, ExternalBrowserId, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -84,9 +84,9 @@ export const api = {
   /** 项目里的文件和文件夹，输入框 @ 引用用；q 为空是第一层 */
   files: (cwd: string, q: string) =>
     request<{ entries: ProjectEntry[] }>("GET", `/files?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(q)}`).then((r) => r.entries),
-  /** 外部浏览器（用户的 Chrome）里交给 Playwright 的标签页，输入框 @ 引用用；enabled 是 config.yml 里开没开 */
   desktopWindows: () => request<{ enabled: boolean; windows: { id: string; app: string; title: string }[] }>("GET", "/desktop/windows"),
-  chromeTabs: () => request<{ enabled: boolean; tabs: { title: string; url: string }[] }>("GET", "/chrome/tabs"),
+  /** 开着的外部浏览器（用户的 Chrome、Edge）和交给 Playwright 的标签页，输入框 @ 引用用；没有开着的时是空数组 */
+  externalTabs: () => request<{ browsers: ExternalBrowserTabs[] }>("GET", "/external/tabs").then((r) => r.browsers),
   /** 右侧面板：项目里一个文件夹的直接子项（path 相对项目文件夹，空是根） */
   listDir: (cwd: string, path: string) => request<{ entries: ProjectEntry[] }>("GET", `/files/list?${q({ cwd, path })}`).then((r) => r.entries),
   readFile: (cwd: string, path: string) => request<FileContent>("GET", `/files/read?${q({ cwd, path })}`),

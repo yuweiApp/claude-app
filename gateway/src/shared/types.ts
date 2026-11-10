@@ -52,6 +52,17 @@ export interface DesktopTarget {
   minimized?: boolean;
 }
 
+/** 外部浏览器（用户自己的 Chrome、Edge，经 Playwright 扩展连接），见 gateway/src/browser/external.ts */
+export type ExternalBrowserId = "chrome" | "edge";
+
+/** GET /external/tabs：开着的外部浏览器和它们交给 Playwright 的标签页（还没连上时 tabs 是空的） */
+export interface ExternalBrowserTabs {
+  id: ExternalBrowserId;
+  /** 显示的名字：Chrome、Edge */
+  name: string;
+  tabs: { title: string; url: string }[];
+}
+
 /** 会话的后台任务（Bash 后台命令、后台子代理等），见 gateway/src/agent/tasks.ts */
 export interface BackgroundTask {
   taskId: string;

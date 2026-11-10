@@ -1,20 +1,20 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { MCP_AUTO_BACKGROUND_MS } from "../config.js";
-import { ALWAYS_LOAD_META, externalBrowserEnabled, isAlwaysLoad } from "../config-file.js";
+import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
 import type { BrowserHost, TemporaryTab } from "./host.js";
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, type Repl, type ToolOutput } from "./repl.js";
 import { WorkerRepl } from "./worker-repl.js";
 
 /**
  * MCP 服务器名：工具全名是 mcp__inapp__browser_run_code 这样。inapp 指应用内（in-app）的浏览器，
- * 和外部浏览器（用户的 Chrome，chrome.ts）的 mcp__chrome__ 一眼能分开。
+ * 和外部浏览器（用户的 Chrome、Edge，external.ts）的 mcp__chrome__、mcp__edge__ 一眼能分开。
  * 不叫 browser：工具名自带 browser_ 前缀，叫 browser 就成了 mcp__browser__browser_snapshot，又长又重复
  */
 export const BROWSER_SERVER = "inapp";
 
 /**
- * 只读的工具，内置浏览器和外部 Chrome（chrome.ts）共用，不用确认（options.allowedTools）。
+ * 只读的工具，内置浏览器和外部浏览器（external.ts）共用，不用确认（options.allowedTools）。
  * browser_run_code 不在里面：它在网关进程里跑任意代码，等同于 Bash，非「完全访问权限」时走权限卡片
  */
 export const READ_TOOL_NAMES = ["browser_snapshot", "browser_take_screenshot", "browser_tabs"];
@@ -25,7 +25,7 @@ export const BROWSER_READ_TOOLS = ["browser_keep_tab", ...READ_TOOL_NAMES].map((
 const BACKGROUND_SECONDS = (Number(process.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS) || MCP_AUTO_BACKGROUND_MS) / 1000;
 
 /**
- * browser_run_code 的运行环境，两个浏览器的说明都带上（各自独立：Chrome 可能没开，内置浏览器可能不在桌面版里）。
+ * browser_run_code 的运行环境，每个浏览器的说明都带上（各自独立：外部浏览器可能没开，内置浏览器可能不在桌面版里）。
  * 原则：只交代环境、能力、限制和会发生什么，不教模型怎么做（先看什么、怎么等、什么时候用哪个工具），决策留给模型。
  * 以前写过「循环检查页面内容、没好就 waitForTimeout(5000)」这样的例子，模型照着写出等满 3 分钟的循环（判断条件是它自己补的，一直不成立）
  */
@@ -53,9 +53,6 @@ const INSTRUCTIONS = [
   "用户消息里的 @内置浏览器 指这个浏览器，@[标题](网址) 指这里的一个标签页。",
 ].join("\n");
 
-/** 开了外部浏览器（config.yml 的 externalBrowser.enabled）时补一句：另一个浏览器是什么 */
-const CHROME_NOTE = "\n另有 mcp__chrome__ 开头的工具，操作的是用户自己的 Chrome，带着用户的登录状态。";
-
 /**
  * browser_run_code 打开了新标签页或当前页跳转了，并且这个会话现在有临时标签页时附上：哪些是临时的、会怎样（事实，不教怎么做）。
  * 是不是临时的问桌面版（host.temporaryTabs）：跳转的可能是用户开的、或者已经留下的标签页，不能只看「打开了网页」
@@ -75,7 +72,7 @@ const error = (t: string) => ({ ...text(t), isError: true });
 /**
  * 每个会话在每个浏览器里一个 REPL，放在模块里而不是跟着 query() 走：
  * 会话空闲关掉子进程、下次发消息 resume 时，变量和当前标签页还在（网关重启才清空）。
- * 内置浏览器的是 WorkerRepl（每个会话一个 worker 线程），Chrome 的是主线程里的 BrowserRepl（chrome.ts）
+ * 内置浏览器的是 WorkerRepl（每个会话一个 worker 线程），外部浏览器的是主线程里的 BrowserRepl（external.ts）
  */
 const repls = new Map<string, Repl>();
 
@@ -171,7 +168,7 @@ export interface ServerOptions {
 }
 
 /**
- * 给模型用的浏览器工具，内置浏览器和外部 Chrome 共用：browser_run_code 为主（同 Codex 的 js 工具），
+ * 给模型用的浏览器工具，内置浏览器和外部浏览器共用：browser_run_code 为主（同 Codex 的 js 工具），
  * 加上读页面结构、截图、列出 / 切换标签页三个只读的，和内置浏览器的 browser_keep_tab。
  * 以前挂的是 playwright-core 自带的 Playwright MCP（二十多个工具），点击、输入、等待这些现在都写在代码里
  */
@@ -282,11 +279,14 @@ export function browserMcpServer({ name, instructions, repl, keep, temporaryTabs
   });
 }
 
-/** 给模型用的内置浏览器工具，每个会话一个 MCP 服务器；REPL 和连接按会话保留（replFor），在这个会话自己的 worker 线程里 */
-export function browserServer(host: BrowserHost, sessionId: string, resumed = false): McpSdkServerConfigWithInstance {
+/**
+ * 给模型用的内置浏览器工具，每个会话一个 MCP 服务器；REPL 和连接按会话保留（replFor），在这个会话自己的 worker 线程里。
+ * externalNote：说明里补的另外还有哪些浏览器（external.ts 的 externalNote）
+ */
+export function browserServer(host: BrowserHost, sessionId: string, resumed = false, externalNote = ""): McpSdkServerConfigWithInstance {
   return browserMcpServer({
     name: BROWSER_SERVER,
-    instructions: INSTRUCTIONS + (externalBrowserEnabled ? CHROME_NOTE : ""),
+    instructions: INSTRUCTIONS + externalNote,
     repl: replFor(`${BROWSER_SERVER}:${sessionId}`, () => new WorkerRepl(host, sessionId), resumed),
     keep: async () => {
       const tab = await host.keep(sessionId);

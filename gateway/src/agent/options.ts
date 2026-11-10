@@ -7,8 +7,8 @@ import { TERMINAL_READ_TOOLS, TERMINAL_SERVER, terminalServer } from "../termina
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { BROWSER_READ_TOOLS, BROWSER_SERVER, browserServer } from "../browser/tool.js";
 import type { BrowserHost } from "../browser/host.js";
-import { CHROME_READ_TOOLS, CHROME_SERVER, chromeServer } from "../browser/chrome.js";
-import { desktopEnabled, externalBrowserEnabled } from "../config-file.js";
+import { externalBrowsers, externalNote, externalServers } from "../browser/external.js";
+import { desktopEnabled } from "../config-file.js";
 import { DESKTOP_READ_TOOLS, DESKTOP_SERVER, desktopServer } from "../desktop/tool.js";
 import type { DesktopTarget } from "../shared/types.js";
 
@@ -39,15 +39,15 @@ export function buildOptions(launch: SessionLaunch): Options {
   // 网页上每个会话都有右侧面板的终端，按工作目录分组：项目会话按项目文件夹，普通会话各有自己的 scratch 目录
   const terminal = launch.terminals ? terminalServer(launch.terminals, launch.cwd) : null;
   // 网页版没有内置浏览器，但会话启动时不知道之后是不是在桌面版里打开，所以都挂上；桌面版没开时调用工具返回错误
-  const browser = launch.browser ? browserServer(launch.browser, launch.sessionId, launch.resume) : null;
-  // 外部浏览器（用户自己的 Chrome）：config.yml 里开了才挂，第一次调用工具时才连
-  const chrome = externalBrowserEnabled ? chromeServer(launch.sessionId, launch.resume) : null;
+  const browser = launch.browser ? browserServer(launch.browser, launch.sessionId, launch.resume, externalNote()) : null;
+  // 外部浏览器（用户自己的 Chrome、Edge）：config.yml 里开了、这台电脑上装了才挂，第一次调用工具时才连
+  const external = externalServers(launch.sessionId, launch.resume);
   // 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 里开了才挂，默认关
   const desktop = desktopEnabled ? desktopServer(launch.sessionId, launch.onDesktopTarget) : null;
   const allowedTools = [
     ...(terminal ? TERMINAL_READ_TOOLS : []),
     ...(browser ? BROWSER_READ_TOOLS : []),
-    ...(chrome ? CHROME_READ_TOOLS : []),
+    ...externalBrowsers.flatMap((b) => b.readTools),
     ...(desktop ? DESKTOP_READ_TOOLS : []),
   ];
   return {
@@ -72,7 +72,7 @@ export function buildOptions(launch: SessionLaunch): Options {
       ...enabledMcpServers(),
       ...(terminal ? { [TERMINAL_SERVER]: terminal } : {}),
       ...(browser ? { [BROWSER_SERVER]: browser } : {}),
-      ...(chrome ? { [CHROME_SERVER]: chrome } : {}),
+      ...external,
       ...(desktop ? { [DESKTOP_SERVER]: desktop } : {}),
     },
     plugins: importedPlugins(),

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, type ExternalBrowserId, type ExternalBrowserTabs } from "../api";
 import { desktop } from "../desktop";
 import { BrowserIcon, GlobeIcon, SiteIcon } from "./BrowserTab";
 import { useDismiss } from "./ComposerPickers";
@@ -7,7 +7,7 @@ import { useDismiss } from "./ComposerPickers";
 interface Tab {
   title: string;
   url: string;
-  /** 网页的图标：内置浏览器的由桌面版给；Chrome 的拿不到，用网站根目录的 /favicon.ico 试，加载失败时显示地球 */
+  /** 网页的图标：内置浏览器的由桌面版给；外部浏览器的拿不到，用网站根目录的 /favicon.ico 试，加载失败时显示地球 */
   favicon?: string;
 }
 
@@ -21,66 +21,99 @@ function rootFavicon(url: string): string | undefined {
   }
 }
 
+/** 折叠起来的组（"inapp"、"chrome"、"edge"），存在 localStorage，下次打开还是折叠的 */
+const COLLAPSED_KEY = "tab-picker-collapsed";
+
+function readCollapsed(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]") as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCollapsed(groups: string[]) {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(groups));
+  } catch {
+    // 存不了（隐私模式等）就只在这次有效
+  }
+}
+
 interface Props {
   /** 桌面版内置浏览器里这个会话的标签页；网页版是空的 */
   inapp: Tab[];
-  /** 选中一个标签页：chrome 时是外部浏览器（用户的 Chrome）的 */
-  onPick: (tab: Tab, chrome: boolean) => void;
-  /** 选中浏览器本身（每组第一行）：chrome 时是外部浏览器 */
-  onPickBrowser: (chrome: boolean) => void;
+  /** 选中一个标签页：source 是外部浏览器（用户的 Chrome、Edge），内置浏览器的不传 */
+  onPick: (tab: Tab, source?: ExternalBrowserId) => void;
+  /** 选中浏览器本身（每组第一行）：source 同上 */
+  onPickBrowser: (source?: ExternalBrowserId) => void;
 }
 
 /**
  * 输入框上面的「浏览器」：和「技能」「插件」一样点开搜索、选择，选中后插在输入框的光标处。
- * 分两组：内置浏览器（只有桌面版）、Chrome（网关开了外部浏览器时；还没连上时是空的，不会为了列标签页去连）。两组都没有就不显示按钮。
- * 每组第一行是浏览器本身（写成 @内置浏览器、@Chrome，指定用哪个浏览器），下面是它的标签页（@[标题](网址)、@chrome[标题](网址)）
+ * 分组：内置浏览器（只有桌面版），再是每个外部浏览器（Chrome、Edge：网关开了外部浏览器、网关那台电脑上装了的；
+ * 还没连上时是空的，不会为了列标签页去连）。一组都没有就不显示按钮。
+ * 每组第一行是浏览器本身（写成 @内置浏览器、@Chrome、@Edge，指定用哪个浏览器），下面是它的标签页（@[标题](网址)、@chrome[标题](网址)、@edge[标题](网址)）。
+ * 标签页可能很多，每组可以折叠（第一行右边的箭头），折叠状态记在 localStorage；搜索时不管折没折叠，都列出匹配的
  */
 export function TabPicker({ inapp, onPick, onPickBrowser }: Props) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [chromeOn, setChromeOn] = useState(false);
-  const [chromeTabs, setChromeTabs] = useState<Tab[] | null>(null);
+  /** 开着的外部浏览器：启动时问一次；打开菜单时再取一次，带上最新的标签页 */
+  const [external, setExternal] = useState<ExternalBrowserTabs[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [collapsed, setCollapsed] = useState(readCollapsed);
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   useDismiss(ref, open, () => setOpen(false));
 
-  // 网关开没开外部浏览器（config.yml 的 externalBrowser.enabled），启动时问一次
   useEffect(() => {
-    api.chromeTabs().then((r) => setChromeOn(r.enabled), () => undefined);
+    api.externalTabs().then(setExternal, () => undefined);
   }, []);
-  // 每次打开时取一次 Chrome 的标签页（AI 可能刚开了新的）
+  // 每次打开时取一次外部浏览器的标签页（AI 可能刚开了新的）
   useEffect(() => {
     if (!open) {
       setSearch("");
-      setChromeTabs(null);
+      setLoaded(false);
       return;
     }
     inputRef.current?.focus();
-    if (!chromeOn) return;
     let stale = false;
-    api.chromeTabs().then(
-      (r) => !stale && setChromeTabs(r.tabs),
-      () => !stale && setChromeTabs([]),
+    api.externalTabs().then(
+      (browsers) => {
+        if (stale) return;
+        setExternal(browsers);
+        setLoaded(true);
+      },
+      () => !stale && setLoaded(true),
     );
     return () => {
       stale = true;
     };
-  }, [open, chromeOn]);
+  }, [open]);
 
   const hasInapp = !!desktop?.browser;
-  if (!hasInapp && !chromeOn) return null;
+  if (!hasInapp && !external.length) return null;
 
   const keyword = search.trim().toLowerCase();
   const filter = (tabs: Tab[]) =>
     tabs.filter((t) => t.url && t.url !== "about:blank" && (!keyword || `${t.title} ${t.url}`.toLowerCase().includes(keyword)));
-  const pick = (tab: Tab, chrome: boolean) => {
+  const pick = (tab: Tab, source?: ExternalBrowserId) => {
     setOpen(false);
-    onPick(tab, chrome);
+    onPick(tab, source);
   };
-  const pickBrowser = (chrome: boolean) => {
+  const pickBrowser = (source?: ExternalBrowserId) => {
     setOpen(false);
-    onPickBrowser(chrome);
+    onPickBrowser(source);
   };
+  const toggle = (group: string) =>
+    setCollapsed((prev) => {
+      const next = prev.includes(group) ? prev.filter((g) => g !== group) : [...prev, group];
+      saveCollapsed(next);
+      return next;
+    });
+  const groupState = (group: string) => ({ collapsed: !keyword && collapsed.includes(group), onToggle: () => toggle(group) });
 
   return (
     <div className="capability-picker" ref={ref}>
@@ -95,26 +128,28 @@ export function TabPicker({ inapp, onPick, onPickBrowser }: Props) {
             {hasInapp && (
               <Group
                 label="内置浏览器"
-                chrome={false}
                 hint="右侧面板"
                 tabs={filter(inapp)}
                 empty={inapp.length ? "没有匹配的标签页" : "这个会话还没有标签页"}
-                onPick={(t) => pick(t, false)}
-                onPickBrowser={() => pickBrowser(false)}
+                onPick={(t) => pick(t)}
+                onPickBrowser={() => pickBrowser()}
+                {...groupState("inapp")}
               />
             )}
-            {chromeOn && (
+            {external.map((b) => (
               <Group
-                label="Chrome"
-                chrome
-                hint="你自己的 Chrome"
-                onPickBrowser={() => pickBrowser(true)}
-                tabs={chromeTabs ? filter(chromeTabs) : []}
-                empty={chromeTabs === null ? "加载中…" : chromeTabs.length ? "没有匹配的标签页" : "还没连上，或者没有交给 AI 的标签页"}
-                onPick={(t) => pick(t, true)}
+                key={b.id}
+                label={b.name}
+                source={b.id}
+                hint={`你自己的 ${b.name}`}
+                onPickBrowser={() => pickBrowser(b.id)}
+                tabs={loaded ? filter(b.tabs) : []}
+                empty={!loaded ? "加载中…" : b.tabs.length ? "没有匹配的标签页" : "还没连上，或者没有交给 AI 的标签页"}
+                onPick={(t) => pick(t, b.id)}
                 guessIcon
+                {...groupState(b.id)}
               />
-            )}
+            ))}
           </div>
         </div>
       )}
@@ -124,7 +159,8 @@ export function TabPicker({ inapp, onPick, onPickBrowser }: Props) {
 
 interface GroupProps {
   label: string;
-  chrome: boolean;
+  /** 外部浏览器；内置浏览器不传 */
+  source?: ExternalBrowserId;
   /** 浏览器那一行右边的小字 */
   hint: string;
   tabs: Tab[];
@@ -132,19 +168,31 @@ interface GroupProps {
   onPick: (tab: Tab) => void;
   onPickBrowser: () => void;
   guessIcon?: boolean;
+  /** 折叠着：只留浏览器那一行（搜索时传 false，照样列出匹配的） */
+  collapsed: boolean;
+  onToggle: () => void;
 }
 
-function Group({ label, chrome, hint, tabs, empty, onPick, onPickBrowser, guessIcon }: GroupProps) {
+function Group({ label, source, hint, tabs, empty, onPick, onPickBrowser, guessIcon, collapsed, onToggle }: GroupProps) {
   return (
     <div className="tab-picker-group">
-      <button className="capability-item tab-picker-browser" role="menuitem" title={`引用${label}`} onClick={onPickBrowser}>
-        <span className={chrome ? "tab-picker-badge chrome" : "tab-picker-badge"}>
-          <BrowserIcon chrome={chrome} />
-        </span>
-        <span className="capability-name">{label}</span>
-        <span className="tab-picker-hint">{hint}</span>
-      </button>
-      {tabs.map((tab) => (
+      <div className="tab-picker-head">
+        <button className="capability-item tab-picker-browser" role="menuitem" title={`引用${label}`} onClick={onPickBrowser}>
+          <span className={source ? `tab-picker-badge ${source}` : "tab-picker-badge"}>
+            <BrowserIcon source={source} />
+          </span>
+          <span className="capability-name">{label}</span>
+          <span className="tab-picker-hint">{hint}</span>
+        </button>
+        {/* 折叠、展开：折叠时箭头朝右，旁边是标签页数 */}
+        <button className="tab-picker-toggle" title={collapsed ? "展开" : "折叠"} aria-expanded={!collapsed} onClick={onToggle}>
+          {collapsed && tabs.length > 0 && <span className="tab-picker-count">{tabs.length}</span>}
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3.5 2 6.5 5l-3 3" />
+          </svg>
+        </button>
+      </div>
+      {!collapsed && tabs.map((tab) => (
         <button key={tab.url} className="capability-item tab-picker-tab" role="menuitem" title={tab.url} onClick={() => onPick(tab)}>
           <span className="tab-picker-icon">
             <SiteIcon src={tab.favicon ?? (guessIcon ? rootFavicon(tab.url) : undefined)} />
@@ -153,7 +201,7 @@ function Group({ label, chrome, hint, tabs, empty, onPick, onPickBrowser, guessI
           <span className="capability-name">{tab.title || tab.url.replace(/^https?:\/\//, "")}</span>
         </button>
       ))}
-      {tabs.length === 0 && <div className="capability-empty tab-picker-empty">{empty}</div>}
+      {!collapsed && tabs.length === 0 && <div className="capability-empty tab-picker-empty">{empty}</div>}
     </div>
   );
 }

@@ -484,7 +484,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
   );
 }
 
-/** 发送前把输入框里的 @[标题]、@chrome[标题] 换成带网址的完整格式（模型按网址找标签页）；手打的、没选过的不动 */
+/** 发送前把输入框里的 @[标题]、@chrome[标题]、@edge[标题] 换成带网址的完整格式（模型按网址找标签页）；手打的、没选过的不动 */
 function expandTabs(text: string, tabs: { token: string; full: string }[]): string {
   return tabs.reduce((acc, { token, full }) => {
     const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

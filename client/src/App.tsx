@@ -616,8 +616,8 @@ function Chat({
             <CapabilityPicker kind="插件" items={capabilities?.plugins.filter((p) => !p.builtin) ?? []} onPick={(name) => composerRef.current?.mention(name)} />
             <TabPicker
               inapp={browserTabs}
-              onPick={(tab, chrome) => composerRef.current?.mentionTab(tab.title, tab.url, chrome ? "chrome" : undefined)}
-              onPickBrowser={(chrome) => composerRef.current?.mentionBrowser(chrome ? "chrome" : undefined)}
+              onPick={(tab, source) => composerRef.current?.mentionTab(tab.title, tab.url, source)}
+              onPickBrowser={(source) => composerRef.current?.mentionBrowser(source)}
             />
             <DesktopPicker
               enabled={config.desktop}
