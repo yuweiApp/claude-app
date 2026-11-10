@@ -8,10 +8,10 @@ interface Props {
   onError: (message: string) => void;
 }
 
-const POPOVER_WIDTH = 600;
+const POPOVER_WIDTH = 480;
 
 /**
- * 会话标题后面的后台任务入口：任务卡片网格，选中后在网格下方查看和复制命令、输出。
+ * 会话标题后面的后台任务入口：按运行中 / 已结束分组的任务列表，点一行在下面展开命令和输出。
  */
 export function TasksPopover({ sessionId, tasks, onError }: Props) {
   // 弹窗位置（视口坐标），null 是关着
@@ -23,29 +23,32 @@ export function TasksPopover({ sessionId, tasks, onError }: Props) {
 
   const running = tasks.filter((t) => t.status === "running").sort((a, b) => b.startedAt - a.startedAt);
   const finished = tasks.filter((t) => t.status !== "running").sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt));
-  const selectedTask = tasks.find((task) => task.taskId === selectedId);
   const selectTask = (taskId: string) => setSelectedId((current) => current === taskId ? null : taskId);
-  const closeDetails = () => {
-    ref.current?.querySelector<HTMLButtonElement>(".task-card-main[aria-expanded='true']")?.focus();
-    setSelectedId(null);
-  };
 
+  const place = () => {
+    const rect = ref.current!.getBoundingClientRect();
+    return { left: Math.max(12, Math.min(rect.left, window.innerWidth - POPOVER_WIDTH - 12)), top: rect.bottom + 6 };
+  };
   const toggle = () => {
     if (at) return setAt(null);
     setSelectedId(null);
-    const rect = ref.current!.getBoundingClientRect();
-    setAt({ left: Math.max(12, Math.min(rect.left, window.innerWidth - POPOVER_WIDTH - 12)), top: rect.bottom + 6 });
+    setAt(place());
   };
 
   useEffect(() => {
     if (!at) return;
-    const reposition = () => {
-      const rect = ref.current!.getBoundingClientRect();
-      setAt({ left: Math.max(12, Math.min(rect.left, window.innerWidth - POPOVER_WIDTH - 12)), top: rect.bottom + 6 });
-    };
+    const reposition = () => setAt(place());
     window.addEventListener("resize", reposition);
     return () => window.removeEventListener("resize", reposition);
   }, [at !== null]);
+
+  const list = (items: BackgroundTask[]) => (
+    <ul className="tasks-list">
+      {items.map((task) => (
+        <TaskItem key={task.taskId} sessionId={sessionId} task={task} selected={task.taskId === selectedId} detailsId={detailsId} onSelect={selectTask} onError={onError} />
+      ))}
+    </ul>
+  );
 
   return (
     <div className="tasks-anchor" ref={ref}>
@@ -55,42 +58,27 @@ export function TasksPopover({ sessionId, tasks, onError }: Props) {
       </button>
       {at && (
         <div className="tasks-popover" role="dialog" aria-label="后台任务" style={{ ...at, width: POPOVER_WIDTH, maxHeight: Math.max(0, Math.min(720, window.innerHeight - at.top - 12)) }}>
-          <div className="tasks-header">
-            <div className="tasks-head">
-              <div className="tasks-head-title"><ListTodoIcon /><h2>后台任务</h2></div>
-              <button className="icon-btn tasks-close" title="关闭后台任务" aria-label="关闭后台任务" onClick={() => setAt(null)}><CloseIcon /></button>
-            </div>
-            <div className="tasks-summary">
-              <span className={running.length ? "running" : undefined}><span className={`task-status-dot${running.length ? " live" : ""}`} />{running.length ? `${running.length} 个任务运行中` : "暂无运行中的任务"}</span>
-              {finished.length > 0 && <span className="tasks-finished-summary">{finished.length} 个已结束</span>}
-            </div>
+          <div className="tasks-head">
+            <h2>后台任务</h2>
+            <button className="icon-btn tasks-close" title="关闭后台任务" aria-label="关闭后台任务" onClick={() => setAt(null)}><CloseIcon /></button>
           </div>
           <div className="tasks-body">
             {tasks.length === 0 && <div className="tasks-empty"><TerminalIcon /><span>暂无后台任务</span><small>后台执行的任务会显示在这里</small></div>}
             {running.length > 0 && (
-              <section className="tasks-section running" aria-label="运行中的任务">
-                <div className="tasks-section-title"><span>运行中 <span className="tasks-count">{running.length}</span></span></div>
-                <div className="tasks-grid">
-                  {running.map((task) => (
-                    <TaskCard key={task.taskId} sessionId={sessionId} task={task} selected={task.taskId === selectedId} detailsId={detailsId} onSelect={selectTask} onError={onError} />
-                  ))}
-                </div>
+              <section className="tasks-section" aria-label="运行中的任务">
+                <div className="tasks-section-title">运行中<span className="tasks-count">{running.length}</span></div>
+                {list(running)}
               </section>
             )}
             {finished.length > 0 && (
-              <section className="tasks-section finished" aria-label="已结束的任务">
+              <section className="tasks-section" aria-label="已结束的任务">
                 <div className="tasks-section-title">
-                  <span>已结束 <span className="tasks-count">{finished.length}</span></span>
+                  已结束<span className="tasks-count">{finished.length}</span>
                   <button className="tasks-clear" title="清除已结束的任务" onClick={() => api.clearTasks(sessionId).catch((e: Error) => onError(e.message))}>清除记录</button>
                 </div>
-                <div className="tasks-grid">
-                  {finished.map((task) => (
-                    <TaskCard key={task.taskId} sessionId={sessionId} task={task} selected={task.taskId === selectedId} detailsId={detailsId} onSelect={selectTask} onError={onError} />
-                  ))}
-                </div>
+                {list(finished)}
               </section>
             )}
-            {selectedTask && <TaskDetails key={`${sessionId}:${selectedTask.taskId}`} id={detailsId} sessionId={sessionId} task={selectedTask} onClose={closeDetails} onError={onError} />}
           </div>
         </div>
       )}
@@ -98,7 +86,7 @@ export function TasksPopover({ sessionId, tasks, onError }: Props) {
   );
 }
 
-function TaskCard({ sessionId, task, selected, detailsId, onSelect, onError }: {
+function TaskItem({ sessionId, task, selected, detailsId, onSelect, onError }: {
   sessionId: string;
   task: BackgroundTask;
   selected: boolean;
@@ -109,40 +97,41 @@ function TaskCard({ sessionId, task, selected, detailsId, onSelect, onError }: {
   const running = task.status === "running";
   const now = useNow(running);
   const stop = () => api.stopTask(sessionId, task.taskId).catch((e: Error) => onError(`停止任务失败：${e.message}`));
+  const id = `${detailsId}-details`;
 
   return (
-    <article className={`task-item ${task.status}${selected ? " selected" : ""}`}>
-      <button className="task-card-main" aria-expanded={selected} aria-controls={selected ? detailsId : undefined} onClick={() => onSelect(task.taskId)} title={task.description}>
-        <span className="task-card-top">
-          <span className="task-kind" title={selected ? "已选中任务" : undefined}>{selected ? <CheckIcon /> : <TerminalIcon />}</span>
-          <span className="task-status"><span className="task-status-dot" />{taskStatus(task)}</span>
-        </span>
-        <span className="task-name">{task.description}</span>
-        <span className="task-card-footer">
-          <span className="task-time">用时 {formatDuration((task.endedAt ?? now) - task.startedAt)}</span>
-          <span className="task-card-action">{selected ? "收起详情" : "查看详情"}<ChevronIcon /></span>
-        </span>
-      </button>
-      {running && (
-        <button className="task-stop" title="停止任务" aria-label={`停止任务：${task.description}`} onClick={stop}>
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1.5" fill="currentColor" /></svg>
+    <li className={`task-item ${task.status}${selected ? " selected" : ""}`}>
+      <div className="task-row">
+        <button className="task-row-main" aria-expanded={selected} aria-controls={selected ? id : undefined} onClick={() => onSelect(task.taskId)} title={task.description}>
+          <TaskStatusIcon status={task.status} />
+          <span className="task-text">
+            <span className="task-name">{task.description}</span>
+            <span className="task-meta"><span className="task-meta-status">{taskStatus(task)}</span> · 用时 {formatDuration((task.endedAt ?? now) - task.startedAt)}</span>
+          </span>
+          <ChevronIcon />
         </button>
-      )}
-    </article>
+        {running && (
+          <button className="task-stop" title="停止任务" aria-label={`停止任务：${task.description}`} onClick={stop}>
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1.5" fill="currentColor" /></svg>
+          </button>
+        )}
+      </div>
+      {selected && <TaskDetails key={`${sessionId}:${task.taskId}`} id={id} sessionId={sessionId} task={task} onError={onError} />}
+    </li>
   );
 }
 
-function TaskDetails({ id, sessionId, task, onClose, onError }: { id: string; sessionId: string; task: BackgroundTask; onClose: () => void; onError: (message: string) => void }) {
+function TaskDetails({ id, sessionId, task, onError }: { id: string; sessionId: string; task: BackgroundTask; onError: (message: string) => void }) {
   const running = task.status === "running";
   const [output, setOutput] = useState<{ text: string; truncated: boolean } | null>(null);
   const [outputError, setOutputError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const outputRef = useRef<HTMLPreElement>(null);
   const followOutput = useRef(running);
-  const headingRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    headingRef.current?.scrollIntoView({ block: "nearest" });
+    rootRef.current?.scrollIntoView({ block: "nearest" });
   }, []);
 
   // 展开时拉输出；运行中的每 1.5 秒刷新，结束时再拉一次拿到完整输出
@@ -179,39 +168,33 @@ function TaskDetails({ id, sessionId, task, onClose, onError }: { id: string; se
   const outputPlaceholder = outputError && !output ? "输出加载失败" : task.hasOutput && !output ? "正在加载输出…" : running ? "等待任务输出…" : "任务没有输出";
 
   return (
-    <section className={`task-details-panel ${task.status}`} id={id} aria-label={`任务详情：${task.description}`}>
-      <div className="task-details-heading" ref={headingRef}>
-        <div><span className="task-details-label">任务详情</span><h3>{task.description}</h3></div>
-        <button className="icon-btn tasks-close" title="收起任务详情" aria-label="收起任务详情" onClick={onClose}><CloseIcon /></button>
-      </div>
-      <div className="task-details">
-        {task.command !== undefined && (
-          <div className="task-block command">
-            <div className="task-block-head"><span><TerminalIcon />执行命令</span><TaskCopyButton text={task.command} label="复制执行命令" onError={onError} /></div>
-            <pre className="task-command">{task.command}</pre>
-          </div>
-        )}
-        {task.code !== undefined && (
-          <div className="task-block code">
-            <div className="task-block-head"><span><CodeIcon />执行代码</span><TaskCopyButton text={task.code} label="复制执行代码" onError={onError} /></div>
-            <pre className="task-command">{task.code}</pre>
-          </div>
-        )}
-        <div className="task-block output">
-          <div className="task-block-head">
-            <span><OutputIcon />输出{running && <span className="task-output-live">实时</span>}</span>
-            <TaskCopyButton text={outputText} label="复制输出" onError={onError} />
-          </div>
-          {output?.truncated && <div className="task-output-note">仅显示最后 64 KB，复制内容为当前可见输出</div>}
-          {outputError && <div className="task-output-note task-error">输出加载失败 <button onClick={() => setReload((n) => n + 1)} title={outputError}>重试</button></div>}
-          <pre className={`task-output${!outputText ? " empty" : task.resultIsError ? " task-error" : ""}`} ref={outputRef} onScroll={() => {
-            const el = outputRef.current;
-            if (el) followOutput.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-          }}>{outputText || outputPlaceholder}</pre>
-          {!running && <div className="task-exit">{statusText(task)}</div>}
+    <div className="task-details" id={id} ref={rootRef} role="region" aria-label={`任务详情：${task.description}`}>
+      {task.command !== undefined && (
+        <div className="task-block command">
+          <div className="task-block-head"><span><TerminalIcon />执行命令</span><TaskCopyButton text={task.command} label="复制执行命令" onError={onError} /></div>
+          <pre className="task-command">{task.command}</pre>
         </div>
+      )}
+      {task.code !== undefined && (
+        <div className="task-block code">
+          <div className="task-block-head"><span><CodeIcon />执行代码</span><TaskCopyButton text={task.code} label="复制执行代码" onError={onError} /></div>
+          <pre className="task-command">{task.code}</pre>
+        </div>
+      )}
+      <div className="task-block output">
+        <div className="task-block-head">
+          <span><OutputIcon />输出{running && <span className="task-output-live">实时</span>}</span>
+          <TaskCopyButton text={outputText} label="复制输出" onError={onError} />
+        </div>
+        {output?.truncated && <div className="task-output-note">仅显示最后 64 KB，复制内容为当前可见输出</div>}
+        {outputError && <div className="task-output-note task-error">输出加载失败 <button onClick={() => setReload((n) => n + 1)} title={outputError}>重试</button></div>}
+        <pre className={`task-output${!outputText ? " empty" : task.resultIsError ? " task-error" : ""}`} ref={outputRef} onScroll={() => {
+          const el = outputRef.current;
+          if (el) followOutput.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        }}>{outputText || outputPlaceholder}</pre>
+        {!running && <div className="task-exit">{statusText(task)}</div>}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -304,6 +287,22 @@ function TerminalIcon() {
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
       <path d="m4.5 6 2 2-2 2M8.5 10h3" />
+    </svg>
+  );
+}
+
+/** 行首的状态图标：运行中转圈，完成打勾，失败打叉，停止是方块 */
+function TaskStatusIcon({ status }: { status: BackgroundTask["status"] }) {
+  return (
+    <svg className="task-status-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {status === "running" ? (
+        <><circle cx="8" cy="8" r="6" opacity="0.25" /><path className="task-spin" d="M8 2a6 6 0 0 1 6 6" /></>
+      ) : (
+        <>
+          <circle cx="8" cy="8" r="6.25" fill="currentColor" fillOpacity="0.12" stroke="none" />
+          {status === "completed" ? <path d="m5.25 8.25 1.75 1.75 3.75-3.75" /> : status === "failed" ? <path d="m6 6 4 4m0-4-4 4" /> : <rect x="6" y="6" width="4" height="4" rx="0.75" fill="currentColor" stroke="none" />}
+        </>
+      )}
     </svg>
   );
 }
