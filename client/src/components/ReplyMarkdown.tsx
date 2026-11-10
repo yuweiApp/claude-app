@@ -112,9 +112,7 @@ function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorE
   const path = files ? projectPath(files.cwd, href) : null;
   // 工作目录外的：面板里以它所在的文件夹（是文件夹时是它自己）为根打开
   const outside = files && path === null ? absolutePath(files.cwd, href) : null;
-  const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
-    // file:// 和相对路径在网页里打不开，不让它跳
-    e.preventDefault();
+  const openFile = () => {
     if (!files || (path === null && !outside)) return;
     const { cwd, open, openFolder } = files;
     const line = linkLine(href);
@@ -129,6 +127,11 @@ function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorE
       .catch(() => [t.rel])
       .then((exists) => (exists.includes(t.rel) ? t.file() : api.listDir(t.dirRoot, t.dirRel).then(t.folder, t.file)));
   };
+  const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    // file:// 和相对路径在网页里打不开，不让它跳
+    e.preventDefault();
+    openFile();
+  };
   if (path === null && !outside) {
     // 还没有工作目录（新会话页）：照原样显示文字，不像链接那样能点
     return (
@@ -137,48 +140,46 @@ function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorE
       </span>
     );
   }
+  // 右键：在右侧面板打开（同单击）、复制绝对路径（相对路径按工作目录算，去掉行号）
+  const absolute = absolutePath(files!.cwd, href);
   return (
-    <a {...rest} href={href} onClick={onClick} title={`在右侧面板打开 ${path ?? outside!.abs}`}>
-      {children}
-    </a>
+    <ContextMenu
+      items={[
+        { label: "在右侧面板打开", run: openFile },
+        ...(absolute ? [{ label: "复制路径", run: () => void navigator.clipboard.writeText(nativePath(absolute.abs)).catch(() => undefined) }] : []),
+      ]}
+    >
+      {(onContextMenu) => (
+        <a {...rest} href={href} onClick={onClick} onContextMenu={onContextMenu} title={`在右侧面板打开 ${path ?? outside!.abs}`}>
+          {children}
+        </a>
+      )}
+    </ContextMenu>
   );
 }
 
+/** 复制给用户的绝对路径：Windows 的（盘符、//server 开头）换回反斜杠，其余照旧用 / */
+function nativePath(abs: string): string {
+  return /^[a-z]:\//i.test(abs) || abs.startsWith("//") ? abs.replaceAll("/", "\\") : abs;
+}
+
 /**
- * 桌面版回复里的网址：单击在内置浏览器里开（按着 Ctrl、Shift 等点的交给系统浏览器）；
- * 右键菜单：在内置浏览器中打开、在外部浏览器中打开（window.open，外壳交给系统浏览器）、复制链接
+ * 链接的右键菜单（同系统菜单的样子，见 .context-menu）：children 拿到 onContextMenu 挂在链接上，
+ * 右键处弹出 items，贴着窗口右边、下边时往里收；点外面、按 Esc 关掉
  */
-function WebLink({ href, openUrl, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string; openUrl: (url: string) => void }) {
+function ContextMenu({ items, children }: { items: { label: string; run: () => void }[]; children: (onContextMenu: (e: MouseEvent<HTMLElement>) => void) => ReactNode }) {
   const [at, setAt] = useState<{ left: number; top: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setAt(null), []);
   useDismiss(menuRef, at !== null, close);
-  const items = [
-    { label: "在内置浏览器中打开", run: () => openUrl(href) },
-    { label: "在外部浏览器中打开", run: () => void window.open(href, "_blank", "noopener") },
-    { label: "复制链接", run: () => void navigator.clipboard.writeText(href).catch(() => undefined) },
-  ];
+  const onContextMenu = (e: MouseEvent<HTMLElement>) => {
+    e.preventDefault();
+    // 菜单宽约 200，每项约 36 高
+    setAt({ left: Math.min(e.clientX, window.innerWidth - 210), top: Math.min(e.clientY, window.innerHeight - 12 - items.length * 36) });
+  };
   return (
     <>
-      <a
-        {...rest}
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-        title={href}
-        onClick={(e) => {
-          if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
-          e.preventDefault();
-          openUrl(href);
-        }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          // 菜单约 200×110，贴着窗口右边、下边时往里收
-          setAt({ left: Math.min(e.clientX, window.innerWidth - 210), top: Math.min(e.clientY, window.innerHeight - 120) });
-        }}
-      >
-        {children}
-      </a>
+      {children(onContextMenu)}
       {at &&
         createPortal(
           <div ref={menuRef} className="menu context-menu" role="menu" style={{ left: at.left, top: at.top }}>
@@ -199,6 +200,39 @@ function WebLink({ href, openUrl, children, ...rest }: AnchorHTMLAttributes<HTML
           document.body,
         )}
     </>
+  );
+}
+
+/**
+ * 桌面版回复里的网址：单击在内置浏览器里开（按着 Ctrl、Shift 等点的交给系统浏览器）；
+ * 右键菜单：在内置浏览器中打开、在外部浏览器中打开（window.open，外壳交给系统浏览器）、复制链接
+ */
+function WebLink({ href, openUrl, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string; openUrl: (url: string) => void }) {
+  const items = [
+    { label: "在内置浏览器中打开", run: () => openUrl(href) },
+    { label: "在外部浏览器中打开", run: () => void window.open(href, "_blank", "noopener") },
+    { label: "复制链接", run: () => void navigator.clipboard.writeText(href).catch(() => undefined) },
+  ];
+  return (
+    <ContextMenu items={items}>
+      {(onContextMenu) => (
+        <a
+          {...rest}
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          title={href}
+          onClick={(e) => {
+            if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            openUrl(href);
+          }}
+          onContextMenu={onContextMenu}
+        >
+          {children}
+        </a>
+      )}
+    </ContextMenu>
   );
 }
 
