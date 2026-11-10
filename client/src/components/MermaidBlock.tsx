@@ -67,6 +67,9 @@ let seq = 0;
 const rendered = new Map<string, Promise<string>>();
 const cacheKey = (code: string, dark: boolean) => `${dark ? "d" : "l"}\n${code}`;
 
+/** 已经渲染好的图：代码块重新挂上时第一帧就显示图，不先显示源码（高度一变，滚动位置会跳） */
+const done = new Map<string, string>();
+
 function renderSvg(code: string, dark: boolean): Promise<string> {
   const key = cacheKey(code, dark);
   let p = rendered.get(key);
@@ -75,6 +78,7 @@ function renderSvg(code: string, dark: boolean): Promise<string> {
       const mermaid = await loadMermaid();
       mermaid.initialize(config(dark));
       const { svg } = await mermaid.render(`mermaid-${++seq}`, code);
+      done.set(key, svg);
       return svg;
     });
     queue = p.catch(() => {});
@@ -136,7 +140,10 @@ const RENDER_DELAY_MS = 300;
  */
 export function MermaidBlock({ code }: { code: string }) {
   const dark = useSyncExternalStore(subscribeDark, isDark);
-  const [result, setResult] = useState<{ code: string; dark: boolean; svg?: string; error?: string } | null>(null);
+  const [result, setResult] = useState<{ code: string; dark: boolean; svg?: string; error?: string } | null>(() => {
+    const svg = done.get(cacheKey(code, dark));
+    return svg ? { code, dark, svg } : null;
+  });
   const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
@@ -147,7 +154,12 @@ export function MermaidBlock({ code }: { code: string }) {
         // 解析错误后面几行是源码片段和插入符，只留第一行（Parse error on line 4:）
         (err: unknown) => live && setResult({ code, dark, error: (err instanceof Error ? err.message : String(err)).split("\n")[0] }),
       );
-    // 已经渲染过的立刻显示，新的源码等一会儿
+    const svg = done.get(cacheKey(code, dark));
+    if (svg) {
+      setResult((r) => (r?.svg === svg && r.dark === dark && r.code === code ? r : { code, dark, svg }));
+      return;
+    }
+    // 正在渲染的接着等，新的源码等一会儿
     if (rendered.has(cacheKey(code, dark))) {
       void run();
       return () => {

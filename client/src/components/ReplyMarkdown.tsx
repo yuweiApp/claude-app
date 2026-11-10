@@ -1,5 +1,5 @@
 import { createContext, isValidElement, useContext, useRef, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
-import Markdown, { defaultUrlTransform } from "react-markdown";
+import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useFileExists } from "../state/fileExists";
 import { MermaidBlock } from "./MermaidBlock";
@@ -21,17 +21,23 @@ export function ReplyMarkdown({ children }: { children: string }) {
     <Markdown
       remarkPlugins={[remarkGfm, remarkKeepWindowsPaths]}
       urlTransform={urlTransform}
-      components={{
-        a: ({ node: _node, ...props }) => <ReplyLink {...props} />,
-        pre: ({ node: _node, ...props }) =>
-          codeLanguage(props.children) === "mermaid" ? <MermaidBlock code={codeText(props.children)} /> : <CodeBlock {...props} />,
-        code: ({ node: _node, ...props }) => <ReplyCode {...props} />,
-      }}
+      components={COMPONENTS}
     >
       {children}
     </Markdown>
   );
 }
+
+/**
+ * 写在模块里、不在渲染时新建：react-markdown 把这些函数当组件类型，每次渲染换一个新函数，
+ * 里面的组件就会整个卸载重挂（mermaid 图会先变回源码再出图，高度一变滚动位置就跳）
+ */
+const COMPONENTS: Components = {
+  a: ({ node: _node, ...props }) => <ReplyLink {...props} />,
+  pre: ({ node: _node, ...props }) =>
+    codeLanguage(props.children) === "mermaid" ? <MermaidBlock code={codeText(props.children)} /> : <CodeBlock {...props} />,
+  code: ({ node: _node, ...props }) => <ReplyCode {...props} />,
+};
 
 /** 在代码块（```）里：里面的 code 不当文件路径 */
 const InCodeBlock = createContext(false);
