@@ -314,7 +314,8 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
 
   private newView(): WebContentsView {
     const view = new WebContentsView({
-      webPreferences: { partition: PARTITION, backgroundThrottling: false, sandbox: true, contextIsolation: true },
+      // nodeIntegrationInSubFrames：预加载脚本（tab-preload.cts）在 iframe 里也跑；沙箱照开，网页拿不到 Node
+      webPreferences: { partition: PARTITION, backgroundThrottling: false, sandbox: true, contextIsolation: true, nodeIntegrationInSubFrames: true },
     });
     this.park!.contentView.addChildView(view);
     view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
@@ -800,6 +801,8 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
    */
   private setupSession(ses: Session): void {
     ses.setUserAgent(chromeUserAgent(ses.getUserAgent()));
+    // 屏蔽通行密钥的自动填充请求，免得一打开登录页就弹系统对话框，见 tab-preload.cts
+    ses.registerPreloadScript({ type: "frame", filePath: path.join(import.meta.dirname, "tab-preload.cjs") });
     const allowed = new Set(["clipboard-sanitized-write"]);
     ses.setPermissionRequestHandler((_wc, permission, callback) => callback(allowed.has(permission)));
     ses.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
