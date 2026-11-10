@@ -129,7 +129,6 @@ export function TabPicker({ inapp, onPick, onPickBrowser, external: enabled }: P
             {hasInapp && (
               <Group
                 label="内置浏览器"
-                hint="右侧面板"
                 tabs={filter(inapp)}
                 empty={inapp.length ? "没有匹配的标签页" : "这个会话还没有标签页"}
                 onPick={(t) => pick(t)}
@@ -142,7 +141,6 @@ export function TabPicker({ inapp, onPick, onPickBrowser, external: enabled }: P
                 key={b.id}
                 label={b.name}
                 logo={b.logo}
-                hint={`你自己的 ${b.name}`}
                 onPickBrowser={() => pickBrowser(b)}
                 tabs={loaded ? filter(b.tabs) : []}
                 empty={!loaded ? "加载中…" : b.tabs.length ? "没有匹配的标签页" : "还没连上，或者没有交给 AI 的标签页"}
@@ -162,8 +160,6 @@ interface GroupProps {
   label: string;
   /** 外部浏览器的图标；内置浏览器不传 */
   logo?: BrowserLogo;
-  /** 浏览器那一行右边的小字 */
-  hint: string;
   tabs: Tab[];
   empty: string;
   onPick: (tab: Tab) => void;
@@ -174,7 +170,7 @@ interface GroupProps {
   onToggle: () => void;
 }
 
-function Group({ label, logo, hint, tabs, empty, onPick, onPickBrowser, guessIcon, collapsed, onToggle }: GroupProps) {
+function Group({ label, logo, tabs, empty, onPick, onPickBrowser, guessIcon, collapsed, onToggle }: GroupProps) {
   return (
     <div className="tab-picker-group">
       <div className="tab-picker-head">
@@ -183,7 +179,6 @@ function Group({ label, logo, hint, tabs, empty, onPick, onPickBrowser, guessIco
             <BrowserIcon logo={logo} name={label} />
           </span>
           <span className="capability-name">{label}</span>
-          <span className="tab-picker-hint">{hint}</span>
         </button>
         {/* 折叠、展开：折叠时箭头朝右，旁边是标签页数 */}
         <button className="tab-picker-toggle" title={collapsed ? "展开" : "折叠"} aria-expanded={!collapsed} onClick={onToggle}>
