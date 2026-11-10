@@ -73,10 +73,13 @@ function splitTurns(items: Item[]): Turn[] {
     return i;
   };
   // 历史消息（getSessionMessages）里没有 result，事件流回放的 result 排在最后：按 SDK 的 user_message_uuid 挂回所属的那一轮。
-  // 后台任务开始的轮没有 user_message_uuid，事件缓冲也可能只剩最近几轮的 result：从后往前，挂到前面最近一个还没有 result 的轮
+  // 后台任务开始的轮没有 user_message_uuid，按 result 到达时最近的那条用户消息或任务通知（startUuid）找。
+  // 都找不到（事件缓冲从某一轮中间开始）：从后往前，挂到前面最近一个还没有 result 的轮
+  const startOf = (uuid: string | undefined) => (uuid ? turns.findIndex((t) => (t.user ?? t.task)?.uuid === uuid) : -1);
   let limit = turns.length;
   for (const r of results.toReversed()) {
-    let i = r.userMessageUuid ? turns.findIndex((t) => t.user?.uuid === r.userMessageUuid) : -1;
+    let i = startOf(r.userMessageUuid);
+    if (i < 0) i = startOf(r.startUuid);
     if (i >= 0) i = lastSegment(i);
     if (i < 0) i = turns.findLastIndex((t, j) => j < limit && !t.result && !turns[j + 1]?.continued);
     if (i < 0) continue;
@@ -163,14 +166,18 @@ export function Messages({ view }: { view: SessionView }) {
   );
 }
 
-/** 进行中的计时，每秒刷新；从开始显示时算起 */
-function Elapsed() {
-  const [start] = useState(Date.now);
+/**
+ * 进行中的计时，每秒刷新；从这一段开头那条消息的时间算起（重新打开会话、切回来时接着算），没有时间的从开始显示时算起。
+ * 历史里的时间是网关那边的钟，和本机差得多的（晚于现在）也从开始显示时算
+ */
+function Elapsed({ since }: { since?: number }) {
+  const [mounted] = useState(Date.now);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+  const start = since !== undefined && since <= mounted ? since : mounted;
   return <>{formatShortDuration(now - start)}</>;
 }
 
@@ -225,7 +232,7 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
             >
               {live ? (
                 <>
-                  已处理 <Elapsed />
+                  已处理 <Elapsed since={(turn.user ?? turn.task ?? turn.compact)?.at} />
                 </>
               ) : duration !== null ? (
                 `用时 ${formatShortDuration(duration)}`

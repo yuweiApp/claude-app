@@ -18,8 +18,11 @@ export type Item =
   | { kind: "user"; uuid: string; at?: number; text: string; images: string[]; attachments: AttachmentChip[]; annotations?: SentResponseAnnotation[] }
   /** messageId：模型 API 那一次响应的 id。一次响应里的多个内容块会拆成多条消息，id 相同；同一个 id 下的多个工具调用是并行的 */
   | { kind: "assistant"; uuid: string; at?: number; messageId?: string; blocks: Block[] }
-  /** userMessageUuid：SDKResultMessage.user_message_uuid，这一轮开头那条用户消息 */
-  | { kind: "result"; uuid: string; at?: number; userMessageUuid?: string; isError: boolean; text: string; durationMs: number; costUsd: number }
+  /**
+   * userMessageUuid：SDKResultMessage.user_message_uuid，这一轮开头那条用户消息；后台任务通知唤起的轮没有。
+   * startUuid：result 到达时消息列表里最近一条主线程的用户消息或后台任务通知，没有 userMessageUuid 时按它归属
+   */
+  | { kind: "result"; uuid: string; at?: number; userMessageUuid?: string; startUuid?: string; isError: boolean; text: string; durationMs: number; costUsd: number }
   | { kind: "error"; uuid: string; text: string }
   /** 本地命令的输出（setModel 等会发一条 <local-command-stdout> 的 user 消息），显示成一行灰字，不算用户消息 */
   | { kind: "notice"; uuid: string; text: string }
@@ -212,7 +215,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
       }
       // 上一轮结束后没有用户消息就又开始运行：是后台任务的通知让 Claude Code 自动开了新的一轮（实时事件里没有这条 user 消息）
       if (event.state === "running" && view.turnEnded && view.pendingTasks.length) {
-        view.pendingTasks.forEach((task) => pushItem(next, null, task));
+        view.pendingTasks.forEach((task) => pushItem(next, null, { ...task, at: Date.now() }));
         next.pendingTasks = [];
         next.turnEnded = false;
       }
@@ -304,11 +307,13 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       finishCompact(view, "failed");
       // 中断的一轮也是 error_during_execution（errors 里是 [ede_diagnostic] …），前面已经有「已中断」，不算出错
       const interrupted = view.items.at(-1)?.kind === "interrupted";
+      const start = view.items.findLast((it) => it.kind === "user" || it.kind === "task");
       pushItem(view, null, {
         kind: "result",
         uuid: message.uuid,
         at: Date.now(),
         userMessageUuid: message.user_message_uuid,
+        startUuid: start?.uuid,
         isError: message.is_error && !interrupted,
         text: message.subtype === "success" ? "" : message.errors.join("\n") || message.subtype,
         durationMs: message.duration_ms,
