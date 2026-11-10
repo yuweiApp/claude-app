@@ -17,12 +17,22 @@
           aurora: ["#7c5cff", "#a18bff", "#7c5cff", "#2dd4bf", "#60a5fa"],
         };
         var id = localStorage.getItem("skin");
+        var adj = (JSON.parse(localStorage.getItem("skin-adjust") || "{}") || {})[id] || {};
+        var img = id === "custom" && localStorage.getItem("skin-image");
         var v = skins[id];
-        if (v) {
+        if (v || img) {
           r.dataset.skin = id;
-          r.style.setProperty("--skin-accent", v[0]);
-          r.style.setProperty("--skin-accent-dark", v[1]);
-          for (var i = 2; i < v.length; i++) r.style.setProperty("--skin-c" + (i - 1), v[i]);
+          var accent = adj.accent || (v ? v[0] : "#2563eb");
+          r.style.setProperty("--skin-accent", accent);
+          r.style.setProperty("--skin-accent-dark", adj.accent || (v ? v[1] : accent));
+          if (img) {
+            r.dataset.skinBg = "image";
+            r.style.setProperty("--skin-image", 'url("' + img + '")');
+          } else if (v.length > 2) {
+            r.dataset.skinBg = "glow";
+            for (var i = 2; i < v.length; i++) r.style.setProperty("--skin-c" + (i - 1), v[i]);
+          }
+          if (typeof adj.veil === "number") r.style.setProperty("--skin-veil", adj.veil + "%");
         }
       } catch (e) {}
     </script>

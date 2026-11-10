@@ -73,53 +73,31 @@
 }
 .skin-preview-warm-canvas .skin-preview-side { background-image: var(--grain); }
 
-/* ---------- 极光：紫、青、蓝三团光晕加点阵星光铺在整个窗口底下，外框和内容区半透明透出来 ---------- */
-:root[data-skin="aurora"],
-.skin-preview-aurora {
-  --bg: #fbfaf8;
-  --frame: #efede7;
-  --border: #dedad2;
+/* ---------- 透出背景的皮肤（<html data-skin-bg>）：极光的光晕（glow）、自定义背景图（image）----------
+   背景铺在 body 上，外框和内容区半透明透出来。--skin-veil 是内容区盖在背景上的底色浓度，设置页可调（调过的写在 <html> 的 style 上） */
+:root[data-skin-bg] {
   --accent: var(--skin-accent);
   --accent-text: #fff;
   --user-bubble: color-mix(in srgb, var(--skin-accent) 14%, var(--bg));
-  --skin-glow: 58%;
   --skin-glass: 62%;
-  /* 内容区（对话、设置页）盖在光晕上的底色浓度 */
   --skin-veil: 40%;
 }
-:root[data-skin="aurora"][data-theme="dark"],
-:root[data-theme="dark"] .skin-preview-aurora {
-  --bg: #16151c;
-  --frame: #100f15;
-  --panel: #201e28;
-  --border: #302d3a;
-  --code-bg: #1f1d27;
+:root[data-skin-bg][data-theme="dark"] {
   --accent: var(--skin-accent-dark);
-  --accent-text: #15131c;
   --user-bubble: color-mix(in srgb, var(--skin-accent) 26%, var(--bg));
-  --skin-glow: 42%;
   --skin-glass: 66%;
-  --skin-veil: 45%;
 }
-:root[data-skin="aurora"] body,
-.skin-preview.skin-preview-aurora {
-  background:
-    radial-gradient(circle, color-mix(in srgb, var(--skin-c3) 55%, transparent) 0 1px, transparent 1.8px) 0 0 / 71px 71px,
-    radial-gradient(circle, color-mix(in srgb, var(--skin-c2) 45%, transparent) 0 1px, transparent 1.8px) 27px 33px / 89px 89px,
-    radial-gradient(circle at 88% 4%, color-mix(in srgb, var(--skin-c1) var(--skin-glow), transparent), transparent 42%),
-    radial-gradient(circle at 10% 12%, color-mix(in srgb, var(--skin-c2) calc(var(--skin-glow) * 0.8), transparent), transparent 36%),
-    radial-gradient(circle at 68% 100%, color-mix(in srgb, var(--skin-c3) calc(var(--skin-glow) * 0.8), transparent), transparent 46%),
-    var(--bg);
-}
-:root[data-skin="aurora"] body { background-attachment: fixed; }
-:root[data-skin="aurora"] {
-  /* 外框（标题栏、图标栏、侧边栏）各自铺半透明的外框色，.app 本身透明，内容区底下直接是光晕 */
+:root[data-skin-bg="image"] { --skin-veil: 70%; }
+:root[data-skin-bg] body { background-attachment: fixed; }
+:root[data-skin-bg="image"] body { background: var(--skin-image) center / cover no-repeat fixed, var(--bg); }
+:root[data-skin-bg] {
+  /* 外框（标题栏、图标栏、侧边栏）各自铺半透明的外框色，.app 本身透明，内容区底下直接是背景 */
   & .app { background: transparent; }
   & :is(.titlebar, .app-rail, .sidebar) { background: color-mix(in srgb, color-mix(in srgb, var(--skin-accent) 6%, var(--frame)) var(--skin-glass), transparent); }
   /* 侧边栏顶部一行吸顶，底下滚过的会话要遮住：不另铺底色（会和侧边栏的半透明叠成一条深色），改成模糊 */
   & .sidebar-top { background: transparent; backdrop-filter: blur(18px); }
   & :is(main, .settings) { background: color-mix(in srgb, var(--bg) var(--skin-veil), transparent); }
-  & :is(.side-panel, .file-tree) { background: color-mix(in srgb, var(--bg) calc(var(--skin-veil) + 30%), transparent); }
+  & :is(.side-panel, .file-tree) { background: color-mix(in srgb, var(--bg) min(var(--skin-veil) + 30%, 100%), transparent); }
   & .settings-nav { background: transparent; }
   & :is(.sidebar, main, .settings, .sidebar-resizer + main, .sidebar-resizer + .settings, .app-rail + main, .app-rail + .settings) {
     border-color: color-mix(in srgb, var(--skin-accent) 18%, var(--divider));
@@ -149,6 +127,40 @@
   & .settings-nav-item.active { background: color-mix(in srgb, var(--skin-accent) 18%, transparent); }
 }
 
+/* ---------- 极光：紫、青、蓝三团光晕加点阵星光 ---------- */
+:root[data-skin="aurora"],
+.skin-preview-aurora {
+  --skin-glow: 58%;
+}
+.skin-preview-aurora {
+  --bg: #fbfaf8;
+  --frame: #efede7;
+  --border: #dedad2;
+  --accent: var(--skin-accent);
+}
+:root[data-skin="aurora"][data-theme="dark"],
+:root[data-theme="dark"] .skin-preview-aurora {
+  --bg: #16151c;
+  --frame: #100f15;
+  --panel: #201e28;
+  --border: #302d3a;
+  --code-bg: #1f1d27;
+  --accent: var(--skin-accent-dark);
+  --accent-text: #15131c;
+  --skin-glow: 42%;
+}
+:root[data-skin="aurora"] body,
+.skin-preview.skin-preview-aurora {
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--skin-c3) 55%, transparent) 0 1px, transparent 1.8px) 0 0 / 71px 71px,
+    radial-gradient(circle, color-mix(in srgb, var(--skin-c2) 45%, transparent) 0 1px, transparent 1.8px) 27px 33px / 89px 89px,
+    radial-gradient(circle at 88% 4%, color-mix(in srgb, var(--skin-c1) var(--skin-glow), transparent), transparent 42%),
+    radial-gradient(circle at 10% 12%, color-mix(in srgb, var(--skin-c2) calc(var(--skin-glow) * 0.8), transparent), transparent 36%),
+    radial-gradient(circle at 68% 100%, color-mix(in srgb, var(--skin-c3) calc(var(--skin-glow) * 0.8), transparent), transparent 46%),
+    var(--bg);
+}
+:root[data-skin="aurora"] body { background-attachment: fixed; }
+
 /* ---------- 设置页「外观」的皮肤卡片 ---------- */
 .skin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
 .skin-card {
@@ -174,3 +186,13 @@
 .skin-card-name { display: flex; align-items: center; gap: 6px; padding: 0 2px; font-size: 14px; font-weight: 600; }
 .skin-check { margin-left: auto; color: var(--accent); }
 .skin-card-desc { padding: 0 2px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+/* 自定义背景的预览：没上传时是一块「选择图片」 */
+.skin-preview.skin-preview-custom {
+  display: grid; place-items: center; background: var(--panel) center / cover no-repeat; color: var(--muted); font-size: 12px;
+}
+
+/* 「调整」一节：按钮、取色、遮罩滑块 */
+.appearance-row-actions { flex: none; display: flex; align-items: center; gap: 8px; }
+.appearance-error { color: var(--err); }
+.appearance-color { width: 40px; height: 28px; padding: 0 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); cursor: pointer; }
+.appearance-range { flex: none; width: 180px; accent-color: var(--accent); }
