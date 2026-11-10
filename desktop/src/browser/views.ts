@@ -144,13 +144,35 @@ function originOf(url: string): string {
 const MAX_FAVICON_BYTES = 2 * 1024 * 1024;
 
 /** 用内置浏览器的会话请求图标（带着 Cookie）：跨域的图标（GitHub 的在 githubassets.com）在网页里请求会被跨域限制挡住，所以先用这个 */
+/**
+ * 取下来的内容是不是图标：content-type 是图片的直接用；不是的（苹果的 favicon.ico 是 application/octet-stream）按文件头认出类型，认不出不用
+ */
+function iconOf(contentType: string, bytes: Buffer): { type: string; bytes: Buffer } | null {
+  if (bytes.length === 0 || bytes.length > MAX_FAVICON_BYTES) return null;
+  const type = contentType.split(";")[0]!.trim().toLowerCase();
+  if (type.startsWith("image/")) return { type, bytes };
+  const sniffed = sniffImage(bytes);
+  return sniffed ? { type: sniffed, bytes } : null;
+}
+
+function sniffImage(b: Buffer): string | null {
+  const starts = (...sig: number[]) => sig.every((v, i) => b[i] === v);
+  if (starts(0x00, 0x00, 0x01, 0x00)) return "image/x-icon";
+  if (starts(0x89, 0x50, 0x4e, 0x47)) return "image/png";
+  if (starts(0x47, 0x49, 0x46, 0x38)) return "image/gif";
+  if (starts(0xff, 0xd8, 0xff)) return "image/jpeg";
+  if (starts(0x52, 0x49, 0x46, 0x46) && b.toString("latin1", 8, 12) === "WEBP") return "image/webp";
+  if (starts(0x42, 0x4d)) return "image/bmp";
+  // SVG：开头（去掉 BOM、空白、<?xml …?>、注释）是 <svg
+  if (/^(?:\uFEFF)?\s*(?:<\?xml[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE svg[^>]*>\s*)?<svg[\s>]/i.test(b.toString("utf8", 0, 1024))) return "image/svg+xml";
+  return null;
+}
+
 async function fetchInSession(url: string): Promise<{ type: string; bytes: Buffer } | null> {
   try {
     const res = await session.fromPartition(PARTITION).fetch(url, { signal: AbortSignal.timeout(8000) });
-    const type = res.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
-    if (!res.ok || !type.startsWith("image/")) return null;
-    const bytes = Buffer.from(await res.arrayBuffer());
-    return bytes.length > 0 && bytes.length <= MAX_FAVICON_BYTES ? { type, bytes } : null;
+    if (!res.ok) return null;
+    return iconOf(res.headers.get("content-type") ?? "", Buffer.from(await res.arrayBuffer()));
   } catch {
     return null;
   }
@@ -163,8 +185,8 @@ async function fetchInSession(url: string): Promise<{ type: string; bytes: Buffe
 async function fetchInPage(url: string, wc: WebContents): Promise<{ type: string; bytes: Buffer } | null> {
   if (wc.isDestroyed()) return null;
   const script = `fetch(${JSON.stringify(url)}, { credentials: "include" }).then(async (r) => {
-    const type = (r.headers.get("content-type") || "").split(";")[0].trim();
-    if (!r.ok || !type.startsWith("image/")) return null;
+    if (!r.ok) return null;
+    const type = r.headers.get("content-type") || "";
     const b = new Uint8Array(await r.arrayBuffer());
     if (!b.length || b.length > ${MAX_FAVICON_BYTES}) return null;
     let s = "";
@@ -173,7 +195,7 @@ async function fetchInPage(url: string, wc: WebContents): Promise<{ type: string
   }).catch(() => null)`;
   try {
     const result = (await wc.executeJavaScript(script)) as [string, string] | null;
-    return result ? { type: result[0], bytes: Buffer.from(result[1], "base64") } : null;
+    return result ? iconOf(result[0], Buffer.from(result[1], "base64")) : null;
   } catch {
     return null;
   }
