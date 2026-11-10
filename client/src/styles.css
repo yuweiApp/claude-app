@@ -917,16 +917,54 @@ main {
 .send-btn:hover { background: var(--text); }
 .send-btn:hover:not(:disabled) { opacity: 0.85; }
 .send-btn:disabled { opacity: 0.35; }
-/* 运行中的停止按钮：外面一圈强调色的弧线在转 */
-.send-stop { position: relative; }
+/* 运行中的停止按钮，和图标的设计语言一致（上浅下深的彩色底、上沿一道高光、里面一个图形）：
+   - 底：强调色的渐变，表面一道光泽缓缓扫过；
+   - 中间：方块一边转一边变成圆角更大的菱形再变回来（转 90° 正好回到原样，循环连贯），颜色是强调色配套的前景色；
+   - 外圈：三色（强调色和色相前后各挪 45° 的两色）的弧线在转，四周光晕一呼一吸，一道淡淡的波纹往外扩散。
+   颜色都从 --accent 来，跟着皮肤变 */
+@property --stop-sheen { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.send-stop {
+  --stop-c1: var(--accent);
+  --stop-c2: oklch(from var(--accent) l c calc(h + 45));
+  --stop-c3: oklch(from var(--accent) l c calc(h - 45));
+  --stop-face:
+    conic-gradient(from var(--stop-sheen), transparent 0 55%, rgb(255 255 255 / 0.32) 72%, transparent 88%),
+    linear-gradient(180deg, oklch(from var(--accent) calc(l + 0.1) c h), oklch(from var(--accent) calc(l - 0.12) c h));
+  --stop-bevel: inset 0 1px 0 rgb(255 255 255 / 0.35), inset 0 -1px 2px rgb(0 0 0 / 0.2);
+  position: relative; color: var(--accent-text); background: var(--stop-face);
+  animation: send-stop-glow 2s ease-in-out infinite, send-stop-sheen 3.2s linear infinite;
+}
+.send-stop:hover { background: var(--stop-face); }
+.send-stop::before, .send-stop::after { content: ""; position: absolute; border-radius: 50%; pointer-events: none; }
 .send-stop::before {
-  content: ""; position: absolute; inset: -4px; border-radius: 50%; pointer-events: none;
-  background: conic-gradient(from 0deg, transparent 0 20%, color-mix(in srgb, var(--accent) 45%, transparent) 50%, var(--accent));
+  inset: -4px;
+  background: conic-gradient(from 0deg, transparent 0 15%, var(--stop-c3) 40%, var(--stop-c2) 70%, var(--stop-c1));
   mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
-  animation: send-stop-spin 1s linear infinite;
+  animation: send-stop-spin 1.2s linear infinite;
+}
+.send-stop::after { inset: 0; border: 1px solid var(--stop-c1); animation: send-stop-ripple 2s ease-out infinite; }
+.stop-core {
+  width: 11px; height: 11px; border-radius: 3px; background: currentColor;
+  box-shadow: 0 0 6px color-mix(in srgb, currentColor 55%, transparent);
+  animation: stop-core-morph 2.4s ease-in-out infinite;
 }
 @keyframes send-stop-spin { to { transform: rotate(1turn); } }
-@media (prefers-reduced-motion: reduce) { .send-stop::before { animation: none; } }
+@keyframes send-stop-sheen { to { --stop-sheen: 1turn; } }
+@keyframes send-stop-glow {
+  0%, 100% { box-shadow: var(--stop-bevel), 0 0 6px 0 color-mix(in srgb, var(--stop-c1) 35%, transparent); }
+  50% { box-shadow: var(--stop-bevel), 0 0 16px 3px color-mix(in srgb, var(--stop-c2) 55%, transparent); }
+}
+@keyframes send-stop-ripple { from { opacity: 0.45; transform: scale(1); } to { opacity: 0; transform: scale(1.8); } }
+@keyframes stop-core-morph {
+  0% { transform: rotate(0deg) scale(1); border-radius: 3px; }
+  50% { transform: rotate(45deg) scale(0.8); border-radius: 5.5px 2px; }
+  100% { transform: rotate(90deg) scale(1); border-radius: 3px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .send-stop, .send-stop::before, .stop-core { animation: none; }
+  .send-stop { box-shadow: var(--stop-bevel); }
+  .send-stop::after { display: none; }
+}
 .spacer { flex: 1; }
 
 /* 新会话输入框上面一栏（同 codex-app-server 的 .new-chat-bar / .new-chat-chip） */
@@ -1426,6 +1464,26 @@ svg.ic-mcp { color: var(--ic-mcp); }
 .ios-icon-orange { background: linear-gradient(180deg, #ffad55, #f2780c); }
 /* 首页、设置的图形和 iOS 一样几乎撑满方块 */
 .ios-icon-gray svg, .ios-icon-orange svg { width: 78%; height: 78%; }
+/* 有会话在运行时的首页图标：外圈一道暖色流光绕着转，橙色光晕一呼一吸，房子轻轻上下浮动 */
+@property --home-spin { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.rail-home.running .ios-icon { position: relative; animation: home-glow 2s ease-in-out infinite; }
+.rail-home.running .ios-icon::before {
+  content: ""; position: absolute; inset: -3px; padding: 2px; border-radius: 9px; pointer-events: none;
+  background: conic-gradient(from var(--home-spin), transparent 0 25%, #ff4f8b 50%, #ff9a3c 78%, #ffe7a3);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: home-spin 1.6s linear infinite;
+}
+.rail-home.running .ios-icon svg { animation: home-bob 2s ease-in-out infinite; }
+@keyframes home-spin { to { --home-spin: 1turn; } }
+@keyframes home-glow {
+  0%, 100% { box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 0 4px rgb(255 140 50 / 0.35); }
+  50% { box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 0 14px 2px rgb(255 110 70 / 0.6); }
+}
+@keyframes home-bob { 50% { transform: translateY(-1.5px) scale(1.05); } }
+@media (prefers-reduced-motion: reduce) {
+  .rail-home.running .ios-icon, .rail-home.running .ios-icon::before, .rail-home.running .ios-icon svg { animation: none; }
+}
 .ios-icon-blue { background: linear-gradient(180deg, #3d9bff, #0a6cf0); }
 .ios-icon-purple { background: linear-gradient(180deg, #c77df5, #9b45d6); }
 .ios-icon-pink { background: linear-gradient(180deg, #ff5a7e, #f0244f); }

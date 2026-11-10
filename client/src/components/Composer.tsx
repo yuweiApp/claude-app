@@ -461,9 +461,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
         {right}
         {running && !text.trim() && ready.length === 0 && !hasNotes ? (
           <button className="send-btn send-stop" onClick={onInterrupt} title="停止" aria-label="停止">
-            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-              <rect width="12" height="12" rx="2" fill="currentColor" />
-            </svg>
+            <span className="stop-core" aria-hidden="true" />
           </button>
         ) : onContinue && !running && !text.trim() && files.length === 0 && !hasNotes ? (
           <button className="send-btn" disabled={sending} onClick={onContinue} title="继续" aria-label="继续">

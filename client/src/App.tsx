@@ -66,6 +66,8 @@ export function App() {
     showPanel(false);
   };
   const current = sessions.find((s) => s.sessionId === currentId);
+  /** 有会话在运行时，图标栏的首页图标带动效 */
+  const anyRunning = sessions.some((s) => s.state === "running");
   // 会话标题和工作目录，显示在对话上方那一行（右边是会话栏按钮）；新会话页没有。
   // 项目会话显示项目文件夹名，悬停看完整路径；普通会话（侧栏「会话」里的）的 scratch-… 目录是网关建的，不显示
   const title = currentId ? (current ? sessionTitle(current) : "新会话") : null;
@@ -191,9 +193,9 @@ export function App() {
         {/* 最左边的功能图标栏（同 codex-app-server 的 .sidebar-rail）：现在只有首页，之后的功能往这里加 */}
         <nav className="app-rail" aria-label="功能">
           <button
-            className={`rail-btn${settingsOpen ? "" : " active"}`}
-            title="首页"
-            aria-label="首页"
+            className={`rail-btn rail-home${settingsOpen ? "" : " active"}${anyRunning ? " running" : ""}`}
+            title={anyRunning ? "首页 · 有会话在运行" : "首页"}
+            aria-label={anyRunning ? "首页，有会话在运行" : "首页"}
             aria-current={settingsOpen ? undefined : "page"}
             onClick={() => (settingsOpen ? setSettingsOpen(false) : startNew())}
           >
