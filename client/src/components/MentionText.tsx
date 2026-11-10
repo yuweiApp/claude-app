@@ -1,6 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { BrowserIcon, GlobeIcon } from "./BrowserTab";
 import { MonitorIcon } from "./DesktopTargetFloat";
+import { FileTypeIcon, FolderTypeIcon } from "./FileTypeIcon";
 
 /** 消息开头的 /技能名（插件技能是 /插件名:技能名）；/home/x 这样的路径后面还有斜杠，不算 */
 const SKILL_PREFIX = /^\/([\w.-]+(?::[\w.-]+)?)(?=\s|$)/;
@@ -44,6 +45,32 @@ export const PATH_DRAG_TYPE = "application/x-claude-app-path";
 
 /** 插入输入框的文件引用：带空白的路径加引号 */
 export const fileMention = (path: string) => (/\s/.test(path) ? `@"${path}"` : `@${path}`);
+
+/** 文件引用（@ 后面的部分，可能带引号）拆成路径、文件名（带后缀）和是不是文件夹（以分隔符结尾） */
+export function fileRefParts(ref: string): { path: string; base: string; dir: boolean } {
+  const path = ref.replace(/^"(.*)"$/, "$1");
+  const dir = /[/\\]$/.test(path);
+  const trimmed = path.replace(/[/\\]+$/, "");
+  return { path, base: trimmed.slice(Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\")) + 1) || path, dir };
+}
+
+/** 输入框里带空白的文件引用：引号透明占位，只露出路径 */
+const quoted = (ref: string): ReactNode =>
+  ref.length > 1 && ref.startsWith('"') && ref.endsWith('"') ? (
+    <>
+      <span className="mention-tab-bracket">"</span>
+      {ref.slice(1, -1)}
+      <span className="mention-tab-bracket">"</span>
+    </>
+  ) : (
+    ref
+  );
+
+/** 文件引用的图标：按文件名（同名区分用的「 (2)」不算），文件夹用文件夹图标 */
+function FileRefIcon({ base, dir }: { base: string; dir: boolean }) {
+  const name = base.replace(/ \(\d+\)$/, "");
+  return dir ? <FolderTypeIcon open={false} name={name} /> : <FileTypeIcon name={name} />;
+}
 
 /** 当前工作目录可用的插件名、技能名，输入框和消息里据此高亮 @插件名、/技能名 */
 export const MentionNamesContext = createContext<MentionNames>({ plugins: [], skills: [] });
@@ -113,7 +140,7 @@ export function findMentions(text: string, { plugins, skills }: MentionNames, fi
 
 /**
  * 消息文字，技能名、插件、文件和标签页引用高亮；files、tabTokens 是输入框里选过的文件、标签页（见 findMentions）。
- * compact：标签页引用只显示标题（消息里）；输入框的镜像层要和输入的字一一对齐，不能省
+ * compact：标签页引用只显示标题、文件引用只显示文件名（消息里）；输入框的镜像层要和输入的字一一对齐，不能省
  */
 export function MentionText({ text, files, tabTokens, compact }: { text: string; files?: string[]; tabTokens?: string[]; compact?: boolean }) {
   const mentions = findMentions(text, useContext(MentionNamesContext), files, tabTokens);
@@ -167,6 +194,27 @@ export function MentionText({ text, files, tabTokens, compact }: { text: string;
           <span className="mention-tab-bracket">]</span>
           {rest}
         </span>,
+      );
+      pos = end;
+      continue;
+    }
+    if (kind === "file") {
+      const { path, base, dir } = fileRefParts(text.slice(start + 1, end));
+      // 消息里：图标加文件名，完整路径在悬停提示里；输入框里字不能少（和 textarea 对齐），@ 透明占位、叠文件图标
+      parts.push(
+        compact ? (
+          <span key={start} className="mention mention-tab mention-file" title={path}>
+            <FileRefIcon base={base} dir={dir} />
+            {base}
+          </span>
+        ) : (
+          <span key={start} className="mention mention-tab-input">
+            <span className="mention-tab-at">
+              @<FileRefIcon base={base} dir={dir} />
+            </span>
+            {quoted(text.slice(start + 1, end))}
+          </span>
+        ),
       );
       pos = end;
       continue;

@@ -1272,10 +1272,12 @@ main {
 .mention-tab-at { position: relative; color: transparent; }
 .mention-tab-at > svg, .mention-tab-at > .chrome-logo, .mention-tab-at > .inapp-logo { position: absolute; top: 50%; left: 50%; width: 0.95em; height: 0.95em; transform: translate(-50%, -50%); }
 .mention-tab-at > svg { color: var(--skill); }
+.mention-tab-at > .file-type-icon { position: absolute; top: 50%; left: 50%; width: 0.9em; height: 0.9em; transform: translate(-50%, -50%); }
 .mention-tab-src { color: var(--muted); }
 .mention-tab-bracket { color: transparent; }
 .mention-tab > svg { width: 13px; height: 13px; flex: none; }
 .mention-tab > .chrome-logo, .mention-tab > .inapp-logo { width: 13px; height: 13px; }
+.mention-tab > .file-type-icon { width: 14px; height: 14px; flex: none; }
 /* 外部浏览器（用户的 Chrome）的标签页引用：标题前标上 Chrome */
 .mention-tab-source { color: var(--muted); font-size: 0.9em; }
 .mention-tab-source::after { content: " ·"; }

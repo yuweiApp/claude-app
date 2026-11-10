@@ -4,7 +4,7 @@ import { AddMenu } from "./AddMenu";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { MentionMenu, type MentionOption } from "./MentionMenu";
-import { fileMention, findMentions, MentionText, browserMention, PATH_DRAG_TYPE, MentionNamesContext, tabMention, tabToken, type Mention, type MentionSource } from "./MentionText";
+import { fileMention, fileRefParts, findMentions, MentionText, browserMention, PATH_DRAG_TYPE, MentionNamesContext, tabMention, tabToken, type Mention, type MentionSource } from "./MentionText";
 
 /** 输入框下方的附件：选中后立刻上传，发送时只传 id */
 interface PendingFile {
@@ -69,7 +69,10 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
   const [picked, setPicked] = useState<string[]>([]);
   // 「浏览器」里选过的：输入框里只显示 token（@[标题]），发送时换成 full（带网址的 @[标题](网址)）
   const [pickedTabs, setPickedTabs] = useState<{ token: string; full: string }[]>([]);
-  const mentions = findMentions(text, names, picked, pickedTabs.map((t) => t.token));
+  // 右侧面板目录树拖进来的：输入框里只显示 token（@文件名，同名不同路径的加 (2)、(3)），发送时换成 full（绝对路径的引用）
+  const [pickedPaths, setPickedPaths] = useState<{ token: string; full: string }[]>([]);
+  const fileRefs = [...picked, ...pickedPaths.map((p) => p.token.slice(1))];
+  const mentions = findMentions(text, names, fileRefs, pickedTabs.map((t) => t.token));
   const highlighted = mentions.length > 0;
 
   // 光标前紧挨着的 @xxx：弹出项目里的文件候选（插件、浏览器标签页走上面的「插件」「浏览器」按钮，这里不列）；已经是整体的引用不弹，选中的文件夹接着列里面的
@@ -211,9 +214,10 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     if (!canSend) return;
     setSending(true);
     try {
-      await onSend(expandTabs(text.trim(), pickedTabs), ready.map((f) => f.attachment!.id));
+      await onSend(expandPaths(expandTabs(text.trim(), pickedTabs), pickedPaths), ready.map((f) => f.attachment!.id));
       setText("");
       setPicked([]);
+      setPickedPaths([]);
       setPickedTabs([]);
       files.forEach((f) => f.preview && URL.revokeObjectURL(f.preview));
       setFiles([]);
@@ -311,8 +315,14 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     setDragging(false);
     const path = e.dataTransfer.getData(PATH_DRAG_TYPE);
     if (path) {
-      setPicked((prev) => (prev.includes(path) ? prev : [...prev, path]));
-      insertAtCaret(fileMention(path));
+      const { base, dir } = fileRefParts(path);
+      const full = fileMention(path);
+      const tokenOf = (label: string) => fileMention(dir ? `${label}/` : label);
+      let label = base;
+      for (let n = 2; pickedPaths.some((p) => p.token === tokenOf(label) && p.full !== full); n++) label = `${base} (${n})`;
+      const token = tokenOf(label);
+      setPickedPaths((prev) => (prev.some((p) => p.token === token) ? prev : [...prev, { token, full }]));
+      insertAtCaret(token);
       return;
     }
     addFiles([...e.dataTransfer.files]);
@@ -409,7 +419,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
         />
         {highlighted && (
           <div ref={mirrorRef} className="composer-mirror" aria-hidden="true">
-            <MentionText text={text} files={picked} tabTokens={pickedTabs.map((t) => t.token)} />
+            <MentionText text={text} files={fileRefs} tabTokens={pickedTabs.map((t) => t.token)} />
             {/* 结尾的换行在 div 里不占一行，在 textarea 里占 */}
             {"\n"}
           </div>
@@ -460,6 +470,14 @@ function expandTabs(text: string, tabs: { token: string; full: string }[]): stri
   return tabs.reduce((acc, { token, full }) => {
     const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return acc.replace(new RegExp(`(^|\\s)${escaped}(?!\\()`, "g"), (_m, space: string) => space + full);
+  }, text);
+}
+
+/** 发送前把拖进来的文件的 token（@文件名）换回绝对路径的引用 */
+function expandPaths(text: string, paths: { token: string; full: string }[]): string {
+  return paths.reduce((acc, { token, full }) => {
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return acc.replace(new RegExp(`(^|\\s)${escaped}(?=\\s|$)`, "g"), (_m, space: string) => space + full);
   }, text);
 }
 
