@@ -356,12 +356,15 @@ export class BrowserRepl implements Repl {
   /**
    * @param tabEvents 内置浏览器：取走桌面版发来的标签页变化（带着是谁做的，见 host.ts 的 TabEvent）；
    *   Chrome 没有，在这里自己记（Playwright 的事件里看不出是用户还是网页，只能分出是不是 AI）
-   * @param downloads 内置浏览器：这个会话的下载和进度，代码里的全局函数 downloads() 就是它；Chrome 没有
+   * @param downloads 内置浏览器：这个会话的下载和进度，代码里的全局函数 downloads() 就是它；外部浏览器没有
+   * @param saveFile 外部浏览器：把数据写进这个会话的工作目录，代码里的全局函数 saveFile() 就是它（external.ts）。
+   *   扩展连接的浏览器上 Playwright 的 download 事件不会触发，下载的文件在哪也不知道，代码拿到数据后自己存
    */
   constructor(
     private readonly getContext: () => Promise<BrowserContext>,
     private readonly tabEvents?: () => TabEvent[],
     downloads?: () => Promise<DownloadInfo[]>,
+    saveFile?: (name: string, data: unknown) => Promise<string>,
   ) {
     const capture =
       (prefix: string) =>
@@ -395,6 +398,7 @@ export class BrowserRepl implements Repl {
         sink.images.push({ data: base64, mimeType });
       },
       ...(downloads ? { downloads } : {}),
+      ...(saveFile ? { saveFile } : {}),
     });
     Object.defineProperty(this.sandbox, "page", {
       enumerable: true,

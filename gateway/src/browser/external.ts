@@ -1,4 +1,6 @@
+import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import path from "node:path";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import type { Browser, BrowserContext } from "playwright-core";
 import { config } from "../config.js";
@@ -137,7 +139,40 @@ export function externalNote(active: ExternalBrowserInfo[]): string {
   return active.map((b) => `\n另有 mcp__${b.id}__ 开头的工具，操作的是用户自己的 ${b.name}，带着用户的登录状态。`).join("");
 }
 
-function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[]): string {
+/**
+ * browser_run_code 里的全局函数 saveFile(name, data)：把数据写进会话的工作目录，返回绝对路径。
+ * 经扩展连接的浏览器上 Playwright 的 download 事件不会触发（中转把 Browser.setDownloadBehavior 当空操作，浏览器不发下载事件），
+ * 下载的文件存到浏览器自己的下载位置，代码拿不到；拿到数据（context.request.get、page.evaluate 里 fetch）后用它存。
+ * name 是相对工作目录的路径，不能跑到外面；同名时文件名后加 (1)、(2)，同内置浏览器的下载。
+ * data：Buffer、Uint8Array 等 TypedArray、ArrayBuffer，或字符串（按 UTF-8 写）。vm 里建的对象不是这边的 Uint8Array，按 ArrayBuffer.isView 认
+ */
+function fileSaver(cwd: string) {
+  return async (name: string, data: unknown): Promise<string> => {
+    if (typeof name !== "string" || !name.trim()) throw new Error("saveFile 的第一个参数是文件名（相对工作目录的路径）");
+    const target = path.resolve(cwd, name);
+    const rel = path.relative(cwd, target);
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) throw new Error(`saveFile 只能写进工作目录 ${cwd} 下面，name 要是相对路径`);
+    let bytes: Uint8Array;
+    if (typeof data === "string") bytes = Buffer.from(data, "utf8");
+    else if (ArrayBuffer.isView(data)) bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    else if (Object.prototype.toString.call(data) === "[object ArrayBuffer]") bytes = new Uint8Array(data as ArrayBuffer);
+    else throw new Error("saveFile 的数据要是 Buffer、Uint8Array、ArrayBuffer 或字符串");
+    await mkdir(path.dirname(target), { recursive: true });
+    const ext = path.extname(target);
+    const stem = target.slice(0, target.length - ext.length);
+    for (let n = 0; ; n++) {
+      const file = n ? `${stem} (${n})${ext}` : target;
+      try {
+        await writeFile(file, bytes, { flag: "wx" });
+        return file;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+    }
+  };
+}
+
+function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[], cwd: string): string {
   const others = active.filter((o) => o.id !== b.id);
   return [
     `用户自己的 ${b.name}：经 Playwright 扩展连接，带着用户的登录状态和 Cookie；右侧面板里的内置浏览器是另一组工具（mcp__inapp__）` +
@@ -149,6 +184,9 @@ function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[]): st
     `第一次调用时，${b.name} 会打开扩展的连接页，用户选好标签页、点允许之后工具才返回；扩展没装、连接失败时工具返回错误。`,
     RUNTIME_FACTS,
     "标签页：通过这里开的标签页不会自动关闭。标签页被新开、关闭时，下一次工具结果里会列出变化，只能分出是不是你做的（扩展不提供是用户还是网页）。",
+    `下载：网页里的下载（包括脚本触发的）由 ${b.name} 自己处理，按用户在浏览器里的设置保存（默认是系统的「下载」文件夹，设了下载前询问时会弹出另存为对话框），同名时浏览器自己在文件名后加 (1)；` +
+      "Playwright 的 download 事件不会触发，page.waitForEvent('download') 一直等到超时，也拿不到文件存在哪。" +
+      `全局函数 await saveFile(name, data) 把数据写进这个会话的工作目录（${cwd}）：name 是相对这个目录的路径，data 是 Buffer、Uint8Array、ArrayBuffer 或字符串（按 UTF-8 写），同名时文件名后加 (1)、(2)，返回写入的绝对路径。`,
     `用户消息里的 @${b.name} 指这个浏览器（用户自己的 ${b.name}），@${b.id}[标题](网址) 指这里的一个标签页。`,
   ].join("\n");
 }
@@ -157,14 +195,14 @@ function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[]): st
  * 给模型用的外部浏览器工具，每个会话每个启用着的浏览器一个 MCP 服务器，共用这个浏览器的连接；REPL 按会话保留（replFor）。
  * 和内置浏览器不同，REPL 在网关主线程里：扩展同一时间只认一个客户端，所有会话共用一条连接，没法分到各自的 worker
  */
-export function externalServers(active: ExternalBrowserInfo[], sessionId: string, resumed = false): Record<string, McpSdkServerConfigWithInstance> {
+export function externalServers(active: ExternalBrowserInfo[], sessionId: string, cwd: string, resumed = false): Record<string, McpSdkServerConfigWithInstance> {
   return Object.fromEntries(
     active.map((b) => [
       b.id,
       browserMcpServer({
         name: b.id,
-        instructions: instructions(b, active),
-        repl: replFor(`${b.id}:${sessionId}`, () => new BrowserRepl(() => bridgeOf(b).context()), resumed),
+        instructions: instructions(b, active, cwd),
+        repl: replFor(`${b.id}:${sessionId}`, () => new BrowserRepl(() => bridgeOf(b).context(), undefined, undefined, fileSaver(cwd)), resumed),
       }),
     ]),
   );
