@@ -3,7 +3,7 @@ import { z } from "zod";
 import { MCP_AUTO_BACKGROUND_MS } from "../config.js";
 import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
 import type { BrowserHost, TemporaryTab } from "./host.js";
-import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, type Repl, type ToolOutput } from "./repl.js";
+import { DATA_URL_KEEP_CHARS, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, type Repl, type ToolOutput } from "./repl.js";
 import { WorkerRepl } from "./worker-repl.js";
 
 /**
@@ -34,6 +34,7 @@ export const RUNTIME_FACTS = [
   "- 全局变量：page 是当前标签页（Playwright Page；没有标签页时是 undefined），context 是 BrowserContext（context.pages() 是全部标签页）。",
   "- 顶层的 const / let / function 在之后的调用里保留，可以重新声明。",
   "- 返回最后一个表达式的值和 console.log 的输出；emitImage(buffer) 把图片加进结果。",
+  `- 返回的文字里，数据部分超过 ${DATA_URL_KEEP_CHARS} 个字符的 data: 地址只保留类型（如 data:image/jpeg;base64,），数据换成「…（省略了 N 个字符）」；代码里拿到的值是完整的。`,
   "- 给 page 赋另一个标签页时，那个标签页切到前台；browser_snapshot、browser_take_screenshot 读的是 page 指向的标签页。",
   `- timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}；Playwright 单个动作默认 30 秒超时。`,
   `- 调用超过约 ${BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，代码继续跑，结束后结果作为通知送达；会话空闲时，这个通知会开始新的一轮。多次调用可以同时在跑，操作的是同一批标签页。`,

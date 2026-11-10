@@ -209,7 +209,28 @@ function show(value: unknown): string {
   return inspect(value, { depth: 3, maxArrayLength: 100, maxStringLength: 10_000, breakLength: 120 });
 }
 
-function truncate(text: string): string {
+/** 数据部分超过这么多字符的 data: 地址在结果里省略掉（见 elideDataUrls） */
+export const DATA_URL_KEEP_CHARS = 256;
+
+/**
+ * data: 地址：类型、参数（;base64、;charset=…），逗号后面的数据部分到引号、空白、括号为止。
+ * inspect 截断过的字符串后面跟着 `'... N more characters`（maxStringLength），一起匹配，省略的字数要算上它
+ */
+const DATA_URL = new RegExp(String.raw`data:([\w.+-]+\/[\w.+-]+)?((?:;[\w.+-]+(?:=[\w.+-]+)?)*),([^\s'"\x60<>)\]]{${DATA_URL_KEEP_CHARS},})('\.\.\. (\d+) more characters?)?`, "g");
+
+/**
+ * 长的 data: 地址只留类型，数据部分换成省略的字数：网页里内嵌的图片（搜索结果的缩略图都是这样）一张就是几千到几万个字符的 base64，
+ * 模型看不懂、还占上下文，以前取一页图片的 src 就是 4 万字符。要用图片有 emitImage、saveFile（外部浏览器）
+ */
+function elideDataUrls(text: string): string {
+  return text.replace(DATA_URL, (_m, mime: string | undefined, params: string, data: string, more: string | undefined, moreCount: string | undefined) => {
+    const omitted = data.length + (moreCount ? Number(moreCount) : 0);
+    return `data:${mime ?? ""}${params},…（省略了 ${omitted} 个字符）${more ? "'" : ""}`;
+  });
+}
+
+function truncate(raw: string): string {
+  const text = elideDataUrls(raw);
   if (text.length <= MAX_OUTPUT_CHARS) return text;
   return `${text.slice(0, MAX_OUTPUT_CHARS)}\n…（输出太长，只留了前 ${MAX_OUTPUT_CHARS} 个字符，共 ${text.length} 个）`;
 }
