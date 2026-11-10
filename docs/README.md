@@ -75,7 +75,7 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
   - 目录里地址和已有服务器相同的（插件带来的、手动添加的）显示「已添加」，免得重复；已添加但要登录的显示「登录」。
 - MCP 服务器的 OAuth 登录（`gateway/src/agent/mcp-auth.ts`）：状态是「需要认证」的服务器（设置页添加的、插件和配置文件带来的都算）在设置页有「登录」。登录整个由 Claude Code 自己做：发现授权服务器、动态注册客户端、PKCE、在 localhost 的随机端口上等回调、换令牌、存令牌（Linux / Windows 是 `$CLAUDE_CONFIG_DIR/.credentials.json` 的 `mcpOAuth`，按「服务器名称|配置的哈希」存；macOS 是钥匙串）、过期刷新。同一个配置目录下的会话共用令牌，所以登录一次，之后的新会话直接连上。
   - 网关起一个和会话同样配置的临时 query（`inspectQuery`），发 `mcp_authenticate` 控制请求拿到登录页地址给网页；query 留着等回调（端口在它的子进程里），每秒查一次 `mcpServerStatus()`，服务器变成 connected 就算成功，10 分钟没完成就结束。成功后开着的会话都 `reconnectMcpServer()`，不用等子进程重启。
-  - SDK 的 `Query` 上有 `mcpAuthenticate`、`mcpSubmitOAuthCallbackUrl`、`mcpClearAuth`，但类型定义里没写（0.3.317），网关按运行时有没有这两个方法判断，没有就报「不支持」。升级 SDK 后要重新跑一遍登录。
+  - SDK 的 `Query` 上有 `mcpAuthenticate`、`mcpSubmitOAuthCallbackUrl`、`mcpClearAuth`，但类型定义里没写（0.3.317～0.3.322 都是这样），网关按运行时有没有这两个方法判断，没有就报「不支持」。升级 SDK 后要重新跑一遍登录。
   - 断开（`POST /mcp-servers/:name/logout`）：连上的远程（HTTP / SSE）服务器在设置页有「断开」，确认后起临时 query 调 `mcpClearAuth` 清掉 Claude Code 存的令牌，再重连一次，返回清除后的状态，开着的会话也重连这个服务器。服务器的状态里看不出是不是靠登录连上的，所以远程服务器都有这个按钮；不是靠登录连上的（不要认证、令牌写在请求头里），清除后仍是已连接，网页提示「没有保存的登录信息」。
   - 网页在浏览器里打开登录页（桌面版的 `window.open` 由外壳交给系统浏览器）。浏览器和网关在同一台电脑上时，登录后跳回 localhost 由 Claude Code 收下；不在同一台电脑上时跳到打不开的 localhost 页面，对话框里可以把地址栏的网址贴回来，网关经 `mcp_oauth_callback_url` 交给 Claude Code。贴回来的回调 Claude Code 不会自己重连服务器（localhost 收到的会），网关接着调 `reconnectMcpServer()`。
   - 服务器的授权服务器不让注册客户端时（没有注册接口、或者拒绝），Claude Code 报 `mcp_client_registration_unavailable`，原因原样显示在对话框里。
