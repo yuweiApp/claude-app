@@ -897,6 +897,14 @@ main {
 .capability-avatar { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; color: #fff; font-size: 12px; font-weight: 600; }
 .capability-name { min-width: 0; overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .capability-empty { padding: 10px 8px; color: var(--muted); font-size: 13px; }
+/* 插件带的技能按插件分组：第一行是插件（整行点了折叠、展开，右边技能数和箭头，展开时朝下），下面缩进列它的技能；组之间一条分隔线 */
+.capability-group { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); }
+.capability-list > .capability-group:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.capability-group-head .capability-name { font-weight: 500; }
+.capability-group-head .capability-group-count { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.capability-group-head svg { flex: none; color: var(--muted); transition: transform 0.1s; }
+.capability-group-head[aria-expanded="true"] svg { transform: rotate(90deg); }
+.capability-nested { padding-left: 40px; }
 /* 一块浅底托盘垫在输入框后面：上边圆角，下沿压在输入框底下，和页面背景、输入框都分得开 */
 .new-chat-bar {
   display: flex; align-items: center; gap: 4px; margin: 0 max(12px, calc((100% - var(--content-width)) / 2 + 12px)) -16px; padding: 5px 6px 21px;

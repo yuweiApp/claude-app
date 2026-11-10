@@ -24,10 +24,35 @@ export function Avatar({ name }: { name: string }) {
   );
 }
 
-/** 输入框上面的「技能」「插件」：点开搜索和选择，选中后写进输入框 */
+/** 展开着的组（插件名），存在 localStorage；没存过的组默认折叠。插件的名字里没有冒号，只有技能会分组 */
+const EXPANDED_KEY = "skill-picker-expanded";
+
+function readExpanded(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(EXPANDED_KEY) ?? "[]") as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveExpanded(groups: string[]) {
+  try {
+    localStorage.setItem(EXPANDED_KEY, JSON.stringify(groups));
+  } catch {
+    // 存不了（隐私模式等）就只在这次有效
+  }
+}
+
+/**
+ * 输入框上面的「技能」「插件」：点开搜索和选择，选中后写进输入框。
+ * 插件带的技能名字是 `插件名:技能名`，按插件分组列在后面，组可以折叠（默认折叠，展开的记在 localStorage），
+ * 组里只显示冒号后面的部分；搜索时不管折没折叠，都列出匹配的
+ */
 export function CapabilityPicker({ kind, items, onPick }: Props) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState(readExpanded);
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   useDismiss(ref, open, () => setOpen(false));
@@ -38,6 +63,24 @@ export function CapabilityPicker({ kind, items, onPick }: Props) {
 
   const keyword = search.trim().toLowerCase();
   const shown = items.filter((item) => `${item.name} ${item.description ?? ""}`.toLowerCase().includes(keyword));
+  const loose = shown.filter((item) => !item.name.includes(":"));
+  const groups = new Map<string, Capability[]>();
+  for (const item of shown) {
+    const i = item.name.indexOf(":");
+    if (i < 0) continue;
+    const group = item.name.slice(0, i);
+    groups.set(group, [...(groups.get(group) ?? []), item]);
+  }
+  const pick = (name: string) => {
+    setOpen(false);
+    onPick(name);
+  };
+  const toggle = (group: string) =>
+    setExpanded((prev) => {
+      const next = prev.includes(group) ? prev.filter((g) => g !== group) : [...prev, group];
+      saveExpanded(next);
+      return next;
+    });
 
   return (
     <div className="capability-picker" ref={ref}>
@@ -49,26 +92,44 @@ export function CapabilityPicker({ kind, items, onPick }: Props) {
         <div className="menu capability-menu" role="menu">
           <input ref={inputRef} className="capability-search" value={search} placeholder={`搜索${kind}…`} onChange={(e) => setSearch(e.target.value)} />
           <div className="capability-list">
-            {shown.map((item) => (
-              <button
-                key={item.name}
-                className="capability-item"
-                role="menuitem"
-                title={item.description}
-                onClick={() => {
-                  setOpen(false);
-                  onPick(item.name);
-                }}
-              >
-                <Avatar name={item.name} />
-                <span className="capability-name">{item.name}</span>
-              </button>
+            {loose.map((item) => (
+              <Item key={item.name} item={item} label={item.name} onPick={pick} />
             ))}
+            {[...groups].map(([group, members]) => {
+              const unfolded = !!keyword || expanded.includes(group);
+              return (
+                <div key={group} className="capability-group">
+                  <button className="capability-item capability-group-head" aria-expanded={unfolded} title={unfolded ? "折叠" : "展开"} onClick={() => toggle(group)}>
+                    <Avatar name={group} />
+                    <span className="capability-name">{group}</span>
+                    <span className="capability-group-count">{members.length}</span>
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M3.5 2 6.5 5l-3 3" />
+                    </svg>
+                  </button>
+                  {unfolded && members.map((item) => <Item key={item.name} item={item} label={item.name.slice(group.length + 1)} onPick={pick} nested />)}
+                </div>
+              );
+            })}
             {shown.length === 0 && <div className="capability-empty">{items.length ? `没有匹配的${kind}` : `暂无${kind}`}</div>}
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+function Item({ item, label, onPick, nested }: { item: Capability; label: string; onPick: (name: string) => void; nested?: boolean }) {
+  return (
+    <button
+      className={nested ? "capability-item capability-nested" : "capability-item"}
+      role="menuitem"
+      title={item.description ? `${item.name}\n${item.description}` : item.name}
+      onClick={() => onPick(item.name)}
+    >
+      <Avatar name={label} />
+      <span className="capability-name">{label}</span>
+    </button>
   );
 }
 
