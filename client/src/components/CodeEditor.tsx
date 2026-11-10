@@ -325,7 +325,7 @@ function Arrow({ up = false }: { up?: boolean }) {
 const editorTheme: Extension = EditorView.theme({
   "&": { height: "100%", color: "var(--text)", backgroundColor: "transparent", fontSize: "12.5px" },
   "&.cm-focused": { outline: "none" },
-  ".cm-scroller": { fontFamily: 'ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo, Consolas, monospace', lineHeight: "1.6", overflow: "auto" },
+  ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.6", overflow: "auto" },
   ".cm-content": { padding: "8px 0 24px", caretColor: "var(--text)" },
   ".cm-line": { padding: "0 12px 0 4px" },
   ".cm-cursor": { borderLeftColor: "var(--text)" },

@@ -206,3 +206,13 @@
 .appearance-error { color: var(--err); }
 .appearance-color { width: 40px; height: 28px; padding: 0 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); cursor: pointer; }
 .appearance-range { flex: none; width: 180px; accent-color: var(--accent); }
+
+/* 「字体」一节：预览块（界面字体、对话字号一行，代码字体一行），自定义字体名的输入框 */
+.font-preview { display: flex; flex-direction: column; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.font-preview p { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.font-preview code { padding: 6px 10px; border-radius: 6px; background: var(--code-bg); font-size: 13px; overflow-x: auto; white-space: pre; }
+.appearance-input {
+  flex: none; width: 260px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text);
+  font: inherit; font-size: 13px; outline: none;
+}
+.appearance-input:focus { border-color: var(--accent); }

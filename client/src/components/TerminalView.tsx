@@ -4,6 +4,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
 import { api, type TerminalEvent } from "../api";
 import { isDark, subscribeTheme } from "../theme";
+import { monoFamily, subscribeFont } from "../font";
 
 const LIGHT: ITheme = {
   background: "#faf9f7",
@@ -54,7 +55,7 @@ export function TerminalView({ terminalId, active }: { terminalId: string; activ
   useEffect(() => {
     const host = hostRef.current!;
     const term = new Terminal({
-      fontFamily: 'ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo, Consolas, "Noto Sans Mono CJK SC", monospace',
+      fontFamily: monoFamily(),
       fontSize: 13,
       cursorBlink: true,
       scrollback: 5000,
@@ -108,9 +109,15 @@ export function TerminalView({ terminalId, active }: { terminalId: string; activ
     };
 
     const offTheme = subscribeTheme(() => (term.options.theme = isDark() ? DARK : LIGHT));
+    // 换了代码字体：字宽变了，按新字体重新算行列
+    const offFont = subscribeFont(() => {
+      term.options.fontFamily = monoFamily();
+      sync();
+    });
 
     return () => {
       offTheme();
+      offFont();
       source.close();
       ro.disconnect();
       clearTimeout(timer);
