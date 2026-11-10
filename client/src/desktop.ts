@@ -43,6 +43,8 @@ export interface BrowserTabInfo {
   kept: boolean;
   /** 网页的图标（favicon）地址 */
   favicon?: string;
+  /** 主框架没加载出来（Chromium 的错误码和名字，如 -105 ERR_NAME_NOT_RESOLVED），下一次跳转时清掉 */
+  error?: { code: number; description: string; url: string };
 }
 
 /** 地址栏的建议（浏览历史） */

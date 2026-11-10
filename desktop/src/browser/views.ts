@@ -37,6 +37,11 @@ export interface TabInfo {
    * 不用 data: 地址是因为图标可能很大（DeepSeek 的 favicon.ico 有 205 KB），标签页信息每次变化都整份推给界面。还没取到、或者网页没有图标时没有
    */
   favicon?: string;
+  /**
+   * 主框架没加载出来（did-fail-load：域名解析不了、连不上、证书错误等），界面在画面区域显示错误提示。
+   * 内置浏览器没有 Chrome 那样的错误页，不提示就是一片白。开始下一次跳转（含刷新重试）时清掉
+   */
+  error?: { code: number; description: string; url: string };
 }
 
 export interface Tab extends TabInfo {
@@ -548,6 +553,17 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
         tab.favicon = data ?? undefined;
         changed();
       });
+    });
+    // 加载失败：主框架的才算；ERR_ABORTED（-3）是停止、被新的跳转顶掉、转成下载，不算
+    wc.on("did-fail-load", (_e, code, description, url, isMainFrame) => {
+      if (!isMainFrame || code === -3) return;
+      tab.error = { code, description, url };
+      changed();
+    });
+    wc.on("did-start-navigation", (details) => {
+      if (!details.isMainFrame || details.isSameDocument || !tab.error) return;
+      tab.error = undefined;
+      changed();
     });
     for (const event of ["did-start-loading", "did-stop-loading", "did-navigate", "did-navigate-in-page", "page-title-updated"] as const) {
       wc.on(event as "did-start-loading", changed);

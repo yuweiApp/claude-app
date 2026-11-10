@@ -21,6 +21,10 @@ export function BrowserTab({ api, id, info, active }: Props) {
   const [covered, setCovered] = useState(false);
   /** 被盖住时贴在原位的网页快照 */
   const [snapshot, setSnapshot] = useState<string | null>(null);
+  /** 没加载出来：收起原生视图（它总在界面之上），画面区域显示错误提示 */
+  const failed = info?.error;
+  const failedRef = useRef(false);
+  failedRef.current = !!failed;
 
   // 没在编辑时，地址栏跟着网页的网址走
   useEffect(() => {
@@ -33,7 +37,8 @@ export function BrowserTab({ api, id, info, active }: Props) {
   }, [active, info?.url]);
 
   // 每一帧对一次位置（拖动面板、侧边栏、缩放窗口都会变），变了才告诉外壳。
-  // 被界面的菜单、对话框盖住时：先拍一张快照贴在原位，再收起视图（视图总在界面之上，不收会挡住它们）
+  // 被界面的菜单、对话框盖住时：先拍一张快照贴在原位，再收起视图（视图总在界面之上，不收会挡住它们）。
+  // 没加载出来时也收起，不拍快照（失败的网页是一片白），露出下面的错误提示
   useEffect(() => {
     if (!active) return;
     let frame = 0;
@@ -46,7 +51,8 @@ export function BrowserTab({ api, id, info, active }: Props) {
       if (el) {
         const r = el.getBoundingClientRect();
         const empty = r.width < 1 || r.height < 1;
-        const hidden = empty || isCovered(el, r);
+        const blocked = failedRef.current;
+        const hidden = empty || blocked || isCovered(el, r);
         if (hidden !== wasCovered) {
           wasCovered = hidden;
           const mine = ++seq;
@@ -57,7 +63,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
               api.hide();
               shown = false;
             };
-            if (shown && !empty) {
+            if (shown && !empty && !blocked) {
               void api.snapshot(id).then((url) => {
                 // 拍快照期间又露出来了：不用收
                 if (mine !== seq) return;
@@ -111,10 +117,22 @@ export function BrowserTab({ api, id, info, active }: Props) {
         suggest={api.suggest}
       />
       <div ref={areaRef} className="browser-area">
-        {covered && (
-          <div className="browser-covered">
-            {snapshot ? <img src={snapshot} alt="" draggable={false} /> : <span>{info?.title || info?.url || ""}</span>}
+        {failed ? (
+          <div className="browser-error" role="alert">
+            <div className="browser-error-title">无法访问此网站</div>
+            <div className="browser-error-url">{failed.url}</div>
+            <div className="browser-error-reason">{loadErrorText(failed.code)}</div>
+            <div className="browser-error-code">{failed.description || `错误码 ${failed.code}`}</div>
+            <button className="btn-small browser-error-retry" onClick={() => api.go(id, "reload")}>
+              重试
+            </button>
           </div>
+        ) : (
+          covered && (
+            <div className="browser-covered">
+              {snapshot ? <img src={snapshot} alt="" draggable={false} /> : <span>{info?.title || info?.url || ""}</span>}
+            </div>
+          )
         )}
       </div>
     </div>
@@ -261,6 +279,46 @@ function isCovered(el: HTMLElement, r: DOMRect): boolean {
       return hit !== null && !el.contains(hit);
     }),
   );
+}
+
+/** Chromium 的网络错误码（net_error_list.h）说成人话；没列到的只显示错误名 */
+function loadErrorText(code: number): string {
+  if (code <= -200 && code > -300) return "网站的安全证书有问题，连接不安全。";
+  switch (code) {
+    case -105:
+    case -137:
+      return "找不到服务器：域名解析失败。可能是网址拼错了，或者这是只能在内网、VPN 里访问的地址。";
+    case -106:
+      return "没有网络连接。";
+    case -102:
+      return "服务器拒绝了连接：对应端口上没有服务在运行，或者被防火墙拦下了。";
+    case -7:
+    case -118:
+      return "连接超时：服务器长时间没有响应。";
+    case -101:
+    case -100:
+      return "连接被服务器重置或关闭了。";
+    case -109:
+    case -104:
+      return "无法连到服务器的地址。";
+    case -130:
+    case -111:
+    case -115:
+      return "代理服务器连接失败。";
+    case -21:
+      return "网络环境变了（如切换了 Wi-Fi、VPN），请重试。";
+    case -300:
+      return "网址格式不对。";
+    case -301:
+    case -302:
+      return "不支持打开这种地址。";
+    case -324:
+      return "服务器没有返回任何数据就断开了。";
+    case -310:
+      return "重定向次数太多，网页无法打开。";
+    default:
+      return "网页没有加载出来。";
+  }
 }
 
 /** 空白页不显示 about:blank */
