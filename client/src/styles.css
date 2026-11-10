@@ -380,6 +380,13 @@ main {
 .market-card-target > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .market-card-meta a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .market-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
+/* 技能卡片：整张卡片可以点开详情；标题是按钮（键盘能选中），悬停时变色；停用的整体变淡 */
+.skill-card { cursor: pointer; }
+.skill-card-open { padding: 0; border: none; border-radius: 0; background: none; color: inherit; text-align: left; font: inherit; font-size: 14px; font-weight: 600; }
+.skill-card-open:hover { background: none; }
+.skill-card:hover .skill-card-open { color: var(--accent); }
+.skill-card.disabled .market-card-desc, .skill-card.disabled .capability-avatar { opacity: 0.6; }
+.skill-card-menu { flex: none; display: flex; margin: -4px -6px -4px 0; }
 /* 设置页主区域是纵向 flex：margin-top: auto 让分页栏在内容不满一屏时贴着底部，间距改用 padding-top，内容超出时照样留 16px 空隙 */
 .pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin-top: auto; padding-top: 16px; color: var(--muted); font-size: 13px; }
 .pager-btn {

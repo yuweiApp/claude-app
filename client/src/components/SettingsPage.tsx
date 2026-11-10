@@ -177,13 +177,13 @@ export function SettingsPage({ navCollapsed = false }: { navCollapsed?: boolean 
           </List>
         )}
         {section === "skills" && (
-          <List empty={data ? (keyword ? "没有匹配的技能" : origin === "mine" ? "还没有个人技能，点右上角导入，或放在项目的 .claude/skills 里" : "没有内置技能") : "加载中…"}>
-            {skills.map((s) => (
-              <Row key={s.name} name={s.name} sub={s.description} wrap tag={s.enabled ? undefined : "已停用"} onOpen={() => setViewing(s)}>
-                <SkillMenu skill={s} onChanged={() => load(false)} onError={setError} />
-              </Row>
-            ))}
-          </List>
+          <SkillGrid
+            skills={skills}
+            empty={data ? (keyword ? "没有匹配的技能" : origin === "mine" ? "还没有个人技能，点右上角导入，或放在项目的 .claude/skills 里" : "没有内置技能") : "加载中…"}
+            onOpen={setViewing}
+            onChanged={() => load(false)}
+            onError={setError}
+          />
         )}
         {browsing && <ConnectorDirectory key={directoryKey} search={search} servers={data?.mcpServers ?? []} onChanged={() => load(false)} />}
         {section === "mcp" && !browsing && (
@@ -282,21 +282,7 @@ function PluginDetail({
         ))}
       </div>
       {tab === "skills" && (
-        <List empty="这个插件没有技能">
-          {skills.map((s) => (
-            // 都是这个插件的，名称去掉「插件名:」，描述去掉 Claude Code 加的「(插件名) 」
-            <Row
-              key={s.name}
-              name={s.name.slice(plugin.name.length + 1)}
-              sub={s.description.replace(`(${plugin.name}) `, "")}
-              wrap
-              tag={s.enabled ? undefined : "已停用"}
-              onOpen={() => onViewSkill(s)}
-            >
-              <SkillMenu skill={s} onChanged={onChanged} onError={onError} />
-            </Row>
-          ))}
-        </List>
+        <SkillGrid skills={skills} plugin={plugin.name} empty="这个插件没有技能" onOpen={onViewSkill} onChanged={onChanged} onError={onError} />
       )}
       {tab === "connectors" && (
         <List empty="这个插件没有连接器">
@@ -306,6 +292,61 @@ function PluginDetail({
         </List>
       )}
     </>
+  );
+}
+
+/**
+ * 技能卡片（同插件市场的卡片网格）：名称、最多 3 行描述，右上角是停用/启用、移除的菜单，点卡片看详情。
+ * plugin：都是这个插件的技能时传插件名，名称去掉「插件名:」，描述去掉 Claude Code 加的「(插件名) 」
+ */
+function SkillGrid({
+  skills,
+  plugin,
+  empty,
+  onOpen,
+  onChanged,
+  onError,
+}: {
+  skills: Capabilities["skills"];
+  plugin?: string;
+  empty: string;
+  onOpen: (skill: Capabilities["skills"][number]) => void;
+  onChanged: () => void;
+  onError: (message: string) => void;
+}) {
+  if (!skills.length) return <div className="settings-empty">{empty}</div>;
+  return (
+    <div className="market-grid">
+      {skills.map((s) => {
+        const name = plugin ? s.name.slice(plugin.length + 1) : s.name;
+        const description = plugin ? s.description.replace(`(${plugin}) `, "") : s.description;
+        return (
+          <div key={s.name} className={`market-card skill-card${s.enabled ? "" : " disabled"}`} onClick={() => onOpen(s)}>
+            <div className="market-card-head">
+              <Avatar name={name} />
+              <button
+                className="market-card-title skill-card-open"
+                title={name}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpen(s);
+                }}
+              >
+                {name}
+              </button>
+              {!s.enabled && <span className="settings-tag">已停用</span>}
+              {/* 菜单、确认框里的点击不冒泡到卡片上，不然会一起打开详情 */}
+              <span className="skill-card-menu" onClick={(e) => e.stopPropagation()}>
+                <SkillMenu skill={s} onChanged={onChanged} onError={onError} />
+              </span>
+            </div>
+            <div className="market-card-desc" title={description}>
+              {description}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
