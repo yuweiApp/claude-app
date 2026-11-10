@@ -493,7 +493,9 @@ main {
     -3px 3px 12px color-mix(in srgb, var(--sb-c3) 45%, transparent), 3px 4px 12px color-mix(in srgb, var(--sb-c2) 45%, transparent);
   animation: scroll-bottom-in 0.15s ease-out;
 }
-.scroll-bottom:hover { filter: brightness(1.1) saturate(1.1); }
+.scroll-bottom:hover { /* 盖过全局的 button:hover 底色，不然悬停时渐变没了，按钮和背景混在一起 */
+  background: linear-gradient(var(--sb-angle), var(--sb-c3), var(--sb-c1) 50%, var(--sb-c2)); filter: brightness(1.1) saturate(1.1);
+}
 .scroll-bottom.running { animation: scroll-bottom-in 0.15s ease-out, scroll-bottom-flow 3s linear infinite; }
 @keyframes scroll-bottom-in { from { opacity: 0; transform: translate(-50%, 6px); } }
 @keyframes scroll-bottom-flow { to { --sb-angle: 495deg; } }
