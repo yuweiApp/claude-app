@@ -100,26 +100,26 @@ export function App() {
     }
   };
   const togglePanel = () => showPanel(!panelOpen);
-  // 回复里指向工作目录里文件的链接：打开右侧面板，在文件标签里显示；指向文件夹的在目录树里定位
+  // 回复里指向本地文件的链接：打开右侧面板，在文件标签里显示；指向文件夹的在目录树里定位。root 是工作目录外的，标签以它为根
   const fileLinks = useMemo(
     () =>
       panelCwd
         ? {
             cwd: panelCwd,
-            open: (path: string) => {
+            open: (path: string, root?: string) => {
               setPanels((all) => {
                 const state = panelOf(all, panelCwd);
-                return { ...all, [panelCwd]: withFileOpen(state, state.active, path, false) };
+                return { ...all, [panelCwd]: withFileOpen(state, state.active, path, false, root) };
               });
               showPanel(true);
             },
-            openFolder: (path: string) => {
+            openFolder: (path: string, root?: string) => {
               setPanels((all) => {
                 const state = panelOf(all, panelCwd);
-                return { ...all, [panelCwd]: withFolderTab(state, state.active) };
+                return { ...all, [panelCwd]: withFolderTab(state, state.active, root) };
               });
               showPanel(true);
-              revealInTree(panelCwd, path);
+              if (path) revealInTree(root ?? panelCwd, path);
             },
           }
         : null,

@@ -7,10 +7,15 @@ import { MermaidBlock } from "./MermaidBlock";
 import { CopyAction } from "./MessageActions";
 
 /**
- * Claude 回复里的链接指向本地文件时，在右侧面板打开：cwd 是会话的工作目录（面板的文件只能是它里面的），
- * open 打开相对它的路径的文件，openFolder 在目录树里定位文件夹。没有（新会话页，还没有工作目录）时本地文件链接点了没反应
+ * Claude 回复里的链接指向本地文件时，在右侧面板打开：cwd 是会话的工作目录，open 打开相对它的路径的文件，
+ * openFolder 在目录树里定位文件夹；工作目录外的传 root（绝对路径），路径相对它，面板里以它为根。
+ * 没有（新会话页，还没有工作目录）时本地文件链接点了没反应
  */
-export const FileLinkContext = createContext<{ cwd: string; open: (path: string) => void; openFolder: (path: string) => void } | null>(null);
+export const FileLinkContext = createContext<{
+  cwd: string;
+  open: (path: string, root?: string) => void;
+  openFolder: (path: string, root?: string) => void;
+} | null>(null);
 
 /**
  * Claude 回复的 Markdown：GFM，本地文件链接点开在右侧面板，网址在新窗口打开。
@@ -96,27 +101,34 @@ function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorE
     );
   }
   const path = files ? projectPath(files.cwd, href) : null;
+  // 工作目录外的：面板里以它所在的文件夹（是文件夹时是它自己）为根打开
+  const outside = files && path === null ? absolutePath(files.cwd, href) : null;
   const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
     // file:// 和相对路径在网页里打不开，不让它跳
     e.preventDefault();
-    if (path === null || !files) return;
-    // 链接看不出是文件还是文件夹：是文件就打开；能列出内容的是文件夹，在目录树里定位；都不是也当文件打开（面板里显示原因）
+    if (!files || (path === null && !outside)) return;
     const { cwd, open, openFolder } = files;
+    // 链接看不出是文件还是文件夹：是文件就打开；能列出内容的是文件夹，在目录树里定位；都不是也当文件打开（面板里显示原因）
+    // 文件：root 下的 rel；文件夹：dirRoot 下的 dirRel
+    const t =
+      path !== null
+        ? { root: cwd, rel: path, dirRoot: cwd, dirRel: path, file: () => open(path), folder: () => openFolder(path) }
+        : { root: outside!.parent, rel: outside!.name, dirRoot: outside!.abs, dirRel: "", file: () => open(outside!.name, outside!.parent), folder: () => openFolder("", outside!.abs) };
     void api
-      .filesExist(cwd, [path])
-      .catch(() => [path])
-      .then((exists) => (exists.includes(path) ? open(path) : api.listDir(cwd, path).then(() => openFolder(path), () => open(path))));
+      .filesExist(t.root, [t.rel])
+      .catch(() => [t.rel])
+      .then((exists) => (exists.includes(t.rel) ? t.file() : api.listDir(t.dirRoot, t.dirRel).then(t.folder, t.file)));
   };
-  if (path === null) {
-    // 面板只能打开工作目录里的：照原样显示文字，不像链接那样能点
+  if (path === null && !outside) {
+    // 还没有工作目录（新会话页）：照原样显示文字，不像链接那样能点
     return (
-      <span className="md-link-off" title={files ? `不在会话的工作目录里，右侧面板打不开：${localPath(href) ?? href}` : (localPath(href) ?? href)}>
+      <span className="md-link-off" title={localPath(href) ?? href}>
         {children}
       </span>
     );
   }
   return (
-    <a {...rest} href={href} onClick={onClick} title={`在右侧面板打开 ${path}`}>
+    <a {...rest} href={href} onClick={onClick} title={`在右侧面板打开 ${path ?? outside!.abs}`}>
       {children}
     </a>
   );
@@ -180,6 +192,36 @@ function projectPath(cwd: string, href: string): string | null {
     else return null;
   }
   return parts.length ? parts.join("/") : null;
+}
+
+/**
+ * 链接指向的绝对路径（/ 分隔，去掉行号、查询参数和锚点，解开 ..），相对路径按工作目录算；
+ * 带上它所在的文件夹和名字。是根目录（/、C:/）时返回 null
+ */
+function absolutePath(cwd: string, href: string): { abs: string; parent: string; name: string } | null {
+  let p = localPath(href);
+  if (p === null) {
+    let rel = href;
+    try {
+      rel = decodeURIComponent(href);
+    } catch {
+      // 不是合法编码，按原样处理
+    }
+    p = `${cwd.replace(/[\\/]+$/, "")}/${rel.replace(/[?#].*$/, "")}`;
+  }
+  p = p.replaceAll("\\", "/").replace(/:\d+(?::\d+)?$/, "");
+  // 开头：Windows 盘符、UNC（//server）或者 /
+  const head = /^[a-z]:\//i.exec(p)?.[0] ?? (p.startsWith("//") ? "//" : "/");
+  const parts: string[] = [];
+  for (const seg of p.slice(head.length).split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") parts.pop();
+    else parts.push(seg);
+  }
+  const name = parts.pop();
+  if (!name) return null;
+  const parent = head + parts.join("/");
+  return { abs: parent.endsWith("/") ? parent + name : `${parent}/${name}`, parent, name };
 }
 
 /** react-markdown 默认会把 file:// 和 C:\... 当成不认识的协议清空，本地路径原样保留 */

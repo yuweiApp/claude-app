@@ -17,7 +17,8 @@ const TerminalView = lazy(() => import("./TerminalView").then((m) => ({ default:
  */
 export type PanelTab =
   | { id: string; kind: "new" }
-  | { id: string; kind: "files"; path: string | null; transient: boolean }
+  /** root：工作目录外的文件、文件夹（回复里的链接）用它所在的文件夹做根（绝对路径），path 相对它；没有就是会话的工作目录 */
+  | { id: string; kind: "files"; path: string | null; transient: boolean; root?: string }
   | { id: string; kind: "terminal"; terminalId: string; label: string }
   /**
    * 内置浏览器（只有桌面版有）：标签页属于对话会话，面板里只显示当前会话的。
@@ -40,16 +41,16 @@ export function newPanelState(): PanelState {
  * 在面板里打开文件（同 codex-app-server）：已经开着就切过去；from 这个标签是「新标签页」「打开文件」或预览打开的，就在这个标签里换；
  * 否则换掉别处预览打开的那个，没有就接在 from 后面新开一个。from 是目录树所在的标签，或者（回复里的链接）当前标签
  */
-export function withFileOpen(s: PanelState, from: string, path: string, pin: boolean): PanelState {
-  const open = s.tabs.find((t) => t.kind === "files" && t.path === path);
+export function withFileOpen(s: PanelState, from: string, path: string, pin: boolean, root?: string): PanelState {
+  const open = s.tabs.find((t) => t.kind === "files" && t.path === path && t.root === root);
   const set = (id: string, tab: PanelTab) => ({ tabs: s.tabs.map((t) => (t.id === id ? tab : t)), active: id });
   if (open) return set(open.id, { ...open, transient: open.kind === "files" && open.transient && !pin } as PanelTab);
+  const files = (id: string): PanelTab => ({ id, kind: "files", path, transient: !pin, ...(root !== undefined && { root }) });
   const here = s.tabs.find((t) => t.id === from);
-  if (here?.kind === "new") return set(here.id, { id: here.id, kind: "files", path, transient: !pin });
-  if (here?.kind === "files" && (here.path === null || here.transient)) return set(here.id, { ...here, path, transient: !pin });
+  if (here?.kind === "new" || (here?.kind === "files" && (here.path === null || here.transient))) return set(here.id, files(here.id));
   const preview = s.tabs.find((t) => t.kind === "files" && t.transient);
-  if (preview) return set(preview.id, { ...preview, path, transient: !pin } as PanelTab);
-  const tab: PanelTab = { id: crypto.randomUUID(), kind: "files", path, transient: !pin };
+  if (preview) return set(preview.id, files(preview.id));
+  const tab = files(crypto.randomUUID());
   const index = s.tabs.findIndex((t) => t.id === from);
   const tabs = [...s.tabs];
   tabs.splice(index < 0 ? tabs.length : index + 1, 0, tab);
@@ -57,15 +58,16 @@ export function withFileOpen(s: PanelState, from: string, path: string, pin: boo
 }
 
 /**
- * 回复里的文件夹链接：切到「打开文件」标签（只有目录树，没打开文件）在树里定位。有就用开着的那个；
+ * 回复里的文件夹链接：切到「打开文件」标签（只有目录树，没打开文件）在树里定位；root 是工作目录外的文件夹，标签以它为根。有就用开着的那个；
  * from（当前标签）是新标签页就在它里面换；否则接在 from 后面新开一个，不动别的标签里打开的文件
  */
-export function withFolderTab(s: PanelState, from: string): PanelState {
-  const open = s.tabs.find((t) => t.kind === "files" && t.path === null);
+export function withFolderTab(s: PanelState, from: string, root?: string): PanelState {
+  const open = s.tabs.find((t) => t.kind === "files" && t.path === null && t.root === root);
   if (open) return { ...s, active: open.id };
+  const folder = (id: string): PanelTab => ({ id, kind: "files", path: null, transient: false, ...(root !== undefined && { root }) });
   const here = s.tabs.find((t) => t.id === from);
-  if (here?.kind === "new") return { tabs: s.tabs.map((t) => (t.id === from ? { id: t.id, kind: "files", path: null, transient: false } : t)), active: from };
-  const tab: PanelTab = { id: crypto.randomUUID(), kind: "files", path: null, transient: false };
+  if (here?.kind === "new") return { tabs: s.tabs.map((t) => (t.id === from ? folder(t.id) : t)), active: from };
+  const tab = folder(crypto.randomUUID());
   const index = s.tabs.findIndex((t) => t.id === from);
   const tabs = [...s.tabs];
   tabs.splice(index < 0 ? tabs.length : index + 1, 0, tab);
@@ -310,13 +312,13 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
   // 有没保存的修改的文件标签：先问
   const [confirmClose, setConfirmClose] = useState<PanelTab | null>(null);
   const requestClose = (tab: PanelTab) => {
-    if (tab.kind === "files" && tab.path !== null && getDraft(cwd, tab.path) !== undefined) setConfirmClose(tab);
+    if (tab.kind === "files" && tab.path !== null && getDraft(tab.root ?? cwd, tab.path) !== undefined) setConfirmClose(tab);
     else closeTab(tab);
   };
   const closeTab = (tab: PanelTab) => {
     if (tab.kind === "terminal") void api.closeTerminal(tab.terminalId).catch(() => undefined);
     if (tab.kind === "browser") browserApi?.close(tab.browserId);
-    if (tab.kind === "files" && tab.path !== null) setDraft(cwd, tab.path, undefined);
+    if (tab.kind === "files" && tab.path !== null) setDraft(tab.root ?? cwd, tab.path, undefined);
     onChange((s) => {
       const tabs = s.tabs.filter((t) => t.id !== tab.id);
       if (!tabs.length) return newPanelState();
@@ -333,32 +335,38 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
   /** 新标签页里选了工具：这个标签页变成那个工具 */
   const replaceTab = (id: string, tab: PanelTab) =>
     onChange((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? tab : t)), active: tab.id }));
-  const openFile = (from: string, path: string, pin: boolean) => onChange((s) => withFileOpen(s, from, path, pin));
+  const openFile = (from: string, path: string, pin: boolean, root?: string) => onChange((s) => withFileOpen(s, from, path, pin, root));
+  /** 同一个根文件夹（root 是 undefined 时是工作目录）下的文件标签 */
+  const sameRoot = (t: PanelTab, root: string | undefined) => t.kind === "files" && t.root === root;
   /** 目录树里重命名、拖动了（文件夹的路径以 / 结尾）：开着的文件标签跟着换路径，没保存的修改也跟过去 */
-  const fileRenamed = (from: string, to: string) => {
+  const fileRenamed = (root: string | undefined, from: string, to: string) => {
     const remap = (p: string) => (p === from ? to : from.endsWith("/") && p.startsWith(from) ? to + p.slice(from.length) : null);
+    const base = root ?? cwd;
     for (const t of state.tabs) {
-      if (t.kind !== "files" || t.path === null) continue;
+      if (t.kind !== "files" || t.path === null || !sameRoot(t, root)) continue;
       const next = remap(t.path);
-      const draft = getDraft(cwd, t.path);
+      const draft = getDraft(base, t.path);
       if (next === null || draft === undefined) continue;
-      setDraft(cwd, t.path, undefined);
-      setDraft(cwd, next, draft);
+      setDraft(base, t.path, undefined);
+      setDraft(base, next, draft);
     }
     onChange((s) => ({
       ...s,
       tabs: s.tabs.map((t) => {
-        const next = t.kind === "files" && t.path !== null ? remap(t.path) : null;
+        const next = t.kind === "files" && t.path !== null && sameRoot(t, root) ? remap(t.path) : null;
         return next === null ? t : { ...t, path: next };
       }),
     }));
   };
   /** 目录树里删了：开着的文件标签关掉，当前看着的那个变回「打开文件」（目录树还在） */
-  const fileDeleted = (path: string) => {
-    const gone = (t: PanelTab) => t.kind === "files" && t.path !== null && (t.path === path || (path.endsWith("/") && t.path.startsWith(path)));
-    for (const t of state.tabs) if (t.kind === "files" && t.path !== null && gone(t)) setDraft(cwd, t.path, undefined);
+  const fileDeleted = (root: string | undefined, path: string) => {
+    const gone = (t: PanelTab) =>
+      t.kind === "files" && t.path !== null && sameRoot(t, root) && (t.path === path || (path.endsWith("/") && t.path.startsWith(path)));
+    for (const t of state.tabs) if (t.kind === "files" && t.path !== null && gone(t)) setDraft(root ?? cwd, t.path, undefined);
     onChange((s) => {
-      const tabs = s.tabs.flatMap((t): PanelTab[] => (!gone(t) ? [t] : t.id === s.active ? [{ id: t.id, kind: "files", path: null, transient: false }] : []));
+      const tabs = s.tabs.flatMap((t): PanelTab[] =>
+        !gone(t) ? [t] : t.id === s.active ? [{ id: t.id, kind: "files", path: null, transient: false, ...(root !== undefined && { root }) }] : [],
+      );
       return { tabs, active: s.active };
     });
   };
@@ -456,14 +464,14 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
             )}
             {tab.kind === "files" && (
               <FileBrowser
-                cwd={cwd}
+                cwd={tab.root ?? cwd}
                 sessionId={sessionId}
                 path={tab.path}
                 active={tab.id === activeId}
-                onSelectFile={(path, pinned) => openFile(tab.id, path, pinned)}
+                onSelectFile={(path, pinned) => openFile(tab.id, path, pinned, tab.root)}
                 onEdited={() => pin(tab.id)}
-                onRenamed={fileRenamed}
-                onDeleted={fileDeleted}
+                onRenamed={(from, to) => fileRenamed(tab.root, from, to)}
+                onDeleted={(path) => fileDeleted(tab.root, path)}
               />
             )}
             {tab.kind === "terminal" && !terminalsChecked && <div className="panel-empty">正在连接终端…</div>}
@@ -507,8 +515,9 @@ function tabLabel(tab: PanelTab): string {
     case "new":
       return "新标签页";
     case "files":
-      // 没选文件时叫「打开文件」（同 codex-app-server）
-      return tab.path === null ? "打开文件" : tab.path.split("/").pop() || tab.path;
+      // 没选文件时叫「打开文件」（同 codex-app-server）；工作目录外的文件夹显示它的名字
+      if (tab.path === null) return tab.root ? tab.root.split(/[\\/]/).filter(Boolean).pop() || tab.root : "打开文件";
+      return tab.path.split("/").pop() || tab.path;
     case "terminal":
       return tab.label;
     case "browser":
@@ -532,17 +541,21 @@ function tabIcon(tab: PanelTab): ReactNode {
 
 /** 标签：预览打开的文件是斜体（双击固定），有没保存的修改时关闭按钮的位置显示圆点（鼠标移上去变回 ×） */
 function TabButton({ cwd, tab, browserInfo, active, onSelect, onPin, onClose }: { cwd: string; tab: PanelTab; browserInfo?: BrowserTabInfo; active: boolean; onSelect: () => void; onPin: () => void; onClose: () => void }) {
-  const unsaved = useHasDraft(cwd, tab.kind === "files" ? tab.path : null);
+  const unsaved = useHasDraft(tab.kind === "files" ? (tab.root ?? cwd) : cwd, tab.kind === "files" ? tab.path : null);
+  // 工作目录外的显示完整路径
+  const filePath = tab.kind === "files" && tab.path !== null ? (tab.root ? `${tab.root.replace(/[\\/]+$/, "")}/${tab.path}` : tab.path) : null;
   const transient = tab.kind === "files" && tab.transient;
   return (
     <div
       className={`panel-tab${active ? " active" : ""}${transient ? " temporary" : ""}`}
       title={
-        tab.kind === "files" && tab.path
+        filePath
           ? transient
-            ? `${tab.path}\n预览打开，双击标签固定`
-            : tab.path
-          : tab.kind === "browser" && browserInfo
+            ? `${filePath}\n预览打开，双击标签固定`
+            : filePath
+          : tab.kind === "files" && tab.root
+            ? tab.root
+            : tab.kind === "browser" && browserInfo
             ? [browserInfo.title, browserInfo.url].filter(Boolean).join("\n")
             : undefined
       }

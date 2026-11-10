@@ -474,7 +474,7 @@ main {
 .assistant > :first-child, .annotatable > [data-response-annotation-target] > :first-child { margin-top: 0; }
 .assistant pre, .permission pre { background: var(--code-bg); padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--border) 60%, transparent); border-radius: 10px; font-size: 13px; line-height: 1.6; }
 .assistant code { font-size: 0.9em; }
-/* 回复里指向工作目录外的本地路径：右侧面板打不开，不显示成能点的链接（ReplyMarkdown.tsx 的 ReplyLink） */
+/* 回复里的本地路径链接，但还没有工作目录（新会话页）打不开：不显示成能点的链接（ReplyMarkdown.tsx 的 ReplyLink） */
 .md-link-off { text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; cursor: help; }
 /* 代码块外框：右上角的复制按钮不随代码滚动（ReplyMarkdown.tsx 的 CodeBlock，同 codex-app-server 的 .md-code） */
 .md-code { position: relative; margin: 1em 0; }
