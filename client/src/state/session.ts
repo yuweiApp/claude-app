@@ -175,7 +175,9 @@ export function reduce(view: SessionView, action: Action): SessionView {
     next.toolStarts = { ...view.toolStarts, ...next.toolStarts };
     next.streaming = view.streaming;
     next.permissions = view.permissions;
-    next.turnEnded = view.turnEnded;
+    // 拉历史之前已经从事件流收到过消息的，以实时的为准；没有的按历史推出来的（最后一条主线程回复的 stop_reason），
+    // 否则刚打开的会话一直当上一轮没结束，后台任务通知唤起的新一轮会接在上一轮后面、没有通知行
+    if (view.items.length) next.turnEnded = view.turnEnded;
     next.pendingTasks = view.pendingTasks;
     next.backgroundTasks = view.backgroundTasks;
     next.backgroundTasksLive = view.backgroundTasksLive;

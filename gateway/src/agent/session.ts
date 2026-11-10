@@ -44,6 +44,9 @@ export interface PermissionReply {
   answers?: Record<string, string>;
 }
 
+/** 空闲时收到后台任务通知后，这么久之内发出的模型请求算通知开始的新一轮（实际紧跟着通知） */
+const WAKE_WINDOW_MS = 5_000;
+
 /** 一个活跃会话：持有一个 claude 子进程，见 docs/README.md「活跃会话」 */
 export class AgentSession {
   state: SessionState = "starting";
@@ -67,6 +70,12 @@ export class AgentSession {
    * 下一轮模型接着用 page 时它已经是 undefined）
    */
   private browserTaskEnded = false;
+  /**
+   * 空闲时收到了后台任务通知：Claude Code 会拿它开始新的一轮，紧接着发出模型请求（status: requesting）时就算进行中，
+   * 不等模型开始返回（中间要几秒，网页这段时间既没有通知行也没有转圈）。只认通知之后的请求：
+   * 停止任务的通知不一定开新的一轮，后台子代理自己的请求也不能当成主线程开始了，所以只认通知后几秒内的。记的是通知到的时间
+   */
+  private wakeAt = 0;
   private readonly done: Promise<void>;
   private closing = false;
 
@@ -272,6 +281,11 @@ export class AgentSession {
         if ((message.type === "assistant" || message.type === "stream_event") && this.state === "idle") {
           this.setState("running");
         }
+        // 后台任务通知唤起的新一轮：发出模型请求时就算开始（见 wakeAt）
+        if (message.type === "system" && this.state === "idle") {
+          if (message.subtype === "task_notification" && !message.skip_transcript) this.wakeAt = Date.now();
+          if (message.subtype === "status" && message.status === "requesting" && Date.now() - this.wakeAt < WAKE_WINDOW_MS) this.setState("running");
+        }
         this.trackTools(message);
         let tasksChanged = this.tasks.ingest(message);
         this.publish({ type: "sdk", message });
@@ -313,6 +327,7 @@ export class AgentSession {
   private setState(state: SessionState): void {
     if (this.state === state) return;
     this.state = state;
+    if (state !== "idle") this.wakeAt = 0;
     this.lastActiveAt = Date.now();
     this.publishState();
   }
