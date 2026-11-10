@@ -14,13 +14,64 @@ interface View {
 }
 const FIT: View = { scale: 1, x: 0, y: 0 };
 
+/** 用 canvas 画成 PNG：剪贴板只认 PNG；SVG 没有固定像素，按 2 倍画，放大看也清楚 */
+async function toPng(src: string, svg: boolean): Promise<Blob> {
+  const img = new Image();
+  img.src = src;
+  await img.decode();
+  const scale = svg ? 2 : 1;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("图片生成失败"))), "image/png"));
+}
+
+const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/bmp": "bmp", "image/avif": "avif" };
+
+/** 下载：位图原样保存，SVG 转成 PNG */
+async function downloadImage(src: string, alt: string) {
+  const blob = await fetch(src).then((r) => r.blob());
+  const isSvg = blob.type.startsWith("image/svg");
+  const out = isSvg || !EXT[blob.type] ? await toPng(src, isSvg) : blob;
+  const name = alt.replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 80) || "image";
+  const url = URL.createObjectURL(out);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${name}.${EXT[out.type] ?? "png"}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+async function copyImage(src: string) {
+  const blob = await fetch(src).then((r) => r.blob());
+  const png = blob.type === "image/png" ? blob : await toPng(src, blob.type.startsWith("image/svg"));
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+}
+
+const ICON = { width: 15, height: 15, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true } as const;
+
 /**
  * 看大图：铺满窗口，挂在 body 上，不受所在位置的滚动、裁剪影响（同 codex-app-server 的 ImageViewer，去掉了编辑）。
  * 滚轮以鼠标处为中心缩放，双指捏合缩放，放大后拖动平移，双击在适应窗口和 2 倍之间切换；
- * 键盘 + / - 缩放、0 复位、Esc 关闭；点图片以外的地方关闭（拖动、捏合后松手不算）
+ * 键盘 + / - 缩放、0 复位、Esc 关闭，Ctrl/⌘+C 复制、Ctrl/⌘+S 下载；点图片以外的地方关闭（拖动、捏合后松手不算）
  */
 export function ImageViewer({ src, alt = "图片", onClose }: { src: string; alt?: string; onClose: () => void }) {
   const [view, setView] = useState<View>(FIT);
+  /** 复制、下载的结果，按钮上短暂显示勾或叉 */
+  const [copyState, setCopyState] = useState<"idle" | "done" | "error">("idle");
+  const [saveState, setSaveState] = useState<"idle" | "error">("idle");
+  useEffect(() => {
+    if (copyState === "idle" && saveState === "idle") return;
+    const t = setTimeout(() => (setCopyState("idle"), setSaveState("idle")), 1500);
+    return () => clearTimeout(t);
+  }, [copyState, saveState]);
+  const copy = () => copyImage(src).then(() => setCopyState("done"), () => setCopyState("error"));
+  const save = () => downloadImage(src, alt).catch(() => setSaveState("error"));
+  const actionsRef = useRef({ copy, save });
+  actionsRef.current = { copy, save };
   const [dragging, setDragging] = useState(false);
   /** 适应窗口时的显示宽度 / 原图宽度，用来显示相对原图的百分比 */
   const [fitRatio, setFitRatio] = useState<number | null>(null);
@@ -62,6 +113,15 @@ export function ImageViewer({ src, alt = "图片", onClose }: { src: string; alt
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        const key = e.key.toLowerCase();
+        // 选中了文字时 Ctrl+C 照常复制文字
+        if (key === "c" && !window.getSelection()?.toString()) void actionsRef.current.copy();
+        else if (key === "s") void actionsRef.current.save();
+        else return;
+        e.preventDefault();
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === "Escape") closeRef.current();
       else if (e.key === "+" || e.key === "=") zoomAt(viewRef.current.scale * STEP);
@@ -174,6 +234,37 @@ export function ImageViewer({ src, alt = "图片", onClose }: { src: string; alt
         </button>
         <button title="放大（+）" aria-label="放大" disabled={view.scale >= MAX_SCALE} onClick={() => zoomAt(view.scale * STEP)}>
           ＋
+        </button>
+        <span className="image-viewer-sep" />
+        <button
+          title={copyState === "done" ? "已复制" : copyState === "error" ? "复制失败" : "复制图片（Ctrl/⌘+C）"}
+          aria-label="复制图片"
+          onClick={() => void copy()}
+        >
+          {copyState === "done" ? (
+            <svg {...ICON}>
+              <path d="M3 8.5l3 3 7-7" />
+            </svg>
+          ) : copyState === "error" ? (
+            <svg {...ICON}>
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
+          ) : (
+            <svg {...ICON}>
+              <path d="M5.5 5.5V3a1 1 0 0 1 1-1H13a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-2.5M3 5.5h6.5a1 1 0 0 1 1 1V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6.5a1 1 0 0 1 1-1z" />
+            </svg>
+          )}
+        </button>
+        <button title={saveState === "error" ? "下载失败" : "下载图片（Ctrl/⌘+S）"} aria-label="下载图片" onClick={() => void save()}>
+          {saveState === "error" ? (
+            <svg {...ICON}>
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
+          ) : (
+            <svg {...ICON}>
+              <path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" />
+            </svg>
+          )}
         </button>
         <span className="image-viewer-sep" />
         <button title="关闭（Esc）" aria-label="关闭" onClick={onClose}>
