@@ -135,9 +135,27 @@ function createWindow(): BrowserWindow {
     }
     if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
   });
+  // 界面缩放。默认菜单的放大快捷键是 Ctrl+Plus，美式键盘上得按 Ctrl+Shift+=，直接按 Ctrl+= 没反应，所以自己处理（含小键盘）。
+  // 只管界面本身；内置浏览器的标签页是另外的 webContents，按键不经过这里
+  win.webContents.on("before-input-event", (e, input) => {
+    if (input.type !== "keyDown" || input.alt) return;
+    if (!(process.platform === "darwin" ? input.meta : input.control)) return;
+    const wc = win.webContents;
+    const current = wc.getZoomFactor();
+    let next: number | undefined;
+    if (input.key === "=" || input.key === "+" || input.code === "NumpadAdd") next = ZOOM_STEPS.find((z) => z > current + 0.001);
+    else if (input.key === "-" || input.key === "_" || input.code === "NumpadSubtract") next = ZOOM_STEPS.findLast((z) => z < current - 0.001);
+    else if (input.key === "0" || input.code === "Numpad0") next = 1;
+    else return;
+    e.preventDefault();
+    if (next !== undefined) wc.setZoomFactor(next);
+  });
   void win.loadURL(clientUrl);
   return win;
 }
+
+/** 和 Chrome 一样的缩放档位 */
+const ZOOM_STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 
 // 网页标题栏上的窗口按钮
 ipcMain.on("window:minimize", (e) => BrowserWindow.fromWebContents(e.sender)?.minimize());
