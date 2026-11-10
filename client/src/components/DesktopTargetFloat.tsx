@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useZoomPan, ZoomButtons } from "./ImageThumb";
 import type { DesktopTarget } from "../api";
 import { desktop, type CaptureSource } from "../desktop";
 
@@ -93,44 +94,96 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
           </span>
         </div>
         <div className="dt-body">
-          <LiveView target={target} source={source} />
+          <LiveView target={target} source={source} large={large} />
         </div>
       </div>
     </div>
   );
 }
 
-/** 实时画面，或者为什么没有画面 */
-function LiveView({ target, source }: { target: DesktopTarget; source: CaptureSource | null | undefined }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+/** 采集分辨率的上限：平时用 NORMAL；放大到超过画面原始像素（100%）时换 HIGH，小字也清楚，回到适应大小再换回来，平时不多占 CPU */
+const NORMAL_MAX = { width: 1920, height: 1200 };
+const HIGH_MAX = { width: 4096, height: 2560 };
+
+/** 取窗口的视频流。Electron 的窗口采集：老式的 mandatory 约束（chromeMediaSource: desktop），标准的类型里没有 */
+function captureWindow(sourceId: string, max: { width: number; height: number }): Promise<MediaStream> {
+  const constraints = {
+    audio: false,
+    video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: sourceId, maxWidth: max.width, maxHeight: max.height, maxFrameRate: 15 } },
+  } as unknown as MediaStreamConstraints;
+  return navigator.mediaDevices.getUserMedia(constraints);
+}
+
+/**
+ * 实时画面，或者为什么没有画面。画面可以缩放、平移（同图片查看器的 useZoomPan）：滚轮以鼠标处为中心缩放，双指捏合，
+ * 放大后拖动平移，双击在适应大小和 2 倍之间切换，右下角的工具条缩小、放大、点百分比还原。换了窗口、放大缩小浮窗时还原
+ */
+function LiveView({ target, source, large }: { target: DesktopTarget; source: CaptureSource | null | undefined; large: boolean }) {
+  const z = useZoomPan();
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const setVideo = useCallback(
+    (el: HTMLVideoElement | null) => {
+      videoRef.current = el;
+      z.mediaRef(el);
+    },
+    [z.mediaRef],
+  );
+  /** 正在显示的流：换分辨率时新的就绪了才停旧的，免得画面闪一下 */
+  const streamRef = useRef<MediaStream | null>(null);
+  const [hiRes, setHiRes] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ended, setEnded] = useState(false);
+
+  // 换了窗口、放大缩小浮窗：缩放还原，分辨率回到平时的
+  const { reset } = z;
+  useEffect(() => {
+    reset();
+    setHiRes(false);
+  }, [source?.id, large, reset]);
+
+  // 放大到超过画面原始像素时换高分辨率；回到适应大小再换回去。换成高分辨率后百分比会变小，所以用「还在放大」判断要不要换回，免得来回切
+  useEffect(() => {
+    if (!hiRes && z.percent > 100) setHiRes(true);
+    else if (hiRes && z.view.scale <= 1) setHiRes(false);
+  }, [z.percent, z.view.scale, hiRes]);
 
   useEffect(() => {
     setError(null);
     setEnded(false);
-    if (!source) return;
-    let stream: MediaStream | null = null;
+    if (!source) {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      return;
+    }
     let cancelled = false;
-    // Electron 的窗口采集：老式的 mandatory 约束（chromeMediaSource: desktop），标准的类型里没有
-    const constraints = {
-      audio: false,
-      video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: source.id, maxWidth: 1920, maxHeight: 1200, maxFrameRate: 15 } },
-    } as unknown as MediaStreamConstraints;
-    navigator.mediaDevices
-      .getUserMedia(constraints)
+    captureWindow(source.id, hiRes ? HIGH_MAX : NORMAL_MAX)
       .then((s) => {
         if (cancelled) return s.getTracks().forEach((t) => t.stop());
-        stream = s;
-        s.getVideoTracks()[0]?.addEventListener("ended", () => setEnded(true));
+        const old = streamRef.current;
+        streamRef.current = s;
+        s.getVideoTracks()[0]?.addEventListener("ended", () => streamRef.current === s && setEnded(true));
         if (videoRef.current) videoRef.current.srcObject = s;
+        old?.getTracks().forEach((t) => t.stop());
       })
       .catch((e: Error) => !cancelled && setError(e.message || e.name));
     return () => {
       cancelled = true;
-      stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [source]);
+  }, [source, hiRes]);
+
+  // 卸载（收起浮窗）时停掉流
+  useEffect(
+    () => () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    },
+    [],
+  );
+
+  // video 元素晚出现（找到窗口后才有）：出现时把已经在的流接上
+  useEffect(() => {
+    if (videoRef.current && streamRef.current && videoRef.current.srcObject !== streamRef.current) videoRef.current.srcObject = streamRef.current;
+  });
 
   let message: string | null = null;
   if (!desktop) message = "网页版看不到实时画面，在桌面版里打开可以看";
@@ -140,13 +193,29 @@ function LiveView({ target, source }: { target: DesktopTarget; source: CaptureSo
   else if (source === null) message = "没找到这个窗口：可能已经关了或改了标题（macOS 上还要给本应用开「屏幕录制」权限）";
   else if (error) message = `取不到画面：${error}`;
   else if (ended) message = "窗口已经关闭";
+  const live = !!source && !error && !ended;
 
   return (
-    <>
-      {source && !error && !ended && <video ref={videoRef} className="dt-video" autoPlay muted playsInline />}
+    <div ref={z.stageRef} className={`dt-stage${live ? " live" : ""}`} {...z.stageHandlers}>
+      {live && (
+        <div className={`dt-frame${z.dragging ? " dragging" : ""}`} style={z.frameStyle}>
+          <video
+            ref={setVideo}
+            className={`dt-video${z.view.scale > 1 ? " zoomed" : ""}${z.dragging ? " dragging" : ""}`}
+            autoPlay
+            muted
+            playsInline
+          />
+        </div>
+      )}
       {message && <div className="dt-message">{message}</div>}
       {!message && target.minimized && <div className="dt-badge">窗口最小化了，画面可能停在最小化之前</div>}
-    </>
+      {live && (
+        <div className="image-viewer-tools dt-zoom-tools">
+          <ZoomButtons z={z} />
+        </div>
+      )}
+    </div>
   );
 }
 

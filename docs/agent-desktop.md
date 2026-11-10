@@ -230,6 +230,7 @@ desktop:
   - 显示这个会话最近操作的软件（应用图标、应用名、窗口标题），这一轮进行中带一个闪烁的点。目标由网关从参数里算（`--window-id`、`--app`、`launch` / `close-app` 的应用名、ref 所属快照的应用和窗口），只给应用名时在 `list-windows` 里找窗口，前台的优先；变了才发 `desktop_target` 事件。调用一开始就发，`launch` 结束后再发。
   - 点开是那个窗口的实时画面，只看不能点：桌面版用 `desktopCapturer` 按窗口标题找采集源（`desktop/src/capture.ts`；agent-desktop 的窗口 id 和采集源的 id 对不上，所以按标题），网页用 `getUserMedia`（`chromeMediaSource: desktop`）取视频流。不用 agent-desktop 的 `screenshot` 轮询：每张起一个进程，而且上游拒绝截被挡住的窗口，看预览时本应用正好挡在上面。
   - 放大：铺满对话消息区（`.scroll-area`，标题行下面、输入框上面，四周留 8px），画面 `object-fit: contain` 按比例缩放、不拉伸，多出来的地方留底色；按 Esc 缩回。
+  - 画面缩放（同图片查看器，复用 `ImageThumb.tsx` 的 `useZoomPan`，它改成图片、视频都能用，视频按 `videoWidth` 算相对原始像素的百分比）：滚轮以鼠标处为中心缩放，双指捏合，放大后拖动平移，双击在适应大小和 2 倍之间切换，右下角工具条缩小、放大、点百分比还原；换了窗口、放大缩小浮窗时还原。采集分辨率平时上限 1920×1200，放大到超过画面原始像素（100%）时重新取一路上限 4096×2560 的流，新的就绪了才停旧的（不闪），回到适应大小再换回来；换成高分辨率后百分比变小，所以用「还在放大」判断要不要换回，免得来回切。
   - Windows 10 1903+（Windows Graphics Capture）和 macOS（ScreenCaptureKit）上被挡住的窗口也有画面，最小化的没有；macOS 要给本应用开「屏幕录制」。网页版没有窗口采集，只显示名字。
   - 待实测：Windows、macOS 上两边的窗口标题是否一致（标题前后加了应用名时按包含匹配，只有一个匹配才用）。
 

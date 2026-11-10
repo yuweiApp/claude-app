@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 
 const MIN_SCALE = 0.2;
@@ -53,17 +53,26 @@ async function copyImage(src: string) {
 
 const ICON = { width: 15, height: 15, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true } as const;
 
+/** 图片的原始宽度，视频是画面的原始宽度（窗口实时画面的像素） */
+const naturalWidth = (el: HTMLImageElement | HTMLVideoElement) => (el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth);
+
 /**
- * 图片缩放、平移：滚轮以鼠标处为中心缩放，双指捏合缩放，放大后拖动平移。
- * stageRef 是放图片的区域，scale=1 时图片在其中适应大小、居中；imgRef 用来算相对原图的百分比
+ * 图片、视频的缩放、平移：滚轮以鼠标处为中心缩放，双指捏合缩放，放大后拖动平移。
+ * stageRef 是放内容的区域，scale=1 时内容在其中适应大小、居中；mediaRef（回调 ref，挂在 img 或 video 上）用来算相对原始像素的百分比，
+ * 内容晚出现、换了元素都行（桌面实时画面的 video 要等找到窗口才有）
  */
 export function useZoomPan() {
   const [view, setView] = useState<View>(FIT);
   const [dragging, setDragging] = useState(false);
-  /** 适应区域时的显示宽度 / 原图宽度，用来显示相对原图的百分比 */
+  /** 适应区域时的显示宽度 / 原始宽度，用来显示相对原始像素的百分比 */
   const [fitRatio, setFitRatio] = useState<number | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
-  const imgRef = useRef<HTMLImageElement>(null);
+  const mediaElRef = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
+  const [media, setMedia] = useState<HTMLImageElement | HTMLVideoElement | null>(null);
+  const mediaRef = useCallback((el: HTMLImageElement | HTMLVideoElement | null) => {
+    mediaElRef.current = el;
+    setMedia(el);
+  }, []);
   const viewRef = useRef(view);
   viewRef.current = view;
   /** 按下的指针：一个是拖动，两个是捏合 */
@@ -86,7 +95,8 @@ export function useZoomPan() {
   };
   const zoomIn = () => zoomAt(viewRef.current.scale * STEP);
   const zoomOut = () => zoomAt(viewRef.current.scale / STEP);
-  const reset = () => setView(FIT);
+  /** 不随渲染变（浮窗在副作用里按它还原缩放） */
+  const reset = useCallback(() => setView(FIT), []);
 
   // React 的 onWheel 是被动监听，不能 preventDefault，直接挂在舞台上
   useEffect(() => {
@@ -101,18 +111,25 @@ export function useZoomPan() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 区域大小变了（窗口、面板拉宽拉窄），适应大小时的显示尺寸也跟着变
+  // 区域大小变了（窗口、面板拉宽拉窄），适应大小时的显示尺寸也跟着变；视频的画面尺寸变了（窗口被拉大）也重算
   useEffect(() => {
-    const img = imgRef.current;
-    if (!img) return;
+    if (!media) return;
     const update = () => {
-      if (img.naturalWidth && img.offsetWidth) setFitRatio(img.offsetWidth / img.naturalWidth);
+      const natural = naturalWidth(media);
+      // 视频元素用 object-fit: contain 铺满区域，画面实际显示的宽度要按比例算
+      const shown =
+        media instanceof HTMLVideoElement && media.videoHeight && media.offsetHeight
+          ? Math.min(media.offsetWidth, (media.offsetHeight * media.videoWidth) / media.videoHeight)
+          : media.offsetWidth;
+      if (natural && shown) setFitRatio(shown / natural);
     };
+    update();
     const ro = new ResizeObserver(update);
-    ro.observe(img);
-    img.addEventListener("load", update);
-    return () => (ro.disconnect(), img.removeEventListener("load", update));
-  }, []);
+    ro.observe(media);
+    const events = ["load", "loadedmetadata", "resize"];
+    events.forEach((name) => media.addEventListener(name, update));
+    return () => (ro.disconnect(), events.forEach((name) => media.removeEventListener(name, update)));
+  }, [media]);
 
   const pinchDistance = () => {
     const [a, b] = [...pointers.current.values()];
@@ -164,9 +181,9 @@ export function useZoomPan() {
     if (pointers.current.size === 0) setDragging(false);
   };
 
-  /** 双击图片在适应大小和 2 倍之间切换 */
+  /** 双击图片（视频）在适应大小和 2 倍之间切换 */
   const onDoubleClick = (e: ReactMouseEvent) => {
-    if (e.target !== imgRef.current) return;
+    if (e.target !== mediaElRef.current) return;
     if (viewRef.current.scale === 1) zoomAt(2, e.clientX, e.clientY);
     else setView(FIT);
   };
@@ -175,7 +192,9 @@ export function useZoomPan() {
     view,
     dragging,
     stageRef,
-    imgRef,
+    mediaRef,
+    /** 是不是点在图片（视频）本身上 */
+    isMedia: (el: EventTarget | null) => el !== null && el === mediaElRef.current,
     zoomIn,
     zoomOut,
     reset,
@@ -190,7 +209,7 @@ export function useZoomPan() {
 }
 
 /** 缩放按钮：缩小、百分比（点了复位）、放大 */
-function ZoomButtons({ z }: { z: ReturnType<typeof useZoomPan> }) {
+export function ZoomButtons({ z }: { z: ReturnType<typeof useZoomPan> }) {
   return (
     <>
       <button title="缩小（-）" aria-label="缩小" disabled={!z.canZoomOut} onClick={z.zoomOut}>
@@ -207,7 +226,7 @@ function ZoomButtons({ z }: { z: ReturnType<typeof useZoomPan> }) {
 }
 
 /** 键盘 + / - 缩放、0 复位；处理了返回 true */
-function zoomKey(z: ReturnType<typeof useZoomPan>, e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }) {
+export function zoomKey(z: ReturnType<typeof useZoomPan>, e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }) {
   if (e.ctrlKey || e.metaKey || e.altKey) return false;
   if (e.key === "+" || e.key === "=") z.zoomIn();
   else if (e.key === "-" || e.key === "_") z.zoomOut();
@@ -234,7 +253,7 @@ export function ZoomableImage({ src, alt }: { src: string; alt?: string }) {
     >
       <div className={`zoom-frame${z.dragging ? " dragging" : ""}`} style={z.frameStyle}>
         <img
-          ref={z.imgRef}
+          ref={z.mediaRef}
           src={src}
           alt={alt}
           draggable={false}
@@ -294,7 +313,7 @@ export function ImageViewer({ src, alt = "图片", onClose }: { src: string; alt
   const onClick = (e: ReactMouseEvent) => {
     if (z.moved()) return;
     const target = e.target as HTMLElement;
-    if (target === z.imgRef.current || target.closest(".image-viewer-tools")) return;
+    if (z.isMedia(target) || target.closest(".image-viewer-tools")) return;
     onClose();
   };
 
@@ -309,7 +328,7 @@ export function ImageViewer({ src, alt = "图片", onClose }: { src: string; alt
     >
       <div className={`image-viewer-frame${z.dragging ? " dragging" : ""}`} style={z.frameStyle}>
         <img
-          ref={z.imgRef}
+          ref={z.mediaRef}
           src={src}
           alt={alt}
           draggable={false}
