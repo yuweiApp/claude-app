@@ -2,17 +2,15 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { api, RequestError, type FileContent, type ProjectEntry } from "../api";
 import { getDraft, setDraft, useHasDraft } from "../state/fileDrafts";
 import { useDismiss } from "./ComposerPickers";
+import { CodeEditor, type LineRange } from "./CodeEditor";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FileTypeIcon, FolderTypeIcon } from "./FileTypeIcon";
 import { MarkdownLiveEditor } from "./MarkdownLiveEditor";
 import { closePageAnnotation, editAnnotationAt, repositionAnnotationEditor, startPageAnnotation } from "./ResponseAnnotations";
 import { useResponseAnnotations, type PageAnnotationTarget } from "../state/responseAnnotations";
 
-/** 文件里的行范围（从 1 开始，含 end），回复里的链接带了行号时面板滚到并选中这几行 */
-export interface LineRange {
-  start: number;
-  end: number;
-}
+/** 文件里的行范围，回复里的链接带了行号时面板滚到并选中这几行 */
+export type { LineRange } from "./CodeEditor";
 
 /**
  * 右侧面板的文件工具（同 codex-app-server 的 FileBrowser）：上面是切换文件树、文件名、复制路径和操作按钮，
@@ -974,6 +972,10 @@ function FileViewer({
   });
   const saved = ok?.text ?? "";
   const value = getDraft(cwd, path) ?? saved;
+  // Windows 换行（\r\n）的文件：文本框会把 \r\n 换成 \n（行号、选区、查找的位置都按它算），
+  // 编辑器里统一给 \n，改了再换回 \r\n，保存时不改换行方式。只有全是 \r\n 才这样换，混着 \n 的照原样
+  const crlf = saved.includes("\r\n") && !/(^|[^\r])\n/.test(saved);
+  const shown = crlf ? value.replaceAll("\r\n", "\n") : value;
 
   const save = async (force = false) => {
     if (!ok || !editable || saving) return;
@@ -997,7 +999,8 @@ function FileViewer({
     setSaveError(null);
     load();
   };
-  const change = (next: string) => {
+  const change = (edited: string) => {
+    const next = crlf ? edited.replace(/\r?\n/g, "\r\n") : edited;
     setDraft(cwd, path, next === saved ? undefined : next);
     rerender((n) => n + 1);
     setSaveError((e) => (e?.conflict ? e : null));
@@ -1032,7 +1035,7 @@ function FileViewer({
       <MarkdownLiveEditor
         cwd={cwd}
         path={path}
-        value={value}
+        value={shown}
         editable={editable}
         placeholder="使用 Markdown 编写…"
         onChange={change}
@@ -1042,8 +1045,8 @@ function FileViewer({
     );
   else
     body = (
-      <TextEditor
-        value={value}
+      <CodeEditor
+        value={shown}
         readOnly={!editable}
         placeholder={markdown ? "使用 Markdown 编写…" : "写点什么…"}
         line={line}
@@ -1301,214 +1304,6 @@ function pageFile(pathname: unknown): string | null {
 }
 
 /**
- * 带行号的编辑器（同 codex-app-server）：不自动换行，行号和每一行对齐；Ctrl/⌘+S 保存。
- * line：打开时（和 reveal 变了时）选中这几行，滚到上方三分之一处；超出文件末尾的部分不算
- */
-function TextEditor({
-  value,
-  readOnly,
-  placeholder,
-  line,
-  reveal,
-  findRequest,
-  onChange,
-  onSave,
-}: {
-  value: string;
-  readOnly: boolean;
-  placeholder: string;
-  line: LineRange | null;
-  reveal: number;
-  /** 变了（Ctrl/⌘+F）就打开查找栏，焦点放进去；选中了一行以内的文字时拿它当查找内容 */
-  findRequest: number;
-  onChange: (value: string) => void;
-  onSave: () => void;
-}) {
-  const lines = value.split("\n");
-  const find = useFind(value, findRequest, () => editorRef.current);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const gutterRef = useRef<HTMLPreElement>(null);
-  const editorRef = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    const ta = editorRef.current;
-    const scroller = scrollRef.current;
-    if (!line || !ta || !scroller || line.start > lines.length) return;
-    const first = line.start - 1;
-    const last = Math.min(line.end, lines.length) - 1;
-    let from = 0;
-    for (let i = 0; i < first; i++) from += lines[i]!.length + 1;
-    let to = from;
-    for (let i = first; i <= last; i++) to += lines[i]!.length + (i < last ? 1 : 0);
-    ta.focus({ preventScroll: true });
-    ta.setSelectionRange(from, to);
-    // 行高取行号栏的（和文本框一样）；行号栏顶端到这一行的距离就是第几行乘行高
-    const gutter = gutterRef.current;
-    const lineHeight = gutter ? parseFloat(getComputedStyle(gutter).lineHeight) || 20 : 20;
-    const offset = (gutter?.getBoundingClientRect().top ?? 0) - scroller.getBoundingClientRect().top + scroller.scrollTop;
-    scroller.scrollTop = Math.max(0, offset + first * lineHeight - scroller.clientHeight / 3);
-    // 只在打开、再点同一个链接时定位，不随编辑、文件被改重新定位
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reveal, line?.start, line?.end]);
-  return (
-    <>
-      {find.bar}
-      <div className="viewer-edit" ref={scrollRef}>
-      <pre className="viewer-edit-gutter" ref={gutterRef} aria-hidden="true">
-        {lines.map((_, i) => i + 1).join("\n")}
-      </pre>
-      <div className="viewer-edit-area">
-      {find.layer}
-      <textarea
-        ref={editorRef}
-        className="viewer-editor"
-        value={value}
-        wrap="off"
-        spellCheck={false}
-        rows={lines.length + 1}
-        readOnly={readOnly}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-            e.preventDefault();
-            onSave();
-          } else if (e.key === "Tab" && !readOnly && !e.ctrlKey && !e.altKey && !e.metaKey) {
-            // Tab 插入缩进，不跳出编辑器
-            e.preventDefault();
-            const el = e.currentTarget;
-            const { selectionStart: start, selectionEnd: end } = el;
-            const next = `${el.value.slice(0, start)}  ${el.value.slice(end)}`;
-            onChange(next);
-            requestAnimationFrame(() => el.setSelectionRange(start + 2, start + 2));
-          }
-        }}
-      />
-      </div>
-      </div>
-    </>
-  );
-}
-
-/** 查找结果最多标这么多处 */
-const MAX_MATCHES = 5000;
-
-/**
- * 文本编辑器里的查找（同 codex-app-server）：不分大小写；Enter / Shift+Enter 下一个、上一个，Esc 关闭；
- * 关闭时把当前这处选中在编辑器里。bar 是查找栏，layer 是和文本框对齐的高亮层（文字透明，只显示匹配处的底色）
- */
-function useFind(value: string, request: number, editor: () => HTMLTextAreaElement | null) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [index, setIndex] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const layerRef = useRef<HTMLPreElement>(null);
-  const matches = useMemo(() => {
-    if (!open || !query) return [];
-    const hay = value.toLowerCase();
-    const needle = query.toLowerCase();
-    const out: number[] = [];
-    for (let i = hay.indexOf(needle); i >= 0 && out.length < MAX_MATCHES; i = hay.indexOf(needle, i + needle.length)) out.push(i);
-    return out;
-  }, [open, query, value]);
-  const current = matches.length ? Math.min(index, matches.length - 1) : -1;
-  const step = (d: number) => matches.length && setIndex((i) => (Math.min(i, matches.length - 1) + d + matches.length) % matches.length);
-
-  // 打开（再按一次也是）：选中的一行以内的文字作为查找内容，焦点放进查找框并全选
-  useEffect(() => {
-    if (!request) return;
-    const ta = editor();
-    const sel = ta && document.activeElement === ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : "";
-    if (sel && !sel.includes("\n")) {
-      setQuery(sel);
-      setIndex(0);
-    }
-    setOpen(true);
-    setFocusTick((n) => n + 1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request]);
-  // 查找栏渲染出来后把焦点放进去并全选（再按一次也是）
-  const [focusTick, setFocusTick] = useState(0);
-  useEffect(() => {
-    if (!focusTick) return;
-    inputRef.current?.focus();
-    inputRef.current?.select();
-  }, [focusTick]);
-  // 当前这处滚到看得见
-  useEffect(() => {
-    if (current < 0) return;
-    layerRef.current?.querySelector<HTMLElement>("mark.current")?.scrollIntoView({ block: "center", inline: "nearest" });
-  }, [current, query]);
-
-  const close = () => {
-    setOpen(false);
-    const ta = editor();
-    if (!ta) return;
-    ta.focus({ preventScroll: true });
-    const at = current >= 0 ? matches[current]! : -1;
-    if (at >= 0) ta.setSelectionRange(at, at + query.length);
-  };
-
-  const bar = open && (
-    <div className="viewer-find">
-      <input
-        ref={inputRef}
-        aria-label="在文件中查找"
-        placeholder="在文件中查找…"
-        value={query}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setIndex(0);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            step(e.shiftKey ? -1 : 1);
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            e.stopPropagation();
-            close();
-          }
-        }}
-      />
-      <span className="viewer-find-count">
-        {query ? (matches.length ? `${current + 1} / ${matches.length}${matches.length >= MAX_MATCHES ? "+" : ""}` : "无结果") : ""}
-      </span>
-      <button className="icon-btn" title="上一个（Shift+Enter）" aria-label="上一个结果" disabled={!matches.length} onClick={() => step(-1)}>
-        <Chevron open up />
-      </button>
-      <button className="icon-btn" title="下一个（Enter）" aria-label="下一个结果" disabled={!matches.length} onClick={() => step(1)}>
-        <Chevron open />
-      </button>
-      <button className="icon-btn" title="关闭（Esc）" aria-label="关闭查找" onClick={close}>
-        ×
-      </button>
-    </div>
-  );
-
-  let layer: ReactNode = null;
-  if (matches.length) {
-    const parts: ReactNode[] = [];
-    let at = 0;
-    matches.forEach((m, i) => {
-      parts.push(value.slice(at, m));
-      parts.push(
-        <mark key={m} className={i === current ? "current" : undefined}>
-          {value.slice(m, m + query.length)}
-        </mark>,
-      );
-      at = m + query.length;
-    });
-    parts.push(value.slice(at), "\n");
-    layer = (
-      <pre className="viewer-find-layer" ref={layerRef} aria-hidden="true">
-        {parts}
-      </pre>
-    );
-  }
-  return { bar, layer };
-}
-
-/**
  * 项目里的路径（/ 分隔，相对 cwd；空是 cwd 本身）的绝对路径。cwd 是 Windows 的路径（C:\…、C:/…、\\server\share）时
  * 整个用 \ 分隔（回复链接打开的工作目录外的文件夹记的是 / 分隔的）。根目录（/、C:\）本身以分隔符结尾，不再多加
  */
@@ -1645,10 +1440,9 @@ export function FoldersIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-/** 向右的箭头；open 时朝下，up 时朝上 */
-function Chevron({ open, up = false }: { open: boolean; up?: boolean }) {
+function Chevron({ open }: { open: boolean }) {
   return (
-    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: up ? "rotate(-90deg)" : open ? "rotate(90deg)" : undefined }}>
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: open ? "rotate(90deg)" : undefined }}>
       <path d="M3.5 2 6.5 5l-3 3" />
     </svg>
   );
