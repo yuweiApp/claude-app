@@ -8,7 +8,7 @@ const capture = typeof desktop?.findCaptureSource === "function" ? desktop : und
 /**
  * 对话区右上角的浮窗：桌面工具（agent-desktop）正在操作哪个软件。平时是一个小条（应用图标、应用名、窗口标题），
  * 点开显示那个窗口的实时画面（桌面版按标题找到窗口，getUserMedia 取视频流，见 desktop/src/capture.ts）。
- * 只看不能点：画面上的点击不转给那个窗口。网页版没有窗口采集，只显示名字
+ * 只看不能点：画面上的点击不转给那个窗口。放大时铺满对话消息区，画面按比例缩放、不拉伸，Esc 缩回。网页版没有窗口采集，只显示名字
  */
 export function DesktopTargetFloat({ target, running }: { target: DesktopTarget; running: boolean }) {
   const [open, setOpen] = useState(false);
@@ -21,6 +21,16 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
   useEffect(() => {
     if (running) setHidden(null);
   }, [running]);
+
+  // 放大时按 Esc 缩回去
+  useEffect(() => {
+    if (!open || !large) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLarge(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, large]);
 
   // 按标题找窗口：标题变了（记事本保存后标题变成文件名）重新找
   useEffect(() => {
@@ -63,7 +73,7 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
         <div className="dt-head">
           {label}
           <span className="dt-head-end">
-            <button className="dt-btn" onClick={() => setLarge(!large)} title={large ? "缩小" : "放大"} aria-label={large ? "缩小" : "放大"}>
+            <button className="dt-btn" onClick={() => setLarge(!large)} title={large ? "缩小（Esc）" : "放大到整个对话区"} aria-label={large ? "缩小" : "放大"}>
               {large ? <ShrinkIcon /> : <GrowIcon />}
             </button>
             <button className="dt-btn" onClick={() => setOpen(false)} title="收起" aria-label="收起">

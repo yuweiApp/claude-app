@@ -434,7 +434,10 @@ main {
 /* 右上角的浮窗：桌面工具正在操作的软件（DesktopTargetFloat），点开是那个窗口的实时画面 */
 .dt-float { position: absolute; top: 12px; right: 16px; z-index: 20; max-width: min(360px, calc(100% - 32px)); }
 .dt-float.dt-open { width: 360px; }
-.dt-float.dt-large { width: min(760px, calc(100% - 32px)); max-width: none; }
+/* 放大：铺满对话消息区（.scroll-area，标题行下面、输入框上面），画面按比例缩放、不拉伸，多出来的地方留底色 */
+.dt-float.dt-large { inset: 8px; width: auto; max-width: none; }
+.dt-large .dt-card { display: flex; flex-direction: column; height: 100%; }
+.dt-large .dt-body { flex: 1; min-height: 0; }
 .dt-chip, .dt-head { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; }
 .dt-chip {
   max-width: 100%; padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--text);
@@ -453,7 +456,7 @@ main {
 .dt-btn:hover { background: var(--panel); color: var(--text); }
 .dt-body { position: relative; display: grid; place-items: center; min-height: 120px; background: color-mix(in srgb, var(--text) 6%, var(--bg)); }
 .dt-video { display: block; width: 100%; max-height: 60vh; object-fit: contain; }
-.dt-large .dt-video { max-height: 75vh; }
+.dt-large .dt-video { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; }
 .dt-message { padding: 24px 16px; color: var(--muted); font-size: 12.5px; line-height: 1.6; text-align: center; }
 .dt-badge { position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: 6px; background: rgb(0 0 0 / 0.6); color: #fff; font-size: 11.5px; }
 .scroll { flex: 1; overflow-y: auto; padding: 32px 48px 24px; overflow-anchor: none; }
