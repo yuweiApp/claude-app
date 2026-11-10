@@ -929,7 +929,7 @@ main {
 
 .send-btn {
   display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0;
-  border: none; border-radius: 50%; background: var(--text); color: var(--bg);
+  margin-left: 8px; border: none; border-radius: 50%; background: var(--text); color: var(--bg);
 }
 /* 盖住全局的 button:hover 底色：不能点（没输入内容）时悬停也要保持深色底 */
 .send-btn:hover { background: var(--text); }
