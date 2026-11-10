@@ -42,6 +42,12 @@ export interface TabInfo {
    * 内置浏览器没有 Chrome 那样的错误页，不提示就是一片白。开始下一次跳转（含刷新重试）时清掉
    */
   error?: { code: number; description: string; url: string };
+  /**
+   * 正在打开、还没显示出来的网址：新建标签页、地址栏跳转、重启恢复时由这边发起的加载。
+   * url 是已经显示出来的网页的网址（新建的标签页这时还是 about:blank），界面地址栏和标签名在加载期间显示这个。
+   * 新网页显示出来、加载失败或停止时清掉，跳转中重定向时跟着换
+   */
+  pendingUrl?: string;
 }
 
 export interface Tab extends TabInfo {
@@ -324,7 +330,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
 
   private save(): void {
     if (this.frozen) return;
-    const list: SavedTab[] = [...this.tabs.values()].map((t) => ({ key: t.key, sessionId: t.sessionId, url: t.url, title: t.title, openedBy: t.openedBy, kept: t.kept }));
+    const list: SavedTab[] = [...this.tabs.values()].map((t) => ({ key: t.key, sessionId: t.sessionId, url: t.pendingUrl || t.url, title: t.title, openedBy: t.openedBy, kept: t.kept }));
     try {
       const tmp = `${this.tabsFile}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify(list));
@@ -382,6 +388,8 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   }
 
   private async load(tab: Tab, url: string): Promise<void> {
+    tab.pendingUrl = url;
+    this.emit("changed", tab);
     await tab.view.webContents.loadURL(url).catch(() => undefined);
   }
 
@@ -587,6 +595,25 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
       if (!details.isMainFrame || details.isSameDocument || !tab.error) return;
       tab.error = undefined;
       changed();
+    });
+    // 正在打开的网址：重定向时跟着换；新网页显示出来（did-navigate）、这次加载失败、整个停下来时清掉。
+    // 失败只认同一个网址的：开始新的加载会顶掉上一次（ERR_ABORTED），那时 pendingUrl 已经换成新的了。
+    // 都在下面的 changed 之前注册，清掉后随它一起推给界面
+    wc.on("did-redirect-navigation", (details) => {
+      if (!details.isMainFrame || details.isSameDocument || !tab.pendingUrl) return;
+      tab.pendingUrl = details.url;
+      changed();
+    });
+    wc.on("did-navigate", () => {
+      tab.pendingUrl = undefined;
+    });
+    wc.on("did-fail-load", (_e, _code, _description, url, isMainFrame) => {
+      if (!isMainFrame || url !== tab.pendingUrl) return;
+      tab.pendingUrl = undefined;
+      changed();
+    });
+    wc.on("did-stop-loading", () => {
+      if (!wc.isLoading()) tab.pendingUrl = undefined;
     });
     for (const event of ["did-start-loading", "did-stop-loading", "did-navigate", "did-navigate-in-page", "page-title-updated"] as const) {
       wc.on(event as "did-start-loading", changed);

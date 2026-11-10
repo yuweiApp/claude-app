@@ -577,7 +577,7 @@ function TabButton({ cwd, tab, browserInfo, active, onSelect, onPin, onClose }: 
           : tab.kind === "files" && tab.root
             ? tab.root
             : tab.kind === "browser" && browserInfo
-            ? [browserInfo.title, browserInfo.url].filter(Boolean).join("\n")
+            ? [browserInfo.pendingUrl ? "" : browserInfo.title, browserInfo.pendingUrl || browserInfo.url].filter(Boolean).join("\n")
             : undefined
       }
       onClick={onSelect}
@@ -585,7 +585,7 @@ function TabButton({ cwd, tab, browserInfo, active, onSelect, onPin, onClose }: 
       onAuxClick={(e) => e.button === 1 && onClose()}
     >
       <span className="panel-tab-icon">{tab.kind === "browser" ? <SiteIcon src={browserInfo?.favicon} /> : tabIcon(tab)}</span>
-      <span className="panel-tab-label">{(tab.kind === "browser" && (browserInfo?.title || browserInfo?.url)) || tabLabel(tab)}</span>
+      <span className="panel-tab-label">{(tab.kind === "browser" && (browserInfo?.pendingUrl || browserInfo?.title || browserInfo?.url)) || tabLabel(tab)}</span>
       <button
         className={`panel-tab-close${unsaved ? " unsaved" : ""}`}
         title={unsaved ? "有未保存的修改（Ctrl+S 保存），关闭时会问" : "关闭"}

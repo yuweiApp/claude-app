@@ -17,7 +17,9 @@ interface Props {
 export function BrowserTab({ api, id, info, active }: Props) {
   const areaRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [address, setAddress] = useState(displayUrl(info?.url));
+  /** 地址栏显示的网址：正在打开的优先，新建标签页加载期间 url 还是 about:blank */
+  const url = displayUrl(info?.pendingUrl || info?.url);
+  const [address, setAddress] = useState(url);
   const [editing, setEditing] = useState(false);
   const [covered, setCovered] = useState(false);
   /** 被盖住时贴在原位的网页快照 */
@@ -29,13 +31,13 @@ export function BrowserTab({ api, id, info, active }: Props) {
 
   // 没在编辑时，地址栏跟着网页的网址走
   useEffect(() => {
-    if (!editing) setAddress(displayUrl(info?.url));
-  }, [info?.url, editing]);
+    if (!editing) setAddress(url);
+  }, [url, editing]);
 
   // 空白页：直接把焦点放到地址栏
   useEffect(() => {
-    if (active && displayUrl(info?.url) === "") inputRef.current?.focus();
-  }, [active, info?.url]);
+    if (active && url === "") inputRef.current?.focus();
+  }, [active, url]);
 
   // 每一帧对一次位置（拖动面板、侧边栏、缩放窗口都会变），变了才告诉外壳。
   // 被界面的菜单、对话框盖住时：先拍一张快照贴在原位，再收起视图（视图总在界面之上，不收会挡住它们）。
@@ -108,7 +110,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
         }}
         onReset={() => {
           setEditing(false);
-          setAddress(displayUrl(info?.url));
+          setAddress(url);
         }}
         onSubmit={(url) => {
           api.navigate(id, url);
@@ -131,7 +133,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
         ) : (
           covered && (
             <div className="browser-covered">
-              {snapshot ? <img src={snapshot} alt="" draggable={false} /> : <span>{info?.title || info?.url || ""}</span>}
+              {snapshot ? <img src={snapshot} alt="" draggable={false} /> : <span>{info?.title || url}</span>}
             </div>
           )
         )}

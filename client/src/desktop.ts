@@ -47,6 +47,8 @@ export interface BrowserTabInfo {
   favicon?: string;
   /** 主框架没加载出来（Chromium 的错误码和名字，如 -105 ERR_NAME_NOT_RESOLVED），下一次跳转时清掉 */
   error?: { code: number; description: string; url: string };
+  /** 正在打开、还没显示出来的网址（新建标签页时 url 还是 about:blank），加载期间地址栏和标签名显示这个 */
+  pendingUrl?: string;
 }
 
 /** 地址栏的建议（浏览历史） */
