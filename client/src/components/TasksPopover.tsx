@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { api, type BackgroundTask } from "../api";
+import { api, type BackgroundTask, type TaskOutput } from "../api";
 import { useDismiss } from "./ComposerPickers";
 
 interface Props {
@@ -123,7 +123,7 @@ function TaskItem({ sessionId, task, selected, detailsId, onSelect, onError }: {
 
 function TaskDetails({ id, sessionId, task, onError }: { id: string; sessionId: string; task: BackgroundTask; onError: (message: string) => void }) {
   const running = task.status === "running";
-  const [output, setOutput] = useState<{ text: string; truncated: boolean } | null>(null);
+  const [output, setOutput] = useState<TaskOutput | null>(null);
   const [outputError, setOutputError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const outputRef = useRef<HTMLPreElement>(null);
@@ -164,6 +164,9 @@ function TaskDetails({ id, sessionId, task, onError }: { id: string; sessionId: 
     if (el && followOutput.current) el.scrollTop = el.scrollHeight;
   }, [output]);
 
+  const agent = task.type === "local_agent";
+  // 子代理的任务说明：开始消息里带的，没有就用对话记录里第一条
+  const prompt = task.prompt ?? output?.prompt;
   const outputText = task.hasOutput ? output?.text : task.result ?? (task.summary !== task.description ? task.summary : undefined);
   const outputPlaceholder = outputError && !output ? "输出加载失败" : task.hasOutput && !output ? "正在加载输出…" : running ? "等待任务输出…" : "任务没有输出";
 
@@ -181,12 +184,18 @@ function TaskDetails({ id, sessionId, task, onError }: { id: string; sessionId: 
           <pre className="task-command">{task.code}</pre>
         </div>
       )}
+      {prompt !== undefined && (
+        <div className="task-block command">
+          <div className="task-block-head"><span><PromptIcon />任务说明</span><TaskCopyButton text={prompt} label="复制任务说明" onError={onError} /></div>
+          <pre className="task-command">{prompt}</pre>
+        </div>
+      )}
       <div className="task-block output">
         <div className="task-block-head">
-          <span><OutputIcon />输出{running && <span className="task-output-live">实时</span>}</span>
+          <span><OutputIcon />{agent ? "执行过程" : "输出"}{running && <span className="task-output-live">实时</span>}</span>
           <TaskCopyButton text={outputText} label="复制输出" onError={onError} />
         </div>
-        {output?.truncated && <div className="task-output-note">仅显示最后 64 KB，复制内容为当前可见输出</div>}
+        {output?.truncated && <div className="task-output-note">{agent ? "记录较长，仅显示最后一部分" : "仅显示最后 64 KB"}，复制内容为当前可见输出</div>}
         {outputError && <div className="task-output-note task-error">输出加载失败 <button onClick={() => setReload((n) => n + 1)} title={outputError}>重试</button></div>}
         <pre className={`task-output${!outputText ? " empty" : task.resultIsError ? " task-error" : ""}`} ref={outputRef} onScroll={() => {
           const el = outputRef.current;
@@ -309,6 +318,10 @@ function TaskStatusIcon({ status }: { status: BackgroundTask["status"] }) {
 
 function ChevronIcon() {
   return <svg className="task-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>;
+}
+
+function PromptIcon() {
+  return <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z" /></svg>;
 }
 
 function CodeIcon() {

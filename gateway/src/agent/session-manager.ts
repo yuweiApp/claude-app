@@ -16,7 +16,7 @@ import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
-import type { BackgroundTask, SessionListItem } from "../shared/types.js";
+import type { BackgroundTask, SessionListItem, TaskOutput } from "../shared/types.js";
 import { loadAttachments } from "./attachments.js";
 import { enabledSkillNames } from "./capabilities.js";
 import { disabledSkills } from "./extensions.js";
@@ -24,7 +24,7 @@ import { AgentSession } from "./session.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { BrowserHost } from "../browser/host.js";
 import { generateTitle } from "./title.js";
-import { readOutputTail, TaskList } from "./tasks.js";
+import { readAgentTranscript, readOutputTail, TaskList } from "./tasks.js";
 import { disposeRepls } from "../browser/tool.js";
 import { disposeDesktopSession } from "../desktop/guard.js";
 import { sessionHistory } from "./history.js";
@@ -214,11 +214,11 @@ export class SessionManager {
     return this.taskList(sessionId).list();
   }
 
-  /** 任务输出的最后一段；只能读这个会话自己记下的任务的输出文件 */
-  async taskOutput(sessionId: string, taskId: string): Promise<{ text: string; truncated: boolean }> {
-    const file = this.taskList(sessionId).outputFile(taskId);
-    if (!file) throw new NotFoundError("这个任务没有输出");
-    return readOutputTail(file).catch(() => ({ text: "", truncated: false }));
+  /** 任务输出的最后一段（子代理是整理过的对话记录）；只能读这个会话自己记下的任务的输出文件 */
+  async taskOutput(sessionId: string, taskId: string): Promise<TaskOutput> {
+    const output = this.taskList(sessionId).output(taskId);
+    if (!output) throw new NotFoundError("这个任务没有输出");
+    return (output.agent ? readAgentTranscript(output.file) : readOutputTail(output.file)).catch(() => ({ text: "", truncated: false }));
   }
 
   async stopTask(sessionId: string, taskId: string): Promise<void> {

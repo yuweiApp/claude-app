@@ -63,6 +63,8 @@ export interface BackgroundTask {
   command?: string;
   /** 转到后台的 browser_run_code 的代码 */
   code?: string;
+  /** 子代理（local_agent）收到的任务说明 */
+  prompt?: string;
   /** 转到后台的网关工具调用（browser_run_code 等）的结果原文，太长时只留开头 */
   result?: string;
   resultIsError?: boolean;
@@ -73,8 +75,18 @@ export interface BackgroundTask {
   exitCode?: number;
   /** 完成通知里的一句话说明 */
   summary?: string;
-  /** 有输出文件可以看（GET /sessions/:id/tasks/:taskId/output） */
+  /** 有输出可以看（GET /sessions/:id/tasks/:taskId/output）：后台命令的输出，子代理的对话记录 */
   hasOutput: boolean;
+}
+
+/** GET /sessions/:id/tasks/:taskId/output */
+export interface TaskOutput {
+  /** 后台命令是输出原文；子代理是整理成文字的对话记录（回复、工具调用和结果） */
+  text: string;
+  /** 只给了最后一段 */
+  truncated: boolean;
+  /** 子代理：对话记录里的第一条用户消息，即交给它的任务说明 */
+  prompt?: string;
 }
 
 /** 可用的技能和插件（GET /capabilities）。技能在消息里写 /name 使用（开头的由 Claude Code 展开），插件在消息里写 @name 引用 */

@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { open, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { BackgroundTask } from "../shared/types.js";
+import type { BackgroundTask, TaskOutput } from "../shared/types.js";
 
 interface TaskRecord extends BackgroundTask {
   /** 任务输出文件（后台 Bash 的 tool_result 或完成通知里给出） */
@@ -28,6 +28,8 @@ export class TaskList {
   private readonly commands = new Map<string, string>();
   /** browser_run_code 调用的代码（input.code）：转到后台后 task_started 只带 tool_use_id */
   private readonly codes = new Map<string, string>();
+  /** Agent 工具调用的任务说明（input.prompt）：task_started 一般自己带着，没带时按 tool_use_id 补 */
+  private readonly prompts = new Map<string, string>();
   /** 转到了后台的工具调用（tool_use_id）：结果里写着 moved to the background */
   private readonly backgroundedCalls = new Map<string, true>();
   /** 工具调用发出的时间：跑久了才转到后台的（MCP 调用跑满 20 秒），开始时间按调用发出时算，不按转后台的时候 */
@@ -102,6 +104,10 @@ export class TaskList {
             const command = (block.input as { command?: unknown }).command;
             if (typeof command === "string") remember(this.commands, block.id, command);
           }
+          if (block.type === "tool_use" && (block.name === "Agent" || block.name === "Task")) {
+            const prompt = (block.input as { prompt?: unknown } | null)?.prompt;
+            if (typeof prompt === "string") remember(this.prompts, block.id, prompt);
+          }
         }
         return false;
       case "user":
@@ -116,12 +122,14 @@ export class TaskList {
   list(): BackgroundTask[] {
     return [...this.tasks.values()]
       .filter((t) => t.backgrounded)
-      .map(({ outputFile, backgrounded: _, ...task }) => ({ ...task, hasOutput: Boolean(outputFile) && task.type === "local_bash" }));
+      .map(({ outputFile, backgrounded: _, ...task }) => ({ ...task, hasOutput: Boolean(outputFile) && readable(task.type) }));
   }
 
-  outputFile(taskId: string): string | undefined {
+  /** 任务的输出文件：后台命令的输出，子代理的对话记录（JSONL）；其他类型的不给读 */
+  output(taskId: string): { file: string; agent: boolean } | undefined {
     const task = this.tasks.get(taskId);
-    return task?.type === "local_bash" ? task.outputFile : undefined;
+    if (!task?.outputFile || !readable(task.type)) return undefined;
+    return { file: task.outputFile, agent: task.type === "local_agent" };
   }
 
   /** 清掉已经结束的任务（界面上的「清除」） */
@@ -151,6 +159,7 @@ export class TaskList {
         // ambient：不算活动的任务（监视器之类），skip_transcript 的也不进对话，都不列
         if (message.ambient || message.skip_transcript) return false;
         const task = this.ensure(message.task_id, message.tool_use_id, message.description, message.task_type);
+        if (message.prompt) task.prompt = message.prompt;
         if (task.status !== "running") {
           // 结束过又开始（恢复的子代理）：重新算一次
           Object.assign(task, { status: "running", startedAt: Date.now(), endedAt: undefined, summary: undefined, result: undefined, resultIsError: undefined, exitCode: undefined });
@@ -218,6 +227,7 @@ export class TaskList {
       task.startedAt = this.toolStarts.get(toolUseId) ?? task.startedAt;
       task.command ??= this.commands.get(toolUseId);
       task.code ??= this.codes.get(toolUseId);
+      task.prompt ??= this.prompts.get(toolUseId);
     }
     return task;
   }
@@ -225,7 +235,7 @@ export class TaskList {
   /**
    * 工具调用的结果：
    * - 跑久了转到后台的 MCP 调用先返回「… was moved to the background as task <id> …」，据此登记（不依赖 task_started）；
-   * - 放到后台的 Bash 立即返回一条 tool_result，里面写着输出文件路径（…/tasks/<task_id>.output），运行中就能看输出
+   * - 放到后台的 Bash、后台子代理立即返回一条 tool_result，里面写着输出文件路径（…/tasks/<task_id>.output），运行中就能看输出
    */
   private ingestToolResults(content: unknown): boolean {
     if (!Array.isArray(content)) return false;
@@ -258,6 +268,10 @@ export class TaskList {
   }
 }
 
+function readable(type: string | undefined): boolean {
+  return type === "local_bash" || type === "local_agent";
+}
+
 function remember<T>(map: Map<string, T>, key: string, value: T): void {
   map.set(key, value);
   if (map.size > MAX_REMEMBERED) map.delete(map.keys().next().value!);
@@ -275,4 +289,131 @@ export async function readOutputTail(file: string, maxBytes = 64 * 1024): Promis
   } finally {
     await handle.close();
   }
+}
+
+/** 子代理对话记录最多读最后这么多字节（截图之类的图片会让记录很大） */
+const AGENT_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
+/** 整理出来的文字最多这么多字，多了留最后一段 */
+const AGENT_TEXT_CHARS = 64 * 1024;
+/** 每个工具结果最多显示几行、几个字 */
+const RESULT_LINES = 6;
+const RESULT_CHARS = 600;
+
+/**
+ * 读子代理的对话记录（tasks/<id>.output 链到子代理的 JSONL），整理成文字：
+ * 回复原文，工具调用一行（▸ 工具名 主要参数），工具结果缩进显示开头几行。
+ * 第一条用户消息是交给它的任务说明，单独放在 prompt 里
+ */
+export async function readAgentTranscript(file: string): Promise<TaskOutput> {
+  const tail = await readOutputTail(file, AGENT_TRANSCRIPT_BYTES);
+  const lines = tail.text.split("\n");
+  // 从中间截断的，第一行不完整
+  if (tail.truncated) lines.shift();
+  let prompt = tail.truncated ? await readFirstPrompt(file) : undefined;
+  const out: string[] = [];
+  let first = !tail.truncated;
+  for (const line of lines) {
+    const entry = parseEntry(line);
+    if (!entry) continue;
+    const content = entry.message?.content;
+    if (entry.type === "user") {
+      if (first) {
+        first = false;
+        const text = plainText(content);
+        if (text) {
+          prompt = text;
+          continue;
+        }
+      }
+      if (typeof content === "string") {
+        out.push(`» ${content.trim()}`, "");
+        continue;
+      }
+      if (!Array.isArray(content)) continue;
+      for (const block of content as Array<Record<string, unknown>>) {
+        if (block.type === "tool_result") out.push(formatToolResult(block.content, block.is_error === true));
+        else if (block.type === "text" && typeof block.text === "string" && block.text.trim()) out.push(`» ${block.text.trim()}`, "");
+      }
+    } else if (entry.type === "assistant" && Array.isArray(content)) {
+      first = false;
+      for (const block of content as Array<Record<string, unknown>>) {
+        if (block.type === "text" && typeof block.text === "string" && block.text.trim()) {
+          if (out.length && out[out.length - 1] !== "") out.push("");
+          out.push(block.text.trim(), "");
+        } else if (block.type === "tool_use" || block.type === "server_tool_use" || block.type === "mcp_tool_use") {
+          out.push(`▸ ${String(block.name)}${toolSummary(block.input)}`);
+        }
+      }
+    }
+  }
+  const text = out.join("\n").trim();
+  const cut = text.length > AGENT_TEXT_CHARS;
+  return { text: cut ? text.slice(text.length - AGENT_TEXT_CHARS) : text, truncated: tail.truncated || cut, ...(prompt ? { prompt } : {}) };
+}
+
+interface TranscriptEntry {
+  type?: string;
+  message?: { content?: unknown };
+}
+
+function parseEntry(line: string): TranscriptEntry | undefined {
+  if (!line.trim()) return undefined;
+  try {
+    return JSON.parse(line) as TranscriptEntry;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 记录很长、只读了最后一段时，单独读开头那条任务说明 */
+async function readFirstPrompt(file: string): Promise<string | undefined> {
+  const handle = await open(file, "r");
+  try {
+    const buffer = Buffer.alloc(256 * 1024);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const first = buffer.subarray(0, bytesRead).toString("utf8").split("\n", 1)[0]!;
+    const entry = parseEntry(first);
+    return entry?.type === "user" ? plainText(entry.message?.content) || undefined : undefined;
+  } finally {
+    await handle.close();
+  }
+}
+
+/** 用户消息里的文字（字符串，或内容块里的 text） */
+function plainText(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return (content as Array<{ type?: unknown; text?: unknown }>)
+    .map((c) => (c.type === "text" && typeof c.text === "string" ? c.text : ""))
+    .join("\n")
+    .trim();
+}
+
+/** 工具调用的主要参数，一行 */
+function toolSummary(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const i = input as Record<string, unknown>;
+  const key = ["command", "file_path", "notebook_path", "pattern", "url", "query", "description", "code", "prompt"].find((k) => typeof i[k] === "string" && i[k]);
+  const text = key ? (i[key] as string) : Object.keys(i).length ? JSON.stringify(i) : "";
+  const trimmed = text.trim();
+  const line = trimmed.split("\n", 1)[0]!.trim();
+  if (!line) return "";
+  return `  ${line.length > 200 ? line.slice(0, 200) : line}${line.length > 200 || line.length < trimmed.length ? " …" : ""}`;
+}
+
+function formatToolResult(content: unknown, isError: boolean): string {
+  let text: string;
+  if (typeof content === "string") text = content;
+  else if (Array.isArray(content)) {
+    text = (content as Array<{ type?: unknown; text?: unknown }>)
+      .map((c) => (c.type === "text" && typeof c.text === "string" ? c.text : c.type === "image" ? "[图片]" : ""))
+      .filter(Boolean)
+      .join("\n");
+  } else text = "";
+  const lines = text.trim().split("\n");
+  let body = lines.slice(0, RESULT_LINES).join("\n");
+  if (body.length > RESULT_CHARS) body = body.slice(0, RESULT_CHARS);
+  const more = body.length < text.trim().length ? "\n…" : "";
+  const shown = (body + more).split("\n").map((l, n) => `${n === 0 ? (isError ? "  ✗ " : "  ← ") : "    "}${l}`);
+  return body ? shown.join("\n") : isError ? "  ✗ （出错，无内容）" : "  ← （无内容）";
 }

@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TerminalEvent, TerminalInfo };
+export type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -179,9 +179,9 @@ export const api = {
   logoutMcpServer: (name: string) => request<{ status: string }>("POST", `/mcp-servers/${encodeURIComponent(name)}/logout`, {}).then((r) => r.status),
   /** 会话的后台任务 */
   tasks: (id: string) => request<{ tasks: BackgroundTask[] }>("GET", `/sessions/${id}/tasks`).then((r) => r.tasks),
-  /** 后台任务输出的最后一段（64 KB） */
+  /** 后台任务输出的最后一段（64 KB）；子代理是整理成文字的对话记录 */
   taskOutput: (id: string, taskId: string) =>
-    request<{ text: string; truncated: boolean }>("GET", `/sessions/${id}/tasks/${encodeURIComponent(taskId)}/output`),
+    request<TaskOutput>("GET", `/sessions/${id}/tasks/${encodeURIComponent(taskId)}/output`),
   stopTask: (id: string, taskId: string) => request("POST", `/sessions/${id}/tasks/${encodeURIComponent(taskId)}/stop`),
   /** 清掉已经结束的后台任务 */
   clearTasks: (id: string) => request("DELETE", `/sessions/${id}/tasks`),
