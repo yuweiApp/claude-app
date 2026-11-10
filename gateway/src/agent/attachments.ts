@@ -34,13 +34,35 @@ function safeName(name: string): string {
   return base && base !== "." && base !== ".." ? base.slice(0, 200) : "file";
 }
 
+/**
+ * 逐级建目录（缺的上级目录先建）。不用 mkdir 的 recursive：它在某一级 mkdir 失败、错误又不是 ENOENT、EACCES、EPERM 这几种时，
+ * 改报那一级 stat 的结果，目录本来就不存在，报出来的就成了 ENOENT，看不出真正原因。这里报的是失败那一级 mkdir 自己的错误
+ */
+async function ensureDir(dir: string): Promise<void> {
+  try {
+    await mkdir(dir);
+    return;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EEXIST" && (await stat(dir).catch(() => null))?.isDirectory()) return;
+    if (code !== "ENOENT" || path.dirname(dir) === dir) throw err;
+  }
+  await ensureDir(path.dirname(dir));
+  try {
+    await mkdir(dir);
+  } catch (err) {
+    // 同时有别的上传在建同一级目录
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST" || !(await stat(dir).catch(() => null))?.isDirectory()) throw err;
+  }
+}
+
 /** 保存一个上传文件；stream 被截断（超过大小上限）时删掉并报错 */
 export async function saveUpload(filename: string, stream: Readable & { truncated?: boolean }): Promise<Attachment> {
   const id = randomUUID();
   const dir = path.join(attachmentsDir, id);
   const name = safeName(filename);
   const file = path.join(dir, name);
-  await mkdir(dir, { recursive: true });
+  await ensureDir(dir);
   try {
     await pipeline(stream, createWriteStream(file));
     if (stream.truncated) throw new AttachmentError(`文件超过 ${config.maxUploadMb} MB：${name}`);

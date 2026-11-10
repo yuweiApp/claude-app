@@ -339,7 +339,8 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
                 <span key={f.key} className={`image-chip ${f.status}`} title={f.error ?? f.name}>
                   <ImageThumb src={f.preview} alt={f.name} className="image-chip-thumb" />
                   {f.status === "uploading" && <span className="image-chip-state">上传中…</span>}
-                  {f.status === "error" && <span className="image-chip-state error">{f.error}</span>}
+                  {/* 缩略图只有 56px，完整的错误信息在悬停提示（title）里 */}
+                  {f.status === "error" && <span className="image-chip-state error">上传失败</span>}
                   <button className="image-chip-remove" onClick={remove} title="移除" aria-label="移除">
                     ×
                   </button>
