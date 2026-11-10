@@ -479,21 +479,30 @@ main {
 .dt-message { padding: 24px 16px; color: var(--muted); font-size: 12.5px; line-height: 1.6; text-align: center; }
 .dt-badge { position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: 6px; background: rgb(0 0 0 / 0.6); color: #fff; font-size: 11.5px; }
 .scroll { flex: 1; overflow-y: auto; padding: 32px 48px 24px; overflow-anchor: none; }
-/* 回到底部：对话区底部正中，运行中三个点依次跳动。用强调色（跟着皮肤和深浅色变），深色下也能和对话区分开 */
+/* 回到底部：对话区底部正中，运行中三个点依次跳动。和停止按钮一个配色：强调色和色相前后各挪 45° 的两色斜向渐变，
+   上沿一道高光，四周带彩色光晕；运行中渐变方向缓缓转圈。颜色都从 --accent 来，跟着皮肤和深浅色变 */
+@property --sb-angle { syntax: "<angle>"; inherits: false; initial-value: 135deg; }
 .scroll-bottom {
+  --sb-c1: var(--accent);
+  --sb-c2: oklch(from var(--accent) l c calc(h + 45));
+  --sb-c3: oklch(from var(--accent) l c calc(h - 45));
   position: absolute; left: 50%; bottom: 12px; z-index: 5; display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
-  transform: translateX(-50%); border: none; border-radius: 50%; background: var(--accent); color: var(--accent-text);
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 40%, transparent), 0 1px 3px rgb(0 0 0 / 0.2);
+  transform: translateX(-50%); border: none; border-radius: 50%; color: var(--accent-text);
+  background: linear-gradient(var(--sb-angle), var(--sb-c3), var(--sb-c1) 50%, var(--sb-c2));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.35), inset 0 -1px 2px rgb(0 0 0 / 0.2),
+    -3px 3px 12px color-mix(in srgb, var(--sb-c3) 45%, transparent), 3px 4px 12px color-mix(in srgb, var(--sb-c2) 45%, transparent);
   animation: scroll-bottom-in 0.15s ease-out;
 }
-.scroll-bottom:hover { background: color-mix(in srgb, var(--accent) 86%, var(--text)); }
+.scroll-bottom:hover { filter: brightness(1.1) saturate(1.1); }
+.scroll-bottom.running { animation: scroll-bottom-in 0.15s ease-out, scroll-bottom-flow 3s linear infinite; }
 @keyframes scroll-bottom-in { from { opacity: 0; transform: translate(-50%, 6px); } }
+@keyframes scroll-bottom-flow { to { --sb-angle: 495deg; } }
 .scroll-bottom-dots { display: flex; gap: 3px; }
 .scroll-bottom-dots span { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: scroll-bottom-dot 1.2s ease-in-out infinite; }
 .scroll-bottom-dots span:nth-child(2) { animation-delay: 0.15s; }
 .scroll-bottom-dots span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes scroll-bottom-dot { 0%, 60%, 100% { opacity: 0.35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
-@media (prefers-reduced-motion: reduce) { .scroll-bottom, .scroll-bottom-dots span { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .scroll-bottom, .scroll-bottom.running, .scroll-bottom-dots span { animation: none; } }
 .scroll-content > * { max-width: var(--content-width); margin-left: auto; margin-right: auto; }
 .empty { text-align: center; color: var(--muted); margin-top: 20vh; font-size: 22px; }
 .empty-sub { font-size: 13px; margin-top: 8px; word-break: break-all; }

@@ -671,7 +671,7 @@ function Chat({
 /** 对话区底部正中的「回到底部」：平时是向下箭头，代理运行中是跳动的三个点 */
 function ScrollToBottom({ running, onClick }: { running: boolean; onClick: () => void }) {
   return (
-    <button className="scroll-bottom" onClick={onClick} title="回到底部" aria-label="回到底部">
+    <button className={running ? "scroll-bottom running" : "scroll-bottom"} onClick={onClick} title="回到底部" aria-label="回到底部">
       {running ? (
         <span className="scroll-bottom-dots" aria-hidden="true">
           <span />
