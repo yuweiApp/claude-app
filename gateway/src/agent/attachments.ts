@@ -93,13 +93,35 @@ function imageType(a: Attachment) {
   return mediaType && a.size <= MAX_IMAGE_BYTES ? mediaType : null;
 }
 
+/** 网页上选中的元素（发消息的请求里的）：网页拼好的 <selected-element> 一段文字，截图是附件 id */
+export interface SelectedElementInput {
+  text: string;
+  screenshot?: string;
+}
+
+/** 截图换成了附件 */
+export interface SelectedElementContent {
+  text: string;
+  screenshot?: Attachment;
+}
+
+export async function loadElements(inputs: SelectedElementInput[]): Promise<SelectedElementContent[]> {
+  return Promise.all(
+    inputs.map(async ({ text, screenshot }) => {
+      const [image] = screenshot ? await loadAttachments([screenshot]) : [];
+      return { text, ...(image ? { screenshot: image } : {}) };
+    }),
+  );
+}
+
 /**
  * 拼用户消息的内容，结构同 Claude 桌面版（会话 jsonl 里用户发的图片就是这样存的）：
  * 图片作为 Anthropic 的 image 块（base64）放在最前面，然后是用户的文字；
+ * 网页上选中的元素接在用户的文字后面，每个是截图（image 块）和那段 <selected-element> 文字，同 Claude 桌面版的「选择元素」；
  * 其他文件用一段 <attachments> 列出路径（网页按这个格式还原附件），模型需要时用 Read 读
  */
-export async function buildUserContent(text: string, attachments: Attachment[]): Promise<UserContent> {
-  if (!attachments.length) return text;
+export async function buildUserContent(text: string, attachments: Attachment[], elements: SelectedElementContent[] = []): Promise<UserContent> {
+  if (!attachments.length && !elements.length) return text;
   const blocks: ContentBlock[] = [];
   const files: Attachment[] = [];
   for (const a of attachments) {
@@ -112,6 +134,11 @@ export async function buildUserContent(text: string, attachments: Attachment[]):
     blocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data } });
   }
   if (text) blocks.push({ type: "text", text });
+  for (const element of elements) {
+    const mediaType = element.screenshot && imageType(element.screenshot);
+    if (mediaType) blocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data: (await readFile(element.screenshot!.path)).toString("base64") } });
+    blocks.push({ type: "text", text: element.text });
+  }
   if (files.length) blocks.push({ type: "text", text: formatAttachments(files) });
   return blocks;
 }

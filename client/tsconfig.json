@@ -13,7 +13,7 @@
     "noEmit": true,
     "types": ["vite/client"],
     "paths": {
-      // 复用网关的事件类型和 SDK 的消息类型（只用于类型，不会打进产物）
+      // 复用网关的事件类型和 SDK 的消息类型；@gateway/shared 下不依赖 Node 的代码也能 import（vite.config.ts 里有同样的别名）
       "@gateway/*": ["../gateway/src/*"],
       "@anthropic-ai/claude-agent-sdk": ["../gateway/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts"]
     }

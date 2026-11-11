@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { ELEMENT_CONTEXT_FUNCTION } from "@gateway/shared/element-context";
 import type { BrowserLogo } from "../api";
 import type { BrowserSuggestion, BrowserTabInfo, DesktopBrowserApi } from "../desktop";
+import { sanitizeElement, uploadElementScreenshot } from "../state/responseAnnotations";
+import { closePageAnnotation, startPageAnnotation } from "./ResponseAnnotations";
 
 interface Props {
   api: DesktopBrowserApi;
@@ -12,7 +15,11 @@ interface Props {
 /**
  * 右侧面板里的一个浏览器标签页（只有桌面版有）：上面是地址栏，下面的画面区域只是个空的 div，
  * 网页是外壳的原生网页视图，按这个 div 的位置叠放在窗口上（见 desktop/src/browser/views.ts）。
- * 原生视图总在界面之上：界面的对话框、菜单盖住画面区域时先把视图收起来，不然会挡住它们
+ * 原生视图总在界面之上：界面的对话框、菜单盖住画面区域时先把视图收起来，不然会挡住它们。
+ *
+ * 选择元素（同 Claude 桌面版，和右侧面板 HTML 预览的标注一样）：工具栏的按钮打开外壳的检查模式（desktop/src/browser/inspect.ts），
+ * 在网页上点一个元素，外壳取元素信息、拍截图推过来，这里上传截图，在元素旁边打开编辑框写要怎么改，加进输入框里的「N 条注释」。
+ * 编辑框盖住画面区域时视图换成快照，选中的元素在快照上画框
  */
 export function BrowserTab({ api, id, info, active }: Props) {
   const areaRef = useRef<HTMLDivElement>(null);
@@ -28,6 +35,56 @@ export function BrowserTab({ api, id, info, active }: Props) {
   const failed = info?.error;
   const failedRef = useRef(false);
   failedRef.current = !!failed;
+  /** 选择元素：检查模式开着没有 */
+  const [picking, setPicking] = useState(false);
+  /** 刚选中、正在写要求的元素在画面区域里的位置（界面的 CSS 像素），快照上画框用 */
+  const [picked, setPicked] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const pickSeq = useRef(0);
+  /** 正在写要求：编辑框不一定碰得到下面检查遮挡的那几个点，这期间一直按被盖住处理 */
+  const pickedRef = useRef(false);
+  pickedRef.current = !!picked;
+
+  // 检查模式：切走、关掉标签页时关掉
+  useEffect(() => {
+    if (!picking || !active) return;
+    void api.inspect(id, ELEMENT_CONTEXT_FUNCTION).then((ok) => {
+      if (!ok) setPicking(false);
+    });
+    return () => {
+      void api.inspect(id, null);
+    };
+  }, [api, id, picking, active]);
+  useEffect(() => api.onInspectEnded((tab) => tab === id && setPicking(false)), [api, id]);
+  useEffect(() => {
+    if (!picking) closePageAnnotation();
+  }, [picking]);
+  // 选中了一个元素：网页的位置按画面区域和网页视口的比例换成界面上的（不管界面、网页各自的缩放）
+  useEffect(
+    () =>
+      api.onPicked((p) => {
+        if (p.tabId !== id) return;
+        const element = sanitizeElement(p.element);
+        const area = areaRef.current;
+        if (!element || !area || p.viewport.width <= 0) return;
+        const scale = area.getBoundingClientRect().width / p.viewport.width;
+        const box = { left: p.rect.x * scale, top: p.rect.y * scale, width: p.rect.width * scale, height: p.rect.height * scale };
+        const seq = ++pickSeq.current;
+        void uploadElementScreenshot(p.screenshot).then((screenshot) => {
+          if (seq !== pickSeq.current) return;
+          setPicked(box);
+          startPageAnnotation(
+            p.sessionId,
+            { url: p.url, element, ...(screenshot ? { screenshot } : {}) },
+            () => {
+              const r = areaRef.current?.getBoundingClientRect();
+              return r ? new DOMRect(r.left + box.left, r.top + box.top, box.width, box.height) : null;
+            },
+            () => setPicked((cur) => (cur === box ? null : cur)),
+          );
+        });
+      }),
+    [api, id],
+  );
 
   // 没在编辑时，地址栏跟着网页的网址走
   useEffect(() => {
@@ -55,7 +112,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
         const r = el.getBoundingClientRect();
         const empty = r.width < 1 || r.height < 1;
         const blocked = failedRef.current;
-        const hidden = empty || blocked || isCovered(el, r);
+        const hidden = empty || blocked || pickedRef.current || isCovered(el, r);
         if (hidden !== wasCovered) {
           wasCovered = hidden;
           const mine = ++seq;
@@ -118,6 +175,18 @@ export function BrowserTab({ api, id, info, active }: Props) {
         }}
         onGo={(action) => api.go(id, action)}
         suggest={api.suggest}
+        actions={
+          <button
+            className={`icon-btn browser-btn${picking ? " on" : ""}`}
+            title={picking ? "退出选择元素（Esc）" : "选择元素：在网页上点选元素写要求，随下一条消息发给 Claude"}
+            aria-label="选择元素"
+            aria-pressed={picking}
+            disabled={!!failed || !info?.url || info.url === "about:blank"}
+            onClick={() => setPicking((on) => !on)}
+          >
+            <SelectElementIcon />
+          </button>
+        }
       />
       <div ref={areaRef} className="browser-area">
         {failed ? (
@@ -134,6 +203,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
           covered && (
             <div className="browser-covered">
               {snapshot ? <img src={snapshot} alt="" draggable={false} /> : <span>{info?.title || url}</span>}
+              {snapshot && picked && <div className="browser-picked" style={picked} />}
             </div>
           )
         )}
@@ -154,6 +224,8 @@ interface ToolbarProps {
   onGo?: (action: "back" | "forward" | "reload" | "stop") => void;
   /** 地址栏的建议（浏览历史） */
   suggest?: (query: string) => Promise<BrowserSuggestion[]>;
+  /** 地址栏右边的按钮（选择元素） */
+  actions?: ReactNode;
   disabled?: boolean;
   placeholder?: string;
 }
@@ -162,7 +234,7 @@ interface ToolbarProps {
  * 浏览器的地址栏一行：后退、前进、刷新（加载中是停止）、地址。新标签页顶部也用它，在那里输入网址就把这个标签页变成浏览器。
  * 输入时下面弹出浏览历史里的建议，上下键选、回车打开
  */
-export function BrowserToolbar({ info, inputRef, address, onAddress, onReset, onSubmit, onGo, suggest, disabled, placeholder }: ToolbarProps) {
+export function BrowserToolbar({ info, inputRef, address, onAddress, onReset, onSubmit, onGo, suggest, actions, disabled, placeholder }: ToolbarProps) {
   const [items, setItems] = useState<BrowserSuggestion[]>([]);
   const [highlight, setHighlight] = useState(-1);
   const [open, setOpen] = useState(false);
@@ -268,6 +340,7 @@ export function BrowserToolbar({ info, inputRef, address, onAddress, onReset, on
           </div>
         )}
       </div>
+      {actions && <div className="browser-nav">{actions}</div>}
     </div>
   );
 }
@@ -388,6 +461,16 @@ function ReloadIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M13 8a5 5 0 1 1-1.46-3.54M13 2.5v3h-3" />
+    </svg>
+  );
+}
+
+/** 选择元素：方框加箭头 */
+function SelectElementIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6.5 13.5h-3a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v3" />
+      <path d="m8 8 6 2.2-2.6 1.1L10.3 14z" />
     </svg>
   );
 }

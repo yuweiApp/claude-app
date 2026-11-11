@@ -14,7 +14,7 @@ import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
 import type { Attachment, GatewayEvent, SessionState } from "../shared/types.js";
-import { buildUserContent } from "./attachments.js";
+import { buildUserContent, type SelectedElementContent } from "./attachments.js";
 import { InputQueue } from "./input-queue.js";
 import { listModels } from "./models.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -116,9 +116,9 @@ export class AgentSession {
     this.done = this.consume();
   }
 
-  async send(text: string, attachments: Attachment[] = []): Promise<string> {
+  async send(text: string, attachments: Attachment[] = [], elements: SelectedElementContent[] = []): Promise<string> {
     const uuid = randomUUID();
-    const content = await buildUserContent(text, attachments);
+    const content = await buildUserContent(text, attachments, elements);
     const now = this.state === "running" && this.toolsInFlight.size > 0 && this.pending.size === 0;
     // 这一轮还在进行时发的，不管 now 还是 next，都要等 Claude Code 交给模型（command_lifecycle started）才知道落在哪里：
     // next 在下一次工具结果之后并进这一轮，或这一轮结束后开始下一轮；now 有时并进这一轮，有时先结束这一轮

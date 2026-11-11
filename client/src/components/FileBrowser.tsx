@@ -9,7 +9,8 @@ import { ZoomableImage } from "./ImageThumb";
 import { MarkdownLiveEditor } from "./MarkdownLiveEditor";
 import { PATH_DRAG_TYPE } from "./MentionText";
 import { closePageAnnotation, editAnnotationAt, repositionAnnotationEditor, startPageAnnotation } from "./ResponseAnnotations";
-import { useResponseAnnotations, type PageAnnotationTarget } from "../state/responseAnnotations";
+import { sanitizeElement, uploadElementScreenshot, useResponseAnnotations } from "../state/responseAnnotations";
+import { desktop } from "../desktop";
 
 /** 文件里的行范围，回复里的链接带了行号时面板滚到并选中这几行 */
 export type { LineRange } from "./CodeEditor";
@@ -1158,9 +1159,10 @@ function FileViewer({
  * 显示的是保存了的文件，文件改了（修改时间变了）就重新加载。
  * sandbox 不给 allow-same-origin：网页和界面同源，脚本不能碰界面的存储和接口。
  *
- * 标注（参照 codex-app-server 的浏览器批注）：网关在网页末尾接了一段脚本（gateway/src/http/page-picker.ts），
- * 和这里互相 postMessage。标注模式下在网页上点一个元素，界面上打开编辑框写要怎么改，
- * 加进输入框里的「N 条注释」，随下一条消息发出；已有的标注在元素上显示编号，点编号修改
+ * 标注（同 Claude 桌面版的「选择元素」，和内置浏览器的一样）：网关在网页末尾接了一段脚本（gateway/src/http/page-picker.ts），
+ * 和这里互相 postMessage。标注模式下在网页上点一个元素，网页里的脚本取元素信息（gateway/src/shared/element-context.ts），
+ * 桌面版再截一张元素的图（网页版截不了），界面上打开编辑框写要怎么改，加进输入框里的「N 条注释」，随下一条消息发出；
+ * 已有的标注在元素上显示编号，点编号修改
  */
 function HtmlPreview({
   cwd,
@@ -1199,11 +1201,13 @@ function HtmlPreview({
   const fileRef = useRef(path);
   fileRef.current = loaded?.file ?? path;
   const pickedRect = useRef<PageRect | null>(null);
+  /** 第几次选：截图、上传期间又选了别的，前一次的就不打开编辑框了 */
+  const pickSeq = useRef(0);
 
   const annotations = useResponseAnnotations(sessionId);
   const file = loaded?.file;
   const marks = useMemo(
-    () => annotations.flatMap((a, i) => (a.page && a.page.file === file ? [{ id: a.id, n: i + 1, selector: a.page.selector }] : [])),
+    () => annotations.flatMap((a, i) => (a.element?.selector && a.element.file === file ? [{ id: a.id, n: i + 1, selector: a.element.selector }] : [])),
     [annotations, file],
   );
 
@@ -1235,17 +1239,25 @@ function HtmlPreview({
         setLoaded((prev) => ({ file: pageFile(d.path) ?? path, n: (prev?.n ?? 0) + 1 }));
         onReady(true);
       } else if (d.type === "pick" && sessionId) {
-        const target = pageTarget(d, fileRef.current);
-        if (!target) return;
+        const element = sanitizeElement(d.element);
+        const selector = str(d.selector, 1000);
+        if (!element || !selector) return;
+        const file = fileRef.current;
         pickedRect.current = pageRect(d.rect);
         const pickId = d.pickId;
-        startPageAnnotation(
-          sessionId,
-          str(d.label, 300),
-          target,
-          () => toScreen(pickedRect.current),
-          () => post({ type: "clear-pick", pickId }),
-        );
+        const seq = ++pickSeq.current;
+        void (async () => {
+          const shot = await captureElement(frame, toScreen(pickedRect.current));
+          post({ type: "show-pick", pickId });
+          const screenshot = await uploadElementScreenshot(shot);
+          if (seq !== pickSeq.current) return;
+          startPageAnnotation(
+            sessionId,
+            { file, selector, element, ...(screenshot ? { screenshot } : {}) },
+            () => toScreen(pickedRect.current),
+            () => post({ type: "clear-pick", pickId }),
+          );
+        })();
       } else if (d.type === "picked-rect") {
         pickedRect.current = pageRect(d.rect);
         repositionAnnotationEditor();
@@ -1296,19 +1308,19 @@ function pageRect(v: unknown): PageRect | null {
   const r = v as Record<string, unknown>;
   return { x: num(r.x), y: num(r.y), width: num(r.width), height: num(r.height) };
 }
-function pageTarget(d: Record<string, unknown>, file: string): PageAnnotationTarget | null {
-  const selector = str(d.selector, 1000);
-  const tag = str(d.tag, 40);
-  if (!selector || !tag) return null;
-  const p = (d.point ?? {}) as Record<string, unknown>;
-  const v = (d.viewport ?? {}) as Record<string, unknown>;
-  return {
-    file,
-    selector,
-    tag,
-    point: { x: Math.round(num(p.x)), y: Math.round(num(p.y)) },
-    viewport: { width: Math.round(num(v.width)), height: Math.round(num(v.height)) },
-  };
+/**
+ * 桌面版：截一张元素的图（四周多 80px，限在网页的范围里，同内置浏览器），PNG 的 base64；网页版、元素不在画面上时 null。
+ * 截的是界面窗口，网页里此时没有画选中框（等 show-pick）
+ */
+async function captureElement(frame: HTMLIFrameElement, el: DOMRect | null): Promise<string | null> {
+  if (!desktop || !el) return null;
+  const f = frame.getBoundingClientRect();
+  const left = Math.max(f.left, el.left - 80);
+  const top = Math.max(f.top, el.top - 80);
+  const right = Math.min(f.right, el.right + 80);
+  const bottom = Math.min(f.bottom, el.bottom + 80);
+  if (right - left < 1 || bottom - top < 1) return null;
+  return desktop.captureRect({ x: left, y: top, width: right - left, height: bottom - top }).catch(() => null);
 }
 /** 网页地址的路径（…/files/page/<id>/<相对路径>）里的文件，文件夹是里面的 index.html */
 function pageFile(pathname: unknown): string | null {

@@ -2,7 +2,7 @@ import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk
 import { listModels } from "../../agent/models.js";
 import type { FastifyInstance } from "fastify";
 import type { ConnectorEntry, ConnectorInput, MarketPluginPage, McpAuthState, McpServerInput } from "../../shared/types.js";
-import { AttachmentError } from "../../agent/attachments.js";
+import { AttachmentError, type SelectedElementInput } from "../../agent/attachments.js";
 import { BadRequestError, NotFoundError, type SessionManager } from "../../agent/session-manager.js";
 import type { EventHub } from "../../events/event-hub.js";
 import { streamSession } from "../sse.js";
@@ -18,6 +18,17 @@ const permissionModes = ["default", "acceptEdits", "plan", "bypassPermissions", 
 const effortLevels = ["low", "medium", "high", "xhigh", "max"];
 
 const attachmentsSchema = { type: "array", items: { type: "string" }, maxItems: 20 };
+/** 网页上选中的元素：网页拼好的 <selected-element> 一段文字，和截图的附件 id */
+const elementsSchema = {
+  type: "array",
+  maxItems: 20,
+  items: {
+    type: "object",
+    required: ["text"],
+    additionalProperties: false,
+    properties: { text: { type: "string", minLength: 1, maxLength: 20000 }, screenshot: { type: "string" } },
+  },
+};
 
 interface IdParams {
   id: string;
@@ -27,9 +38,9 @@ interface TaskParams extends IdParams {
   taskId: string;
 }
 
-/** 文字和附件至少要有一样 */
-function requireContent(body: { text: string; attachments?: string[] }): void {
-  if (!body.text.trim() && !body.attachments?.length) throw new AttachmentError("消息不能为空");
+/** 文字、附件、网页元素至少要有一样 */
+function requireContent(body: { text: string; attachments?: string[]; elements?: SelectedElementInput[] }): void {
+  if (!body.text.trim() && !body.attachments?.length && !body.elements?.length) throw new AttachmentError("消息不能为空");
 }
 
 export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hub: EventHub): void {
@@ -228,20 +239,20 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     messages: await sessions.messages(req.params.id),
   }));
 
-  app.post<{ Params: IdParams; Body: { text: string; attachments?: string[] } }>(
+  app.post<{ Params: IdParams; Body: { text: string; attachments?: string[]; elements?: SelectedElementInput[] } }>(
     "/sessions/:id/messages",
     {
       schema: {
         body: {
           type: "object",
           required: ["text"],
-          properties: { text: { type: "string" }, attachments: attachmentsSchema },
+          properties: { text: { type: "string" }, attachments: attachmentsSchema, elements: elementsSchema },
         },
       },
     },
     async (req) => {
       requireContent(req.body);
-      return { uuid: await sessions.send(req.params.id, req.body.text.trim(), req.body.attachments) };
+      return { uuid: await sessions.send(req.params.id, req.body.text.trim(), req.body.attachments, req.body.elements) };
     },
   );
 

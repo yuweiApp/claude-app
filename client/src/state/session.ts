@@ -1,6 +1,6 @@
 import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
 import type { BackgroundTask, DesktopTarget, GatewayEvent, HistoryMessage } from "../api";
-import { splitResponseAnnotations, type SentResponseAnnotation } from "./responseAnnotations";
+import { parseSelectedElement, splitResponseAnnotations, type SentResponseAnnotation } from "./responseAnnotations";
 
 /** 消息里显示的附件（历史消息里只有路径，没有大小） */
 export interface AttachmentChip {
@@ -436,7 +436,12 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
     const texts: string[] = [];
     const images: string[] = [];
     const attachments: AttachmentChip[] = [];
+    /** 网页上选中的元素（<selected-element> 文字块），紧挨在前面的图片是它的截图 */
+    const elements: SentResponseAnnotation[] = [];
+    let prev: Record<string, unknown> | undefined;
     for (const b of content as Array<Record<string, unknown>>) {
+      const before = prev;
+      prev = b;
       if (b.type === "tool_result") {
         const inner = Array.isArray(b.content) ? (b.content as unknown[]) : [];
         const id = String(b.tool_use_id);
@@ -455,12 +460,17 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
         if (src) images.push(src);
       } else if (b.type === "text" && typeof b.text === "string") {
         const parsed = parseAttachments(b.text);
-        if (parsed) attachments.push(...parsed);
+        const element = parsed ? null : parseSelectedElement(b.text);
+        if (element) {
+          const shot = before?.type === "image" ? imageSrc(before) : null;
+          if (shot && images.at(-1) === shot) images.pop();
+          elements.push(shot && element.element ? { ...element, element: { ...element.element, image: shot } } : element);
+        } else if (parsed) attachments.push(...parsed);
         else if (!SKILL_META.test(b.text)) texts.push(b.text);
       }
     }
-    if (texts.length || images.length || attachments.length) {
-      pushItem(view, parent, userItem(uuid, at, texts.join("\n"), images, attachments));
+    if (texts.length || images.length || attachments.length || elements.length) {
+      pushItem(view, parent, userItem(uuid, at, texts.join("\n"), images, attachments, elements));
       if (!parent) view.turnEnded = false;
     } else {
       view.seen = new Set(view.seen).add(uuid);
@@ -498,12 +508,12 @@ function finishCompact(view: SessionView, status: "done" | "failed"): void {
   view.items = view.items.with(i, { ...item, status, awaitingSummary: status === "done" });
 }
 
-/** 用户消息：末尾带回复注释的拆出来 */
-function userItem(uuid: string, at: number | undefined, raw: string, images: string[], attachments: AttachmentChip[]): Item {
+/** 用户消息：末尾带回复注释的拆出来，和网页上选中的元素一起放进 annotations */
+function userItem(uuid: string, at: number | undefined, raw: string, images: string[], attachments: AttachmentChip[], elements: SentResponseAnnotation[] = []): Item {
   const split = splitResponseAnnotations(raw);
-  return split
-    ? { kind: "user", uuid, at, text: split.text, images, attachments, annotations: split.annotations }
-    : { kind: "user", uuid, at, text: raw, images, attachments };
+  const annotations = [...(split?.annotations ?? []), ...elements];
+  const text = split ? split.text : raw;
+  return annotations.length ? { kind: "user", uuid, at, text, images, attachments, annotations } : { kind: "user", uuid, at, text, images, attachments };
 }
 
 /** 用户中断时 Claude Code 写进对话的 user 消息（字符串，或只有一个 text 块） */

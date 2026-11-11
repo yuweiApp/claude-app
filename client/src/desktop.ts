@@ -1,3 +1,4 @@
+import type { SelectedElement } from "@gateway/shared/types";
 /** 桌面版（Electron）预加载脚本注入的窗口接口，见 desktop/src/preload.cts；普通浏览器里没有 */
 export interface DesktopApi {
   platform: string;
@@ -13,6 +14,8 @@ export interface DesktopApi {
   onMaximizedChange(callback: (maximized: boolean) => void): () => void;
   /** 按标题找桌面上的窗口（桌面工具正在操作的那个），返回采集源，getUserMedia 用它的 id 取实时画面；找不到时 null。见 desktop/src/capture.ts */
   findCaptureSource(title: string): Promise<CaptureSource | null>;
+  /** 界面上一块区域（界面的 CSS 像素）的截图，PNG 的 base64，最长边不超过 1200px；拍不到时 null */
+  captureRect(rect: { x: number; y: number; width: number; height: number }): Promise<string | null>;
   /** 内置浏览器（右侧面板的「浏览器」），见 desktop/src/browser/views.ts */
   browser: DesktopBrowserApi;
 }
@@ -75,6 +78,25 @@ export interface DesktopBrowserApi {
   onTabs(callback: (tabs: BrowserTabInfo[]) => void): () => void;
   /** AI 切到了某个标签页 */
   onActivate(callback: (id: string) => void): () => void;
+  /** 选择元素：传取元素的函数（gateway/src/shared/element-context.ts）打开检查模式，传 null 关掉；打不开时返回 false */
+  inspect(id: string, fn: string | null): Promise<boolean>;
+  /** 检查模式下选中了一个元素，见 desktop/src/browser/inspect.ts */
+  onPicked(callback: (picked: BrowserPickedElement) => void): () => void;
+  /** 在网页里按 Esc 退出了检查模式 */
+  onInspectEnded(callback: (id: string) => void): () => void;
+}
+
+/** 内置浏览器里选中的元素，和 desktop/src/browser/inspect.ts 的 PickedElement 一致 */
+export interface BrowserPickedElement {
+  tabId: string;
+  sessionId: string;
+  url: string;
+  element: SelectedElement;
+  /** 元素在网页视口里的位置和视口大小（CSS 像素） */
+  rect: { x: number; y: number; width: number; height: number };
+  viewport: { width: number; height: number };
+  /** 元素截图，PNG 的 base64 */
+  screenshot?: string;
 }
 
 export const desktop: DesktopApi | undefined = (window as Window & { desktop?: DesktopApi }).desktop;

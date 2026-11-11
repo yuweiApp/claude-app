@@ -6,9 +6,16 @@ export default defineConfig(({ mode }) => {
   const target = env.VITE_PROXY_TARGET || "http://127.0.0.1:8788";
   return {
     plugins: [react()],
+    resolve: {
+      // 网关的 shared 目录：类型之外还有和网关共用的、不依赖 Node 的代码（如 shared/element-context.ts）。
+      // client 没装 @types/node，用 URL 算路径；Windows 上 pathname 是 /F:/…，去掉开头的斜杠
+      alias: { "@gateway": decodeURIComponent(new URL("../gateway/src", import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, "$1") },
+    },
     server: {
       port: 5180,
       strictPort: true,
+      // @gateway 别名指到 client 外面，开发服务器默认不给读
+      fs: { allow: [".", "../gateway/src/shared"] },
       proxy: {
         // 开发时 /api/* 转发到网关，前端不用处理 CORS
         "/api": {

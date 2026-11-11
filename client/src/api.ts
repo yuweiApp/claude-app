@@ -137,8 +137,9 @@ export const api = {
   setModel: (id: string, change: { model?: string; effort?: EffortLevel }) => request("POST", `/sessions/${id}/model`, change),
   messages: (id: string) =>
     request<{ messages: HistoryMessage[] }>("GET", `/sessions/${id}/messages`).then((r) => r.messages),
-  send: (id: string, text: string, attachments: string[]) =>
-    request("POST", `/sessions/${id}/messages`, { text, attachments }),
+  /** elements：网页上选中的元素，每个是一段文字和截图的附件 id，网关排在用户文字后面（见 gateway/src/agent/attachments.ts） */
+  send: (id: string, text: string, attachments: string[], elements: { text: string; screenshot?: string }[] = []) =>
+    request("POST", `/sessions/${id}/messages`, { text, attachments, ...(elements.length ? { elements } : {}) }),
   upload: (files: File[]) => {
     const form = new FormData();
     for (const file of files) form.append("file", file, file.name);

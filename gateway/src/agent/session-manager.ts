@@ -17,7 +17,7 @@ import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
 import type { BackgroundTask, SessionListItem, TaskOutput } from "../shared/types.js";
-import { loadAttachments } from "./attachments.js";
+import { loadAttachments, loadElements, type SelectedElementInput } from "./attachments.js";
 import { enabledSkillNames } from "./capabilities.js";
 import { disabledSkills } from "./extensions.js";
 import { AgentSession } from "./session.js";
@@ -102,10 +102,11 @@ export class SessionManager {
   }
 
   /** 发送消息；会话不活跃时先 resume */
-  async send(sessionId: string, text: string, attachmentIds: string[] = []): Promise<string> {
+  async send(sessionId: string, text: string, attachmentIds: string[] = [], elementInputs: SelectedElementInput[] = []): Promise<string> {
     rejectDisabledSkill(text);
     const attachments = await loadAttachments(attachmentIds);
-    return (await this.activate(sessionId)).send(text, attachments);
+    const elements = await loadElements(elementInputs);
+    return (await this.activate(sessionId)).send(text, attachments, elements);
   }
 
   /** 活跃会话直接返回；子进程已回收的用原来的工作目录 resume */

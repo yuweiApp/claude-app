@@ -210,7 +210,7 @@ async function fetchInPage(url: string, wc: WebContents): Promise<{ type: string
 /** 弹出窗口出现前多久之内的点击、按键算触发了它 */
 const POPUP_TRIGGER_MS = 2000;
 /** 网页收到的输入事件，离 AI 上一次经 CDP 发输入命令不到这么久的，是 AI 的（CDP 发的输入也会触发 input-event） */
-const AGENT_INPUT_ECHO_MS = 300;
+export const AGENT_INPUT_ECHO_MS = 300;
 
 export interface BrowserViewsEvents {
   created: [tab: Tab];

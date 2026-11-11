@@ -1384,6 +1384,8 @@ main {
 .browser-btn { flex: none; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
 .browser-btn:hover:not(:disabled) { color: var(--text); }
 .browser-btn:disabled { opacity: 0.4; cursor: default; }
+/* 选择元素开着 */
+.browser-btn.on, .browser-btn.on:hover:not(:disabled) { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .browser-address { flex: 1; min-width: 0; height: 32px; padding: 0 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--panel); color: var(--text); font-size: 13px; outline: none; }
 .browser-address:focus { border-color: var(--accent); background: var(--bg); }
 .browser-area { flex: 1; min-height: 0; position: relative; background: #fff; }
@@ -1406,6 +1408,8 @@ main {
 .browser-error-retry { margin-top: 8px; color: var(--text); }
 .browser-covered img { width: 100%; height: 100%; object-fit: fill; display: block; }
 .browser-covered:has(img) { padding: 0; }
+/* 快照上正在写要求的那个元素，颜色同 HTML 预览里的选中框 */
+.browser-picked { position: absolute; box-sizing: border-box; border: 2px solid #2563eb; border-radius: 3px; background: rgba(37, 99, 235, 0.12); pointer-events: none; }
 .mention-tab { display: inline-flex; align-items: center; gap: 3px; vertical-align: bottom; }
 /* 输入框里的标签页引用：字不能少（要和 textarea 对齐），@ 和方括号透明占位，@ 的位置叠地球图标 */
 .mention-tab-at { position: relative; color: transparent; }
@@ -1612,6 +1616,8 @@ svg.ic-mcp { color: var(--ic-mcp); }
 .sent-note:hover:not(:disabled) { background: none; }
 .sent-note:disabled { cursor: default; opacity: 1; }
 .sent-note-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* 网页元素的截图 */
+.sent-note-shot { max-width: 240px; max-height: 160px; margin: 2px 0 4px; border: 1px solid var(--border); border-radius: 6px; object-fit: contain; background: #fff; }
 .plugin-notice { margin: 12px 0 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .plugin-directory-bar { display: flex; align-items: center; gap: 12px; margin: -4px 0 12px; color: var(--muted); font-size: 13px; }
 .plugin-directory-bar > span { flex: 1; min-width: 0; }

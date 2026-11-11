@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell, type MenuItemConstructorOptions, type OpenDialogOptions, type Rectangle } from "electron";
 import { GatewayBridge } from "./browser/bridge.js";
+import { ElementInspector, pngBase64 } from "./browser/inspect.js";
 import { BrowserViews, FAVICON_SCHEME, tabInfo } from "./browser/views.js";
 import { findCaptureSource } from "./capture.js";
 
@@ -198,6 +199,26 @@ ipcMain.on("browser:go", (e, id: unknown, action: unknown) => {
 ipcMain.on("browser:show", (e, id: unknown, bounds: Rectangle) => fromUi(e.sender) && typeof id === "string" && browserViews.show(id, bounds));
 ipcMain.on("browser:hide", (e) => fromUi(e.sender) && browserViews.hide());
 ipcMain.handle("browser:snapshot", (e, id: unknown) => (fromUi(e.sender) && typeof id === "string" ? browserViews.snapshot(id) : null));
+// 选择元素（见 browser/inspect.ts）：界面开关检查模式，传来取元素的函数；选中的元素、按 Esc 退出推给界面
+const inspector = new ElementInspector(browserViews);
+inspector.on("picked", (picked) => mainWindow?.webContents.send("browser:picked", picked));
+inspector.on("ended", (id) => mainWindow?.webContents.send("browser:inspect-ended", id));
+ipcMain.handle("browser:inspect", (e, id: unknown, fn: unknown) => {
+  if (!fromUi(e.sender) || typeof id !== "string") return false;
+  if (typeof fn !== "string") {
+    inspector.stop(id);
+    return false;
+  }
+  return inspector.start(id, fn);
+});
+// 界面上一块区域的截图（右侧面板 HTML 预览里选中的元素）：rect 是界面的 CSS 像素，按界面的缩放换成窗口坐标；返回 PNG 的 base64
+ipcMain.handle("window:capture", async (e, rect: Rectangle) => {
+  if (!fromUi(e.sender) || !mainWindow || mainWindow.isDestroyed()) return null;
+  const zoom = mainWindow.webContents.getZoomFactor();
+  const area = { x: Math.round(rect.x * zoom), y: Math.round(rect.y * zoom), width: Math.round(rect.width * zoom), height: Math.round(rect.height * zoom) };
+  if (area.width < 1 || area.height < 1) return null;
+  return pngBase64(await mainWindow.webContents.capturePage(area)) ?? null;
+});
 ipcMain.handle("browser:suggest", (e, query: unknown) => (fromUi(e.sender) && typeof query === "string" ? browserViews.history.suggest(query) : []));
 
 // 桌面工具正在操作的窗口的实时画面（网页右上角的浮窗）：按标题找采集源，见 capture.ts

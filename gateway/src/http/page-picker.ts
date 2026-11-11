@@ -1,14 +1,17 @@
+import { ELEMENT_CONTEXT_FUNCTION } from "../shared/element-context.js";
+
 /**
  * 网页预览（/files/page/）给 HTML 末尾加上的脚本：右侧面板在网页上点选元素写标注用。
  * 网页在沙箱里（单独的源），界面碰不到里面的 DOM，只能由网页里的脚本和界面互相 postMessage：
  *
  * 界面 → 网页（source: "claude-app"）
  * - { type: "state", annotating, marks: [{ id, n, selector }] }：开关标注模式；已有标注的编号贴在对应元素上
+ * - { type: "show-pick", pickId }：界面截完图了，给这次选中的元素画上框（截图里不要框；已经又选了别的就不动）
  * - { type: "clear-pick", pickId }：写标注的框关了，去掉这次选中的元素的框（已经又选了别的就不动）
  *
  * 网页 → 界面（source: "claude-app-page"）
  * - { type: "ready", path }：加载好了（每次加载、跳到别的页面都发），path 是网页地址的路径
- * - { type: "pick", pickId, label, selector, tag, point, viewport, rect }：标注模式下点了一个元素
+ * - { type: "pick", pickId, selector, element, rect }：标注模式下点了一个元素；element 是 shared/element-context.ts 的函数取的元素信息
  * - { type: "picked-rect", rect }：选中的元素滚动后的新位置
  * - { type: "edit", id, rect }：点了已有标注的编号
  * - { type: "escape" }：标注模式下按了 Esc
@@ -19,12 +22,14 @@
  */
 export const PAGE_PICKER_SCRIPT = String.raw`(function () {
   if (window.parent === window) return;
+  var elementContext = ${ELEMENT_CONTEXT_FUNCTION};
   var me = document.currentScript;
   if (me && me.parentNode) me.parentNode.removeChild(me);
   var annotating = false;
   var marks = [];
   var hoverEl = null;
   var pickedEl = null;
+  var pending = null;
   var pickId = 0;
   var lastPickedRect = "";
   var host = null;
@@ -180,18 +185,6 @@ export const PAGE_PICKER_SCRIPT = String.raw`(function () {
     }
     return parts.join(" > ");
   }
-  function labelOf(el) {
-    var t =
-      el.getAttribute("aria-label") ||
-      el.getAttribute("alt") ||
-      el.getAttribute("title") ||
-      el.getAttribute("placeholder") ||
-      el.innerText ||
-      el.textContent ||
-      "";
-    t = t.replace(/\s+/g, " ").trim();
-    return t.length > 160 ? t.slice(0, 160) + "…" : t;
-  }
   function ours(e) {
     return e.target === host;
   }
@@ -213,22 +206,19 @@ export const PAGE_PICKER_SCRIPT = String.raw`(function () {
     block(e);
     var el = e.target;
     if (!el || el.nodeType !== 1 || el === document.documentElement) return;
-    pickedEl = el;
     pickId++;
+    pending = el;
+    pickedEl = null;
     hoverEl = null;
     lastPickedRect = "";
-    var r = rectOf(el);
-    post({
-      type: "pick",
-      pickId: pickId,
-      label: labelOf(el),
-      selector: selectorOf(el),
-      tag: el.tagName.toLowerCase(),
-      point: { x: e.clientX, y: e.clientY },
-      viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
-      rect: r,
-    });
-    schedule();
+    // the UI takes a screenshot first: hide the hover box now, draw the picked box on show-pick
+    if (hoverBox) place(hoverBox, null);
+    if (pickBox) place(pickBox, null);
+    var element = null;
+    try {
+      element = elementContext.call(el);
+    } catch (err) {}
+    post({ type: "pick", pickId: pickId, selector: selectorOf(el), element: element, rect: rectOf(el) });
   }
   ["pointerdown", "mousedown", "pointerup", "mouseup", "dblclick", "auxclick", "contextmenu", "submit"].forEach(function (t) {
     window.addEventListener(t, block, true);
@@ -263,8 +253,12 @@ export const PAGE_PICKER_SCRIPT = String.raw`(function () {
       }
       renderBadges();
       schedule();
+    } else if (d.type === "show-pick" && d.pickId === pickId) {
+      pickedEl = pending;
+      schedule();
     } else if (d.type === "clear-pick" && d.pickId === pickId) {
       pickedEl = null;
+      pending = null;
       schedule();
     }
   });

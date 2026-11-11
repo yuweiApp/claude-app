@@ -542,7 +542,8 @@ function Chat({
     scrollToBottom("auto");
     try {
       if (sessionId) {
-        await api.send(sessionId, withResponseAnnotations(text, annotations), attachments);
+        const message = withResponseAnnotations(text, annotations);
+        await api.send(sessionId, message.text, attachments, message.elements);
         if (annotations.length) clearResponseAnnotations(sessionId);
       }
       else onCreated(await api.createSession(text, attachments, { permissionMode: newMode, cwd: cwd ?? undefined, model: newModel, effort: newEffort }));

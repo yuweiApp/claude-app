@@ -308,6 +308,29 @@ export interface McpServerInput {
 }
 
 /** 上传后的附件（POST /uploads 返回），发消息时只传 id */
+/**
+ * 网页上选中的元素（右侧面板的 HTML 预览、桌面版的内置浏览器），取法同 Claude 桌面版的「选择元素」（captureElementContext），
+ * 在网页里取的函数见 element-context.ts
+ */
+export interface SelectedElement {
+  /** 标签名（小写） */
+  tagName: string;
+  id?: string;
+  classes: string[];
+  /** 只取 ELEMENT_ATTRIBUTES 里有值的 */
+  attributes: Record<string, string>;
+  /** 只取 ELEMENT_STYLES 里有值的 */
+  computedStyles: Record<string, string>;
+  /** 元素文字的前 200 个字符 */
+  innerText?: string;
+  /** 往上最多 4 层父元素（到 body 为止），每层是 标签#id 或 标签.第一个类名，用 > 连起来 */
+  parentPath?: string;
+  /** 超过 2000 字符截断，末尾加 ... */
+  outerHTML?: string;
+  /** 同一个父元素下的所有子元素：别的只写标签、id、前 3 个类名，选中的那个前面加 <!-- SELECTED --> 写完整 HTML；超过 2000 字符截断 */
+  siblingHTML?: string;
+}
+
 export interface Attachment {
   id: string;
   name: string;

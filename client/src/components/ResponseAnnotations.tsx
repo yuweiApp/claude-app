@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
-  addPageAnnotation,
+  addElementAnnotation,
   addResponseAnnotation,
   clearResponseAnnotations,
   findAnnotationTarget,
@@ -11,7 +11,7 @@ import {
   updateResponseAnnotation,
   useResponseAnnotations,
   ANNOTATION_TARGET_ATTR,
-  type PageAnnotationTarget,
+  type ElementAnnotationTarget,
   type ResponseAnnotation,
   type ResponseAnnotationSource,
   type SentResponseAnnotation,
@@ -23,7 +23,7 @@ import {
  * - 「回复」在选区上方写回复（可以不写），✓ 加进输入框里的「N 条注释」
  * - 加好的注释在原文的末尾显示编号，点编号（或「N 条注释」列表里的「编辑」）改回复、删除
  * - 发出后用户消息上方显示「N 条注释」，点开看所选文本和回复，点一条跳回原文
- * 右侧面板网页上点选元素写的标注也用这里的编辑框和「N 条注释」（见 FileBrowser 的 HtmlPreview）
+ * 网页上选中的元素（右侧面板的 HTML 预览见 FileBrowser 的 HtmlPreview，内置浏览器见 BrowserTab）也用这里的编辑框和「N 条注释」
  */
 
 // ---------------------------------------------------------------------------
@@ -56,8 +56,8 @@ function revealAnnotationSource(source: ResponseAnnotationSource) {
 type EditorState =
   | { mode: "new"; sessionId: string; text: string; source: ResponseAnnotationSource; range: Range }
   | { mode: "edit"; sessionId: string; id: string; anchor: () => DOMRect | null }
-  /** 网页上点选的元素，✓ 后加进「N 条注释」（要求可以不写）；onClose：编辑框关了（添加、取消、换成别的） */
-  | { mode: "page"; sessionId: string; seq: number; text: string; page: PageAnnotationTarget; anchor: () => DOMRect | null; onClose?: () => void };
+  /** 网页上选中的元素，✓ 后加进「N 条注释」（要求可以不写）；onClose：编辑框关了（添加、取消、换成别的） */
+  | { mode: "page"; sessionId: string; seq: number; target: ElementAnnotationTarget; anchor: () => DOMRect | null; onClose?: () => void };
 
 let editor: EditorState | null = null;
 let pageSeq = 0;
@@ -87,15 +87,9 @@ function startAnnotationFromSelection() {
   return true;
 }
 
-/** 网页上点了一个元素：打开编辑框写要求（可以不写），✓ 后加进「N 条注释」；anchor 是元素在界面上的位置（跟着网页滚动变） */
-export function startPageAnnotation(
-  sessionId: string,
-  text: string,
-  page: PageAnnotationTarget,
-  anchor: () => DOMRect | null,
-  onClose?: () => void,
-) {
-  setEditor({ mode: "page", sessionId, seq: ++pageSeq, text, page, anchor, onClose });
+/** 网页上选中了一个元素：打开编辑框写要求（可以不写），✓ 后加进「N 条注释」；anchor 是元素在界面上的位置（跟着网页滚动变） */
+export function startPageAnnotation(sessionId: string, target: ElementAnnotationTarget, anchor: () => DOMRect | null, onClose?: () => void) {
+  setEditor({ mode: "page", sessionId, seq: ++pageSeq, target, anchor, onClose });
 }
 
 /** 改已有的注释，编辑框挂在 anchor 上（网页里的编号） */
@@ -323,9 +317,9 @@ export function AnnotationEditor({ sessionId, onSaved }: { sessionId: string | n
   const above = anchor.top > 180;
   const style = above ? { left, top: anchor.top - 8, transform: "translateY(-100%)" } : { left, top: anchor.bottom + 8 };
 
-  const editingPage = state.mode === "page" || !!current?.page;
+  const editingPage = state.mode === "page" || !!current?.element;
   const save = () => {
-    if (state.mode === "page") addPageAnnotation(sessionId, state.text, draft, state.page);
+    if (state.mode === "page") addElementAnnotation(sessionId, draft, state.target);
     else if (state.mode === "new") addResponseAnnotation(sessionId, state.text, draft, state.source);
     else updateResponseAnnotation(sessionId, state.id, draft);
     setEditor(null);
@@ -461,7 +455,7 @@ function AnnotationMarkers({
 // ---------------------------------------------------------------------------
 // 输入框里的「N 条注释」
 
-const noteLabel = (a: SentResponseAnnotation) => (a.page ? `网页元素（${a.page.file}）：` : "所选文本：");
+const noteLabel = (a: SentResponseAnnotation) => (a.element ? `网页元素（${a.element.file ?? a.element.url ?? ""}）：` : "所选文本：");
 
 /** 输入框里待发送的注释：鼠标移上去展开列表，每条可以编辑、删除；× 全部不发送 */
 export function NotesChip({ sessionId, annotations }: { sessionId: string; annotations: ResponseAnnotation[] }) {
@@ -536,6 +530,7 @@ export function SentNotesChip({ annotations }: { annotations: SentResponseAnnota
           {annotations.map((a, i) => (
             <li key={i}>
               <button className="sent-note" disabled={!a.source} onClick={() => a.source && revealAnnotationSource(a.source)}>
+                {a.element?.image && <img className="sent-note-shot" src={a.element.image} alt="" />}
                 <span className="notes-item-label">{noteLabel(a)}</span>
                 <span className="sent-note-text">{a.text}</span>
                 {a.annotation && (

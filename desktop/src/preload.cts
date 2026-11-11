@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld("desktop", {
   },
   // 桌面工具正在操作的窗口：按标题找采集源（见 capture.ts），网页拿 id 调 getUserMedia
   findCaptureSource: (title: string): Promise<unknown> => ipcRenderer.invoke("capture:find", title),
+  // 界面上一块区域的截图（PNG base64），右侧面板 HTML 预览里选中的元素用
+  captureRect: (rect: { x: number; y: number; width: number; height: number }): Promise<string | null> => ipcRenderer.invoke("window:capture", rect),
   // 内置浏览器（右侧面板的「浏览器」），见 main.ts 和 browser/views.ts
   browser: {
     list: (): Promise<unknown[]> => ipcRenderer.invoke("browser:list"),
@@ -30,6 +32,18 @@ contextBridge.exposeInMainWorld("desktop", {
     hide: () => ipcRenderer.send("browser:hide"),
     snapshot: (id: string): Promise<string | null> => ipcRenderer.invoke("browser:snapshot", id),
     suggest: (query: string): Promise<unknown[]> => ipcRenderer.invoke("browser:suggest", query),
+    // 选择元素：传取元素的函数打开检查模式，传 null 关掉
+    inspect: (id: string, fn: string | null): Promise<boolean> => ipcRenderer.invoke("browser:inspect", id, fn),
+    onPicked: (callback: (picked: unknown) => void) => {
+      const listener = (_event: electron.IpcRendererEvent, picked: unknown) => callback(picked);
+      ipcRenderer.on("browser:picked", listener);
+      return () => void ipcRenderer.removeListener("browser:picked", listener);
+    },
+    onInspectEnded: (callback: (id: string) => void) => {
+      const listener = (_event: electron.IpcRendererEvent, id: string) => callback(id);
+      ipcRenderer.on("browser:inspect-ended", listener);
+      return () => void ipcRenderer.removeListener("browser:inspect-ended", listener);
+    },
     onTabs: (callback: (tabs: unknown[]) => void) => {
       const listener = (_event: electron.IpcRendererEvent, tabs: unknown[]) => callback(tabs);
       ipcRenderer.on("browser:tabs", listener);
