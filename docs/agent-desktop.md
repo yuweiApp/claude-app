@@ -100,7 +100,8 @@ snapshot s191jb6hk0gciz（mousepad，窗口 w-1.1895-…）
 
 - 成功：`data` 的 JSON，不缩进。
 - 失败：留 `code`、`message`、`details`、`disposition`（`delivery` 送没送到、`retry` 能不能重试，都是事实），去掉上游的 `suggestion`、`recovery`（「先 focus-window 再重试」这类是做法，同 CLAUDE.md 的约定）。
-- 网关自己的错误（被拦、超时）写清楚因为什么，用模型看得到的东西说（run、工具名、本应用），不提网关（模型不知道有网关）：「这是本应用（claude-app）的窗口，桌面工具不能读取或操作它」「命令超过 timeout_ms 被终止，动作可能已经生效」「run 不接受 --force」。
+- 参数解析错误（`INVALID_ARGS`，`message` 是命令行解析器的原话 `error: unexpected argument '--timeout-ms' found` 这样，命令名本身不认识时 `command` 是 `unknown` 除外）：后面附这条命令的 `--help`（同一版本，去掉 run 不接受的那几个参数的行，Usage 里的可执行文件名统一写成 agent-desktop）。上游的参数名不统一（snapshot 的 `--timeout-ms`、wait 的 `--timeout`、`--wait-for` 的 `--wait-timeout`），模型照着 snapshot 的写法给 wait 传 `--timeout-ms`，只拿到「参数不认识」不知道该叫什么。命令没执行（`not_delivered`），再跑一次 `--help` 没有副作用。这是「反馈」（这条命令接受哪些参数），不是做法。
+- 网关自己的错误（被拦、超时）写清楚因为什么，用模型看得到的东西说（run、工具名、本应用），不提网关（模型不知道有网关）：「这是本应用（claude-app）的窗口，桌面工具不能读取或操作它」「命令运行超过 60000 毫秒被终止，动作可能已经生效」「run 不接受 --force」。
 
 ### 说明（instructions）
 
@@ -186,7 +187,8 @@ desktop:
 
 ### 7.3 超时、中断、转后台
 
-- `timeout_ms` 默认 60 秒（`wait` 上游最多 30 秒）。到时间就杀进程，报「命令超过 timeout_ms 被终止，动作可能已经生效」（第 4 节）。
+- `timeout_ms` 默认 60 秒、最多 10 分钟。到时间就杀进程，报「命令运行超过 N 毫秒被终止，动作可能已经生效」（第 4 节）。
+- 命令自己会等的（`wait` 的 `[MS]` 和 `--timeout`，上游默认 30 秒、最多 24 小时；任何命令带 `--wait-for` / `--wait-for-gone` 时的 `--wait-timeout`，默认 30 秒）：进程期限取 `timeout_ms` 和「等待时限 + 5 秒」里大的那个（同样不超过 10 分钟），写在 run 的工具描述里。不然 `wait --timeout 60000` 配默认的 `timeout_ms` 60000，上游等满正要返回 `TIMEOUT`（`details.kind: wait_timeout`，带最后看到的窗口标题）时进程被杀，模型拿到的是「被终止，动作可能已经生效」。
 - MCP 请求的 `signal` 中断时也杀进程。
 - 超过 20 秒转后台，沿用现在的 `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`，不用另做。
 
@@ -230,6 +232,7 @@ desktop:
   - 显示这个会话最近操作的软件（应用图标、应用名、窗口标题），这一轮进行中带一个闪烁的点。目标由网关从参数里算（`--window-id`、`--app`、`launch` / `close-app` 的应用名、ref 所属快照的应用和窗口），只给应用名时在 `list-windows` 里找窗口，前台的优先；变了才发 `desktop_target` 事件。调用一开始就发，`launch` 结束后再发。
   - 点开是那个窗口的实时画面，只看不能点：桌面版用 `desktopCapturer` 按窗口标题找采集源（`desktop/src/capture.ts`；agent-desktop 的窗口 id 和采集源的 id 对不上，所以按标题），网页用 `getUserMedia`（`chromeMediaSource: desktop`）取视频流。不用 agent-desktop 的 `screenshot` 轮询：每张起一个进程，而且上游拒绝截被挡住的窗口，看预览时本应用正好挡在上面。
   - 放大：铺满对话消息区（`.scroll-area`，标题行下面、输入框上面，四周留 8px），画面 `object-fit: contain` 按比例缩放、不拉伸，多出来的地方留底色；按 Esc 缩回。
+  - 画面缩放（同图片查看器，复用 `ImageThumb.tsx` 的 `useZoomPan`，它改成图片、视频都能用，视频按 `videoWidth` 算相对原始像素的百分比）：滚轮以鼠标处为中心缩放，双指捏合，放大后拖动平移，双击在适应大小和 2 倍之间切换，右下角工具条缩小、放大、点百分比还原；换了窗口、放大缩小浮窗时还原。采集分辨率平时上限 1920×1200，放大到超过画面原始像素（100%）时重新取一路上限 4096×2560 的流，新的就绪了才停旧的（不闪），回到适应大小再换回来；换成高分辨率后百分比变小，所以用「还在放大」判断要不要换回，免得来回切。
   - Windows 10 1903+（Windows Graphics Capture）和 macOS（ScreenCaptureKit）上被挡住的窗口也有画面，最小化的没有；macOS 要给本应用开「屏幕录制」。网页版没有窗口采集，只显示名字。
   - 待实测：Windows、macOS 上两边的窗口标题是否一致（标题前后加了应用名时按包含匹配，只有一个匹配才用）。
 

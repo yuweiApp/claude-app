@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <title>Claude App</title>
-    <!-- 在样式生效前定下深浅色和皮肤，刷新时不先闪一下别的配色；逻辑与 src/theme.ts、src/skin.ts 一致 -->
+    <!-- 在样式生效前定下深浅色、皮肤和字体，刷新时不先闪一下别的配色、字体；逻辑与 src/theme.ts、src/skin.ts、src/font.ts 一致 -->
     <script>
       try {
         var r = document.documentElement;
@@ -33,6 +33,36 @@
             for (var i = 2; i < v.length; i++) r.style.setProperty("--skin-c" + (i - 1), v[i]);
           }
           if (typeof adj.veil === "number") r.style.setProperty("--skin-veil", adj.veil + "%");
+        }
+      } catch (e) {}
+      try {
+        var f = JSON.parse(localStorage.getItem("font") || "null");
+        if (f && typeof f === "object") {
+          var fs = document.documentElement.style;
+          var fam = function (id, custom, presets, fallback) {
+            if (id === "custom") {
+              var g = ["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-monospace", "ui-sans-serif", "ui-serif", "ui-rounded"];
+              var names = String(custom || "").split(",").map(function (n) { return n.trim(); }).filter(Boolean).map(function (n) {
+                return /^["']/.test(n) || g.indexOf(n.toLowerCase()) >= 0 ? n : '"' + n.replace(/"/g, "") + '"';
+              });
+              return names.length ? names.join(", ") + ", " + fallback : "";
+            }
+            return presets[id] || "";
+          };
+          var ui = fam(f.ui, f.uiCustom, {
+            sans: '"PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif',
+            serif: 'Georgia, "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", SimSun, serif',
+            kai: '"Kaiti SC", STKaiti, KaiTi, "AR PL UKai CN", serif',
+          }, "sans-serif");
+          var mono = fam(f.mono, f.monoCustom, {
+            cascadia: '"Cascadia Code", "Cascadia Mono", ui-monospace, Consolas, monospace',
+            sf: '"SF Mono", SFMono-Regular, Menlo, ui-monospace, monospace',
+            jetbrains: '"JetBrains Mono", ui-monospace, Consolas, monospace',
+            consolas: 'Consolas, "Courier New", monospace',
+          }, "monospace");
+          if (ui) fs.setProperty("--font-ui", ui);
+          if (mono) fs.setProperty("--font-mono", mono);
+          if (typeof f.size === "number" && f.size !== 15) fs.setProperty("--chat-font-size", Math.min(20, Math.max(12, Math.round(f.size))) + "px");
         }
       } catch (e) {}
     </script>

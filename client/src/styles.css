@@ -36,8 +36,13 @@
   --ic-mcp: #db2777;
   --ic-tasks-from: #0ea5e9;
   --ic-tasks-to: #7c3aed;
+  /* 字体：默认值，设置「外观」里改过的由 font.ts 写在 <html> 的 style 上覆盖 */
+  --font-ui: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", SFMono-Regular, Menlo, Consolas, "Noto Sans Mono CJK SC", monospace;
+  /* 对话字号：消息和输入框的正文 */
+  --chat-font-size: 15px;
   color-scheme: light;
-  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  font-family: var(--font-ui);
   font-size: 15px;
 }
 
@@ -88,6 +93,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, #000); border-color: color-mix(in srgb, var(--accent) 88%, #000); }
 pre { white-space: pre-wrap; word-break: break-word; }
+code, pre, kbd, samp { font-family: var(--font-mono); }
 
 .app-shell { display: flex; flex-direction: column; height: 100vh; }
 /* 外框：标题栏、图标栏连成一片（--frame）。图标栏右边的区域（侧边栏 + 对话区，或设置页）上沿一条线，最左边一条线、左上角圆角；
@@ -267,7 +273,7 @@ main {
 .browsers-field { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .browsers-field-label { flex: none; width: 84px; color: var(--muted); font-size: 12.5px; }
 .browsers-field input { flex: 1; min-width: 160px; max-width: 360px; }
-.browsers-path { flex: 1; min-width: 0; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.browsers-path { flex: 1; min-width: 0; overflow: hidden; font-family: var(--font-mono); font-size: 12px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 .browsers-field button.danger { border-color: var(--err); color: var(--err); background: none; }
 .browsers-hint { margin: 0 0 0 92px; color: var(--muted); font-size: 12px; }
 .browsers-notice { margin-bottom: 12px; color: var(--warn); font-size: 13px; }
@@ -309,7 +315,7 @@ main {
 .settings-row-main { flex: 1; min-width: 0; }
 .settings-row-name { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
 .settings-row-sub { margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.settings-row-target { margin-top: 3px; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.settings-row-target { margin-top: 3px; overflow: hidden; font-family: var(--font-mono); font-size: 12px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 .settings-row-status { margin-top: 3px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .settings-tag { padding: 0 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; font-weight: 500; line-height: 18px; }
 .mcp-status.connected { color: var(--ok); }
@@ -379,7 +385,7 @@ main {
 .settings-form input:focus, .settings-form select:focus, .settings-form textarea:focus { border-color: var(--accent); }
 /* 添加 MCP 服务器：类型是两个胶囊按钮，右边「从 JSON 导入」；参数、环境变量、JSON 用等宽字体 */
 .mcp-dialog { width: 560px; gap: 14px; padding: 20px 22px; }
-.settings-form input.mono, .settings-form textarea.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.55; }
+.settings-form input.mono, .settings-form textarea.mono { font-family: var(--font-mono); font-size: 13px; line-height: 1.55; }
 .mcp-type-row { display: flex; align-items: center; gap: 8px; }
 .mcp-type { display: flex; gap: 4px; }
 .mcp-type button { padding: 6px 14px; border: 1px solid transparent; border-radius: 999px; background: none; color: var(--muted); font-size: 14px; }
@@ -407,7 +413,7 @@ main {
 }
 .market-card-meta { margin-top: auto; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 /* 连接器的注册表名称和地址：等宽字体，各占一行，太长截断 */
-.market-card-target { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.market-card-target { font-family: var(--font-mono); }
 .market-card-target > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .market-card-meta a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .market-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
@@ -465,28 +471,60 @@ main {
 .dt-body { position: relative; display: grid; place-items: center; min-height: 120px; background: color-mix(in srgb, var(--text) 6%, var(--bg)); }
 .dt-video { display: block; width: 100%; max-height: 60vh; object-fit: contain; }
 .dt-large .dt-video { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; }
+/* 画面的缩放、平移（同图片查看器）：舞台裁掉放大后溢出的部分，frame 上做 transform；放大时铺满 .dt-body */
+.dt-stage { position: relative; width: 100%; overflow: hidden; touch-action: none; }
+.dt-large .dt-stage { position: absolute; inset: 0; }
+.dt-frame { transition: transform 0.12s ease-out; }
+.dt-frame.dragging { transition: none; }
+.dt-large .dt-frame { position: absolute; inset: 0; }
+.dt-video.zoomed { cursor: grab; }
+.dt-video.dragging { cursor: grabbing; }
+/* 缩放工具条：画面右下角，鼠标在画面上时出现（放大时一直显示） */
+.dt-stage .dt-zoom-tools { position: absolute; left: auto; right: 10px; bottom: 10px; transform: none; opacity: 0; transition: opacity 0.15s; }
+.dt-stage.live:hover .dt-zoom-tools, .dt-large .dt-stage .dt-zoom-tools { opacity: 1; }
+.dt-stage .dt-zoom-tools button { min-width: 30px; height: 26px; font-size: 15px; }
+.dt-stage .dt-zoom-tools .image-viewer-percent { min-width: 52px; font-size: 12px; }
 .dt-message { padding: 24px 16px; color: var(--muted); font-size: 12.5px; line-height: 1.6; text-align: center; }
 .dt-badge { position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: 6px; background: rgb(0 0 0 / 0.6); color: #fff; font-size: 11.5px; }
 .scroll { flex: 1; overflow-y: auto; padding: 32px 48px 24px; overflow-anchor: none; }
-/* 回到底部：对话区底部正中，运行中三个点依次跳动 */
+/* 回到底部：对话区底部正中，运行中三个点依次跳动。和停止按钮一个配色：强调色和色相前后各挪 45° 的两色斜向渐变，
+   上沿一道高光，四周带彩色光晕；运行中渐变方向缓缓转圈。颜色都从 --accent 来，跟着皮肤和深浅色变 */
+@property --sb-angle { syntax: "<angle>"; inherits: false; initial-value: 135deg; }
 .scroll-bottom {
+  --sb-c1: var(--accent);
+  --sb-c2: oklch(from var(--accent) l c calc(h + 45));
+  --sb-c3: oklch(from var(--accent) l c calc(h - 45));
   position: absolute; left: 50%; bottom: 12px; z-index: 5; display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
-  transform: translateX(-50%); border: 1px solid var(--border); border-radius: 50%; background: var(--bg); color: var(--text);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16); animation: scroll-bottom-in 0.15s ease-out;
+  transform: translateX(-50%); border: none; border-radius: 50%; color: var(--accent-text);
+  background: linear-gradient(var(--sb-angle), var(--sb-c3), var(--sb-c1) 50%, var(--sb-c2));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.35), inset 0 -1px 2px rgb(0 0 0 / 0.2),
+    -3px 3px 12px color-mix(in srgb, var(--sb-c3) 45%, transparent), 3px 4px 12px color-mix(in srgb, var(--sb-c2) 45%, transparent);
+  animation: scroll-bottom-in 0.15s ease-out;
 }
-.scroll-bottom:hover { background: var(--panel); }
+.scroll-bottom:hover { /* 盖过全局的 button:hover 底色，不然悬停时渐变没了，按钮和背景混在一起 */
+  background: linear-gradient(var(--sb-angle), var(--sb-c3), var(--sb-c1) 50%, var(--sb-c2)); filter: brightness(1.1) saturate(1.1);
+}
+.scroll-bottom.running { animation: scroll-bottom-in 0.15s ease-out, scroll-bottom-flow 3s linear infinite; }
+/* 运行中外圈一道三色弧线转圈，和停止按钮的外圈一样，离按钮留 2px 空隙 */
+.scroll-bottom.running::before {
+  content: ""; position: absolute; inset: -5px; border-radius: 50%; pointer-events: none;
+  background: conic-gradient(from 0deg, transparent 0 15%, var(--sb-c3) 40%, var(--sb-c2) 70%, var(--sb-c1));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+  animation: send-stop-spin 1.2s linear infinite;
+}
 @keyframes scroll-bottom-in { from { opacity: 0; transform: translate(-50%, 6px); } }
+@keyframes scroll-bottom-flow { to { --sb-angle: 495deg; } }
 .scroll-bottom-dots { display: flex; gap: 3px; }
 .scroll-bottom-dots span { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: scroll-bottom-dot 1.2s ease-in-out infinite; }
 .scroll-bottom-dots span:nth-child(2) { animation-delay: 0.15s; }
 .scroll-bottom-dots span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes scroll-bottom-dot { 0%, 60%, 100% { opacity: 0.35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
-@media (prefers-reduced-motion: reduce) { .scroll-bottom, .scroll-bottom-dots span { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .scroll-bottom, .scroll-bottom.running, .scroll-bottom.running::before, .scroll-bottom-dots span { animation: none; } }
 .scroll-content > * { max-width: var(--content-width); margin-left: auto; margin-right: auto; }
 .empty { text-align: center; color: var(--muted); margin-top: 20vh; font-size: 22px; }
 .empty-sub { font-size: 13px; margin-top: 8px; word-break: break-all; }
 
-.messages { display: flex; flex-direction: column; gap: 28px; }
+.messages { display: flex; flex-direction: column; gap: 28px; font-size: var(--chat-font-size); }
 .user {
   align-self: flex-end; background: var(--user-bubble); border-radius: 18px 18px 6px 18px; padding: 9px 16px;
   max-width: 80%; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6;
@@ -555,7 +593,7 @@ main {
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .step-icon-running::after { animation: none; } }
 .step-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.step-target { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
+.step-target { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
 .step-caret { flex-shrink: 0; font-size: 12px; }
 .step-count { margin-left: 6px; font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--panel); }
 .step-bad { flex-shrink: 0; font-size: 11px; color: var(--err); }
@@ -693,7 +731,7 @@ main {
 /* 后台任务完成、自动开始新一轮的那一行，在用户消息的位置上 */
 .task-line { align-self: center; color: var(--muted); font-size: 12px; }
 /* 失败原因：报错原文的第一行，可能是很长的网址，允许在任意处断行 */
-.task-reason { margin-top: 2px; text-align: center; font-family: var(--mono, ui-monospace, monospace); font-size: 11px; overflow-wrap: anywhere; }
+.task-reason { margin-top: 2px; text-align: center; font-family: var(--font-mono); font-size: 11px; overflow-wrap: anywhere; }
 .result.error { color: var(--err); }
 
 .permission { border: 1px solid var(--accent); border-radius: 10px; padding: 12px; margin-top: 12px; }
@@ -794,7 +832,8 @@ main {
   /* 高度随内容增长，最高 40% 窗口高度，再多才出滚动条 */
   field-sizing: content; min-height: 2lh; max-height: 40vh;
 }
-.composer-input { position: relative; }
+/* 输入框和它下面的 @ 高亮层同一个字号（对话字号），文字才对得齐 */
+.composer-input { position: relative; font-size: var(--chat-font-size); }
 .composer textarea.has-mention { color: transparent; caret-color: var(--text); }
 .composer-mirror { position: absolute; inset: 0; padding: 4px 6px; overflow: hidden; white-space: pre-wrap; overflow-wrap: break-word; pointer-events: none; }
 /* 输入 @ 弹出的插件、文件候选：输入框正上方，和输入框一样宽 */
@@ -898,12 +937,69 @@ main {
 
 .send-btn {
   display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0;
-  border: none; border-radius: 50%; background: var(--text); color: var(--bg);
+  margin-left: 8px; border: none; border-radius: 50%; background: var(--text); color: var(--bg);
 }
 /* 盖住全局的 button:hover 底色：不能点（没输入内容）时悬停也要保持深色底 */
 .send-btn:hover { background: var(--text); }
 .send-btn:hover:not(:disabled) { opacity: 0.85; }
 .send-btn:disabled { opacity: 0.35; }
+/* 运行中的停止按钮，和图标的设计语言一致（上浅下深的彩色底、上沿一道高光、里面一个图形）：
+   - 底：强调色的渐变，表面一道光泽缓缓扫过；
+   - 中间：方块一边转一边变成圆角更大的菱形再变回来（转 90° 正好回到原样，循环连贯），颜色是强调色配套的前景色；
+   - 外圈：三色（强调色和色相前后各挪 45° 的两色）的弧线在转，四周光晕一呼一吸，一道淡淡的波纹往外扩散。
+   颜色都从 --accent 来，跟着皮肤变 */
+@property --stop-sheen { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.send-stop {
+  --stop-c1: var(--accent);
+  --stop-c2: oklch(from var(--accent) l c calc(h + 45));
+  --stop-c3: oklch(from var(--accent) l c calc(h - 45));
+  --stop-face:
+    conic-gradient(from var(--stop-sheen), transparent 0 55%, rgb(255 255 255 / 0.32) 72%, transparent 88%),
+    linear-gradient(180deg, oklch(from var(--accent) calc(l + 0.1) c h), oklch(from var(--accent) calc(l - 0.12) c h));
+  --stop-bevel: inset 0 1px 0 rgb(255 255 255 / 0.35), inset 0 -1px 2px rgb(0 0 0 / 0.2);
+  position: relative; color: var(--accent-text); background: var(--stop-face);
+  animation: send-stop-glow 2s ease-in-out infinite, send-stop-sheen 3.2s linear infinite;
+}
+.send-stop:hover { background: var(--stop-face); }
+.send-stop::before, .send-stop::after { content: ""; position: absolute; border-radius: 50%; pointer-events: none; }
+.send-stop::before {
+  inset: -4px;
+  background: conic-gradient(from 0deg, transparent 0 15%, var(--stop-c3) 40%, var(--stop-c2) 70%, var(--stop-c1));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+  animation: send-stop-spin 1.2s linear infinite;
+}
+.send-stop::after { inset: 0; border: 1px solid var(--stop-c1); animation: send-stop-ripple 2s ease-out infinite; }
+/* 中间的核：不跟前景色（浅色强调色的皮肤上前景色是深色，成了一块黑），而是一颗发光的亮核——
+   左上一点白色高光，底下是三色调亮的渐变，外面一圈白光加彩色光晕，变形时光晕跟着一呼一吸 */
+.stop-core {
+  --core-glow: 0 0 0 1px rgb(255 255 255 / 0.75), 0 0 6px 1px rgb(255 255 255 / 0.55), 0 0 10px 2px color-mix(in srgb, var(--stop-c2) 60%, transparent);
+  width: 11px; height: 11px; border-radius: 3px;
+  background:
+    radial-gradient(circle at 30% 25%, #fff 0 20%, transparent 65%),
+    conic-gradient(from 45deg, oklch(from var(--stop-c3) 0.93 calc(c * 0.6) h), oklch(from var(--stop-c1) 0.97 calc(c * 0.4) h), oklch(from var(--stop-c2) 0.93 calc(c * 0.6) h), oklch(from var(--stop-c3) 0.93 calc(c * 0.6) h));
+  box-shadow: var(--core-glow);
+  animation: stop-core-morph 2.4s ease-in-out infinite;
+}
+@keyframes send-stop-spin { to { transform: rotate(1turn); } }
+@keyframes send-stop-sheen { to { --stop-sheen: 1turn; } }
+@keyframes send-stop-glow {
+  0%, 100% { box-shadow: var(--stop-bevel), 0 0 6px 0 color-mix(in srgb, var(--stop-c1) 35%, transparent); }
+  50% { box-shadow: var(--stop-bevel), 0 0 16px 3px color-mix(in srgb, var(--stop-c2) 55%, transparent); }
+}
+@keyframes send-stop-ripple { from { opacity: 0.45; transform: scale(1); } to { opacity: 0; transform: scale(1.8); } }
+@keyframes stop-core-morph {
+  0% { transform: rotate(0deg) scale(1); border-radius: 3px; }
+  50% {
+    transform: rotate(45deg) scale(0.8); border-radius: 5.5px 2px;
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.9), 0 0 9px 2px rgb(255 255 255 / 0.7), 0 0 16px 4px color-mix(in srgb, var(--stop-c2) 75%, transparent);
+  }
+  100% { transform: rotate(90deg) scale(1); border-radius: 3px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .send-stop, .send-stop::before, .stop-core { animation: none; }
+  .send-stop { box-shadow: var(--stop-bevel); }
+  .send-stop::after { display: none; }
+}
 .spacer { flex: 1; }
 
 /* 新会话输入框上面一栏（同 codex-app-server 的 .new-chat-bar / .new-chat-chip） */
@@ -975,7 +1071,7 @@ main {
 .folder-path { display: flex; gap: 8px; }
 .folder-path input {
   flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
-  color: var(--text); font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--text); font-family: var(--font-mono); font-size: 13px;
 }
 .folder-crumbs { display: flex; flex-wrap: wrap; gap: 2px; font-size: 13px; }
 .folder-crumbs button { border: none; padding: 2px 6px; color: var(--muted); }
@@ -1051,6 +1147,19 @@ main {
 .task-item.selected .task-name { white-space: normal; overflow-wrap: anywhere; }
 .task-meta { color: var(--muted); font-size: 11px; line-height: 1.45; font-variant-numeric: tabular-nums; }
 .task-meta-status { color: var(--task-tone); }
+/* 运行中的一行状态（MCP 服务器报的、子代理的进度摘要） */
+.task-progress { overflow: hidden; color: var(--muted); font-size: 11.5px; line-height: 1.45; white-space: nowrap; text-overflow: ellipsis; }
+.task-item.selected .task-progress { white-space: normal; overflow-wrap: anywhere; }
+/* MCP 任务的工具：服务器 / 工具名 */
+.task-tool { display: flex; align-items: baseline; gap: 6px; padding: 8px 10px; font-size: 12.5px; overflow-wrap: anywhere; }
+.task-tool-server { font-weight: 500; }
+.task-tool-sep { color: var(--muted); }
+.task-tool code { font-family: var(--font-mono); font-size: 12px; }
+/* MCP 任务按引用返回的文件 */
+.task-links { margin: 0; padding: 6px 10px 8px; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.task-links li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.task-links a, .task-links .md-link-off { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-link-meta { flex: none; color: var(--muted); font-size: 11px; }
 .task-chevron { flex: none; color: var(--muted); transition: transform 0.15s; }
 .task-item.selected .task-chevron { transform: rotate(90deg); }
 .task-stop {
@@ -1069,7 +1178,7 @@ main {
 .task-copy:disabled { opacity: 0.4; }
 .task-command, .task-output {
   margin: 0; padding: 8px 10px; max-height: 200px; overflow: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.6;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
   color: var(--text); tab-size: 2; scrollbar-width: thin; scrollbar-color: var(--divider) transparent; overscroll-behavior: contain;
 }
 .task-command { max-height: 140px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
@@ -1078,7 +1187,7 @@ main {
 .task-output-live { padding: 0 5px; border-radius: 4px; background: color-mix(in srgb, var(--task-blue) 12%, var(--bg)); color: var(--task-blue); font-size: 10px; line-height: 15px; }
 .task-output-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 10px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 10px; }
 .task-output-note button { padding: 1px 4px; border: none; font-size: 10px; }
-.task-exit { padding: 5px 10px; border-top: 1px solid var(--border); color: var(--task-tone); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; }
+.task-exit { padding: 5px 10px; border-top: 1px solid var(--border); color: var(--task-tone); font-family: var(--font-mono); font-size: 10px; }
 .task-error { color: var(--task-red); }
 .tasks-popover button:focus-visible { outline: 2px solid var(--task-blue); outline-offset: -2px; }
 @media (prefers-reduced-motion: reduce) { .task-chevron, .task-row { transition: none; } .task-spin { animation-duration: 2.4s; } }
@@ -1204,7 +1313,6 @@ main {
 .file-markdown { flex: 1; min-height: 0; overflow: auto; padding: 12px 18px 24px; }
 /* Markdown 实时预览（MarkdownLiveEditor.tsx，CodeMirror，同 codex-app-server）：编辑的是源码，符号藏起来、按渲染效果显示 */
 .file-markdown.md-live { cursor: text; line-height: 1.6; }
-.md-live { --mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo, Consolas, monospace; }
 .md-live .cm-editor { background: transparent; color: inherit; }
 .md-live .cm-editor.cm-focused { outline: none; }
 .md-live .cm-scroller { font-family: inherit; line-height: 1.6; overflow: visible; }
@@ -1222,8 +1330,8 @@ main {
 .md-live .cm-md-syntax { color: var(--muted); }
 .md-live .cm-md-link { color: var(--accent); cursor: pointer; }
 .md-live .cm-md-link .cm-md-syntax { color: inherit; }
-.md-live .cm-md-inline-code { padding: 1px 5px; border-radius: 4px; background: var(--code-bg); font-family: var(--mono); font-size: 0.92em; }
-.md-live .cm-line.cm-md-code { padding: 0 12px; background: var(--code-bg); font-family: var(--mono); font-size: 0.92em; }
+.md-live .cm-md-inline-code { padding: 1px 5px; border-radius: 4px; background: var(--code-bg); font-family: var(--font-mono); font-size: 0.92em; }
+.md-live .cm-line.cm-md-code { padding: 0 12px; background: var(--code-bg); font-family: var(--font-mono); font-size: 0.92em; }
 .md-live .cm-line.cm-md-code-first { padding-top: 8px; border-radius: 8px 8px 0 0; }
 .md-live .cm-line.cm-md-code-last { padding-bottom: 8px; border-radius: 0 0 8px 8px; }
 .md-live .cm-line.cm-md-code-first.cm-md-code-last { border-radius: 8px; }
@@ -1302,7 +1410,7 @@ main {
 .browser-error-title { font-size: 18px; font-weight: 600; }
 .browser-error-url { max-width: 100%; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .browser-error-reason { max-width: 520px; font-size: 13.5px; line-height: 1.6; }
-.browser-error-code { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; color: var(--muted); }
+.browser-error-code { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
 .browser-error-retry { margin-top: 8px; color: var(--text); }
 .browser-covered img { width: 100%; height: 100%; object-fit: fill; display: block; }
 .browser-covered:has(img) { padding: 0; }
@@ -1391,6 +1499,26 @@ svg.ic-mcp { color: var(--ic-mcp); }
 .ios-icon-orange { background: linear-gradient(180deg, #ffad55, #f2780c); }
 /* 首页、设置的图形和 iOS 一样几乎撑满方块 */
 .ios-icon-gray svg, .ios-icon-orange svg { width: 78%; height: 78%; }
+/* 有会话在运行时的首页图标：外圈一道暖色流光绕着转，橙色光晕一呼一吸，房子轻轻上下浮动 */
+@property --home-spin { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.rail-home.running .ios-icon { position: relative; animation: home-glow 2s ease-in-out infinite; }
+.rail-home.running .ios-icon::before {
+  content: ""; position: absolute; inset: -3px; padding: 2px; border-radius: 9px; pointer-events: none;
+  background: conic-gradient(from var(--home-spin), transparent 0 25%, #ff4f8b 50%, #ff9a3c 78%, #ffe7a3);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: home-spin 1.6s linear infinite;
+}
+.rail-home.running .ios-icon svg { animation: home-bob 2s ease-in-out infinite; }
+@keyframes home-spin { to { --home-spin: 1turn; } }
+@keyframes home-glow {
+  0%, 100% { box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 0 4px rgb(255 140 50 / 0.35); }
+  50% { box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 0 14px 2px rgb(255 110 70 / 0.6); }
+}
+@keyframes home-bob { 50% { transform: translateY(-1.5px) scale(1.05); } }
+@media (prefers-reduced-motion: reduce) {
+  .rail-home.running .ios-icon, .rail-home.running .ios-icon::before, .rail-home.running .ios-icon svg { animation: none; }
+}
 .ios-icon-blue { background: linear-gradient(180deg, #3d9bff, #0a6cf0); }
 .ios-icon-purple { background: linear-gradient(180deg, #c77df5, #9b45d6); }
 .ios-icon-pink { background: linear-gradient(180deg, #ff5a7e, #f0244f); }

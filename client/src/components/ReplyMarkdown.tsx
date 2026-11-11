@@ -96,7 +96,8 @@ function ReplyCode({ children, ...rest }: HTMLAttributes<HTMLElement> & { childr
   return <code {...rest}>{children}</code>;
 }
 
-function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement>) {
+/** 链接：本地文件在右侧面板打开，网址在内置浏览器或新窗口打开，右键有菜单（见上面 ReplyMarkdown）；后台任务面板里 MCP 任务返回的文件也用它 */
+export function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement>) {
   const files = useContext(FileLinkContext);
   const local = href ? isLocalLink(href) : false;
   if (!href || !local) {

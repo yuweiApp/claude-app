@@ -150,6 +150,10 @@ export function agentEnv(): Record<string, string | undefined> {
     ...tiers,
     CLAUDE_CONFIG_DIR: config.claudeConfigDir,
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ?? "1",
+    // 上下文多大（token）：只对 Claude Code 不认识的模型名（不是 claude- 开头的，如 gpt-6-luna、qwen）生效，
+    // Claude 官方模型按它自己的模型表。没设时 Claude Code 也是按 200000 算，这里写明，要改在 .env.local 里设，
+    // 要和模型实际支持的一致：设大了请求会在模型那边超限报错，而不是及时压缩上下文
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS: env.CLAUDE_CODE_MAX_CONTEXT_TOKENS ?? "200000",
     CLAUDE_AGENT_SDK_CLIENT_APP: "claude-app-gateway/0.1.0",
     // 跑得久的工具调用自动转到后台（同 Claude Code 终端里的 Ctrl+B）：工具先返回「在后台运行」，这一轮接着走，
     // 模型可以先回复用户；跑完后结果以 task_notification 送回来，会话空闲时会自动开始新的一轮。

@@ -26,10 +26,13 @@ export function streamSession(req: FastifyRequest, reply: FastifyReply, hub: Eve
 
   const channel = hub.channel(sessionId);
   const backlog = channel.since(afterId);
-  if (backlog === null) {
-    res.write(`data: {"type":"reset"}\n\n`);
-    channel.all().forEach(write);
-  } else backlog.forEach(write);
+  if (backlog === null) res.write(`data: {"type":"reset"}\n\n`);
+  const replay = backlog ?? channel.all();
+  // 已经挤出缓冲的状态类事件（这一轮开始时的 state: running 等）先补发。不带 id：
+  // 浏览器的 lastEventId 不变，断线重连时照旧从回放的最后一条续上
+  const seenUpTo = backlog === null ? 0 : afterId;
+  for (const event of channel.missingSticky(seenUpTo, replay[0]?.id ?? Number.POSITIVE_INFINITY)) res.write(`data: ${JSON.stringify(event)}\n\n`);
+  replay.forEach(write);
 
   const unsubscribe = channel.subscribe(write);
   const heartbeat = setInterval(() => res.write(": ping\n\n"), HEARTBEAT_MS);

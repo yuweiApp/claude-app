@@ -5,6 +5,7 @@ import { desktop } from "./desktop";
 import { setDesktopToken } from "./api";
 import "./theme";
 import "./skin";
+import "./font";
 import "./styles.css";
 import "./skins.css";
 

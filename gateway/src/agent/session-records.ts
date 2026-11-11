@@ -1,10 +1,12 @@
+import { createReadStream } from "node:fs";
 import { open, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { config } from "../config.js";
 
 /**
  * 直接读 Claude Code 落盘的会话记录（projects/<目录名>/<会话 id>.jsonl），补 SDK 列会话给不了的：
- * 最后一次 AI 回复的时间和模型、文件中间的自定义标题。只读不写
+ * 最后一次 AI 回复的时间和模型、文件中间的自定义标题、开头 64KB 里找不到的工作目录。只读不写
  */
 
 /** 从文件末尾往前每次读这么多 */
@@ -15,6 +17,7 @@ const MAX_SCAN = 4 * 1024 * 1024;
 /** 按文件大小、修改时间缓存，文件没变就不再读；键是文件路径 */
 const responseCache = new Map<string, { size: number; mtimeMs: number; at: number | undefined }>();
 const titleCache = new Map<string, { size: number; mtimeMs: number; title: string | undefined }>();
+const cwdCache = new Map<string, string>();
 
 /** 所有会话的记录文件，键是 sessionId */
 export async function sessionRecordFiles(): Promise<Map<string, string>> {
@@ -74,6 +77,38 @@ export async function lastCustomTitle(file: string): Promise<string | undefined>
   }
   titleCache.set(file, { size: info.size, mtimeMs: info.mtimeMs, title });
   return title;
+}
+
+/**
+ * 会话的工作目录：记录里第一条带 cwd 字段的行。SDK 列会话、getSessionInfo 只在文件开头 64KB 里找 cwd，
+ * 第一条消息带了图片时（用户消息那行 message 在 cwd 前面，图片是 base64）找不到，给的是 undefined，这里从头逐行读。
+ * 写进去的 cwd 不会再变，找到了就一直缓存；键是文件路径
+ */
+export async function recordedCwd(file: string): Promise<string | undefined> {
+  const cached = cwdCache.get(file);
+  if (cached) return cached;
+  const stream = createReadStream(file, { encoding: "utf8" });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (!line.includes('"cwd"')) continue;
+      try {
+        const entry = JSON.parse(line) as { cwd?: unknown };
+        if (typeof entry.cwd === "string" && entry.cwd) {
+          cwdCache.set(file, entry.cwd);
+          return entry.cwd;
+        }
+      } catch {
+        // 写到一半的行
+      }
+    }
+  } catch {
+    // 文件读不了
+  } finally {
+    lines.close();
+    stream.destroy();
+  }
+  return undefined;
 }
 
 /** 从末尾往前一块块读，逐行找最后一条 pick 给出结果的记录；跨块的行拼起来再看 */

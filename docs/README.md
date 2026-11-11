@@ -75,7 +75,7 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
   - 目录里地址和已有服务器相同的（插件带来的、手动添加的）显示「已添加」，免得重复；已添加但要登录的显示「登录」。
 - MCP 服务器的 OAuth 登录（`gateway/src/agent/mcp-auth.ts`）：状态是「需要认证」的服务器（设置页添加的、插件和配置文件带来的都算）在设置页有「登录」。登录整个由 Claude Code 自己做：发现授权服务器、动态注册客户端、PKCE、在 localhost 的随机端口上等回调、换令牌、存令牌（Linux / Windows 是 `$CLAUDE_CONFIG_DIR/.credentials.json` 的 `mcpOAuth`，按「服务器名称|配置的哈希」存；macOS 是钥匙串）、过期刷新。同一个配置目录下的会话共用令牌，所以登录一次，之后的新会话直接连上。
   - 网关起一个和会话同样配置的临时 query（`inspectQuery`），发 `mcp_authenticate` 控制请求拿到登录页地址给网页；query 留着等回调（端口在它的子进程里），每秒查一次 `mcpServerStatus()`，服务器变成 connected 就算成功，10 分钟没完成就结束。成功后开着的会话都 `reconnectMcpServer()`，不用等子进程重启。
-  - SDK 的 `Query` 上有 `mcpAuthenticate`、`mcpSubmitOAuthCallbackUrl`、`mcpClearAuth`，但类型定义里没写（0.3.317），网关按运行时有没有这两个方法判断，没有就报「不支持」。升级 SDK 后要重新跑一遍登录。
+  - SDK 的 `Query` 上有 `mcpAuthenticate`、`mcpSubmitOAuthCallbackUrl`、`mcpClearAuth`，但类型定义里没写（0.3.317～0.3.322 都是这样），网关按运行时有没有这两个方法判断，没有就报「不支持」。升级 SDK 后要重新跑一遍登录。
   - 断开（`POST /mcp-servers/:name/logout`）：连上的远程（HTTP / SSE）服务器在设置页有「断开」，确认后起临时 query 调 `mcpClearAuth` 清掉 Claude Code 存的令牌，再重连一次，返回清除后的状态，开着的会话也重连这个服务器。服务器的状态里看不出是不是靠登录连上的，所以远程服务器都有这个按钮；不是靠登录连上的（不要认证、令牌写在请求头里），清除后仍是已连接，网页提示「没有保存的登录信息」。
   - 网页在浏览器里打开登录页（桌面版的 `window.open` 由外壳交给系统浏览器）。浏览器和网关在同一台电脑上时，登录后跳回 localhost 由 Claude Code 收下；不在同一台电脑上时跳到打不开的 localhost 页面，对话框里可以把地址栏的网址贴回来，网关经 `mcp_oauth_callback_url` 交给 Claude Code。贴回来的回调 Claude Code 不会自己重连服务器（localhost 收到的会），网关接着调 `reconnectMcpServer()`。
   - 服务器的授权服务器不让注册客户端时（没有注册接口、或者拒绝），Claude Code 报 `mcp_client_registration_unavailable`，原因原样显示在对话框里。
@@ -102,6 +102,7 @@ Claude Code 默认读写 `~/.claude`。gateway 通过 `env.CLAUDE_CONFIG_DIR` �
 
 - 每个会话一个频道，环形缓冲最近 `EVENT_BUFFER_SIZE`（默认 5000）条事件，事件 id 在频道内单调递增。
 - `GET /sessions/:id/events`：首次连接回放整个缓冲；断线重连时浏览器自动带 `Last-Event-ID`，只回放之后的事件。缓冲已经被覆盖时先发一条 `reset`，客户端重新拉历史。
+- 状态类事件（`state`、`desktop_target`）只在变化时发一次，频道另外记着每种的最后一条：新连上来（首次连接、续不上重来）时它已经被挤出缓冲的话，回放之前先补发这一条（不带 id，浏览器的 `Last-Event-ID` 不变）。一轮跑得久，每一小段输出都是一条 `stream_event`，开始时那条 `state: running` 很快被挤掉；以前这时打开、切回会话，网页一直当这一轮没在运行（没有「停止」按钮、没有运行中的提示），侧边栏却在转圈。
 - 每 15 秒发一次注释行心跳，防止代理断开空闲连接。
 
 ### 3.2 事件类型
@@ -129,6 +130,7 @@ SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类
 - 工具调用：`assistant` 里的 `tool_use` 块和随后 `user` 消息里同 `tool_use_id` 的 `tool_result` 配对显示。
 - `parent_tool_use_id` 不为空的是子代理里的消息，折叠在对应的 Agent 工具调用下面。
 - 后台任务（会话标题后面的按钮，点开是弹窗）：网关按会话记后台任务（`gateway/src/agent/tasks.ts`）。SDK 的 `task_started` / `task_updated` / `task_notification` 里没有时间，开始、结束时间按网关收到的时间记；命令取自对应的 Bash `tool_use`，输出文件路径取自放到后台时立即返回的 `tool_result`（运行中就能看输出）或完成通知。只列放到后台的任务，`ambient`、`skip_transcript` 的不列。是不是后台任务看 `task_started` 的 `is_backgrounded`，或者在不在最近一条 `background_tasks_changed`（SDK 说是当前所有在跑的后台任务的完整列表）里：转到后台的 MCP 调用（`mcp_task`，如 `browser_run_code` 跑满 20 秒）的 `task_started` 不带 `is_backgrounded`，只靠后者认出来，它比 `task_started` 先到。开始时间按对应的 `tool_use` 发出的时间算（跑久了才转后台的，不按转后台的时候）。任务记录跟会话走，子进程空闲回收后还在，会话删除或网关重启时丢掉；子进程退出时还在运行的任务记为已停止。
+- MCP 任务（`task_type` 为 `mcp_task`）：跑久了转到后台的 MCP 调用（`CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`，网关自己的浏览器等工具就是这种），和 MCP 服务器以 MCP 协议的「任务」方式跑的工具调用（工具标了 `execution.taskSupport`，Claude Code 一开始就把它转到后台）都是这个类型。后一种 SDK 0.3.319 起支持，但实测（0.3.322 / Claude Code 2.1.322，2026-11-10）在网关里没有生效：Claude Code 调用标了 `taskSupport` 的工具时不带 `task` 参数，`required` 的直接报「requires task augmentation」。程序里这个功能由远程功能开关 `tengu_glowing_lark` 控制（设了 `CLAUDE_CODE_DISABLE_MCP_TASKS` 就关），拉不到开关时的默认值只有入口是终端的 `claude` 命令（entrypoint `cli`）才开，SDK 会话是关；网关又设了 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`，不拉功能开关，所以一定是关的。下面的显示等 Claude Code 放开后直接生效，跑久了转到后台的那种现在就用得上。网关按 `tool_use_id` 记下发起的工具名（`tool`），弹窗里展开显示「MCP 工具：服务器 / 工具名」（网关自带的服务器显示成内置浏览器、终端、桌面，外部浏览器用浏览器名，其余是设置页添加的连接器的服务器名）。`task_progress` 的 `summary` 记成运行中的一行状态（`progress`）：MCP 任务是服务器自己报的状态（变一次发一次），子代理是进度摘要；只在变了时推送（子代理的进度消息很频繁），结束（`task_notification` 或 `task_updated`）时清掉；任务行在用时下面显示它。完成通知里的 `resource_links`（结果按引用返回的文件，最多 50 个）记成 `resourceLinks`，展开后列出「返回的文件」，用回复里的 `ReplyLink` 显示：本地文件点开在右侧面板，网址按回复里的方式打开，右键菜单一样。停止照旧是 `Query.stopTask()`。
 - 后台任务（Bash 后台命令、后台子代理）完成时，如果模型空闲，Claude Code 会拿通知自动开始新的一轮，没有用户消息。历史里这条通知存成内容是 `<task-notification>` 的 user 消息；实时事件里只有 `system/task_notification`，之后网关的状态从 `idle` 变回 `running`：空闲时收到通知后 5 秒内 Claude Code 发出模型请求（`system/status` 的 `requesting`，紧跟着通知）就切换，不等模型开始返回（中间要几秒，网页这段时间既没有通知行也没有「思考中」）；只认通知之后不久的请求，停止任务的通知不一定开新的一轮，后台子代理自己的请求也不能当成主线程开始了。网页把两者都显示成一行「后台任务已完成：…」作为新一轮的开头，按 `task:<task_id>` 去重。一轮还在进行时完成的任务，Claude Code 会把通知并进当前这一轮（只有一个 result；历史里这条通知夹在这一轮中间，前一条 assistant 的 `stop_reason` 是 `tool_use`），这种不分轮、对话里也不显示：历史里按 `stop_reason` 判断，实时按收到通知后这一轮里有没有再发出模型请求（`status: requesting`）判断；通知到时已经在路上的请求不带它，响应回来后通知还会开新的一轮。
 
 ## 4. 权限
@@ -194,6 +196,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 另外：
 
 - `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`：关掉遥测、错误上报、自动更新检查，不往 Anthropic 发东西。
+- `CLAUDE_CODE_MAX_CONTEXT_TOKENS`（默认 200000）：上下文大小。Claude Code 对不认识的模型名（不是 `claude-` 开头的，第三方模型都是）按这个值算，没设时也是 200000；Claude 官方模型按它自己的模型表（带 `[1m]` 的是 100 万），这个变量不管。快用满时自动压缩上下文（对话里的「上下文已压缩」），会提前留出回复的空间。网关写明默认值，要改在 `.env.local` 里设；所有第三方模型共用一个值，要和模型实际支持的一致，设大了请求会在模型那边超限报错。想更早压缩可以另设 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`（按它算什么时候压缩，不超过上下文大小）。（规则按 Claude Code 2.1.322 的程序核对。）
 - `WebSearch` 是 Anthropic 服务端工具，第三方模型用不了，默认放进 `disallowedTools`。
 - `WebFetch` 每次抓网页前会先请求 `api.anthropic.com/api/web/domain_info?domain=<域名>` 查域名黑名单，Anthropic 不支持的地区（如中国）这个接口一律返回 403，所有网址都报 "Unable to verify if domain … is safe to fetch"，网页本身其实能连上。网关在 SDK 的 `settings` 选项里设 `skipWebFetchPreflight: true` 跳过这一步。
 - Windows 上命令输出的编码：Claude Code 的 Bash 工具跑的是 Git Bash，模型在里面调 `powershell.exe`、`ipconfig` 等原生程序时，它们按控制台代码页输出（中文系统是 936，GBK），Claude Code 按 UTF-8 读，中文全是乱码。`agentEnv()` 在 Windows 上给子进程设 `BASH_ENV`，指向网关写在 `$CLAUDE_CONFIG_DIR/claude-app-bash-env.sh` 的脚本，每次起 bash 先 `chcp.com 65001`；环境里原来有 `BASH_ENV` 的放进 `CLAUDE_APP_USER_BASH_ENV`，脚本最后接着 source 它。Claude Code 自己的 PowerShell 工具（`CLAUDE_CODE_USE_POWERSHELL_TOOL=1`，预览）也是先 `chcp 65001` 再起 PowerShell。

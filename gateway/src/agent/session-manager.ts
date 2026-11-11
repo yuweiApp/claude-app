@@ -28,7 +28,7 @@ import { readAgentTranscript, readOutputTail, TaskList } from "./tasks.js";
 import { disposeRepls } from "../browser/tool.js";
 import { disposeDesktopSession } from "../desktop/guard.js";
 import { sessionHistory } from "./history.js";
-import { lastCustomTitle, lastResponseAt, lastResponseModel, sessionRecordFiles } from "./session-records.js";
+import { lastCustomTitle, lastResponseAt, lastResponseModel, recordedCwd, sessionRecordFiles } from "./session-records.js";
 import { createScratchDir, isChatCwd, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
@@ -115,7 +115,7 @@ export class SessionManager {
     const info = await getSessionInfo(sessionId);
     if (!info) throw new NotFoundError(`会话不存在：${sessionId}`);
     const settings = this.lastSettings.get(sessionId) ?? { model: await this.recordedModel(sessionId) };
-    return this.launch(sessionId, true, { cwd: info.cwd || config.workspaceDir, ...settings });
+    return this.launch(sessionId, true, { cwd: (await this.infoCwd(info)) || config.workspaceDir, ...settings });
   }
 
   /** 记录文件里最后一次回复用的模型 */
@@ -128,7 +128,22 @@ export class SessionManager {
   async cwd(sessionId: string): Promise<string | null> {
     const session = this.active.get(sessionId);
     if (session) return session.cwd;
-    return (await getSessionInfo(sessionId))?.cwd || null;
+    const info = await getSessionInfo(sessionId);
+    return (info && (await this.infoCwd(info))) || null;
+  }
+
+  /**
+   * SDK 给的会话工作目录；它没读出来时（只看记录文件开头 64KB，第一条消息带了图片就不在这段里）从记录文件里找。
+   * 不补的话项目会话会被当成普通会话列到「会话」里，子进程回收后 resume 也会跑到默认工作目录
+   */
+  private async infoCwd(info: { sessionId: string; cwd?: string }, file?: string): Promise<string | undefined> {
+    if (info.cwd) return info.cwd;
+    if (!file) {
+      const dir = await sessionRecordDir(info.sessionId);
+      if (!dir) return undefined;
+      file = path.join(dir, `${info.sessionId}.jsonl`);
+    }
+    return recordedCwd(file);
   }
 
   async list(): Promise<SessionListItem[]> {
@@ -144,10 +159,12 @@ export class SessionManager {
           if (customTitle) this.titles.set(info.sessionId, customTitle);
         }
         const responded = file ? await lastResponseAt(file) : undefined;
+        const cwd = await this.infoCwd(info, file);
         return {
           ...info,
           ...(customTitle ? { customTitle } : {}),
-          chat: isChatCwd(info.cwd),
+          ...(cwd ? { cwd } : {}),
+          chat: isChatCwd(cwd),
           state: this.active.get(info.sessionId)?.state,
           lastResponseAt: responded ?? info.createdAt ?? info.lastModified,
         };
@@ -184,7 +201,7 @@ export class SessionManager {
     const session = this.active.get(sessionId);
     await session?.close();
     const info = await getSessionInfo(sessionId);
-    const cwd = session?.cwd ?? info?.cwd;
+    const cwd = session?.cwd ?? (info ? await this.infoCwd(info) : undefined);
     const recordDir = info ? await sessionRecordDir(sessionId) : undefined;
     // 刚建的会话第一轮还没落盘时只有子进程，没有文件可删
     this.titles.delete(sessionId);

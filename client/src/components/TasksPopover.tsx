@@ -1,6 +1,24 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useContext, useEffect, useId, useRef, useState } from "react";
 import { api, type BackgroundTask, type TaskOutput } from "../api";
 import { useDismiss } from "./ComposerPickers";
+import { MentionNamesContext } from "./MentionText";
+import { ReplyLink } from "./ReplyMarkdown";
+
+/** 网关自带的 MCP 服务器的名字；外部浏览器（chrome、brave…）按启用着的浏览器列表取，其余是设置页添加的连接器，用服务器名 */
+const OWN_SERVERS: Record<string, string> = { inapp: "内置浏览器", terminal: "终端", desktop: "桌面" };
+
+/** MCP 工具全名 mcp__服务器__工具 拆开；不是 MCP 工具返回 null */
+function splitMcpTool(tool: string | undefined): { server: string; name: string } | null {
+  const m = /^mcp__(.+?)__(.+)$/.exec(tool ?? "");
+  return m ? { server: m[1]!, name: m[2]! } : null;
+}
+
+/** 文件大小：1.2 KB、3.4 MB */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
 
 interface Props {
   sessionId: string;
@@ -107,6 +125,8 @@ function TaskItem({ sessionId, task, selected, detailsId, onSelect, onError }: {
           <span className="task-text">
             <span className="task-name">{task.description}</span>
             <span className="task-meta"><span className="task-meta-status">{taskStatus(task)}</span> · 用时 {formatDuration((task.endedAt ?? now) - task.startedAt)}</span>
+            {/* 运行中的一行状态：MCP 任务是服务器报的，子代理是进度摘要 */}
+            {running && task.progress && <span className="task-progress" title={task.progress}>{task.progress}</span>}
           </span>
           <ChevronIcon />
         </button>
@@ -165,6 +185,10 @@ function TaskDetails({ id, sessionId, task, onError }: { id: string; sessionId: 
   }, [output]);
 
   const agent = task.type === "local_agent";
+  // MCP 任务（MCP 服务器以任务方式跑的，或者跑久了转到后台的 MCP 调用）：哪个服务器的哪个工具
+  const mcp = task.type === "mcp_task" ? splitMcpTool(task.tool) : null;
+  const browsers = useContext(MentionNamesContext).browsers;
+  const serverName = mcp ? (OWN_SERVERS[mcp.server] ?? browsers.find((b) => b.id === mcp.server)?.name ?? mcp.server) : "";
   // 子代理的任务说明：开始消息里带的，没有就用对话记录里第一条
   const prompt = task.prompt ?? output?.prompt;
   const outputText = task.hasOutput ? output?.text : task.result ?? (task.summary !== task.description ? task.summary : undefined);
@@ -172,6 +196,16 @@ function TaskDetails({ id, sessionId, task, onError }: { id: string; sessionId: 
 
   return (
     <div className="task-details" id={id} ref={rootRef} role="region" aria-label={`任务详情：${task.description}`}>
+      {mcp && (
+        <div className="task-block">
+          <div className="task-block-head"><span><PlugIcon />MCP 工具</span></div>
+          <div className="task-tool">
+            <span className="task-tool-server">{serverName}</span>
+            <span className="task-tool-sep">/</span>
+            <code>{mcp.name}</code>
+          </div>
+        </div>
+      )}
       {task.command !== undefined && (
         <div className="task-block command">
           <div className="task-block-head"><span><TerminalIcon />执行命令</span><TaskCopyButton text={task.command} label="复制执行命令" onError={onError} /></div>
@@ -203,6 +237,21 @@ function TaskDetails({ id, sessionId, task, onError }: { id: string; sessionId: 
         }}>{outputText || outputPlaceholder}</pre>
         {!running && <div className="task-exit">{statusText(task)}</div>}
       </div>
+      {task.resourceLinks && task.resourceLinks.length > 0 && (
+        <div className="task-block">
+          <div className="task-block-head"><span><FileIcon />返回的文件<span className="tasks-count">{task.resourceLinks.length}</span></span></div>
+          <ul className="task-links">
+            {task.resourceLinks.map((link) => (
+              <li key={link.uri}>
+                <ReplyLink href={link.uri}>{link.title || link.name}</ReplyLink>
+                {(link.mimeType || link.size !== undefined) && (
+                  <span className="task-link-meta">{[link.mimeType, link.size !== undefined ? formatSize(link.size) : ""].filter(Boolean).join(" · ")}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -342,4 +391,22 @@ function CheckIcon() {
 
 function CloseIcon() {
   return <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" /></svg>;
+}
+
+/** MCP 工具：插头 */
+function PlugIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 1.75v3M10 1.75v3M4.25 4.75h7.5v2.5a3.75 3.75 0 0 1-7.5 0zM8 11v3.25" />
+    </svg>
+  );
+}
+
+/** 返回的文件 */
+function FileIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9.25 1.75H4.5a1.25 1.25 0 0 0-1.25 1.25v10a1.25 1.25 0 0 0 1.25 1.25h7a1.25 1.25 0 0 0 1.25-1.25V5.25zM9.25 1.75v3.5h3.5" />
+    </svg>
+  );
 }

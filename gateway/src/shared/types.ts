@@ -138,6 +138,15 @@ export interface BackgroundTask {
   exitCode?: number;
   /** 完成通知里的一句话说明 */
   summary?: string;
+  /** 发起任务的工具全名（mcp__服务器__工具、Bash、Agent 等），按 tool_use_id 对上 */
+  tool?: string;
+  /**
+   * 运行中的一行状态（task_progress 的 summary）：MCP 任务（mcp_task）是 MCP 服务器自己报的状态，
+   * 子代理是模型生成的进度摘要；状态变了才更新，结束后清掉
+   */
+  progress?: string;
+  /** MCP 任务完成时结果里按引用返回的文件（resource_link），最多 50 个 */
+  resourceLinks?: { uri: string; name: string; title?: string; mimeType?: string; size?: number }[];
   /** 有输出可以看（GET /sessions/:id/tasks/:taskId/output）：后台命令的输出，子代理的对话记录 */
   hasOutput: boolean;
 }

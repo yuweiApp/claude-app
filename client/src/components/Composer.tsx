@@ -459,11 +459,10 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
         {left}
         <div className="spacer" />
         {right}
+        {/* 只有一个按钮：运行中输入框空着是停止，有内容就换成「追加到当前任务」的发送 */}
         {running && !text.trim() && ready.length === 0 && !hasNotes ? (
           <button className="send-btn send-stop" onClick={onInterrupt} title="停止" aria-label="停止">
-            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-              <rect width="12" height="12" rx="2" fill="currentColor" />
-            </svg>
+            <span className="stop-core" aria-hidden="true" />
           </button>
         ) : onContinue && !running && !text.trim() && files.length === 0 && !hasNotes ? (
           <button className="send-btn" disabled={sending} onClick={onContinue} title="继续" aria-label="继续">
