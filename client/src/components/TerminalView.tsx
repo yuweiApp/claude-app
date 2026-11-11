@@ -21,6 +21,9 @@ const DARK: ITheme = {
   selectionBackground: "#c9644255",
 };
 
+/** 用户在终端里敲字、粘贴、用输入法时 xterm 的输入框上会有的事件 */
+const USER_INPUT_EVENTS = ["keydown", "keypress", "input", "paste", "compositionend"] as const;
+
 /**
  * 连上终端：输出、输入、改大小走一条 WebSocket（不像 SSE 那样占浏览器对同一个源的 6 个 HTTP 连接）。
  * 断了（网关重启等）隔 2 秒重连，连上后网关先发一遍保留的输出；终端退出、不存在、卸载后不再连。
@@ -105,7 +108,12 @@ export function TerminalView({ terminalId, active }: { terminalId: string; activ
         }
       },
     );
-    const dataSub = term.onData((data) => conn.send({ type: "input", data }));
+    // xterm 往外发的除了键盘、粘贴、输入法，还有它自己的自动回复（焦点上报 ESC[I/ESC[O、光标位置、设备属性等），
+    // 都走 onData。紧跟在终端里的键盘、粘贴、输入法事件之后的才标成用户敲的（输入法上屏是 setTimeout 之后发）
+    let typedAt = -Infinity;
+    const markTyped = () => (typedAt = performance.now());
+    for (const type of USER_INPUT_EVENTS) host.addEventListener(type, markTyped, true);
+    const dataSub = term.onData((data) => conn.send({ type: "input", data, typed: performance.now() - typedAt < 100 }));
 
     const sync = () => {
       if (!host.offsetWidth || !host.offsetHeight) return;
@@ -135,6 +143,7 @@ export function TerminalView({ terminalId, active }: { terminalId: string; activ
       ro.disconnect();
       clearTimeout(timer);
       dataSub.dispose();
+      for (const type of USER_INPUT_EVENTS) host.removeEventListener(type, markTyped, true);
       term.dispose();
       termRef.current = null;
       fitRef.current = null;

@@ -382,8 +382,11 @@ export interface TerminalInfo {
 /** 终端的 WebSocket（GET /terminals/:id/socket）网关发的消息：连上时先来一条 data 是已有的输出；终端不存在时发 error 后断开 */
 export type TerminalEvent = { type: "data"; data: string } | { type: "exit"; code: number } | { type: "error"; message: string };
 
-/** 终端的 WebSocket 网页发的消息：输入、改大小 */
-export type TerminalClientMessage = { type: "input"; data: string } | { type: "resize"; cols: number; rows: number };
+/**
+ * 终端的 WebSocket 网页发的消息：输入、改大小。
+ * typed：用户在网页里敲的、粘贴的；false 是 xterm 自己发的（焦点上报、对查询的回复），不算用户动过这个终端
+ */
+export type TerminalClientMessage = { type: "input"; data: string; typed: boolean } | { type: "resize"; cols: number; rows: number };
 
 /** GET /files/read：右侧面板查看文件 */
 export interface FileContent {

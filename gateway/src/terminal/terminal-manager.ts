@@ -94,8 +94,11 @@ export class TerminalManager {
     return () => term.listeners.delete(listener);
   }
 
-  /** from：用户在网页里敲的，还是模型写的命令（用户敲过的终端模型不再往里写） */
-  write(id: string, data: string, from: "user" | "agent" = "user"): void {
+  /**
+   * from：用户在网页里敲的、模型写的命令，还是网页终端自动发的（焦点上报、对查询的回复）。
+   * 只有 user 算用户敲过（用户敲过的终端模型不再往里写、不能停）
+   */
+  write(id: string, data: string, from: "user" | "agent" | "emulator"): void {
     const term = this.get(id);
     if (from === "user") term.userTyped = true;
     if (term.status === "running") term.proc.write(data);

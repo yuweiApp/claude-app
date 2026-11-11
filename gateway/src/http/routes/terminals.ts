@@ -40,7 +40,7 @@ export function terminalRoutes(app: FastifyInstance, terminals: TerminalManager)
           return;
         }
         try {
-          if (msg.type === "input" && typeof msg.data === "string") terminals.write(req.params.id, msg.data);
+          if (msg.type === "input" && typeof msg.data === "string") terminals.write(req.params.id, msg.data, msg.typed === true ? "user" : "emulator");
           else if (msg.type === "resize") terminals.resize(req.params.id, Number(msg.cols), Number(msg.rows));
         } catch {
           // 终端已经关了
