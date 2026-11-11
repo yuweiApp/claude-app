@@ -81,7 +81,7 @@ snapshot s191jb6hk0gciz（mousepad，窗口 w-1.1895-…）
 - 最小化的窗口上游要先试着截、超时（Windows 上 5 秒）才报错，网关在 `list-windows` 里看到 `window_id` 的窗口 `minimized: true` 时直接返回，不执行截图。
 - 网关自己查的 `list-windows`（guard、浮窗、截图前检查、截图的坐标说明）结果留 1 秒共用，桌面写操作开始和结束时清掉。
 - macOS 要「屏幕录制」权限。
-- 图片太大：原始大小超过 3.75MB（base64 后 5MB，模型接口的单张上限）时不返回图片，报大小和上限。缩小见第 12 节待定问题。
+- 图片缩小（`sharp`）：macOS 的桌面坐标是点，Retina 屏截出来是 2 倍像素（实测 iMac 上全屏的 Fotor 窗口 4616×2398、6.5MB，超过模型接口 base64 后 5MB 的单张上限，以前直接报错不返回图片，模型看不到界面），按 agent-desktop 结果里的 `scale_factor` 缩回点的尺寸，图片像素和桌面坐标一一对应；Windows 的桌面坐标本来就是像素，不按缩放缩小。之后还超过 3.75MB 就改成 JPEG（质量 80），再超过就每次缩到 3/4。结果里写明原图和返回的图片尺寸。
 
 ### run
 
@@ -109,7 +109,8 @@ snapshot s191jb6hk0gciz（mousepad，窗口 w-1.1895-…）
 
 - 操作的是运行网关的这台电脑上、当前登录用户的桌面；用户可能同时在用这台电脑。
 - ref 只在产生它的快照里有效，界面变了会返回 `STALE_REF` 或 `AMBIGUOUS_TARGET`。
-- 默认（不加 `headed`）经无障碍接口操作，不移动鼠标、不切换前台窗口；`headed` 用真实的鼠标键盘。
+- 默认（不加 `headed`）经无障碍接口操作，不移动鼠标、不切换前台窗口；`headed` 用真实的鼠标键盘。用户已允许使用 `headed`，不需要另外确认：agent-desktop 的 skill 里写着只有用户明确允许时才用 `--headed`，模型照着读了就不敢用，在对话里让用户自己去点（2026-11-11 macOS 上 Fotor 首页的功能方块，见第 13 节）。
+- 元素的 bounds（`find` 的结果、`snapshot` 的 `include_bounds`）和坐标命令用同一套桌面坐标。
 - 本应用自己的窗口不在结果里，也不能操作。
 - 超过约 20 秒转后台、结束后作为通知送达（同 `RUNTIME_FACTS`）；屏幕上的变化不会通知它。
 - 别的会话也可能在操作桌面（见 7.2）。
@@ -253,7 +254,6 @@ desktop:
 
 ## 12. 待定问题
 
-- **截图太大怎么办**：现在超过上限就返回错误。网关没有图片库，要缩小的话：加 `sharp` 依赖，或经 `/browser/host` 交给桌面版用 `nativeImage` 缩小（网页版用不了）。
 - 6.2 的「结束后 1 秒」够不够：无障碍点击到网页发出请求的延迟要实测。
 - 要不要把 `batch` 开放出来（guard 要逐条检查）。
 - 7.2 之外，要不要在结果里报「自上次调用以来新开 / 关闭的窗口」（每次多跑一次 `list-windows`，约 0.1 秒）。
@@ -295,6 +295,12 @@ desktop:
   - 日志里每次调用的 stderr 都是 Node 调试器的输出：Windows 上一直在经 Node 启动器调用，改成直接调用原生程序（第 9 节）。
   - 改完：`skills get` 746 → 67 毫秒，`list-windows` 1–1.4 秒 → 0.35–0.46 秒。截最小化窗口仍要 4.9 秒（上游），一次截图跑 3 遍 `list-windows`：网关改成看到最小化直接返回、`list-windows` 留 1 秒共用（第 4 节 screenshot）。
 - 快照渲染改成不认识的字段也原样带上（节点行尾、快照头的「其他：」），Windows 上快照节点有没有额外字段还没看到原始 JSON。
+
+**macOS 实测（iMac，2026-11-11，Fotor 用文生图生成图片）**：
+- Fotor（Qt）首页的功能方块在无障碍树里只有 `statictext "智能图片生成"` 和 `image`，上层 `group` 也没有可用操作，没有 ref，只能按坐标用真实鼠标点（`mouse-click --headed --xy`）。很多应用都会这样（自绘控件、canvas、游戏），要靠截图和坐标这条路。
+- 模型拿到了 `find` 给的坐标，但没用 headed：skill 写着只有用户明确允许才用，截图又因为超过上限没返回图片。改了两处：说明里写明用户已允许 headed、不需要另外确认，以及 bounds 和坐标命令是同一套坐标；截图按 Retina 缩放缩小（第 4 节 screenshot）。
+- `--xy` 不切换前台：当时本应用全屏在前台、盖住了 Fotor，坐标点击会落在本应用上（网关拒绝）。
+- 浮窗显示「窗口已经关闭」：找到了采集源，视频流随即结束，原因没查清。Fotor 的窗口标题在 `list-windows` 里一会儿是「Fotor」、一会儿是「Fotor Photo Editor」，可能按标题匹配错了窗口。
 
 **拦不住的**：模型用 Bash 直接跑 `gateway/node_modules/agent-desktop/bin/agent-desktop`（或 xdotool、AppleScript 这类）就绕过了网关。这和 Bash 本身能做任何事一样，边界是 Bash 的权限卡片；「完全访问权限」下没有这道边界。
 

@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
+import sharp from "sharp";
 import { z } from "zod";
 import { MCP_AUTO_BACKGROUND_MS } from "../config.js";
 import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
@@ -28,8 +29,10 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_TIMEOUT_MS = 10 * 60_000;
 /** run 里命令自己要等（wait 的 --timeout 等，见 upstreamWaitMs）时，进程期限至少比它多这么久 */
 const WAIT_MARGIN_MS = 5_000;
-/** 截图原始大小上限：模型接口的单张图片上限是 base64 后 5MB */
+/** 返回给模型的图片大小上限：模型接口的单张图片上限是 base64 后 5MB */
 const MAX_IMAGE_BYTES = 3_750_000;
+/** 缩小后仍超过上限时改成 JPEG 的质量 */
+const JPEG_QUALITY = 80;
 /**
  * snapshot 的读取期限默认值。agent-desktop 自己的默认是 3000：Windows 上紫鸟（Chromium）在 3 秒内没读到窗口的根就报 TIMEOUT
  * （walk_root_unread）；它的 Windows 说明里写 Chromium、Electron 应用第一次读要 10–25 秒才完整。期限是上限，读完就返回
@@ -75,12 +78,15 @@ const INSTRUCTIONS = [
   "  键盘鼠标：press、hover、drag、mouse-move、mouse-click、mouse-wheel",
   "  应用和窗口：launch、close-app、focus-window、resize-window、move-window、minimize、maximize、restore、open-system-surface",
   "  通知：dismiss-notification、dismiss-all-notifications、notification-action；剪贴板：clipboard-get、clipboard-set、clipboard-clear；其他：cursor-overlay",
-  "- 默认经无障碍接口操作，不移动鼠标、不切换前台窗口。run 的 headed 为 true 时用真实的鼠标键盘，会移动鼠标、切换前台窗口；一部分命令只在 headed 下可用（它们的 --help 里写着 requires --headed）。",
+  "- 默认经无障碍接口操作，不移动鼠标、不切换前台窗口。run 的 headed 为 true 时用真实的鼠标键盘，会移动鼠标、切换前台窗口；一部分命令只在 headed 下可用（它们的 --help 里写着 requires --headed）。这台电脑的用户已允许桌面工具使用 headed（真实的鼠标键盘输入），headed 的调用不需要另外确认。",
+  "- 元素的 bounds（find 的结果、snapshot 的 include_bounds）和坐标命令（mouse-click --xy 等）用的是同一套桌面坐标。",
   "- 桌面工具的规则：本应用（claude-app）自己的窗口不在结果里，也不能读取或操作；ref 只认这个会话经 snapshot 或 find 拿到的；find、press、list-surfaces 和窗口命令（focus-window、restore 等）不指定目标时作用于前台窗口，这里要求指定目标（每条命令接受哪些目标参数见它的 --help）；" +
     `run 不执行 snapshot、screenshot（用对应的工具）、mcp、session、trace、batch，不接受参数 --session、--agent-id、--trace、--trace-strict、--screenshot、--debug、--force、--stdin、--headed（用 headed 参数）、--cdp。`,
   `- 调用超过约 ${BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，结束后结果作为通知送达。屏幕上的变化不会通知你。`,
   "- 别的会话也可能在操作这个桌面：自你上次调用以来它们执行过的操作，列在下一次结果的开头。",
-  `- 截图原始大小超过 ${(MAX_IMAGE_BYTES / 1e6).toFixed(2)}MB 时不返回图片。`,
+  process.platform === "darwin"
+    ? `- screenshot 的图片按屏幕缩放（Retina 是 200%）缩小到桌面坐标的尺寸，图片的 1 个像素对应 1 个桌面坐标单位；缩小后仍超过 ${(MAX_IMAGE_BYTES / 1e6).toFixed(2)}MB 时改成 JPEG，再超过就继续缩小，结果里写明原图和返回的图片尺寸。`
+    : `- screenshot 的图片超过 ${(MAX_IMAGE_BYTES / 1e6).toFixed(2)}MB 时改成 JPEG，再超过就缩小，结果里写明原图和返回的图片尺寸。`,
   '- 用户消息里的 @桌面 指这个桌面，@desktop[标题](window:<id> "应用名") 指这里的一个窗口：<id> 是用户引用时 list-windows 里它的窗口 id，引号里是它的 app_name（没有应用名时不带引号这部分）。',
 ].join("\n");
 
@@ -122,17 +128,45 @@ const needOne = (names: string[]) => `${names.join("、")} 至少给一个`;
  */
 const appUnlessWindow = (input: { app?: string; window_id?: string }) => (input.window_id ? undefined : input.app || undefined);
 
-/** PNG 的宽高（IHDR） */
-const pngSize = (png: Buffer) => (png.length >= 24 ? { width: png.readUInt32BE(16), height: png.readUInt32BE(20) } : null);
+type Size = { width: number; height: number };
+type ScreenshotImage = { data: Buffer; mimeType: "image/png" | "image/jpeg"; size: Size; original: Size };
+
+/**
+ * 截图转成返回给模型的图片。macOS 的桌面坐标是点，Retina 屏截出来是 2 倍像素（实测 iMac 上全屏窗口 4616×2398、6.5MB，超过上限），
+ * 按 agent-desktop 报的 scale_factor 缩回点的尺寸，图片像素和桌面坐标一一对应；Windows 的桌面坐标本来就是像素（第 13 节实测），不按缩放缩小。
+ * 之后还超过上限就改成 JPEG，再超过就每次缩到 3/4
+ */
+async function screenshotImage(png: Buffer, scaleFactor: number | undefined): Promise<ScreenshotImage> {
+  const meta = await sharp(png).metadata();
+  const original = { width: meta.width, height: meta.height };
+  const scale = process.platform === "darwin" && scaleFactor && scaleFactor > 1 ? scaleFactor : 1;
+  let size = scale > 1 ? { width: Math.round(original.width / scale), height: Math.round(original.height / scale) } : original;
+  const resized = (s: Size) => (s.width === original.width ? sharp(png) : sharp(png).resize(s.width, s.height, { fit: "fill" }));
+  let data = scale > 1 ? await resized(size).png().toBuffer() : png;
+  if (data.length <= MAX_IMAGE_BYTES) return { data, mimeType: "image/png", size, original };
+  for (;;) {
+    data = await resized(size).jpeg({ quality: JPEG_QUALITY }).toBuffer();
+    if (data.length <= MAX_IMAGE_BYTES || size.width < 200) return { data, mimeType: "image/jpeg", size, original };
+    size = { width: Math.round(size.width * 0.75), height: Math.round(size.height * 0.75) };
+  }
+}
+
+/** 返回的图片和原图的关系（尺寸、格式） */
+function imageNote(image: ScreenshotImage): string {
+  const { size, original } = image;
+  const dims = (s: Size) => `${s.width}×${s.height}`;
+  const format = image.mimeType === "image/jpeg" ? "，JPEG" : "";
+  if (size.width === original.width && !format) return `图片 ${dims(size)} 像素`;
+  return `原图 ${dims(original)} 像素，返回的图片缩小到 ${dims(size)}${format}`;
+}
 
 /**
  * 截图对应桌面上的哪一块：屏幕或窗口在桌面坐标里的范围、屏幕的缩放，和图片的像素大小。
  * 坐标命令（mouse-click --xy 等）用的是桌面坐标；实测 Windows 两块屏（125%、150%）都是按像素算，副屏从 x=1920 开始，
  * 模型拿到的截图还可能被 Claude Code 缩小过（它会另外说明缩放比例）
  */
-async function screenshotGeometry(png: Buffer, target: { app?: string; windowId?: string; screen?: number }): Promise<string | null> {
-  const size = pngSize(png);
-  const pixels = size ? `；图片 ${size.width}×${size.height} 像素` : "";
+async function screenshotGeometry(image: ScreenshotImage, target: { app?: string; windowId?: string; screen?: number }): Promise<string | null> {
+  const pixels = `；${imageNote(image)}`;
   const range = (b: { x: number; y: number; width: number; height: number }) => `x ${b.x}–${b.x + b.width}、y ${b.y}–${b.y + b.height}`;
   if (target.screen !== undefined) {
     const display = (await listDisplays())[target.screen];
@@ -243,15 +277,13 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
           const failed = failure(result, 60_000);
           if (failed) return error(prefixed(notice, failed));
           if (!result.envelope!.ok) return error(prefixed(notice, formatError(result.envelope!.error!)));
-          const png = await readFile(file);
-          const geometry = await screenshotGeometry(png, { app, windowId: input.window_id, screen }).catch(() => null);
-          if (png.length > MAX_IMAGE_BYTES) {
-            return error(prefixed(notice, `截图有 ${(png.length / 1e6).toFixed(1)}MB，超过 ${(MAX_IMAGE_BYTES / 1e6).toFixed(2)}MB 的上限，没有返回图片`));
-          }
+          const scaleFactor = (result.envelope!.data as { scale_factor?: number } | undefined)?.scale_factor;
+          const image = await screenshotImage(await readFile(file), scaleFactor);
+          const geometry = (await screenshotGeometry(image, { app, windowId: input.window_id, screen }).catch(() => null)) ?? imageNote(image);
           return {
             content: [
-              ...(notice || geometry ? [{ type: "text" as const, text: [notice, geometry].filter(Boolean).join("\n\n") }] : []),
-              { type: "image" as const, data: png.toString("base64"), mimeType: "image/png" },
+              { type: "text" as const, text: [notice, geometry].filter(Boolean).join("\n\n") },
+              { type: "image" as const, data: image.data.toString("base64"), mimeType: image.mimeType },
             ],
           };
         } finally {
