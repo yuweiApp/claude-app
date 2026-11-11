@@ -99,7 +99,9 @@ claude 子进程 ──进程内 MCP──▶ 网关 desktop 服务器 ──exe
 
 ### 说明（instructions）
 
-例外于 CLAUDE.md 的「只写事实」：开头让模型第一次使用前用 `run` 读 agent-desktop 自带的 skill（`skills get desktop`、`skills get platform`）并照着做，再说明 skill 里的命令行对应 `run` 的 `command` 和 `args`（不经过 shell）。以前只列出有 `skills` 命令，实测 Windows 上模型从来不读。其余只写事实：环境（平台、agent-desktop 版本、用户可能同时在用）、`run_code` 的接口和规则、用户已允许 headed（skill 写着只有用户明确允许才用，模型照着就不敢用，见第 13 节 macOS）、bounds 和坐标命令同一套坐标、代管的参数、截图的缩小规则和字段、本应用窗口的规则、超时和转后台、别的会话的操作、`@desktop` 引用的格式。约 2400 字符。
+例外于 CLAUDE.md 的「只写事实」：开头让模型第一次使用前用 `run` 读 agent-desktop 自带的 skill（`skills get desktop`、`skills get platform`）并照着做，再说明 skill 里的命令行对应 `run` 的 `command` 和 `args`（不经过 shell）。以前只列出有 `skills` 命令，实测 Windows 上模型从来不读。其余只写事实：环境（平台、agent-desktop 版本、用户可能同时在用）、`run_code` 的接口和规则、用户已允许 headed（skill 写着只有用户明确允许才用，模型照着就不敢用，见第 13 节 macOS）、bounds 和坐标命令同一套坐标、代管的参数、截图的缩小规则和字段、macOS 上模态对话框的已知问题（见下）、本应用窗口的规则、超时和转后台、别的会话的操作、`@desktop` 引用的格式。约 2800 字符。
+
+macOS 的已知问题写成事实：应用弹出模态对话框（layer 不为 0）时，读全局窗口列表的命令（不带 `--app` 的 `list-windows`、按 `--window-id` 的命令、`screenshot`）一直重试到超时，`TIMEOUT` 的 `details.kind` 是 `global_window_inventory_unstable`、`last_kind` 是 `frontmost_window_join`，结果里的 `suggestion` 说应用可能忙或没响应；对话框关掉后恢复；`list-windows --app` 和 `snapshot --app … --surface focused` 不受影响，后者读到的就是这个对话框。没写的时候模型照 `suggestion` 以为 Fotor 卡住了，直接停下来让用户去看（第 13 节 macOS 第三轮），skill 里只笼统写着菜单、对话框用 `--surface`。
 
 ## 5. 权限
 
@@ -280,6 +282,8 @@ desktop:
 - 第二轮（小猫）：headed 和缩小后的截图都用上了，填好描述、点了生成，停在积分为 0 的购买页。中间一分半钟没有动静：点开「智能图片生成」后 Fotor 弹出介绍页，这期间 `list-windows` 每次等满 5 秒报 `TIMEOUT`（`global_window_inventory_unstable`，`APP_UNRESPONSIVE`），按窗口 id 的快照等了 30 秒、截图 5 秒失败，`list-windows --app` 和截整屏不受影响；Fotor 的窗口 id 也从 w-3616 换成了 w-3671。网关改了两处：`list-windows` 读失败后的处理（不反复等、坐标拦截不再放空，6.1）和窗口 id 不在了直接返回（6.1）。
 - 根本原因（复现过）：介绍页是 Fotor 的模态对话框（`AiEditChooseImageGuideWidget`，`AXDialog`，CoreGraphics layer 8）。无障碍接口说前台窗口是它，agent-desktop 的窗口列表只收 layer 0 的窗口，两边对不上（`frontmost_window_join`），读整个窗口列表、按窗口 id 的命令都一直重试到超时。`snapshot` 加了 `surface` 参数，`surface: focused` 能读到这个对话框并按 ref 操作（第 4 节 snapshot）。
 - 浮窗显示「窗口已经关闭」：找到了采集源，视频流随即结束，原因没查清。Fotor 的窗口标题在 `list-windows` 里一会儿是「Fotor」、一会儿是「Fotor Photo Editor」，可能按标题匹配错了窗口。
+
+- 第三轮（2026-11-11，改造后，小狗）：模型先读了 skill，按 `snapshot` / `screenshot` / `mouse-click --headed` 找到并点开「智能图片生成」（第一次点击时 Fotor 不在前台，没点上；`focus-window` 后再点才点开）。介绍页弹出后 `snapshot --window-id`、`screenshot --app`、`list-windows` 都超时（`frontmost_window_join`），模型照 `suggestion`（「应用可能忙或没响应」）判断 Fotor 卡住，结束了这一轮，没试 `--surface focused`。当时经 ssh 直接跑 `snapshot --app "Fotor Photo Editor" --surface focused -i --compact`，0.14 秒读到对话框和「立即开始」「不再提示」的 ref，`list-windows --app` 也正常。说明里补上了这条已知问题（第 4 节说明）。另外：macOS 截窗口的图带阴影，图片 2308×1199、窗口 bounds 2240×1131（四边约多 34），图片像素和桌面坐标比例是 1:1，但原点不是窗口的原点，说明里还没写。
 
 **拦不住的**：模型用 Bash 直接跑 `gateway/node_modules/agent-desktop/bin/agent-desktop`（或 xdotool、AppleScript 这类）就绕过了网关。这和 Bash 本身能做任何事一样，边界是 Bash 的权限卡片；「完全访问权限」下没有这道边界。
 
