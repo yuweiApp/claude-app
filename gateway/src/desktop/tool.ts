@@ -69,7 +69,7 @@ const INSTRUCTIONS = [
   // 无障碍接口报的前台窗口是 layer 不为 0 的模态对话框时对不上，一直重试到超时。实测 Fotor（Qt）的介绍页，见 docs/agent-desktop.md 第 13 节
   ...(process.platform === "darwin"
     ? [
-        "- agent-desktop 这个版本在 macOS 上的已知问题：应用弹出模态对话框（窗口层级不是 0 的，比如 Qt 应用的对话框）时，对话框不在窗口列表里，和系统报的前台窗口对不上。这期间读全局窗口列表的命令（不带 --app 的 list-windows、按 --window-id 的 snapshot 等、screenshot）一直重试到超时，返回 TIMEOUT，details.kind 为 global_window_inventory_unstable、last_kind 为 frontmost_window_join（结果里的 suggestion 说应用可能忙或没有响应，这个错误出现时应用不一定没有响应）；对话框关掉后恢复。list-windows --app <应用名> 和 snapshot --app <应用名> --surface focused 不受影响，后者读到的就是这个对话框，里面的 ref 可以操作。",
+        "- agent-desktop 这个版本在 macOS 上的已知问题：应用弹出窗口层级不是 0 的模态对话框时，对话框不在窗口列表里，和系统报的前台窗口对不上。这期间读全局窗口列表的命令（不带 --app 的 list-windows、按 --window-id 的 snapshot 等、screenshot）一直重试到超时，返回 TIMEOUT，details.kind 为 global_window_inventory_unstable、last_kind 为 frontmost_window_join（结果里的 suggestion 说应用可能忙或没有响应，这个错误出现时应用不一定没有响应）；对话框关掉后恢复。list-windows --app <应用名> 和 snapshot --app <应用名> --surface focused 不受影响，后者读到的就是这个对话框，里面的 ref 可以操作。",
       ]
     : []),
   "- 本应用（claude-app）自己的窗口：list-apps、list-windows 的结果里没有它；--app 是本应用、--window-id 是本应用的窗口时不执行。ref 只认这个会话经 run、run_code 拿到的。snapshot、screenshot、find、press、list-surfaces 和窗口命令（focus-window、restore 等）不指定目标时作用于前台窗口，这里要求指定目标（snapshot 读系统界面的 --surface，如 dock、taskbar，不用指定）。",
