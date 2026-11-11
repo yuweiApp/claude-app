@@ -4,7 +4,7 @@
  */
 
 /**
- * agent-desktop 1.2.0 的全部命令（`agent-desktop --help` 的 Commands），run 的 command 参数只接受这些。
+ * agent-desktop 1.2.0 的全部命令（`agent-desktop --help` 的 Commands），desktop() 的 command 只接受这些。
  * 拒绝的（DENIED_COMMANDS）也列着：模型照 skill 用到时拿到的是原因，不是「不在枚举里」
  */
 export const AGENT_DESKTOP_COMMANDS = [
@@ -72,7 +72,7 @@ export const AGENT_DESKTOP_COMMANDS = [
   "help",
 ] as const;
 
-/** 只读、没有副作用的命令：run 调用它们不弹权限卡片（Session.canUseTool），也不算「桌面写操作」（6.2） */
+/** 只读、没有副作用的命令：不算「桌面写操作」（6.2），也不记进别的会话的提示（7.2） */
 const READ_ONLY = new Set([
   "snapshot",
   "screenshot",
@@ -91,68 +91,33 @@ const READ_ONLY = new Set([
   "help",
 ]);
 
-/** run 不执行的命令和原因（原因原样告诉模型，只说模型看得到的：run、工具名，不提网关） */
+/** desktop() 不执行的命令和原因（原因原样告诉模型，只说模型看得到的：desktop()、工具名，不提网关） */
 const DENIED_COMMANDS: Record<string, string> = {
-  mcp: "run 不执行 mcp 命令",
-  session: "快照命名空间是固定的（每个会话一个），run 不执行 session 命令",
-  trace: "run 不执行 trace 命令",
-  batch: "run 不执行 batch 命令",
+  mcp: "desktop() 不执行 mcp 命令",
+  session: "快照命名空间是固定的（每个会话一个），desktop() 不执行 session 命令",
+  trace: "desktop() 不执行 trace 命令",
+  batch: "desktop() 不执行 batch 命令",
 };
 
-/** run 不接受的参数：网关代管的全局参数、会写文件的、放行危险快捷键的（原因原样告诉模型，同上） */
+/** desktop() 不接受的参数：网关代管的全局参数、会写文件的、放行危险快捷键的（原因原样告诉模型，同上） */
 const DENIED_FLAGS: Record<string, string> = {
-  "--session": "--session 是固定设好的（每个会话一个快照命名空间），run 不接受",
-  "--agent-id": "run 不接受 --agent-id",
-  "--trace": "run 不接受 --trace",
-  "--trace-strict": "run 不接受 --trace-strict",
-  "--screenshot": "run 不接受 --screenshot（会写出含屏幕内容的文件）",
-  "--debug": "run 不接受 --debug",
-  "--force": "run 不接受 --force（它放行 alt+f4、win+l、cmd+q 这类快捷键和强制结束进程）",
-  "--headed": "--headed 由 run 的 headed 参数设置",
-  "--cdp": "run 不接受 --cdp",
-  "--stdin": "run 不接受 --stdin（没有标准输入）",
+  "--session": "--session 是固定设好的（每个会话一个快照命名空间），desktop() 不接受",
+  "--agent-id": "desktop() 不接受 --agent-id",
+  "--trace": "desktop() 不接受 --trace",
+  "--trace-strict": "desktop() 不接受 --trace-strict",
+  "--screenshot": "desktop() 不接受 --screenshot（会写出含屏幕内容的文件）",
+  "--debug": "desktop() 不接受 --debug",
+  "--force": "desktop() 不接受 --force（它放行 alt+f4、win+l、cmd+q 这类快捷键和强制结束进程）",
+  "--headed": "--headed 用 desktop() 第三个参数的 headed 设置",
+  "--cdp": "desktop() 不接受 --cdp",
+  "--stdin": "desktop() 不接受 --stdin（没有标准输入）",
 };
-
-/**
- * 不指定目标时作用于前台窗口的命令，和它们各自接受的目标参数（1.2.0 的 --help）：网关要求指定目标（前台窗口可能就是本应用）。
- * snapshot 读系统的界面（SYSTEM_SURFACES）时不属于哪个应用，不要求。
- * 拒绝时按命令列出能用的参数：以前一律写「--app、--window-id 或 ref」，模型给只认 --app 的 list-surfaces 加 --window-id，给 click 也加 --app
- */
-const WINDOW_TARGETS = ["--app", "--window-id"];
-export const NEEDS_TARGET: Record<string, string[]> = {
-  snapshot: [...WINDOW_TARGETS, "--root"],
-  screenshot: [...WINDOW_TARGETS, "--screen"],
-  find: [...WINDOW_TARGETS, "--root"],
-  press: WINDOW_TARGETS,
-  "list-surfaces": ["--app"],
-  "focus-window": WINDOW_TARGETS,
-  "resize-window": WINDOW_TARGETS,
-  "move-window": WINDOW_TARGETS,
-  minimize: WINDOW_TARGETS,
-  maximize: WINDOW_TARGETS,
-  restore: WINDOW_TARGETS,
-};
-
-/** snapshot --surface 里系统的界面（Dock、通知中心等），不属于哪个应用；其余（window、focused、menu…）属于应用 */
-export const SYSTEM_SURFACES = new Set([
-  "desktop",
-  "taskbar",
-  "system-tray",
-  "quick-settings",
-  "notification-center",
-  "dock",
-  "spotlight",
-  "menu-bar-extras",
-  "system-tray-overflow",
-  "start-menu",
-  "action-center",
-]);
 
 /** 第一个位置参数是应用名的命令 */
 export const APP_ARGUMENT = new Set(["launch", "close-app"]);
 
 /**
- * 这次 run 只是看参数说明（--help / -h / help）：不碰任何窗口，跳过目标检查、不弹权限卡片。
+ * 这次只是看参数说明（--help / -h / help）：不碰任何窗口，跳过目标检查、不算写操作。
  * 只认 -- 之前的：-- 之后的 --help 是普通参数值，命令照样执行
  */
 export function isHelp(args: string[]): boolean {
@@ -164,7 +129,7 @@ export function isHelp(args: string[]): boolean {
 /** 参数名（--foo=bar 取 --foo） */
 const flagName = (arg: string) => (arg.startsWith("--") ? (arg.split("=")[0] ?? arg) : arg);
 
-/** 这次 run 是不是只读的（不弹权限卡片、不算桌面写操作）：只读命令，或任何命令的 --help */
+/** 这条命令是不是只读的（不算桌面写操作）：只读命令，或任何命令的 --help */
 export function isReadOnly(args: string[]): boolean {
   if (args.length === 0) return false;
   if (isHelp(args)) return true;
@@ -224,7 +189,7 @@ const toMs = (v: string | undefined) => {
  * 这条命令在 agent-desktop 里自己最多会等多久（毫秒），没有等待返回 0：
  * wait 的 [MS]（停多久）和 --timeout（等元素、窗口、文字的时限），launch 的 --timeout，snapshot 的 --timeout-ms（读取期限），
  * 任何命令带 --wait-for / --wait-for-gone 时的 --wait-timeout。
- * run 的进程期限至少比它长一点，agent-desktop 等满时限后自己的结果（TIMEOUT 等）才能返回，不被提前杀掉
+ * 进程期限至少比它长一点，agent-desktop 等满时限后自己的结果（TIMEOUT 等）才能返回，不被提前杀掉
  */
 export function upstreamWaitMs(args: string[]): number {
   let ms = 0;

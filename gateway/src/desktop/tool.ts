@@ -16,15 +16,14 @@ import { DesktopRepl } from "./repl.js";
 
 /**
  * 桌面操作：经 agent-desktop（https://github.com/vercel-labs/agent-desktop）读系统的无障碍树、操作网关所在电脑上的原生应用。
- * run：一条命令，命令和参数原样交给 agent-desktop 的命令行（每次一个进程），结果原样返回它的 JSON；
- * run_code：一段 JavaScript，里面用 desktop() 连着执行多条命令（同 browser_run_code）。
- * 网关只管快照命名空间、截图、超时和本应用窗口的拦截，见 docs/agent-desktop.md。两个工具都不弹权限卡片。
- * MCP 服务器名 desktop，工具全名 mcp__desktop__run、mcp__desktop__run_code
+ * 只有一个工具 run_code：一段 JavaScript，里面用 desktop(command, args) 执行命令，命令和参数原样交给 agent-desktop 的命令行
+ * （每条一个进程），返回它的 JSON（同 browser_run_code）。网关只管快照命名空间、截图、超时和本应用窗口的拦截，见 docs/agent-desktop.md。
+ * 不弹权限卡片。MCP 服务器名 desktop，工具全名 mcp__desktop__run_code
  */
 export const DESKTOP_SERVER = "desktop";
 const full = (name: string) => `mcp__${DESKTOP_SERVER}__${name}`;
-/** 桌面工具都不用确认（options.allowedTools） */
-export const DESKTOP_TOOLS = [full("run"), full("run_code")];
+/** 桌面工具不用确认（options.allowedTools） */
+export const DESKTOP_TOOLS = [full("run_code")];
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_TIMEOUT_MS = 10 * 60_000;
@@ -53,27 +52,21 @@ const ACCESSIBILITY_API = { win32: "UI Automation", darwin: "AX API", linux: "AT
  */
 const INSTRUCTIONS = [
   `桌面：运行你（Claude Code）的这台电脑（${PLATFORM}）上、当前登录用户的桌面（原生应用的窗口、菜单、对话框），经系统的无障碍接口（${ACCESSIBILITY_API}）读取和操作，工具是 agent-desktop ${version}。用户可能同时在用这台电脑。`,
-  '- 第一次使用前，先用 run 执行 skills get desktop 和 skills get platform（command 为 "skills"，args 为 ["get", "desktop"]、["get", "platform"]），读 agent-desktop 自带的使用说明（和这个版本对应），按里面的做法操作；说明里提到的参考文档用 ["get", "desktop", "<文件名>"] 读。',
-  "- 使用说明里的命令行 `agent-desktop <命令> <参数…>` 在这里是 run 的 command 和 args：args 是数组，直接交给程序，不经过 shell（说明里 PowerShell、POSIX shell 的引号转义用不上）。结果是 agent-desktop 原样输出的 JSON（ok、data 或 error）；args 为 [\"--help\"] 时返回这条命令的参数说明（文字）。这里没有 agent-desktop 命令行，Bash 里也没有。全局参数 --headed 用 run 的 headed 参数给。",
-  "- run_code 在这个会话常驻的 JavaScript 环境（Node 的 vm）里执行代码，一次调用里可以执行多条命令：",
-  "  - `await desktop(command, args?, { headed?, timeout_ms? })` 执行一条命令，参数和规则同 run。返回 agent-desktop 的 JSON 解析成的对象（ok 为 false 时也是返回，不抛错）；--help 返回文字；被拒绝、超时被终止、调用被中断时抛错。screenshot 返回的 data 里多一个 image（图片的 Buffer），图片不会自动给你，`emitImage(buffer, \"image/png\" 或 \"image/jpeg\")` 把它加进这次调用的结果。",
-  "  - 支持顶层 await；顶层的 const、let、function 在之后的调用里还在。最后一个表达式的值作为结果（字符串原样，其他按 util.inspect 显示，嵌套超过 3 层的显示成 [Object]），console.log 的输出也在结果里，超过 40000 字符只留开头。",
-  "  - 有 setTimeout、fetch、Buffer、URL 等，没有 require、import、process。代码连续同步执行超过 2 秒（中间没有 await）会被中止。到 timeout_ms 先返回，代码可能还在跑；调用被中断时正在执行的命令被终止，之后的 desktop() 抛错。",
+  '- 桌面工具只有 run_code：在这个会话常驻的 JavaScript 环境（Node 的 vm）里执行代码，代码里用 `await desktop(command, args?, { headed?, timeout_ms? })` 执行 agent-desktop 命令，一次调用里可以执行多条。',
+  '- 第一次使用前，先执行 skills get desktop 和 skills get platform（desktop("skills", ["get", "desktop"])、desktop("skills", ["get", "platform"])），读 agent-desktop 自带的使用说明（和这个版本对应），按里面的做法操作；说明里提到的参考文档用 desktop("skills", ["get", "desktop", "<文件名>"]) 读。',
+  "- 使用说明里的命令行 `agent-desktop <命令> <参数…>` 在这里是 desktop() 的 command 和 args：args 是字符串数组，直接交给程序，不经过 shell（说明里 PowerShell、POSIX shell 的引号转义用不上）；全局参数 --headed 用第三个参数的 headed 给。这里没有 agent-desktop 命令行，Bash 里也没有。",
+  "- desktop() 返回 agent-desktop 输出的 JSON 解析成的对象（ok、data 或 error；ok 为 false 时也是返回，不抛错）；args 为 [\"--help\"] 时返回这条命令的参数说明（文字）；被拒绝、超时被终止、调用被中断时抛错。",
+  "- screenshot 返回的 data 里多一个 image（图片的 Buffer），图片不会自动给你，`emitImage(buffer, \"image/png\" 或 \"image/jpeg\")` 把它加进这次调用的结果。",
+  "- run_code 支持顶层 await；顶层的 const、let、function 在之后的调用里还在。最后一个表达式的值作为结果（字符串原样，其他按 util.inspect 显示，嵌套超过 3 层的显示成 [Object]），console.log 的输出也在结果里，超过 40000 字符只留开头。有 setTimeout、fetch、Buffer、URL 等，没有 require、import、process。代码连续同步执行超过 2 秒（中间没有 await）会被中止。到 run_code 的 timeout_ms 先返回，代码可能还在跑；调用被中断时正在执行的命令被终止，之后的 desktop() 抛错。",
   "- 这台电脑的用户已允许桌面工具使用 headed（真实的鼠标键盘输入），headed 的调用不需要另外确认。",
   "- 元素的 bounds（find 的结果、snapshot 的 --include-bounds）和坐标命令（mouse-click --xy 等）用的是同一套桌面坐标。",
-  "- 每个会话有一个固定的快照命名空间（--session 已经设好）。run 和 desktop() 不执行 mcp、session、trace、batch，不接受参数 --session、--agent-id、--trace、--trace-strict、--screenshot、--debug、--force、--stdin、--cdp、--headed（用 headed 参数）。",
-  process.platform === "darwin"
-    ? `- screenshot 不接受 [PATH]，图片随结果返回。图片按屏幕缩放（Retina 是 200%）缩小到桌面坐标的尺寸，图片的 1 个像素对应 1 个桌面坐标单位；缩小后仍超过 ${(MAX_IMAGE_BYTES / 1e6).toFixed(2)}MB 时改成 JPEG，再超过就继续缩小。data 里的 width、height 是返回的图片的尺寸，original_width、original_height 是原图的，format 是 png 或 jpeg。`
-    : `- screenshot 不接受 [PATH]，图片随结果返回。图片超过 ${(MAX_IMAGE_BYTES / 1e6).toFixed(2)}MB 时改成 JPEG，再超过就缩小。data 里的 width、height 是返回的图片的尺寸，original_width、original_height 是原图的，format 是 png 或 jpeg。`,
-  // agent-desktop 1.2.0 在 macOS 上的已知问题（上游 issue #548，修复 PR #394、#594 未合并）：窗口列表只收 layer 0 的窗口，
+  "- 每个会话有一个固定的快照命名空间（--session 已经设好）。desktop() 不执行 mcp、session、trace、batch，不接受参数 --session、--agent-id、--trace、--trace-strict、--screenshot、--debug、--force、--stdin、--cdp、--headed（用 headed 给）。",
+  `- screenshot 不接受 [PATH]，图片随结果返回。图片缩小到桌面坐标的尺寸（屏幕缩放大于 100%、桌面坐标按点算时按缩放缩小），图片的 1 个像素对应 1 个桌面坐标单位；仍超过 ${(MAX_IMAGE_BYTES / 1e6).toFixed(2)}MB 时改成 JPEG，再超过就继续缩小。data 里的 width、height 是返回的图片的尺寸，original_width、original_height 是原图的，format 是 png 或 jpeg。`,
+  // agent-desktop 1.2.0 的已知问题（上游 issue #548，修复 PR #394、#594 未合并，macOS 上实测）：窗口列表只收 layer 0 的窗口，
   // 无障碍接口报的前台窗口是 layer 不为 0 的模态对话框时对不上，一直重试到超时。实测 Fotor（Qt）的介绍页，见 docs/agent-desktop.md 第 13 节
-  ...(process.platform === "darwin"
-    ? [
-        "- agent-desktop 这个版本在 macOS 上的已知问题：应用弹出窗口层级不是 0 的模态对话框时，对话框不在窗口列表里，和系统报的前台窗口对不上。这期间读全局窗口列表的命令（不带 --app 的 list-windows、按 --window-id 的 snapshot 等、screenshot）一直重试到超时，返回 TIMEOUT，details.kind 为 global_window_inventory_unstable、last_kind 为 frontmost_window_join（结果里的 suggestion 说应用可能忙或没有响应，这个错误出现时应用不一定没有响应）；对话框关掉后恢复。list-windows --app <应用名> 和 snapshot --app <应用名> --surface focused 不受影响，后者读到的就是这个对话框，里面的 ref 可以操作。",
-      ]
-    : []),
-  "- 本应用（claude-app）自己的窗口：list-apps、list-windows 的结果里没有它；--app 是本应用、--window-id 是本应用的窗口时不执行。ref 只认这个会话经 run、run_code 拿到的。snapshot、screenshot、find、press、list-surfaces 和窗口命令（focus-window、restore 等）不指定目标时作用于前台窗口，这里要求指定目标（snapshot 读系统界面的 --surface，如 dock、taskbar，不用指定）。",
-  `- 一条命令的进程期限（run 的 timeout_ms、desktop() 的 timeout_ms）默认 ${DEFAULT_TIMEOUT_MS}、最大 ${MAX_TIMEOUT_MS}；命令自己的等待时限（wait 的 [MS] 和 --timeout，launch 的 --timeout，snapshot 的 --timeout-ms，--wait-for 的 --wait-timeout）加 ${WAIT_MARGIN_MS / 1000} 秒超过 timeout_ms 时，按前者计（同样不超过 ${MAX_TIMEOUT_MS}）。`,
+  "- agent-desktop 这个版本的已知问题：应用弹出窗口层级不是 0 的模态对话框时，对话框不在窗口列表里，和系统报的前台窗口对不上。这期间读全局窗口列表的命令（不带 --app 的 list-windows、按 --window-id 的 snapshot 等、screenshot）一直重试到超时，返回 TIMEOUT，details.kind 为 global_window_inventory_unstable、last_kind 为 frontmost_window_join（结果里的 suggestion 说应用可能忙或没有响应，这个错误出现时应用不一定没有响应）；对话框关掉后恢复。list-windows --app <应用名> 和 snapshot --app <应用名> --surface focused 不受影响，后者读到的就是这个对话框，里面的 ref 可以操作。",
+  "- 本应用（claude-app）自己的窗口：list-apps、list-windows 的结果里没有它；--app 是本应用、--window-id 是本应用的窗口时不执行。ref 只认这个会话经 desktop() 拿到的。",
+  `- desktop() 一条命令的进程期限 timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}、最大 ${MAX_TIMEOUT_MS}；命令自己的等待时限（wait 的 [MS] 和 --timeout，launch 的 --timeout，snapshot 的 --timeout-ms，--wait-for 的 --wait-timeout）加 ${WAIT_MARGIN_MS / 1000} 秒超过 timeout_ms 时，按前者计（同样不超过 ${MAX_TIMEOUT_MS}）。`,
   `- 调用超过约 ${BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，结束后结果作为通知送达。屏幕上的变化不会通知你。`,
   "- 别的会话也可能在操作这个桌面：自你上次调用以来它们执行过的操作，列在下一次结果的开头。",
   '- 用户消息里的 @桌面 指这个桌面，@desktop[标题](window:<id> "应用名") 指这里的一个窗口：<id> 是用户引用时 list-windows 里它的窗口 id，引号里是它的 app_name（没有应用名时不带引号这部分）。',
@@ -124,13 +117,6 @@ async function screenshotImage(png: Buffer, scaleFactor: number | undefined): Pr
   }
 }
 
-/** run 的输入拼成 agent-desktop 的参数（命令在第一个） */
-export function runArgv(input: Record<string, unknown>): string[] {
-  const command = typeof input.command === "string" ? input.command : "";
-  const args = Array.isArray(input.args) ? input.args.map(String) : [];
-  return [command, ...args];
-}
-
 /** 一条命令的结果：envelope 是去掉本应用条目后的 agent-desktop 结果；没有 envelope 时 text 是被拦下、超时等的说明或 --help 的文字 */
 interface Exec {
   envelope?: Envelope;
@@ -140,7 +126,7 @@ interface Exec {
 }
 
 /**
- * 执行一条命令（run 和 run_code 里的 desktop() 共用）：拦截检查、桌面写操作的记录（6.2、7.2）、浮窗、超时，
+ * 执行一条命令（run_code 里的 desktop()）：拦截检查、桌面写操作的记录（6.2、7.2）、浮窗、超时，
  * screenshot 由网关给临时路径、读出图片缩小
  */
 async function execute(
@@ -237,31 +223,6 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
     return repl;
   };
 
-  const run = tool(
-    "run",
-    `执行一条 agent-desktop 命令（command 是命令名，args 是它的参数），返回它原样输出的 JSON；args 为 ["--help"] 时返回参数说明。screenshot 的结果另带图片。`,
-    {
-      command: z.enum(AGENT_DESKTOP_COMMANDS).describe("agent-desktop 的命令名"),
-      args: z.array(z.string()).optional().describe('命令的参数，原样交给 agent-desktop，不经过 shell，如 ["@s8f3k2p9:e3"]、["--app", "Notes", "-i", "--compact"]'),
-      headed: z.boolean().optional().describe("加全局参数 --headed（真实的鼠标键盘，会移动鼠标、切换前台窗口），默认 false"),
-      timeout_ms: z.number().int().min(1000).max(MAX_TIMEOUT_MS).optional().describe(`进程最多跑多久（毫秒），默认 ${DEFAULT_TIMEOUT_MS}`),
-    },
-    async (input, extra) => {
-      const notice = othersSince(sessionId);
-      const result = await execute(sessionId, runArgv(input), { headed: input.headed, timeoutMs: input.timeout_ms, signal: signalOf(extra) }, note);
-      const out = prefixed(notice, result.text);
-      rememberResult(extra, out, result.isError);
-      return {
-        content: [
-          { type: "text" as const, text: out },
-          ...(result.image ? [{ type: "image" as const, data: result.image.data.toString("base64"), mimeType: result.image.mimeType }] : []),
-        ],
-        ...(result.isError ? { isError: true } : {}),
-      };
-    },
-    { annotations: { title: "Desktop command", readOnlyHint: false, destructiveHint: true, openWorldHint: true } },
-  );
-
   const runCode = tool(
     "run_code",
     `在一个常驻的 JavaScript 环境里执行代码（顶层 await；顶层的变量、函数在之后的调用里还在），代码里用 desktop() 执行 agent-desktop 命令。最后一个表达式的值、console 的输出作为结果。timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}、最大 ${MAX_TIMEOUT_MS}。`,
@@ -286,7 +247,7 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
     name: DESKTOP_SERVER,
     version: "1.0.0",
     instructions: INSTRUCTIONS,
-    tools: [run, runCode].map((t) => (isAlwaysLoad(full(t.name)) ? { ...t, _meta: { ...t._meta, [ALWAYS_LOAD_META]: true } } : t)),
+    tools: [runCode].map((t) => (isAlwaysLoad(full(t.name)) ? { ...t, _meta: { ...t._meta, [ALWAYS_LOAD_META]: true } } : t)),
   });
 }
 

@@ -49,7 +49,7 @@ export function buildOptions(launch: SessionLaunch): Options {
     ...(terminal ? TERMINAL_READ_TOOLS : []),
     ...(browser ? BROWSER_READ_TOOLS : []),
     ...externalReadTools(active),
-    // 桌面工具（run、run_code）都不弹权限卡片
+    // 桌面工具（run_code）不弹权限卡片
     ...(desktop ? DESKTOP_TOOLS : []),
   ];
   return {

@@ -1,6 +1,6 @@
 import { rmSync } from "node:fs";
 import type { DesktopTarget } from "../shared/types.js";
-import { APP_ARGUMENT, flagValues, isHelp, NEEDS_TARGET, refsIn, snapshotIdOf, SYSTEM_SURFACES } from "./commands.js";
+import { APP_ARGUMENT, flagValues, isHelp, refsIn, snapshotIdOf } from "./commands.js";
 import { runCli, sessionStateDir } from "./cli.js";
 import { desktopLog } from "./log.js";
 
@@ -146,11 +146,10 @@ export function observeResult(session: string, args: string[], data: unknown, st
 
 /**
  * 执行前检查参数指向的目标，不行返回原因。args 是 agent-desktop 的参数（命令在第一个）。
- * - ref 必须是这个会话经网关拿到的（本应用的窗口拍不了快照，所以也拿不到它的 ref）
- * - 不带目标时作用于前台窗口的命令（NEEDS_TARGET），要求带目标：前台可能就是本应用
+ * - ref 必须是这个会话经网关拿到的
  * - --window-id 在见过的 list-windows 结果里属于本应用的，拒绝
  * - --app、launch / close-app 的应用名是本应用的，拒绝
- * 不查坐标：坐标点击（要 headed）能点到本应用的窗口，权限卡片靠 6.2
+ * 不查坐标，也不要求指定目标：坐标点击（要 headed）、不带目标的命令（作用于前台窗口，前台可能是本应用）能读到、点到本应用的窗口，权限卡片靠 6.2
  */
 export async function checkTarget(session: string, args: string[]): Promise<string | null> {
   const context: Record<string, unknown> = {};
@@ -166,17 +165,11 @@ async function decide(session: string, args: string[], context: Record<string, u
   const refs = refsIn(args);
   for (const ref of refs) {
     const entry = snapshots.get(snapshotIdOf(ref));
-    if (!entry || entry.session !== session) return `${ref} 不是这个会话经 run 拿到的 ref（本应用重启后，之前拿到的 ref 也不再认）`;
+    if (!entry || entry.session !== session) return `${ref} 不是这个会话经 desktop() 拿到的 ref（本应用重启后，之前拿到的 ref 也不再认）`;
   }
   const windowIds = flagValues(args, "--window-id");
   const appArg = APP_ARGUMENT.has(command) && args[1] && !args[1].startsWith("-") ? [args[1]] : [];
   const apps = [...flagValues(args, "--app"), ...appArg];
-  const targets = NEEDS_TARGET[command];
-  const systemSurface = command === "snapshot" && flagValues(args, "--surface").some((s) => SYSTEM_SURFACES.has(s));
-  const screens = flagValues(args, "--screen");
-  if (targets && !systemSurface && refs.length === 0 && windowIds.length === 0 && apps.length === 0 && screens.length === 0) {
-    return `${command} 不指定目标时作用于前台窗口，这里要求指定目标；${command} 接受的目标参数：${targets.join("、")}`;
-  }
   if (ownPids.size === 0) return null;
 
   context.windows = windowIds.map((id) => knownWindows.get(id) ?? { id, known: false });

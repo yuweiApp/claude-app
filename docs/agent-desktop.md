@@ -1,6 +1,6 @@
 # 桌面操作（agent-desktop）设计
 
-> **2026-11-11 改造**：去掉了网关包的那层（自定义的 snapshot / screenshot 工具和参数、快照转文字、错误改写、靠 `list-windows` 的拦截和坐标检查），改成命令和参数原样交给 agent-desktop 的命令行、结果原样返回，另加 `run_code`（JavaScript 里连着执行多条命令，同 `browser_run_code`），两个工具都不弹权限卡片。起因和别人的做法见第 2 节。Linux 上经 MCP 客户端直接调用验证过，没经模型、没在 macOS / Windows 上跑过（第 11 节的验收）。
+> **2026-11-11 改造**：去掉了网关包的那层（自定义的 snapshot / screenshot 工具和参数、快照转文字、错误改写、靠 `list-windows` 的拦截和坐标检查），改成命令和参数原样交给 agent-desktop 的命令行、结果原样返回，再改成只有一个工具 `run_code`（JavaScript 里用 `desktop()` 执行命令，可以连着执行多条，同 `browser_run_code`），不弹权限卡片。起因和别人的做法见第 2 节。Linux 上经 MCP 客户端直接调用验证过，没经模型、没在 macOS / Windows 上跑过（第 11 节的验收）。
 >
 > 状态：网关部分（第 13 节的 1–3 步）已实现，默认关（`config.yml` 的 `desktop.enabled`）；界面（第 4 步）和 Windows、macOS 实测（第 5 步）没做。全部做完后并进 [README.md](README.md) 作为第 14 节，这个文件删掉。
 >
@@ -45,47 +45,34 @@
 
 ```
 claude 子进程 ──进程内 MCP──▶ 网关 desktop 服务器 ──execFile，每条命令一个进程──▶ agent-desktop ──▶ 系统无障碍接口
-                               │  run：一条命令      run_code：vm 里的 desktop() 一条条调用
-                               └─ 共用 execute()：拦截检查、6.2 / 7.2 的记录、浮窗、超时、截图
+                               │  run_code：vm 里的 desktop() 一条条调用
+                               └─ execute()：拦截检查、6.2 / 7.2 的记录、浮窗、超时、截图
 ```
 
 `gateway/src/desktop/`：
 
 - `cli.ts`：找二进制、拼参数（加 `--session`、按需加 `--headed`）、`execFile`、解析 JSON 结果、超时和中断时杀进程。环境变量 `AGENT_DESKTOP_HOME` 设成 `gateway/.data/agent-desktop`（要真实路径，带 `..` 会报 `private file parent must not contain parent traversal`；目录权限 700），不碰 `~/.agent-desktop`。
-- `commands.ts`：上游 1.2.0 的命令名（`AGENT_DESKTOP_COMMANDS`，升级时对一遍 `agent-desktop --help`）、只读命令、拒绝的命令和参数、要求指定目标的命令、从参数里取 ref / `--app` / 等待时限。
+- `commands.ts`：上游 1.2.0 的命令名（`AGENT_DESKTOP_COMMANDS`，升级时对一遍 `agent-desktop --help`）、只读命令、拒绝的命令和参数、从参数里取 ref / `--app` / 等待时限。
 - `guard.ts`：第 6、7 节；另外记着见过的窗口（`list-windows` 的结果）、应用（`list-apps`）和快照编号归属哪个会话。
 - `repl.ts`：`run_code` 的 vm（改写、顶层 await、循环检查、后台错误认领都用 `browser/repl.ts` 导出的）。
 - `log.ts`：每次 agent-desktop 调用和 guard 的判断写进对话日志（格式见 [README.md](README.md) 第 11 节）。
-- `tool.ts`：`execute()`、两个工具、说明。
+- `tool.ts`：`execute()`、`run_code` 工具、说明。
 
 **每条命令起一个进程**，不常驻 `agent-desktop mcp`，也不用它的 C 库：实测一次 0.1 秒左右；全局参数能每次不同；卡住或崩溃只影响这一次。多个进程同时操作时，agent-desktop 自己有跨进程的「交互租约」排队，网关不另加锁。
 
 ## 4. 工具
 
-服务器名 `desktop`。两个工具都在 `allowedTools` 里，不弹权限卡片（用户定的：桌面工具默认开放）。`config.yml` 的 `tools.alwaysLoad` 里两个都常驻。
-
-### run
-
-```ts
-{
-  command: z.enum(AGENT_DESKTOP_COMMANDS),  // 上游 1.2.0 的全部命令名（含被拒绝的，拒绝时返回原因）
-  args?: string[],                          // 原样交给 agent-desktop，不经过 shell
-  headed?: boolean,                         // 加 --headed
-  timeout_ms?: number,                      // 进程期限，见 7.3
-}
-```
-
-- `snapshot`、`screenshot` 和其他命令一样经 `run`，上游的参数（`--surface`、`--root`、`--skeleton`、`--timeout-ms`……）都能用。网关不再替模型加 `-i`、`--compact`，也不再把 `--timeout-ms` 默认改成 15000（skill 里写着 Chromium 慢时调大）。
-- 网关代管、不接受的参数：`--session`（网关按会话 id 加）、`--agent-id`、`--trace`、`--trace-strict`、`--debug`、`--screenshot`（写含屏幕内容的 HTML 文件）、`--stdin`、`--headed`（用 `headed` 参数）、`--force`（放行 `cmd+q`、`alt+f4` 和强制结束进程）、`--cdp`（第 14 节）。
-- 不执行的命令：`mcp`、`session`、`trace`、`batch`（多步用 `run_code`）。
-- `screenshot`：`[PATH]` 由网关给（临时目录，读完删掉），模型给了路径就拒绝。
+服务器名 `desktop`，只有一个工具 `run_code`，在 `allowedTools` 里，不弹权限卡片（用户定的：桌面工具默认开放），`config.yml` 的 `tools.alwaysLoad` 里常驻。以前还有一个 `run`（一次一条命令，`{command, args, headed, timeout_ms}`），2026-11-11 去掉，用户要验证只用 `run_code` 的效果。
 
 ### run_code
 
 `{ code: string, timeout_ms?: number }`。每个会话一个常驻的 vm 上下文（删会话时删掉），顶层 await，顶层的 const / let / function 在之后的调用里还在，最后一个表达式的值和 console 输出作为结果（同 `browser_run_code`，超过 40000 字符只留开头）。
 
-- `await desktop(command, args?, { headed?, timeout_ms? })`：执行一条命令，走和 `run` 完全一样的 `execute()`（拦截、6.2、7.2、浮窗、超时）。返回 envelope 解析成的对象，`ok: false` 也是返回不抛错（和命令行一样，模型按 `error.code`、`disposition` 判断）；`--help` 返回文字；被拒绝、超时被终止、调用被中断时抛错。
-- `screenshot` 的 `data` 里多一个 `image`（Buffer），不自动给模型，`emitImage(buffer, mime)` 加进结果。
+- `await desktop(command, args?, { headed?, timeout_ms? })`：执行一条命令，经 `execute()`（拦截、6.2、7.2、浮窗、超时）。`command` 是上游 1.2.0 的命令名（`AGENT_DESKTOP_COMMANDS`），`args` 原样交给 agent-desktop、不经过 shell，`headed` 加 `--headed`，`timeout_ms` 是这条命令的进程期限（7.3）。返回 envelope 解析成的对象，`ok: false` 也是返回不抛错（和命令行一样，模型按 `error.code`、`disposition` 判断）；`--help` 返回文字；被拒绝、超时被终止、调用被中断时抛错。
+- `snapshot`、`screenshot` 和其他命令一样经 `desktop()`，上游的参数（`--surface`、`--root`、`--skeleton`、`--timeout-ms`……）都能用。网关不替模型加 `-i`、`--compact`，也不改 `--timeout-ms` 的默认值（skill 里写着 Chromium 慢时调大）。
+- 网关代管、不接受的参数：`--session`（网关按会话 id 加）、`--agent-id`、`--trace`、`--trace-strict`、`--debug`、`--screenshot`（写含屏幕内容的 HTML 文件）、`--stdin`、`--headed`（用 `headed` 给）、`--force`（放行 `cmd+q`、`alt+f4` 和强制结束进程）、`--cdp`（第 14 节）。
+- 不执行的命令：`mcp`、`session`、`trace`、`batch`（多步就写在代码里）。
+- `screenshot`：`[PATH]` 由网关给（临时目录，读完删掉），模型给了路径就拒绝。`data` 里多一个 `image`（Buffer），不自动给模型，`emitImage(buffer, mime)` 加进结果。
 - 有 `setTimeout`、`fetch`、`Buffer`、`URL` 等，没有 `require`、`process`。同步执行超过 2 秒（中间没有 await）中止；`timeout_ms` 到了先返回，代码可能还在跑；调用被中断时正在执行的命令被杀掉，这次调用之后的 `desktop()` 抛错。
 - vm 不是安全边界，跑在网关主线程里，等同于 Bash（`browser_run_code` 同理）。定时器里抛的错、没 await 的失败由 `browser/repl.ts` 的全局处理认领（vm 文件名 `desktop_run_code_<编号>.js`），下一次调用时告诉模型，不会让网关退出。
 
@@ -93,19 +80,21 @@ claude 子进程 ──进程内 MCP──▶ 网关 desktop 服务器 ──exe
 
 - agent-desktop 的 envelope 原样返回（不缩进），包括 `suggestion`、`recovery`：skill 本身就是做法，结果里的建议和 skill 一致。只去掉本应用的条目（6.1）。
 - 快照不再改写成文字。代价是 token 多一倍左右（Mousepad 实测 JSON 46.6KB、改写后的文字 21.4KB），验收时量一次，太大再考虑 JSON 层面的精简（去掉空字段），不回到自定义文字格式。
-- `screenshot`：envelope 去掉临时文件的 `path`，`width`、`height` 改成返回的图片尺寸，加 `original_width`、`original_height`、`format`（png / jpeg），后面跟 MCP 图片。缩小规则：macOS 按 `scale_factor` 缩回点的尺寸（实测 iMac 全屏 Fotor 4616×2398、6.5MB，超过模型接口 base64 后 5MB 的单张上限），图片像素和桌面坐标一一对应；Windows 的桌面坐标本来就是像素，不缩；之后还超过 3.75MB 改 JPEG（质量 80），再超过每次缩到 3/4。
-- 网关自己的错误（被拦、超时）是一句话，用模型看得到的东西说（run、本应用），不提网关。
+- `screenshot`：envelope 去掉临时文件的 `path`，`width`、`height` 改成返回的图片尺寸，加 `original_width`、`original_height`、`format`（png / jpeg），模型 `emitImage` 后作为 MCP 图片返回。缩小规则：macOS 按 `scale_factor` 缩回点的尺寸（实测 iMac 全屏 Fotor 4616×2398、6.5MB，超过模型接口 base64 后 5MB 的单张上限），图片像素和桌面坐标一一对应；Windows 的桌面坐标本来就是像素，不缩；之后还超过 3.75MB 改 JPEG（质量 80），再超过每次缩到 3/4。
+- 网关自己的错误（被拦、超时）是一句话，用模型看得到的东西说（desktop()、本应用），不提网关。
 - 上游行为（实测）：窗口被挡住时拒绝截图（`reason: covered`）；最小化的窗口要等约 5 秒才报错（Windows），网关不再提前判断。macOS 截图要「屏幕录制」权限。
 
 ### 说明（instructions）
 
-例外于 CLAUDE.md 的「只写事实」：开头让模型第一次使用前用 `run` 读 agent-desktop 自带的 skill（`skills get desktop`、`skills get platform`）并照着做，再说明 skill 里的命令行对应 `run` 的 `command` 和 `args`（不经过 shell）。以前只列出有 `skills` 命令，实测 Windows 上模型从来不读。其余只写事实：环境（平台、agent-desktop 版本、用户可能同时在用）、`run_code` 的接口和规则、用户已允许 headed（skill 写着只有用户明确允许才用，模型照着就不敢用，见第 13 节 macOS）、bounds 和坐标命令同一套坐标、代管的参数、截图的缩小规则和字段、macOS 上模态对话框的已知问题（见下）、本应用窗口的规则、超时和转后台、别的会话的操作、`@desktop` 引用的格式。约 2800 字符。
+例外于 CLAUDE.md 的「只写事实」：开头让模型第一次使用前用 `desktop("skills", ["get", …])` 读 agent-desktop 自带的 skill（`skills get desktop`、`skills get platform`）并照着做，再说明 skill 里的命令行对应 `desktop()` 的 `command` 和 `args`（不经过 shell）。以前只列出有 `skills` 命令，实测 Windows 上模型从来不读。其余只写事实：环境（平台、agent-desktop 版本、用户可能同时在用）、`run_code` 的接口和规则、用户已允许 headed（skill 写着只有用户明确允许才用，模型照着就不敢用，见第 13 节 macOS）、bounds 和坐标命令同一套坐标、代管的参数、截图的缩小规则和字段、模态对话框的已知问题（见下）、本应用窗口的规则、超时和转后台、别的会话的操作、`@desktop` 引用的格式。约 2800 字符。
 
-macOS 的已知问题写成事实：应用弹出模态对话框（layer 不为 0）时，读全局窗口列表的命令（不带 `--app` 的 `list-windows`、按 `--window-id` 的命令、`screenshot`）一直重试到超时，`TIMEOUT` 的 `details.kind` 是 `global_window_inventory_unstable`、`last_kind` 是 `frontmost_window_join`，结果里的 `suggestion` 说应用可能忙或没响应；对话框关掉后恢复；`list-windows --app` 和 `snapshot --app … --surface focused` 不受影响，后者读到的就是这个对话框。没写的时候模型照 `suggestion` 以为 Fotor 卡住了，直接停下来让用户去看（第 13 节 macOS 第三轮），skill 里只笼统写着菜单、对话框用 `--surface`。
+说明不区分平台（用户定的：规则都一样，不要只对 macOS 加），只有第一句写这台电脑是什么系统、用哪个无障碍接口。截图的缩小代码仍只在 macOS 上按缩放缩小（Windows 的桌面坐标本来就是像素），说明里只写「缩小到桌面坐标的尺寸，1 个像素对应 1 个桌面坐标单位」，两边都成立。
+
+已知问题写成事实（macOS 上实测，说明里不写平台）：应用弹出模态对话框（layer 不为 0）时，读全局窗口列表的命令（不带 `--app` 的 `list-windows`、按 `--window-id` 的命令、`screenshot`）一直重试到超时，`TIMEOUT` 的 `details.kind` 是 `global_window_inventory_unstable`、`last_kind` 是 `frontmost_window_join`，结果里的 `suggestion` 说应用可能忙或没响应；对话框关掉后恢复；`list-windows --app` 和 `snapshot --app … --surface focused` 不受影响，后者读到的就是这个对话框。没写的时候模型照 `suggestion` 以为 Fotor 卡住了，直接停下来让用户去看（第 13 节 macOS 第三轮），skill 里只笼统写着菜单、对话框用 `--surface`。
 
 ## 5. 权限
 
-两个工具都不弹卡片（`allowedTools`），「总是允许」也就用不上。下面第 6 节的拦截不经过权限系统，照样生效。
+`run_code` 不弹卡片（`allowedTools`），「总是允许」也就用不上。下面第 6 节的拦截不经过权限系统，照样生效。
 
 ## 6. 安全
 
@@ -126,13 +115,13 @@ macOS 的已知问题写成事实：应用弹出模态对话框（layer 不为 0
 - `--window-id` 在见过的 `list-windows` 结果里（模型自己调的，和输入框「Computer Use」查的）属于本应用的，拒绝；没见过的照常交给 agent-desktop。
 - `--app`、`launch` / `close-app` 的应用名是本应用的，拒绝。和本应用同名的还有其他进程（开发模式下 Electron 应用都叫 `electron.exe`）时照实说分不出来，让模型按窗口 id 指定。
 - ref 必须是这个会话经网关拿到的（快照编号记在网关里；本应用的窗口拍不了快照，也就拿不到它的 ref）。上游的 ref 本来就归属于会话。
-- 不指定目标时作用于前台窗口的命令（`snapshot`、`screenshot`、`find`、`press`、`list-surfaces`、窗口命令），要求指定目标：前台可能正是本应用，焦点停在「允许」按钮上时一个 `press return` 就点下去了。`snapshot` 读系统界面（`--surface dock`、`taskbar` 等）不要求。
-- **不查坐标**：坐标点击（`mouse-click --xy` 等，要 `headed`）能点到本应用的窗口。权限卡片靠 6.2 保护。
+- **不要求指定目标**（2026-11-11 去掉）：不带 `--app` / `--window-id` 的 `snapshot`、`screenshot`、`find`、`press`、窗口命令照上游的规则作用于前台窗口，前台是本应用时能读到、能按键到本应用（比如焦点停在「允许」按钮上时 `press return`）。以前网关要求这些命令带目标，是网关自己加的规则，和上游的行为不一样，去掉了；权限卡片靠 6.2。
+- **不查坐标**：坐标点击（`mouse-click --xy` 等，要 `headed`）能点到本应用的窗口。权限卡片靠 6.2。
 - 网关没连着桌面版（网页版）时不知道 pid，这一层不起作用，靠 6.2。
 
 ### 6.2 桌面操作进行中收到的权限回复不算数
 
-网页版开在用户的 Chrome、Edge、Safari 里时，界面属于用户的浏览器进程，6.1 拦不住。所以再加一层：网关记下正在执行的桌面写操作（非只读的命令，`run` 和 `run_code` 里的 `desktop()` 都算，从开始到结束后 1 秒）。这期间收到的任何权限回复（任何会话的）都不生效，卡片留着，旁边提示「这次确认发生在 AI 操作桌面期间，没有生效，请再点一次」。
+网页版开在用户的 Chrome、Edge、Safari 里时，界面属于用户的浏览器进程，6.1 拦不住。所以再加一层：网关记下正在执行的桌面写操作（`run_code` 里 `desktop()` 执行的非只读命令，从开始到结束后 1 秒）。这期间收到的任何权限回复（任何会话的）都不生效，卡片留着，旁边提示「这次确认发生在 AI 操作桌面期间，没有生效，请再点一次」。
 
 只拦「允许」，「拒绝」照常生效。实现：`Session.replyPermission` 抛 409，网页把错误信息显示出来，卡片还在（没发 `permission_resolved`）。
 
@@ -147,7 +136,7 @@ desktop:
   enabled: false
 ```
 
-不像 `externalBrowser` 默认开。打开后每个会话多一个 `desktop` 服务器（`run`、`run_code`，不弹权限卡片），常驻在 `tools.alwaysLoad` 里配。网关对外开放（设了 `API_TOKEN`）时，打开它等于让远程的人操作这台电脑的桌面，README 里写明。
+不像 `externalBrowser` 默认开。打开后每个会话多一个 `desktop` 服务器（`run_code`，不弹权限卡片），常驻在 `tools.alwaysLoad` 里配。网关对外开放（设了 `API_TOKEN`）时，打开它等于让远程的人操作这台电脑的桌面，README 里写明。
 
 ### 6.4 隐私
 
@@ -204,7 +193,7 @@ desktop:
 
 ## 10. 界面
 
-- 工具调用：`run` 一行显示成命令行（`已操作桌面 snapshot --app Notes -i`），展开是 `agent-desktop …` 和原样的 JSON；`run_code` 一行显示代码第一行，展开是整段代码；截图照常渲染成图片（`client/src/components/Steps.tsx`）。
+- 工具调用：`run_code` 一行显示代码第一行，展开是整段代码（以前会话里的 `run` 照旧显示成命令行）；截图照常渲染成图片（`client/src/components/Steps.tsx`）。
 - 被 6.2 挡掉的权限回复（别的工具的卡片）有提示。
 - 设置页：桌面操作开没开（来自 `config.yml`，只读显示）、平台和权限状态、macOS 的授权引导按钮。
 - 引用窗口：输入框上面的「Computer Use」（`client/src/components/DesktopPicker.tsx`，窗口来自网关的 `GET /desktop/windows`，本应用自己的去掉）第一行插入 `@桌面`，选中窗口插入 `@desktop[标题](window:窗口 id "应用名")`：和浏览器标签页的引用同一个结构（Markdown 链接前面加 @），应用名（`list-windows` 的 `app_name`）放在 Markdown 的链接标题里。窗口标题常重名、看不出是哪个程序（两个「桌面 - 文件资源管理器」），窗口关掉重开后 id 也会变，带上应用名模型对不上 id 时还能按应用找回。以前的引用没有链接标题，照样解析。输入框和消息里显示成显示器图标加「桌面 · 标题」，悬停显示应用名；桌面工具的说明里写了这两种写法指什么。
@@ -224,9 +213,9 @@ desktop:
 2. Fotor 首页的功能方块（没有 ref）：截图（Retina 缩小后）、按坐标 `mouse-click --headed`。
 3. Windows 紫鸟（Chromium）：快照、按 ref 点击、重名 `group` 的 `AMBIGUOUS_TARGET`。
 4. 快照大小：Fotor、紫鸟、资源管理器各量一次 JSON 原样返回的大小。
-5. `run_code`：模型会不会用它做多步（点击后 `wait`、读结果、再点），截图经 `emitImage` 返回。
-6. 两个工具都不弹卡片；6.2 照样生效（模型操作期间点别的工具的「允许」不算数）。
-7. 本应用的窗口：6.1 的每一条（按应用名、按 `list-windows` 里的窗口 id、不带目标的 `press`）都拦得住；`list-apps`、`list-windows` 里没有本应用。
+5. 只有 `run_code` 时：模型能不能照 skill 用 `desktop()`，会不会在一次调用里做多步（点击后 `wait`、读结果、再点），截图经 `emitImage` 返回。
+6. `run_code` 不弹卡片；6.2 照样生效（模型操作期间点别的工具的「允许」不算数）。
+7. 本应用的窗口：6.1 的每一条（按应用名、按 `list-windows` 里的窗口 id）都拦得住；`list-apps`、`list-windows` 里没有本应用。
 8. 两个会话同时操作，7.2 的提示正确。
 
 更早的清单（改造前定的，部分已在第 13 节做过）：`status` / `permissions` 的结果和 macOS 上授权归到哪个应用；记事本 / TextEdit 的 `type`、`set-value`、菜单、`press` 保存；资源管理器 / Finder 的 `--skeleton` 加 `--root`；被挡住的窗口和整屏截图；网页版开在 Chrome 里时 6.2 生效；Windows 的管理员窗口、最小化窗口、Electron 第一次读的等待、杀毒软件。
@@ -291,7 +280,7 @@ desktop:
 
 想法：Windows 上紫鸟（Electron）的无障碍树不可靠（窗口被挡住时停在第一次读到的一小部分，没名字的 `group` 按 ref 点不了，模型只好切到前台用真实鼠标点），于是用 agent-desktop 的 `launch --cdp` 以本机调试端口重新启动应用，网关用 Playwright `connectOverCDP` 连上去，模型用 `mcp__cdp__` 一组工具（同浏览器那一套）操作网页内容，不经无障碍接口、不抢前台。`config.yml` 的 `desktop.cdp` 开关，提交 4aaeab5 里实现过，Linux 上拿 Electron 实测能用。
 
-没走通，代码已删除，`run` 照旧拒绝 `--cdp`：
+没走通，代码已删除，`desktop()` 照旧拒绝 `--cdp`：
 
 - 紫鸟（6.50，Windows 实测）主进程启动时检查命令行，正式版里带 `--remote-debugging-port` 或 `--inspect` 就打印「Remote debugging is not allowed.」并退出（app.asar 里的代码），agent-desktop 等满 30 秒报 `cdp_endpoint_unavailable`。绕开启动器、直接带实例参数（`--use-chromium-request --user-data-dir=…`）启动也一样。它还在开发者工具打开时自动关掉。紫鸟只在官方的 WebDriver 模式里给店铺窗口（另起的浏览器内核进程）开调试端口，客户端界面本身不开。
 - 其余限制：只能用于新启动的进程（已在运行时返回 `cdp_requires_fresh_launch`，要先关掉应用，丢掉用户在里面的状态）；端口开着时本机任何程序都能控制这个应用。
