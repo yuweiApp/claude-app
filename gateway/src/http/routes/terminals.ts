@@ -2,6 +2,7 @@ import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { BadRequestError } from "../../agent/session-manager.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
+import { isRemote } from "../../ssh/location.js";
 
 const HEARTBEAT_MS = 15_000;
 type IdParams = { id: string };
@@ -12,8 +13,8 @@ export function terminalRoutes(app: FastifyInstance, terminals: TerminalManager)
 
   app.post<{ Body: { cwd: string; cols?: number; rows?: number } }>("/terminals", async (req) => {
     const { cwd, cols = 80, rows = 24 } = req.body ?? {};
-    if (!cwd || !path.isAbsolute(cwd)) throw new BadRequestError("缺少项目文件夹");
-    return { terminal: terminals.create(cwd, cols, rows) };
+    if (!cwd || !(path.isAbsolute(cwd) || isRemote(cwd))) throw new BadRequestError("缺少项目文件夹");
+    return { terminal: await terminals.create(cwd, cols, rows) };
   });
 
   app.get<{ Params: IdParams }>("/terminals/:id/stream", (req, reply) => {

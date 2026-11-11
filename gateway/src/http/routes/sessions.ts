@@ -13,6 +13,7 @@ import { addConnector, ConnectorError, listConnectors } from "../../agent/connec
 import { cancelMcpAuth, clearMcpAuth, getMcpAuth, McpAuthError, startMcpAuth, submitMcpAuthCallback } from "../../agent/mcp-auth.js";
 import { installMarketPlugin, PluginMarketError, queryMarketPlugins, uninstallMarketPlugin, updateMarketPlugin } from "../../agent/plugin-market.js";
 import { config } from "../../config.js";
+import { isRemote } from "../../ssh/location.js";
 
 const permissionModes = ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"];
 const effortLevels = ["low", "medium", "high", "xhigh", "max"];
@@ -52,7 +53,8 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
   /** 可用的技能、插件和 MCP 服务器；cwd 不传是默认工作目录，refresh=1 不用缓存 */
   app.get<{ Querystring: { cwd?: string; refresh?: string } }>("/capabilities", async (req) => {
     if (req.query.refresh === "1") clearCapabilitiesCache();
-    return listCapabilities(req.query.cwd || config.workspaceDir);
+    // 远程会话不管技能、插件、连接器（网页上也不显示），按默认工作目录回答
+    return listCapabilities(req.query.cwd && !isRemote(req.query.cwd) ? req.query.cwd : config.workspaceDir);
   });
 
   /** 技能的 SKILL.md；内置技能没有文件，返回 404。插件里的技能到插件所在的文件夹里找 */

@@ -1,5 +1,6 @@
 import { buildApp } from "./app.js";
 import { config } from "./config.js";
+import { disconnectAll } from "./ssh/hosts.js";
 
 const { app, sessions, terminals } = buildApp();
 
@@ -10,6 +11,7 @@ async function shutdown(signal: string): Promise<void> {
   app.log.info({ signal }, "正在关闭：结束所有 claude 子进程");
   terminals.closeAll();
   await sessions.closeAll();
+  disconnectAll();
   await app.close();
   process.exit(0);
 }

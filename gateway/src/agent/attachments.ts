@@ -88,7 +88,7 @@ export async function loadAttachments(ids: string[]): Promise<Attachment[]> {
 }
 
 /** 能直接作为 image 块发给模型的图片：常见格式、不超过 5 MB */
-function imageType(a: Attachment) {
+export function imageType(a: Attachment) {
   const mediaType = IMAGE_TYPES[path.extname(a.name).toLowerCase()];
   return mediaType && a.size <= MAX_IMAGE_BYTES ? mediaType : null;
 }
@@ -120,7 +120,13 @@ export async function loadElements(inputs: SelectedElementInput[]): Promise<Sele
  * 网页上选中的元素接在用户的文字后面，每个是截图（image 块）和那段 <selected-element> 文字，同 Claude 桌面版的「选择元素」；
  * 其他文件用一段 <attachments> 列出路径（网页按这个格式还原附件），模型需要时用 Read 读
  */
-export async function buildUserContent(text: string, attachments: Attachment[], elements: SelectedElementContent[] = []): Promise<UserContent> {
+export async function buildUserContent(
+  text: string,
+  attachments: Attachment[],
+  elements: SelectedElementContent[] = [],
+  /** 远程会话：附件上传到远端后的路径（附件 id → 远端路径），模型看到的是它 */
+  remotePaths?: Map<string, string>,
+): Promise<UserContent> {
   if (!attachments.length && !elements.length) return text;
   const blocks: ContentBlock[] = [];
   const files: Attachment[] = [];
@@ -139,7 +145,7 @@ export async function buildUserContent(text: string, attachments: Attachment[], 
     if (mediaType) blocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data: (await readFile(element.screenshot!.path)).toString("base64") } });
     blocks.push({ type: "text", text: element.text });
   }
-  if (files.length) blocks.push({ type: "text", text: formatAttachments(files) });
+  if (files.length) blocks.push({ type: "text", text: formatAttachments(files.map((a) => ({ ...a, path: remotePaths?.get(a.id) ?? a.path }))) });
   return blocks;
 }
 

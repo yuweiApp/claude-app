@@ -1,3 +1,4 @@
+import { machinePath } from "../remote";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { api, RequestError, type FileContent, type ProjectEntry } from "../api";
 import { getDraft, setDraft, useHasDraft } from "../state/fileDrafts";
@@ -560,7 +561,8 @@ function FileTree({
   const setDragPath = (e: DragEvent, rel: string) => {
     const abs = absolutePath(cwd, trimSlash(rel));
     const dir = rel === "" || rel.endsWith("/");
-    const sep = isWindowsPath(cwd) ? "\\" : "/";
+    // 远程会话按那台机器上的写法（Windows 远端是 C:\…）
+    const sep = isWindowsPath(machinePath(cwd)) ? "\\" : "/";
     e.dataTransfer.setData(PATH_DRAG_TYPE, dir && !abs.endsWith(sep) ? abs + sep : abs);
   };
   const onDragStart = (e: DragEvent, entry: ProjectEntry) => {
@@ -1339,7 +1341,9 @@ function pageFile(pathname: unknown): string | null {
  * 项目里的路径（/ 分隔，相对 cwd；空是 cwd 本身）的绝对路径。cwd 是 Windows 的路径（C:\…、C:/…、\\server\share）时
  * 整个用 \ 分隔（回复链接打开的工作目录外的文件夹记的是 / 分隔的）。根目录（/、C:\）本身以分隔符结尾，不再多加
  */
-function absolutePath(cwd: string, rel: string): string {
+/** 那台机器上的绝对路径（复制、拖进输入框用）：远程会话去掉 ssh://<id>，就是模型看到的远端路径 */
+function absolutePath(cwdOrUri: string, rel: string): string {
+  const cwd = machinePath(cwdOrUri);
   const joined = !rel ? cwd : /[\\/]$/.test(cwd) ? cwd + rel : `${cwd}/${rel}`;
   return isWindowsPath(cwd) ? joined.replaceAll("/", "\\") : joined;
 }

@@ -29,7 +29,14 @@ import { disposeRepls } from "../browser/tool.js";
 import { disposeDesktopSession } from "../desktop/tool.js";
 import { sessionHistory } from "./history.js";
 import { lastCustomTitle, lastResponseAt, lastResponseModel, recordedCwd, sessionRecordFiles } from "./session-records.js";
-import { createScratchDir, isChatCwd, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
+import { createScratchDir, isChatCwd, isScratchIn, newScratchName, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
+import { fromWindowsPath, nativePath, parseRemote, remoteUri } from "../ssh/location.js";
+import { existingHost, sshHost } from "../ssh/hosts.js";
+import type { SshHost } from "../ssh/host.js";
+import { rmdirQuiet } from "../ssh/remote-ops.js";
+import { remoteFs } from "../ssh/host-fs.js";
+import { appendRemote, deleteRemoteSession, registerRemoteSession, remoteSessionHost, syncHost, syncSession } from "../ssh/transcripts.js";
+import { listConnections } from "../ssh/connections.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
 export class SessionManager {
@@ -75,10 +82,20 @@ export class SessionManager {
     opts: { cwd?: string; model?: string; effort?: EffortLevel; permissionMode?: PermissionMode; attachments?: string[] },
   ): Promise<AgentSession> {
     rejectDisabledSkill(text);
-    // 没选文件夹：给这个会话新建一个工作目录（同 Claude 桌面版），不和别的普通会话共用
-    const cwd = opts.cwd ? await resolveDir(opts.cwd) : await createScratchDir();
+    const remote = parseRemote(opts.cwd);
+    const sessionId = randomUUID();
+    let cwd: string;
+    if (remote) {
+      // 远程会话：工作目录写成 ssh://<连接 id><远端路径>；只有连接 id 时在远端新建 scratch 目录
+      const host = await readyHost(remote.host);
+      cwd = remoteUri(remote.host, remote.path ? await resolveRemoteDir(host, remote.path) : await createRemoteScratch(host));
+      registerRemoteSession(sessionId, remote.host);
+    } else {
+      // 没选文件夹：给这个会话新建一个工作目录（同 Claude 桌面版），不和别的普通会话共用
+      cwd = opts.cwd ? await resolveDir(opts.cwd) : await createScratchDir();
+    }
     const attachments = await loadAttachments(opts.attachments ?? []);
-    const session = await this.launch(randomUUID(), false, { ...opts, cwd });
+    const session = await this.launch(sessionId, false, { ...opts, cwd });
     await session.send(text, attachments);
     void this.nameSession(session.id, text || (attachments[0]?.name ?? ""));
     return session;
@@ -90,7 +107,7 @@ export class SessionManager {
     const title = await generateTitle(text);
     for (let i = 0; i < 20; i++) {
       try {
-        await renameSession(sessionId, title);
+        await this.writeTitle(sessionId, title);
         this.titles.set(sessionId, title);
         this.hub.publish(sessionId, { type: "title", title });
         return;
@@ -109,14 +126,25 @@ export class SessionManager {
     return (await this.activate(sessionId)).send(text, attachments, elements);
   }
 
-  /** 活跃会话直接返回；子进程已回收的用原来的工作目录 resume */
+  /** 活跃会话直接返回；子进程已回收的用原来的工作目录 resume。远程会话先连上主机、同步一下记录 */
   async activate(sessionId: string): Promise<AgentSession> {
     const session = this.active.get(sessionId);
     if (session) return session;
+    const hostId = remoteSessionHost(sessionId);
+    if (hostId) await syncSession(await readyHost(hostId), sessionId).catch(() => undefined);
     const info = await getSessionInfo(sessionId);
     if (!info) throw new NotFoundError(`会话不存在：${sessionId}`);
     const settings = this.lastSettings.get(sessionId) ?? { model: await this.recordedModel(sessionId) };
-    return this.launch(sessionId, true, { cwd: (await this.infoCwd(info)) || config.workspaceDir, ...settings });
+    const recorded = await this.infoCwd(info);
+    if (hostId && !recorded) throw new NotFoundError(`远程会话的记录里没有工作目录：${sessionId}`);
+    return this.launch(sessionId, true, { cwd: hostId ? remoteUri(hostId, recorded!) : recorded || config.workspaceDir, ...settings });
+  }
+
+  /** 写自定义标题：本机会话交给 SDK；远程会话追加到远端的记录里（格式同 Claude Code 写的），再同步回来 */
+  private async writeTitle(sessionId: string, title: string): Promise<void> {
+    const hostId = remoteSessionHost(sessionId);
+    if (!hostId) return renameSession(sessionId, title);
+    await appendRemote(await readyHost(hostId), sessionId, [{ type: "custom-title", customTitle: title, sessionId }]);
   }
 
   /** 记录文件里最后一次回复用的模型 */
@@ -130,7 +158,10 @@ export class SessionManager {
     const session = this.active.get(sessionId);
     if (session) return session.cwd;
     const info = await getSessionInfo(sessionId);
-    return (info && (await this.infoCwd(info))) || null;
+    const cwd = info && (await this.infoCwd(info));
+    if (!cwd) return null;
+    const hostId = remoteSessionHost(sessionId);
+    return hostId ? remoteUri(hostId, cwd) : cwd;
   }
 
   /**
@@ -148,6 +179,9 @@ export class SessionManager {
   }
 
   async list(): Promise<SessionListItem[]> {
+    // 连着的远程主机先把会话记录同步过来（最多等 3 秒，没同步完的下次再列）；没连着的用本机已有的副本
+    const syncs = listConnections().map((c) => existingHost(c.id)).filter((h): h is SshHost => Boolean(h?.isReady)).map((h) => syncHost(h).catch(() => undefined));
+    if (syncs.length) await Promise.race([Promise.all(syncs), sleep(3000)]);
     // 不传 dir：所有工作目录（项目）的会话
     const [infos, files] = await Promise.all([listSessions(), sessionRecordFiles()]);
     const stored: SessionListItem[] = await Promise.all(
@@ -160,7 +194,9 @@ export class SessionManager {
           if (customTitle) this.titles.set(info.sessionId, customTitle);
         }
         const responded = file ? await lastResponseAt(file) : undefined;
-        const cwd = await this.infoCwd(info, file);
+        const recorded = await this.infoCwd(info, file);
+        const hostId = remoteSessionHost(info.sessionId);
+        const cwd = hostId && recorded ? remoteUri(hostId, recorded) : recorded;
         return {
           ...info,
           ...(customTitle ? { customTitle } : {}),
@@ -181,14 +217,17 @@ export class SessionManager {
     return stored.sort((a, b) => b.lastResponseAt - a.lastResponseAt);
   }
 
-  /** 历史消息：压缩上下文之前的也接上（见 history.ts） */
+  /** 历史消息：压缩上下文之前的也接上（见 history.ts）。远程会话连着时先同步一下记录 */
   async messages(sessionId: string) {
+    const hostId = remoteSessionHost(sessionId);
+    const host = hostId ? existingHost(hostId) : undefined;
+    if (host?.isReady) await syncSession(host, sessionId).catch(() => undefined);
     return sessionHistory(sessionId);
   }
 
   /** 用户改标题：写成自定义标题，打开这个会话的页面通过 title 事件跟着变 */
   async rename(sessionId: string, title: string): Promise<void> {
-    await renameSession(sessionId, title);
+    await this.writeTitle(sessionId, title);
     this.titles.set(sessionId, title);
     this.hub.publish(sessionId, { type: "title", title });
   }
@@ -201,6 +240,8 @@ export class SessionManager {
   async delete(sessionId: string): Promise<void> {
     const session = this.active.get(sessionId);
     await session?.close();
+    const hostId = remoteSessionHost(sessionId);
+    if (hostId) return this.deleteRemote(sessionId, hostId, session);
     const info = await getSessionInfo(sessionId);
     const cwd = session?.cwd ?? (info ? await this.infoCwd(info) : undefined);
     const recordDir = info ? await sessionRecordDir(sessionId) : undefined;
@@ -216,6 +257,25 @@ export class SessionManager {
         if (await getSessionInfo(sessionId)) await deleteSession(sessionId);
       }
     }
+    this.disposeSession(sessionId);
+    await removeScratchDirIfEmpty(cwd, recordDir);
+  }
+
+  /** 删远程会话：远端的记录和本机的副本；它的 scratch 目录是空的就一起删（要连得上远端） */
+  private async deleteRemote(sessionId: string, hostId: string, session: AgentSession | undefined): Promise<void> {
+    const host = await readyHost(hostId);
+    const cwd = session?.cwd ?? (await this.cwd(sessionId));
+    // 子进程退出时还会往记录里写几行，等一下再删
+    if (session) await sleep(1500);
+    await deleteRemoteSession(host, sessionId);
+    this.titles.delete(sessionId);
+    this.lastSettings.delete(sessionId);
+    this.disposeSession(sessionId);
+    const dir = parseRemote(cwd)?.path;
+    if (dir && host.env && isScratchIn(dir, host.env.workspace)) await rmdirQuiet(host, dir);
+  }
+
+  private disposeSession(sessionId: string): void {
     this.hub.remove(sessionId);
     this.taskList(sessionId).dispose();
     this.tasks.delete(sessionId);
@@ -225,7 +285,6 @@ export class SessionManager {
     disposeDesktopSession(sessionId);
     // 内置浏览器里这个会话的标签页也关掉：AI 留下的、用户开的不会自动关，不关的话会一直留在桌面版后台（会话没了，面板里也看不到）
     this.browser?.closeSession(sessionId);
-    await removeScratchDirIfEmpty(cwd, recordDir);
   }
 
   listTasks(sessionId: string): BackgroundTask[] {
@@ -236,7 +295,11 @@ export class SessionManager {
   async taskOutput(sessionId: string, taskId: string): Promise<TaskOutput> {
     const output = this.taskList(sessionId).output(taskId);
     if (!output) throw new NotFoundError("这个任务没有输出");
-    return (output.agent ? readAgentTranscript(output.file) : readOutputTail(output.file)).catch(() => ({ text: "", truncated: false }));
+    // 远程会话的输出文件在远端：取回来放进本机的临时文件再读
+    const hostId = remoteSessionHost(sessionId);
+    const file = hostId ? await fetchRemoteOutput(await readyHost(hostId), output.file, !output.agent) : output.file;
+    if (!file) return { text: "", truncated: false };
+    return (output.agent ? readAgentTranscript(file) : readOutputTail(file)).catch(() => ({ text: "", truncated: false }));
   }
 
   async stopTask(sessionId: string, taskId: string): Promise<void> {
@@ -289,7 +352,8 @@ export class SessionManager {
         model: opts.model,
         effort: opts.effort ?? config.defaultEffort,
         permissionMode: opts.permissionMode ?? config.defaultPermissionMode,
-        skills: await enabledSkillNames(opts.cwd),
+        // 远程会话不管技能（远端只有 Claude Code 自带的和项目里的）
+        skills: parseRemote(opts.cwd) ? undefined : await enabledSkillNames(opts.cwd),
       },
       this.hub,
       this.log,
@@ -342,6 +406,53 @@ async function resolveDir(dir: string): Promise<string> {
   const info = await stat(resolved).catch(() => null);
   if (!info?.isDirectory()) throw new BadRequestError(`文件夹不存在：${resolved}`);
   return resolved;
+}
+
+/** 远程主机连上、准备好；连不上时报给网页 */
+async function readyHost(hostId: string): Promise<SshHost> {
+  const host = sshHost(hostId);
+  try {
+    await host.ensureReady();
+  } catch (err) {
+    throw new BadRequestError(`连接远程主机「${host.connection.name}」失败：${err instanceof Error ? err.message : String(err)}`);
+  }
+  return host;
+}
+
+/** 远端的文件夹：支持 ~，必须是已存在的目录 */
+async function resolveRemoteDir(host: SshHost, dir: string): Promise<string> {
+  const fs = remoteFs(host);
+  const home = await fs.home();
+  const expanded = dir.trim().replace(/^~(?=$|\/)/, home);
+  if (!expanded.startsWith("/")) throw new BadRequestError(`请填写绝对路径：${dir}`);
+  const resolved = path.posix.resolve(expanded);
+  const info = await fs.stat(resolved).catch(() => null);
+  if (!info?.isDirectory) throw new BadRequestError(`远端文件夹不存在：${nativePath(host.windows, resolved)}`);
+  return resolved;
+}
+
+/** 远端的普通会话目录：~/.claude-app/workspace/scratch-日期-随机串 */
+async function createRemoteScratch(host: SshHost): Promise<string> {
+  const dir = `${host.env!.workspace}/${newScratchName()}`;
+  await remoteFs(host).mkdir(dir, { recursive: true });
+  return dir;
+}
+
+/** 远端的任务输出文件取回本机临时文件；tail：只取最后 64 KB */
+async function fetchRemoteOutput(host: SshHost, file: string, tail: boolean): Promise<string | null> {
+  const { createWriteStream } = await import("node:fs");
+  const { pipeline } = await import("node:stream/promises");
+  const { createHash } = await import("node:crypto");
+  const sftp = await host.sftp();
+  // Windows 上的 claude 报的是 C:\Users\…\xx.output，SFTP 要 /C:/Users/…/xx.output（C:\… 会被当成相对用户目录的路径）
+  file = fromWindowsPath(file);
+  const size = await new Promise<number | null>((resolve) => sftp.stat(file, (err, s) => resolve(err ? null : s.size)));
+  if (size === null) return null;
+  const local = path.join(os.tmpdir(), `claude-app-ssh-${createHash("sha1").update(`${host.id}:${file}`).digest("hex").slice(0, 16)}`);
+  const start = tail ? Math.max(0, size - 64 * 1024) : 0;
+  if (size === 0) return null;
+  await pipeline(sftp.createReadStream(file, { start, end: size - 1 }), createWriteStream(local, { mode: 0o600 }));
+  return local;
 }
 
 export class NotFoundError extends Error {}

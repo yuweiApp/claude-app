@@ -1,6 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { fsFor, machinePathOf } from "../ssh/host-fs.js";
 import { createRequire } from "node:module";
-import path from "node:path";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import type { Browser, BrowserContext } from "playwright-core";
 import { config } from "../config.js";
@@ -147,24 +146,28 @@ export function externalNote(active: ExternalBrowserInfo[]): string {
  * data：Buffer、Uint8Array 等 TypedArray、ArrayBuffer，或字符串（按 UTF-8 写）。vm 里建的对象不是这边的 Uint8Array，按 ArrayBuffer.isView 认
  */
 export function fileSaver(cwd: string) {
+  // 远程会话的工作目录在远端：经 SFTP 写过去（见 ssh/host-fs.ts）
+  const { fs, root } = fsFor(cwd);
+  const p = fs.path;
   return async (name: string, data: unknown): Promise<string> => {
     if (typeof name !== "string" || !name.trim()) throw new Error("saveFile 的第一个参数是文件名（相对工作目录的路径）");
-    const target = path.resolve(cwd, name);
-    const rel = path.relative(cwd, target);
-    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) throw new Error(`saveFile 只能写进工作目录 ${cwd} 下面，name 要是相对路径`);
-    let bytes: Uint8Array;
+    const target = p.resolve(root, name);
+    const rel = p.relative(root, target);
+    if (!rel || rel.startsWith("..") || p.isAbsolute(rel)) throw new Error(`saveFile 只能写进工作目录 ${machinePathOf(cwd, root)} 下面，name 要是相对路径`);
+    let bytes: Buffer;
     if (typeof data === "string") bytes = Buffer.from(data, "utf8");
-    else if (ArrayBuffer.isView(data)) bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-    else if (Object.prototype.toString.call(data) === "[object ArrayBuffer]") bytes = new Uint8Array(data as ArrayBuffer);
+    else if (ArrayBuffer.isView(data)) bytes = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+    else if (Object.prototype.toString.call(data) === "[object ArrayBuffer]") bytes = Buffer.from(data as ArrayBuffer);
     else throw new Error("saveFile 的数据要是 Buffer、Uint8Array、ArrayBuffer 或字符串");
-    await mkdir(path.dirname(target), { recursive: true });
-    const ext = path.extname(target);
+    await fs.mkdir(p.dirname(target), { recursive: true });
+    const ext = p.extname(target);
     const stem = target.slice(0, target.length - ext.length);
     for (let n = 0; ; n++) {
       const file = n ? `${stem} (${n})${ext}` : target;
       try {
-        await writeFile(file, bytes, { flag: "wx" });
-        return file;
+        await fs.writeFile(file, bytes, { exclusive: true });
+        // 返回给模型：Windows 远端是 C:\… 的写法
+        return machinePathOf(cwd, file);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       }
@@ -174,7 +177,7 @@ export function fileSaver(cwd: string) {
 
 /** 说明里 saveFile 的那句，内置浏览器（tool.ts 的 browserServer）和外部浏览器共用 */
 export const saveFileFact = (cwd: string) =>
-  `全局函数 await saveFile(name, data) 把数据写进这个会话的工作目录（${cwd}）：name 是相对这个目录的路径，data 是 Buffer、Uint8Array、ArrayBuffer 或字符串（按 UTF-8 写），同名时文件名后加 (1)、(2)，返回写入的绝对路径。`;
+  `全局函数 await saveFile(name, data) 把数据写进这个会话的工作目录（${machinePathOf(cwd, fsFor(cwd).root)}）：name 是相对这个目录的路径，data 是 Buffer、Uint8Array、ArrayBuffer 或字符串（按 UTF-8 写），同名时文件名后加 (1)、(2)，返回写入的绝对路径。`;
 
 function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[], cwd: string): string {
   const others = active.filter((o) => o.id !== b.id);

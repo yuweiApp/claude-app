@@ -18,6 +18,10 @@ import { terminalRoutes } from "./http/routes/terminals.js";
 import { TerminalError, TerminalManager } from "./terminal/terminal-manager.js";
 import { folderRoutes } from "./http/routes/folders.js";
 import { uploadRoutes } from "./http/routes/uploads.js";
+import { sshRoutes } from "./http/routes/ssh.js";
+import { SshConfigError } from "./ssh/connections.js";
+import { SshError } from "./ssh/host.js";
+import { isRemote } from "./ssh/location.js";
 
 // 终端里用 pino-pretty 格式化。不用 transport：它在 worker 线程里把 UTF-8 字节直接写 fd 1，
 // 中文 Windows 控制台按 GBK 显示会乱码；交给 process.stdout 由 Node 转成 UTF-16 写控制台。
@@ -48,7 +52,11 @@ export function buildApp(): App {
   const hub = new EventHub(config.eventBufferSize);
   const terminals = new TerminalManager();
   // 桌面版问会话的工作目录（内置浏览器的下载存到那里）时用 sessions 回答，两边互相引用，所以传函数
-  const browser = new BrowserHost((sessionId) => sessions.cwd(sessionId));
+  // 远程会话的工作目录在远端，内置浏览器的下载放不进去，交给桌面版按默认的下载位置存
+  const browser = new BrowserHost(async (sessionId) => {
+    const cwd = await sessions.cwd(sessionId);
+    return cwd && !isRemote(cwd) ? cwd : null;
+  });
   const conversationLog = new ConversationLog(config.conversationLog, app.log);
   setDesktopLog((entry) => conversationLog.recordDesktop(entry));
   const sessions = new SessionManager(hub, app.log, conversationLog, terminals, browser);
@@ -66,7 +74,9 @@ export function buildApp(): App {
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
     if (err instanceof BusyError) return reply.code(429).send({ error: err.message });
-    if (err instanceof AttachmentError || err instanceof BadRequestError || err instanceof TerminalError) return reply.code(400).send({ error: err.message });
+    if (err instanceof AttachmentError || err instanceof BadRequestError || err instanceof TerminalError || err instanceof SshConfigError || err instanceof SshError) {
+      return reply.code(400).send({ error: err.message });
+    }
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) app.log.error(err);
     return reply.code(status).send({ error: err instanceof Error ? err.message : String(err) });
@@ -92,6 +102,7 @@ export function buildApp(): App {
   folderRoutes(app);
   fileRoutes(app);
   terminalRoutes(app, terminals);
+  sshRoutes(app);
 
   // 启用着的外部浏览器（用户的 Chrome、Edge 等）和交给 Playwright 的标签页，输入框 @ 引用用；还没连上时 tabs 是空的
   app.get("/external/tabs", async () => ({ browsers: await externalTabs() }));

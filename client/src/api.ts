@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo };
+export type { SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -125,6 +125,19 @@ export const api = {
   closeTerminal: (id: string) => request("DELETE", `/terminals/${id}`),
   terminalStreamUrl: (id: string) => withToken(`/terminals/${id}/stream`),
   folders: (path?: string) => request<FolderListing>("GET", `/folders${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  /** 设置页「SSH 连接」 */
+  sshConnections: () => request<{ connections: SshConnectionInfo[] }>("GET", "/ssh/connections").then((r) => r.connections),
+  sshConfigHosts: () => request<{ hosts: SshConfigHost[] }>("GET", "/ssh/config-hosts").then((r) => r.hosts),
+  addSshConnection: (input: SshConnectionInput) => request<{ connection: SshConnectionInfo }>("POST", "/ssh/connections", input).then((r) => r.connection),
+  updateSshConnection: (id: string, input: Partial<SshConnectionInput>) =>
+    request<{ connection: SshConnectionInfo }>("PATCH", `/ssh/connections/${id}`, input).then((r) => r.connection),
+  removeSshConnection: (id: string) => request("DELETE", `/ssh/connections/${id}`),
+  /** 连上并准备好远端（第一次要装 Claude Code），等到连上或失败才返回；失败时看返回的状态（error、hostKey、needsPassword） */
+  connectSsh: (id: string, password?: string) =>
+    request<{ connection: SshConnectionInfo }>("POST", `/ssh/connections/${id}/connect`, password === undefined ? {} : { password }).then((r) => r.connection),
+  trustSshHostKey: (id: string, fingerprint: string) =>
+    request<{ connection: SshConnectionInfo }>("POST", `/ssh/connections/${id}/trust`, { fingerprint }).then((r) => r.connection),
+  disconnectSsh: (id: string) => request<{ connection: SshConnectionInfo }>("POST", `/ssh/connections/${id}/disconnect`).then((r) => r.connection),
   /** Claude Code 的模型列表（SDK 的 ModelInfo） */
   models: () => request<{ models: ModelInfo[] }>("GET", "/models").then((r) => r.models),
   /** opts.cwd：在哪个文件夹里开，不传是无文件夹（默认工作目录）；model 是模型列表里的 value（别名） */

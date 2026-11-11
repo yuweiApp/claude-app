@@ -27,6 +27,14 @@ export const connectorRegistry: string = (configFile?.connectors?.registry ?? "h
 export const featuredConnectors: string[] = configFile?.connectors?.featured ?? [];
 
 /**
+ * 远程主机装 Claude Code 时下载 npm 平台包的源（config.yml 的 ssh.registries），按顺序试，见 ssh/deploy.ts。
+ * 不读 npm_config_registry：经 npm run 起网关时 npm 会把用户自己的 registry 配置放进这个环境变量
+ */
+export const sshRegistries: string[] = ((configFile?.ssh?.registries as string[] | undefined) ?? ["https://registry.npmmirror.com", "https://registry.npmjs.org"]).map((r) =>
+  String(r).replace(/\/+$/, ""),
+);
+
+/**
  * 插件市场（设置页「插件」→「插件市场」）：config.yml 的 plugins.marketplaces，git 仓库地址，
  * 或 Claude Code 内置市场的名称（anthropic-plugin-directory），见 agent/plugin-market.ts
  */

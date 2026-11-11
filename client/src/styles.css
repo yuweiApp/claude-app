@@ -33,6 +33,7 @@
   --ic-plugin: #2563eb;
   --ic-tab: #059669;
   --ic-desktop: #0284c7;
+  --ic-remote: #218b82;
   --ic-mcp: #db2777;
   --ic-tasks-from: #0ea5e9;
   --ic-tasks-to: #7c3aed;
@@ -67,6 +68,7 @@
   --ic-plugin: #79a6ff;
   --ic-tab: #34d399;
   --ic-desktop: #38bdf8;
+  --ic-remote: #65b8ad;
   --ic-mcp: #f472b6;
   --ic-tasks-from: #38bdf8;
   --ic-tasks-to: #a78bfa;
@@ -183,6 +185,9 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 /* 文件夹行、分区标题行的按钮本身不画底色（盖过全局的 button:hover），悬停底色由外面一整行（.group-head、.section-head）画 */
 .sidebar .group-toggle, .sidebar .group-toggle:hover, .sidebar .section-toggle, .sidebar .section-toggle:hover { background: none; }
 .group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ssh-hostkey { margin-top: 8px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.ssh-hostkey p { margin: 0; color: var(--muted); }
+.ssh-hostkey code { font-size: 12px; user-select: all; word-break: break-all; }
 .group-list .session-row { padding-left: 34px; }
 /* 会话超出默认个数时的「展开更多 / 收起」，和会话标题左对齐 */
 .list-toggle { display: flex; align-items: center; gap: 2px; padding: 2px 0 4px 6px; }
@@ -434,7 +439,7 @@ main {
 }
 .chat-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14.5px; font-weight: 600; }
 /* 项目会话的文件夹名：标题后面一个小标签 */
-.chat-folder { flex: none; max-width: 30%; overflow: hidden; padding: 2px 8px; border-radius: 6px; background: var(--panel); color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.chat-folder { flex: none; display: inline-flex; align-items: center; gap: 4px; max-width: 30%; overflow: hidden; padding: 2px 8px; border-radius: 6px; background: var(--panel); color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .muted { color: var(--muted); }
 .scroll-area { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* 右上角的浮窗：桌面工具正在操作的软件（DesktopTargetFloat），点开是那个窗口的实时画面 */
@@ -1052,6 +1057,14 @@ main {
 .context-menu .menu-item:disabled { opacity: 0.45; cursor: default; }
 .menu-item.danger { color: var(--err); }
 .menu-item-icon { display: flex; align-items: center; gap: 8px; }
+/* 新会话栏的环境选择（本机 / SSH 主机）：左边图标，中间名字和地址，右边连接状态的圆点 */
+.env-menu { min-width: 220px; }
+.menu-item.env-item { flex-direction: row; align-items: center; gap: 10px; }
+.env-item > svg { flex: none; color: var(--muted); }
+.env-item-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.env-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--muted) 45%, transparent); }
+.env-dot.on { background: var(--ok); }
+.env-dot.err { background: var(--err); }
 
 /* 选择文件夹对话框 */
 .dialog-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.35); padding: 16px; -webkit-app-region: no-drag; }
@@ -1477,6 +1490,8 @@ svg.ic-settings { color: var(--ic-settings); }
 svg.ic-compose { color: var(--ic-compose); }
 svg.ic-project { color: var(--ic-project); }
 svg.ic-folder { color: var(--ic-folder); }
+/* 远程主机（SSH）的系统图标：带颜色，和本机的文件夹区分开（同 codex-app-server 的 --remote） */
+svg.host-icon { flex: none; color: var(--ic-remote); }
 svg.ic-chat { color: var(--ic-chat); }
 svg.ic-skill { color: var(--ic-skill); }
 svg.ic-plugin { color: var(--ic-plugin); }

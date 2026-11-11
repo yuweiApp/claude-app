@@ -1,3 +1,6 @@
+import { HostIcon } from "./HostIcon";
+import { machinePath, parseRemote } from "../remote";
+import { sshName, useSshConnections } from "../state/sshConnections";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { SessionListItem } from "../api";
 import { useDismiss } from "./ComposerPickers";
@@ -9,7 +12,12 @@ export const sessionTitle = (s: SessionListItem) =>
   (s.customTitle || s.firstPrompt || s.summary || "新会话").replace(/@(?:[a-z][a-z0-9]*)?\[([^\]\n]*)\]\([^\s)]+(?: "[^"\n]*")?\)/g, "$1");
 
 /** 项目名：工作目录的最后一级 */
-export const folderName = (dir: string) => dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || dir;
+/** 文件夹名（路径最后一级）；远程会话的 ssh://<id> 没有路径时是连接的名称 */
+export const folderName = (dir: string) => {
+  const remote = parseRemote(dir);
+  if (remote && !remote.path) return sshName(remote.host);
+  return dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || dir;
+};
 
 /** 一个项目：同一个文件夹（工作目录）下的会话。Claude Code 按工作目录区分项目 */
 interface FolderGroup {
@@ -415,12 +423,16 @@ function ProjectGroup({
   list: ReactNode;
 }) {
   const menu = useRowMenu();
+  // 远程主机上的项目：名字后面带主机名，悬停显示远端路径
+  useSshConnections();
+  const remote = parseRemote(g.cwd);
   return (
     <div className="group">
       <div className={`group-head${active ? " active" : ""}${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
-        <button className="group-toggle" onClick={onToggle} title={g.cwd}>
+        <button className="group-toggle" onClick={onToggle} title={remote ? `${sshName(remote.host)}：${machinePath(g.cwd)}` : g.cwd}>
           <CaretIcon open={open} />
-          <FolderIcon />
+          {/* 远程主机上的项目：文件夹换成主机的系统图标（同 codex-app-server），主机名在悬停提示里 */}
+          {remote ? <HostIcon hostId={remote.host} /> : <FolderIcon />}
           <span className="group-name">{folderName(g.cwd)}</span>
         </button>
         <div className="group-actions">

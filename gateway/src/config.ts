@@ -156,27 +156,29 @@ export function agentEnv(): Record<string, string | undefined> {
     // MCP 调用（浏览器的 browser_run_code 等）多久后转由 CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS 定，默认 120 秒，这里改成 20 秒
     CLAUDE_AUTO_BACKGROUND_TASKS: env.CLAUDE_AUTO_BACKGROUND_TASKS ?? "1",
     CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS ?? String(MCP_AUTO_BACKGROUND_MS),
-    ...(process.platform === "win32" ? windowsBashEnv(inherited.BASH_ENV) : {}),
+    ...(process.platform === "win32" ? windowsBashEnv(inherited.CLAUDE_ENV_FILE) : {}),
   };
 }
 
 /**
  * Windows 上 Claude Code 的 Bash 工具跑的是 Git Bash，模型在里面调 powershell.exe、ipconfig 等原生程序时，
  * 它们按控制台代码页输出（中文系统是 936，GBK），Claude Code 按 UTF-8 读，中文全成了乱码。
- * 用 BASH_ENV 让每次起 bash 时先 chcp 65001，原生程序就输出 UTF-8（Claude Code 自己的 PowerShell 工具也是先 chcp 65001 再起 PowerShell）。
- * 环境里原来有 BASH_ENV 的，执行完再接着 source 它
+ * 用 CLAUDE_ENV_FILE（Claude Code 每条 Bash 命令前在同一个 shell 里先执行它）先 chcp 65001，原生程序就输出 UTF-8
+ * （Claude Code 自己的 PowerShell 工具也是先 chcp 65001 再起 PowerShell）。以前用 BASH_ENV：Claude Code 起 bash 时把它当不安全的变量去掉了，
+ * 实测（2.1.322，中文 Windows，SSH 远程会话里同样的做法）设了 BASH_ENV 代码页还是 936，换成 CLAUDE_ENV_FILE 后生效。
+ * 环境里原来有 CLAUDE_ENV_FILE 的，执行完再接着 source 它
  */
-function windowsBashEnv(userBashEnv: string | undefined): Record<string, string> {
-  const file = path.join(config.claudeConfigDir, "claude-app-bash-env.sh");
+function windowsBashEnv(userEnvFile: string | undefined): Record<string, string> {
+  const file = path.join(config.claudeConfigDir, "claude-app-env.sh");
   if (!bashEnvWritten) {
     mkdirSync(config.claudeConfigDir, { recursive: true });
     // bash 读不了 CRLF，换行写死成 \n
     writeFileSync(
       file,
       [
-        "# claude-app 网关生成（config.ts 的 windowsBashEnv），Bash 工具起 bash 时先执行：控制台代码页切到 UTF-8",
+        "# claude-app 网关生成（config.ts 的 windowsBashEnv），Claude Code 每条 Bash 命令前先执行：控制台代码页切到 UTF-8",
         'chcp.com 65001 >/dev/null 2>&1',
-        'if [ -n "${CLAUDE_APP_USER_BASH_ENV:-}" ]; then . "$CLAUDE_APP_USER_BASH_ENV"; fi',
+        'if [ -n "${CLAUDE_APP_USER_ENV_FILE:-}" ]; then . "$CLAUDE_APP_USER_ENV_FILE"; fi',
         "",
       ].join("\n"),
     );
@@ -184,8 +186,8 @@ function windowsBashEnv(userBashEnv: string | undefined): Record<string, string>
   }
   return {
     // Git Bash 认 C:/ 开头的路径，反斜杠换成正斜杠省得转义
-    BASH_ENV: file.replaceAll("\\", "/"),
-    ...(userBashEnv ? { CLAUDE_APP_USER_BASH_ENV: userBashEnv } : {}),
+    CLAUDE_ENV_FILE: file.replaceAll("\\", "/"),
+    ...(userEnvFile ? { CLAUDE_APP_USER_ENV_FILE: userEnvFile } : {}),
   };
 }
 let bashEnvWritten = false;

@@ -392,3 +392,56 @@ export interface FileContent {
   /** 修改时间，保存时带回来，文件在这期间被改过就报冲突 */
   mtimeMs: number;
 }
+
+/**
+ * 远程会话的工作目录写成 ssh://<连接 id><远端绝对路径>（ssh://k3j9x2ab/home/me/proj），网页把它当普通的 cwd 用：
+ * 分组、最近用过的文件夹、右侧面板的文件和终端都按它，网关按前缀找到 SSH 连接（gateway/src/ssh/location.ts）。
+ * 这个文件只放类型，网页那边的解析在 client/src/remote.ts
+ */
+
+
+/** 设置页「SSH 连接」里填的，存在 Claude Code 配置目录的 gateway-ssh-connections.json */
+export interface SshConnectionInput {
+  /** 显示的名称 */
+  name: string;
+  /** user@host、host，或者 ~/.ssh/config 里的别名 */
+  host: string;
+  port?: number;
+  /** 私钥文件的路径（只存路径，不存私钥内容） */
+  identityFile?: string;
+  /** 新会话浏览文件夹时先打开的远端目录，不填是远端的用户目录 */
+  startDirectory?: string;
+}
+
+export type SshStatus = "disconnected" | "connecting" | "deploying" | "ready" | "error";
+
+/** GET /ssh/connections 的一项：配置加上现在的连接状态 */
+export interface SshConnectionInfo extends SshConnectionInput {
+  id: string;
+  /** 来自本机 ~/.ssh/config（自动列出，不用添加）：设置页里只能连接、断开，要改、要删改那个文件 */
+  fromConfig?: boolean;
+  /** ~/.ssh/config 里写的地址（user@hostname:port，写了哪些显示哪些），设置页显示用 */
+  address?: string;
+  status: SshStatus;
+  /** 上次连接失败的原因 */
+  error?: string;
+  /** 主机密钥没记录过或者变了：要用户看过指纹、点了信任才连 */
+  hostKey?: { type: string; fingerprint: string; changed: boolean };
+  /** 用密钥、ssh-agent 都登录不了，要输入密码（密码只在网关内存里，不落盘） */
+  needsPassword?: boolean;
+  /** 已经信任的主机密钥指纹（SHA256:…） */
+  trustedFingerprint?: string;
+  /** 正在上传 Claude Code：已传的比例（0–1） */
+  progress?: number;
+  /** 连上过之后记下的远端信息 */
+  platform?: string;
+  home?: string;
+}
+
+/** 设置页添加连接时，从本机 ~/.ssh/config 里读出来的主机别名 */
+export interface SshConfigHost {
+  alias: string;
+  hostname?: string;
+  user?: string;
+  port?: number;
+}

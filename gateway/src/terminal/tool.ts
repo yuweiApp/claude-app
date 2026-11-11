@@ -3,6 +3,8 @@ import { z } from "zod";
 import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
 import type { TerminalInfo } from "../shared/types.js";
 import type { TerminalManager } from "./terminal-manager.js";
+import { parseRemote } from "../ssh/location.js";
+import { machinePathOf } from "../ssh/host-fs.js";
 
 /** MCP 服务器名：工具全名是 mcp__terminal__read_terminal 这样 */
 export const TERMINAL_SERVER = "terminal";
@@ -52,7 +54,8 @@ export function terminalTools(terminals: TerminalManager, cwd: string) {
               list.map((t) => ({
                 tab_id: t.id,
                 title: label(t),
-                cwd: t.cwd,
+                // 远程会话的工作目录是 ssh://<连接 id><路径>，模型只看那台主机上的路径（Windows 是 C:\… 的写法）
+                cwd: parseRemote(t.cwd) ? machinePathOf(t.cwd, parseRemote(t.cwd)!.path) : t.cwd,
                 shell: t.shell,
                 opened_by: t.openedBy,
                 running: terminals.foreground(t.id) ?? null,
@@ -115,7 +118,7 @@ export function terminalTools(terminals: TerminalManager, cwd: string) {
             }
             term = t;
           } else {
-            term = terminals.create(cwd, 120, 30, { title: title?.trim() || command.slice(0, 30), openedBy: "agent" });
+            term = await terminals.create(cwd, 120, 30, { title: title?.trim() || command.slice(0, 30), openedBy: "agent" });
             // 等 shell 的启动文件跑完、出了提示符再敲
             await terminals.waitForOutput(term.id, 3000, 300);
           }

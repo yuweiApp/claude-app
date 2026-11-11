@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import os from "node:os";
+import { StringDecoder } from "node:string_decoder";
 import type { IPty } from "@lydell/node-pty";
 import type { TerminalEvent, TerminalInfo } from "../shared/types.js";
+import { nativePath, parseRemote } from "../ssh/location.js";
+import { psEncoded, psQuote, shQuote } from "../ssh/host.js";
+import { sshHost } from "../ssh/hosts.js";
 
 /** 每个终端保留的输出（字符数），面板重新打开、刷新页面时用来还原屏幕 */
 const SCROLLBACK_CHARS = 512 * 1024;
@@ -16,8 +20,19 @@ function pty(): PtyModule {
   return ptyModule;
 }
 
+/** 终端背后的进程：本机是 node-pty，远程会话是 SSH 上开的 pty 通道 */
+interface Proc {
+  onData(cb: (data: string) => void): void;
+  onExit(cb: (code: number) => void): void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+  /** 前台进程组的程序名；拿不到时 undefined */
+  foreground(): string | undefined;
+}
+
 interface Terminal extends TerminalInfo {
-  proc: IPty;
+  proc: Proc;
   chunks: string[];
   chars: number;
   listeners: Set<(event: TerminalEvent) => void>;
@@ -33,21 +48,11 @@ export class TerminalManager {
     return [...this.terminals.values()].filter((t) => !cwd || t.cwd === cwd).map(info);
   }
 
-  create(cwd: string, cols: number, rows: number, opts: { title?: string; openedBy?: "user" | "agent" } = {}): TerminalInfo {
+  /** cwd 是 ssh://… 时在远端开（远端用户的登录 shell） */
+  async create(cwd: string, cols: number, rows: number, opts: { title?: string; openedBy?: "user" | "agent" } = {}): Promise<TerminalInfo> {
     if (this.terminals.size >= MAX_TERMINALS) throw new TerminalError(`终端最多开 ${MAX_TERMINALS} 个，先关掉一些`);
-    const shell = process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/bash";
-    let proc: IPty;
-    try {
-      proc = pty().spawn(shell, [], {
-        name: "xterm-256color",
-        cols: clamp(cols, 20, 500, 80),
-        rows: clamp(rows, 5, 200, 24),
-        cwd,
-        env: { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" } as Record<string, string>,
-      });
-    } catch (err) {
-      throw new TerminalError(`终端启动失败：${err instanceof Error ? err.message : String(err)}`);
-    }
+    const size = { cols: clamp(cols, 20, 500, 80), rows: clamp(rows, 5, 200, 24) };
+    const { proc, shell } = parseRemote(cwd) ? await remotePty(cwd, size) : localPty(cwd, size);
     const term: Terminal = {
       id: randomUUID(),
       cwd,
@@ -71,7 +76,7 @@ export class TerminalManager {
       while (term.chars > SCROLLBACK_CHARS && term.chunks.length > 1) term.chars -= term.chunks.shift()!.length;
       term.listeners.forEach((l) => l({ type: "data", data }));
     });
-    proc.onExit(({ exitCode }) => {
+    proc.onExit((exitCode) => {
       term.status = "exited";
       term.exitCode = exitCode;
       term.listeners.forEach((l) => l({ type: "exit", code: exitCode }));
@@ -107,14 +112,11 @@ export class TerminalManager {
   foreground(id: string): string | null | undefined {
     const term = this.get(id);
     if (term.status !== "running") return null;
-    if (process.platform === "win32") return undefined;
-    try {
-      // 可能是完整路径（/bin/bash），登录 shell 前面带 -
-      const name = (term.proc.process ?? "").split(/[\\/]/).pop()?.replace(/^-/, "") ?? "";
-      return !name || name === term.shell ? null : name;
-    } catch {
-      return undefined;
-    }
+    const fg = term.proc.foreground();
+    if (fg === undefined) return undefined;
+    // 可能是完整路径（/bin/bash），登录 shell 前面带 -
+    const name = fg.split(/[\\/]/).pop()?.replace(/^-/, "") ?? "";
+    return !name || name === term.shell ? null : name;
   }
 
   /** 屏幕上的文字（去掉颜色等控制序列、按回车覆盖处理），最后 lines 行 */
@@ -154,7 +156,7 @@ export class TerminalManager {
     const term = this.get(id);
     this.terminals.delete(id);
     term.listeners.clear();
-    if (term.status === "running") kill(term.proc);
+    if (term.status === "running") term.proc.kill();
   }
 
   closeAll(): void {
@@ -216,14 +218,95 @@ export function plainText(raw: string): string {
     .join("\n");
 }
 
-function kill(proc: IPty): void {
+function localPty(cwd: string, size: { cols: number; rows: number }): { proc: Proc; shell: string } {
+  const shell = process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/bash";
+  let p: IPty;
   try {
-    // Windows 上 node-pty 不支持传信号
-    if (os.platform() === "win32") proc.kill();
-    else proc.kill("SIGHUP");
-  } catch {
-    // 已经退出了
+    p = pty().spawn(shell, [], {
+      name: "xterm-256color",
+      ...size,
+      cwd,
+      env: { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" } as Record<string, string>,
+    });
+  } catch (err) {
+    throw new TerminalError(`终端启动失败：${err instanceof Error ? err.message : String(err)}`);
   }
+  return {
+    shell,
+    proc: {
+      onData: (cb) => p.onData(cb),
+      onExit: (cb) => p.onExit(({ exitCode }) => cb(exitCode)),
+      write: (d) => p.write(d),
+      resize: (c, r) => p.resize(c, r),
+      kill: () => {
+        try {
+          // Windows 上 node-pty 不支持传信号
+          if (os.platform() === "win32") p.kill();
+          else p.kill("SIGHUP");
+        } catch {
+          // 已经退出了
+        }
+      },
+      // node-pty 在 Unix 上用 tcgetpgrp 取前台进程组的程序名，Windows 上不准
+      foreground: () => {
+        if (process.platform === "win32") return undefined;
+        try {
+          return p.process ?? "";
+        } catch {
+          return undefined;
+        }
+      },
+    },
+  };
+}
+
+/** 远端的终端：SSH 上开带 pty 的通道，在工作目录里起远端用户的登录 shell（Windows 是 PowerShell）。前台在跑什么拿不到 */
+async function remotePty(cwd: string, size: { cols: number; rows: number }): Promise<{ proc: Proc; shell: string }> {
+  const remote = parseRemote(cwd)!;
+  const host = sshHost(remote.host);
+  let channel;
+  try {
+    await host.ensureReady();
+    const dir = remote.path || host.env!.home;
+    const pty = { term: "xterm-256color", ...size };
+    // Windows：交互的 PowerShell（-NoExit），先进工作目录；-EncodedCommand 不经默认 shell（cmd）的转义
+    channel = host.env!.windows
+      ? await host.openRaw(`powershell.exe -NoLogo -NoExit -EncodedCommand ${psEncoded(`Set-Location -LiteralPath ${psQuote(nativePath(true, dir))}`)}`, { pty })
+      : await host.openExec(`cd -- ${shQuote(dir)} 2>/dev/null; COLORTERM=truecolor; export COLORTERM; exec "\${SHELL:-/bin/sh}" -l`, { pty });
+  } catch (err) {
+    throw new TerminalError(`远端终端启动失败：${err instanceof Error ? err.message : String(err)}`);
+  }
+  const decoder = new StringDecoder("utf8");
+  const ch = channel;
+  let exitCode = 0;
+  return {
+    shell: host.env!.shell,
+    proc: {
+      onData: (cb) => {
+        ch.on("data", (d: Buffer) => cb(decoder.write(d)));
+        ch.stderr.on("data", (d: Buffer) => cb(d.toString("utf8")));
+      },
+      onExit: (cb) => {
+        ch.on("exit", (code: number | null) => {
+          exitCode = code ?? 0;
+        });
+        ch.on("close", () => cb(exitCode));
+      },
+      write: (d) => {
+        ch.write(d);
+      },
+      resize: (c, r) => ch.setWindow(r, c, 0, 0),
+      kill: () => {
+        try {
+          ch.signal("HUP");
+        } catch {
+          // 已经关了
+        }
+        ch.close();
+      },
+      foreground: () => undefined,
+    },
+  };
 }
 
 function clamp(n: number, min: number, max: number, fallback: number): number {

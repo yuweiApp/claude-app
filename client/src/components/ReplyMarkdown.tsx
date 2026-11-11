@@ -1,3 +1,4 @@
+import { machinePath, parseRemote, remoteUri } from "../remote";
 import { createContext, isValidElement, useCallback, useContext, useRef, useState, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -117,12 +118,15 @@ export function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTML
     if (!files || (path === null && !outside)) return;
     const { cwd, open, openFolder } = files;
     const line = linkLine(href);
+    // 工作目录外的远端路径：面板、接口要的是 ssh://<id><路径>
+    const remote = parseRemote(cwd);
+    const at = (p: string) => (remote ? remoteUri(remote.host, p) : p);
     // 链接看不出是文件还是文件夹：是文件就打开；能列出内容的是文件夹，在目录树里定位；都不是也当文件打开（面板里显示原因）
     // 文件：root 下的 rel；文件夹：dirRoot 下的 dirRel
     const t =
       path !== null
         ? { root: cwd, rel: path, dirRoot: cwd, dirRel: path, file: () => open(path, undefined, line), folder: () => openFolder(path) }
-        : { root: outside!.parent, rel: outside!.name, dirRoot: outside!.abs, dirRel: "", file: () => open(outside!.name, outside!.parent, line), folder: () => openFolder("", outside!.abs) };
+        : { root: at(outside!.parent), rel: outside!.name, dirRoot: at(outside!.abs), dirRel: "", file: () => open(outside!.name, at(outside!.parent), line), folder: () => openFolder("", at(outside!.abs)) };
     void api
       .filesExist(t.root, [t.rel])
       .catch(() => [t.rel])
@@ -295,7 +299,8 @@ function projectPath(cwd: string, href: string): string | null {
   let rel: string;
   if (abs !== null) {
     const norm = splitLine(abs.replaceAll("\\", "/")).path;
-    const root = `${cwd.replaceAll("\\", "/").replace(/\/+$/, "")}/`;
+    // 远程会话的工作目录是 ssh://<id><路径>，模型写的是远端路径，和路径部分比
+    const root = `${machinePath(cwd).replaceAll("\\", "/").replace(/\/+$/, "")}/`;
     // Windows 的路径不分大小写
     const win = /^[a-z]:\//i.test(root) || root.startsWith("//");
     const head = norm.slice(0, root.length);
@@ -332,7 +337,7 @@ function absolutePath(cwd: string, href: string): { abs: string; parent: string;
     } catch {
       // 不是合法编码，按原样处理
     }
-    p = `${cwd.replace(/[\\/]+$/, "")}/${splitLine(rel).path.replace(/[?#].*$/, "")}`;
+    p = `${machinePath(cwd).replace(/[\\/]+$/, "")}/${splitLine(rel).path.replace(/[?#].*$/, "")}`;
   }
   p = splitLine(p.replaceAll("\\", "/")).path;
   // 开头：Windows 盘符、UNC（//server）或者 /

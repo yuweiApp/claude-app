@@ -11,10 +11,13 @@ import { activeBrowsers, externalNote, externalServers, externalTools, fileSaver
 import { desktopEnabled } from "../config-file.js";
 import { DESKTOP_SERVER, DESKTOP_TOOLS, desktopServer } from "../desktop/tool.js";
 import type { DesktopTarget } from "../shared/types.js";
+import { nativePath, parseRemote } from "../ssh/location.js";
+import { sshHost } from "../ssh/hosts.js";
+import { remoteSpawner } from "../ssh/spawn.js";
 
 export interface SessionLaunch {
   sessionId: string;
-  /** 工作目录，也就是 Claude Code 的项目 */
+  /** 工作目录，也就是 Claude Code 的项目；远程会话是 ssh://<连接 id><远端路径> */
   cwd: string;
   /** true：续接已有会话（从 jsonl 读回历史）；false：用 sessionId 新建 */
   resume: boolean;
@@ -36,6 +39,7 @@ export interface SessionLaunch {
 
 /** 拼 query() 的 Options，见 docs/README.md「会话模型」「模型接入」 */
 export function buildOptions(launch: SessionLaunch): Options {
+  if (parseRemote(launch.cwd)) return buildRemoteOptions(launch);
   // 网页上每个会话都有右侧面板的终端，按工作目录分组：项目会话按项目文件夹，普通会话各有自己的 scratch 目录
   const terminal = launch.terminals ? terminalServer(launch.terminals, launch.cwd) : null;
   // 网页版没有内置浏览器，但会话启动时不知道之后是不是在桌面版里打开，所以都挂上；桌面版没开时调用工具返回错误
@@ -82,6 +86,53 @@ export function buildOptions(launch: SessionLaunch): Options {
     },
     plugins: importedPlugins(),
     ...(launch.skills ? { skills: launch.skills } : {}),
+    systemPrompt: {
+      type: "preset",
+      preset: "claude_code",
+      ...(config.appendSystemPrompt ? { append: config.appendSystemPrompt } : {}),
+    },
+    includePartialMessages: true,
+    abortController: launch.abortController,
+    stderr: launch.stderr,
+  };
+}
+
+/**
+ * 远程会话（docs/README.md「SSH 远程开发」）：claude 经 SSH 在远端跑，模型请求经反向转发回网关。
+ * 工具只挂浏览器（本机的内置浏览器和外部浏览器）和右侧面板的终端（远端的）；插件、技能白名单、设置页的连接器、桌面操作都不给
+ */
+function buildRemoteOptions(launch: SessionLaunch): Options {
+  const remote = parseRemote(launch.cwd)!;
+  const host = sshHost(remote.host);
+  const terminal = launch.terminals ? terminalServer(launch.terminals, launch.cwd) : null;
+  const active = activeBrowsers();
+  const browser = launch.browser
+    ? browserServer(launch.browser, launch.sessionId, launch.resume, externalNote(active), { save: fileSaver(launch.cwd), fact: saveFileFact(launch.cwd) })
+    : null;
+  const external = externalServers(active, launch.sessionId, launch.cwd, launch.resume);
+  const allowedTools = [...(terminal ? TERMINAL_READ_TOOLS : []), ...(browser ? BROWSER_TOOLS : []), ...externalTools(active)];
+  return {
+    cwd: remote.path,
+    // 远端的附件目录（发消息时上传到这里）
+    ...(host.env ? { additionalDirectories: [nativePath(host.env.windows, host.env.attachments)] } : {}),
+    // 只带 Claude Code 相关的变量过去，见 ssh/spawn.ts
+    env: agentEnv(),
+    spawnClaudeCodeProcess: remoteSpawner(host, launch.stderr),
+    ...(launch.resume ? { resume: launch.sessionId } : { sessionId: launch.sessionId }),
+    model: launch.model ?? config.model,
+    ...(launch.effort ? { effort: launch.effort } : {}),
+    permissionMode: launch.permissionMode,
+    allowDangerouslySkipPermissions: true,
+    canUseTool: launch.canUseTool,
+    ...(allowedTools.length ? { allowedTools } : {}),
+    disallowedTools: config.disallowedTools,
+    settingSources: ["user", "project", "local"],
+    settings: { skipWebFetchPreflight: true },
+    mcpServers: {
+      ...(terminal ? { [TERMINAL_SERVER]: terminal } : {}),
+      ...(browser ? { [BROWSER_SERVER]: browser } : {}),
+      ...external,
+    },
     systemPrompt: {
       type: "preset",
       preset: "claude_code",

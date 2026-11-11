@@ -1,3 +1,5 @@
+import { HostIcon } from "./components/HostIcon";
+import { sshName } from "./state/sshConnections";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { GearGlyph, HomeGlyph, IosIcon } from "./components/IosIcon";
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
@@ -7,12 +9,12 @@ import { MentionNamesContext } from "./components/MentionText";
 import { Composer, type ComposerHandle } from "./components/Composer";
 import { Messages } from "./components/Messages";
 import { PermissionCard } from "./components/PermissionCard";
-import { FolderPicker } from "./components/FolderPicker";
+import { EnvPicker, FolderPicker } from "./components/FolderPicker";
 import { ModelPicker, PermissionPicker, resolveModel } from "./components/ComposerPickers";
 import { Sidebar, folderName, groupByFolder, sessionTitle } from "./components/Sidebar";
 import { DEFAULT_SIDEBAR_WIDTH, SidebarResizer } from "./components/SidebarResizer";
 import { SidebarToggle } from "./components/SidebarToggle";
-import { SettingsPage } from "./components/SettingsPage";
+import { SettingsPage, type SettingsSection } from "./components/SettingsPage";
 import { revealInTree, type LineRange } from "./components/FileBrowser";
 import { newPanelState, PanelIcon, SidePanel, withBrowserTab, withFileOpen, withFolderTab, type PanelState } from "./components/SidePanel";
 import { FileLinkContext } from "./components/ReplyMarkdown";
@@ -22,6 +24,7 @@ import { TitleBar } from "./components/TitleBar";
 import { desktop } from "./desktop";
 import { useBrowserTabs } from "./state/browserTabs";
 import { TabPicker } from "./components/TabPicker";
+import { isRemote, machinePath, parseRemote } from "./remote";
 import { DesktopPicker } from "./components/DesktopPicker";
 import { emptyView, reduce } from "./state/session";
 import { AnnotationEditor, AnnotationSelectionButton, AnnotationSessionContext, NotesChip } from "./components/ResponseAnnotations";
@@ -38,6 +41,8 @@ export function App() {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   /** 图标栏上开着的页面：首页（会话）或设置 */
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 打开设置时先显示哪一页（新会话栏的「管理 SSH 连接…」直接到 SSH 连接） */
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>();
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
   const commitSidebarWidth = (width: number) => {
     setSidebarWidth(width);
@@ -208,7 +213,10 @@ export function App() {
             title="设置"
             aria-label="设置"
             aria-current={settingsOpen ? "page" : undefined}
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => {
+              setSettingsSection(undefined);
+              setSettingsOpen(true);
+            }}
           >
             <IosIcon tone="gray" size={28}>
               <GearGlyph />
@@ -216,7 +224,7 @@ export function App() {
           </button>
         </nav>
         {/* 桌面版标题栏上的收起按钮在设置页里收起左边的导航；网页版设置页里没有这个按钮，导航一直显示 */}
-        {settingsOpen && <SettingsPage navCollapsed={!!desktop && collapsed} />}
+        {settingsOpen && <SettingsPage key={settingsSection ?? "default"} initialSection={settingsSection} navCollapsed={!!desktop && collapsed} />}
         {!settingsOpen && !collapsed && (
           <>
             {config && (
@@ -254,11 +262,21 @@ export function App() {
                 cwd={chatCwd}
                 folderPicker={
                   !currentId && (
-                    <FolderPicker
-                      value={newCwd}
-                      recent={groupByFolder(sessions.filter((s) => !s.chat), config.workspaceDir).map((g) => g.cwd)}
-                      onChange={setNewCwd}
-                    />
+                    <>
+                      <EnvPicker
+                        value={newCwd}
+                        onChange={setNewCwd}
+                        onManage={() => {
+                          setSettingsSection("ssh");
+                          setSettingsOpen(true);
+                        }}
+                      />
+                      <FolderPicker
+                        value={newCwd}
+                        recent={groupByFolder(sessions.filter((s) => !s.chat), config.workspaceDir).map((g) => g.cwd)}
+                        onChange={setNewCwd}
+                      />
+                    </>
                   )
                 }
                 config={config}
@@ -389,6 +407,9 @@ function Chat({
   folderPicker,
 }: ChatProps) {
   const [view, dispatch] = useReducer(reduce, undefined, emptyView);
+  /** 远程会话（工作目录是 ssh://…）：输入框上面只留「浏览器」 */
+  const remoteChat = isRemote(cwd);
+  const remoteHost = parseRemote(cwd)?.host ?? null;
   const [newMode, setNewMode] = useState<PermissionMode>(config.permissionMode);
   // 新会话选的模型（模型列表里的 value）和推理强度，发第一条消息时带上
   const [newModel, setNewModel] = useState<string | undefined>();
@@ -575,7 +596,8 @@ function Chat({
             </span>
           )}
           {folder && (
-            <span className="chat-folder" title={cwd ?? undefined}>
+            <span className="chat-folder" title={remoteHost ? `${sshName(remoteHost)}：${machinePath(cwd!)}` : (cwd ?? undefined)}>
+              {remoteHost && <HostIcon hostId={remoteHost} size={12} />}
               {folder}
             </span>
           )}
@@ -589,7 +611,7 @@ function Chat({
         {!sessionId && (
           <div className="empty">
             有什么可以帮你？
-            {cwd && <div className="empty-sub">新会话在 {cwd}</div>}
+            {cwd && <div className="empty-sub">新会话在 {remoteHost ? `${sshName(remoteHost)}${parseRemote(cwd)!.path ? `：${machinePath(cwd)}` : ""}` : cwd}</div>}
           </div>
         )}
         <AnnotationSessionContext.Provider value={sessionId}>
@@ -627,8 +649,9 @@ function Chat({
         top={
           <>
             {folderPicker}
-            <CapabilityPicker kind="技能" items={capabilities?.skills.filter((s) => s.enabled && !s.builtin) ?? []} onPick={(name) => composerRef.current?.mentionSkill(name)} />
-            <CapabilityPicker kind="插件" items={capabilities?.plugins.filter((p) => !p.builtin) ?? []} onPick={(name) => composerRef.current?.mention(name)} />
+            {/* 远程会话（SSH）只留「浏览器」：技能、插件、Computer Use 远端都不挂 */}
+            {!remoteChat && <CapabilityPicker kind="技能" items={capabilities?.skills.filter((s) => s.enabled && !s.builtin) ?? []} onPick={(name) => composerRef.current?.mentionSkill(name)} />}
+            {!remoteChat && <CapabilityPicker kind="插件" items={capabilities?.plugins.filter((p) => !p.builtin) ?? []} onPick={(name) => composerRef.current?.mention(name)} />}
             <TabPicker
               inapp={browserTabs}
               external={externalBrowsers}
@@ -636,7 +659,7 @@ function Chat({
               onPickBrowser={(b) => composerRef.current?.mentionBrowser(b?.name ?? "内置浏览器")}
             />
             <DesktopPicker
-              enabled={config.desktop}
+              enabled={config.desktop && !remoteChat}
               onPick={(w) => composerRef.current?.mentionTab(w.title || w.app, `window:${w.id}`, "desktop", w.app)}
               onPickDesktop={() => composerRef.current?.mentionBrowser("桌面")}
             />

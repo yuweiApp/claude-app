@@ -14,10 +14,6 @@ tools:
   alwaysLoad:
     # 内置浏览器（mcp__inapp__）和所有外部浏览器
     - mcp__*__browser_run_code
-    - mcp__*__browser_snapshot
-    - mcp__*__browser_take_screenshot
-    - mcp__*__browser_tabs
-    - mcp__inapp__browser_keep_tab
     # 桌面操作（下面 desktop.enabled 打开时才有）
     - mcp__desktop__run_code
 
@@ -68,6 +64,16 @@ connectors:
     - com.digitalocean/mcp
     - com.paypal.mcp/mcp
     - com.cloudflare.mcp/mcp
+
+# SSH 远程开发：远程主机第一次连接（或网关升级 SDK 后）要装和网关 SDK 同版本的 Claude Code，
+# 即 npm 上的 @anthropic-ai/claude-agent-sdk-<平台> 平台包（约 150 MB）。下面是下载它的源，按顺序试：
+# 包信息（下载地址、sha512）取第一个能取到的；远端自己下载、远端上不了网时网关下载，都按这个顺序换源，sha512 对不上的不用。
+# npmmirror（淘宝镜像）和官方几乎同时同步；华为云 https://mirrors.huaweicloud.com/repository/npm、
+# 腾讯云 https://mirrors.cloud.tencent.com/npm 也有这些包。公司内网的私有源（Verdaccio、Nexus 等）也可以写在这里。
+ssh:
+  registries:
+    - https://registry.npmmirror.com
+    - https://registry.npmjs.org
 
 # 插件市场（设置页「插件」→「插件市场」），交给 Claude Code 自己克隆、安装（要有 git），见 docs/README.md「插件市场」。
 # 每项是市场的 git 仓库地址，或 Claude Code 内置市场的名称。git 仓库写完整的 https 地址：GitHub 的简写（owner/repo）Claude Code 会用 SSH 克隆，没配 SSH 密钥的电脑会失败。
