@@ -250,8 +250,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | GET | `/files/raw?cwd=&path=` | 图片原文件（只允许图片类型，带禁脚本的 CSP） |
 | GET | `/terminals?cwd=` | 右侧面板的终端列表（刷新页面后把还开着的补成标签页） |
 | POST | `/terminals` | 开终端 `{ cwd, cols, rows }`：网关机器上的 pty（`@lydell/node-pty`，带各平台预编译包），shell 是 `$SHELL`，Windows 是 PowerShell |
-| GET | `/terminals/:id/stream` | 终端输出（SSE）：连上先给保留的输出（最多 512K 字符）还原屏幕，之后实时推 `data`、`exit` |
-| POST | `/terminals/:id/input`、`/terminals/:id/resize` | 输入 `{ data }`（网页按顺序发，前一个回来才发下一个）、改大小 `{ cols, rows }` |
+| GET（WebSocket） | `/terminals/:id/socket` | 终端的输出、输入、改大小走这一条：连上先给保留的输出（最多 512K 字符）还原屏幕，之后实时推 `data`、`exit`（终端不存在时推 `error` 后断开）；网页发 `{ type: "input", data }`、`{ type: "resize", cols, rows }`。不用 SSE：每个 SSE 占一个 HTTP 连接，浏览器对同一个源最多 6 个，终端开到 5 个（加上会话事件流）其他请求（上传、发消息）就全在排队。网页断线 2 秒后重连，连上后补发大小 |
 | DELETE | `/terminals/:id` | 关终端（关标签页时）；网关退出时全部结束 |
 | GET（WebSocket） | `/browser/host` | 桌面版外壳连上来，转发各会话 Playwright 的 CDP 消息（见第 12 节） |
 | GET | `/external/tabs` | 启用着的外部浏览器（用户的 Chrome、Edge 等）和交给 Playwright 的标签页，输入框 @ 引用用（见第 13 节） |

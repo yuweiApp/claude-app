@@ -379,8 +379,11 @@ export interface TerminalInfo {
   activeAt: number;
 }
 
-/** GET /terminals/:id/stream 推的事件：连上时先来一条 data 是已有的输出 */
-export type TerminalEvent = { type: "data"; data: string } | { type: "exit"; code: number };
+/** 终端的 WebSocket（GET /terminals/:id/socket）网关发的消息：连上时先来一条 data 是已有的输出；终端不存在时发 error 后断开 */
+export type TerminalEvent = { type: "data"; data: string } | { type: "exit"; code: number } | { type: "error"; message: string };
+
+/** 终端的 WebSocket 网页发的消息：输入、改大小 */
+export type TerminalClientMessage = { type: "input"; data: string } | { type: "resize"; cols: number; rows: number };
 
 /** GET /files/read：右侧面板查看文件 */
 export interface FileContent {

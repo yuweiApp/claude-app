@@ -98,6 +98,8 @@ export function buildApp(): App {
 
   // 超过大小的文件流会被截断（file.truncated），由 saveUpload 删掉并报错
   void app.register(multipart, { limits: { fileSize: config.maxUploadMb * 1024 * 1024, files: 20 } });
+  // WebSocket 路由（终端、桌面版外壳）要在这个插件加载之后声明，所以放在各路由前面
+  void app.register(websocket);
 
   sessionRoutes(app, sessions, hub);
   uploadRoutes(app);
@@ -118,7 +120,6 @@ export function buildApp(): App {
   });
 
   // 桌面版外壳连上来（内置浏览器），见 browser/host.ts 和 desktop/src/browser/bridge.ts
-  void app.register(websocket);
   void app.register(async (scoped) => {
     scoped.get("/browser/host", { websocket: true }, (socket) => {
       app.log.info("桌面版的内置浏览器已连上");

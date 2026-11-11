@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalEvent, TerminalInfo };
+export type { SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -26,7 +26,7 @@ export class RequestError extends Error {
   }
 }
 
-/** 浏览器直接请求的地址（EventSource、<img>）带不了请求头，令牌放进 ?token= */
+/** 浏览器直接请求的地址（EventSource、WebSocket、<img>）带不了请求头，令牌放进 ?token= */
 export function withToken(path: string): string {
   const t = token();
   if (!t) return BASE + path;
@@ -120,10 +120,13 @@ export const api = {
   terminals: (cwd: string) => request<{ terminals: TerminalInfo[] }>("GET", `/terminals?${q({ cwd })}`).then((r) => r.terminals),
   createTerminal: (cwd: string, cols: number, rows: number) =>
     request<{ terminal: TerminalInfo }>("POST", "/terminals", { cwd, cols, rows }).then((r) => r.terminal),
-  terminalInput: (id: string, data: string) => request("POST", `/terminals/${id}/input`, { data }),
-  resizeTerminal: (id: string, cols: number, rows: number) => request("POST", `/terminals/${id}/resize`, { cols, rows }),
   closeTerminal: (id: string) => request("DELETE", `/terminals/${id}`),
-  terminalStreamUrl: (id: string) => withToken(`/terminals/${id}/stream`),
+  /** 终端的 WebSocket 地址（输出、输入、改大小） */
+  terminalSocketUrl: (id: string) => {
+    const url = new URL(withToken(`/terminals/${id}/socket`), location.href);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return url.toString();
+  },
   folders: (path?: string) => request<FolderListing>("GET", `/folders${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   /** 设置页「SSH 连接」 */
   sshConnections: () => request<{ connections: SshConnectionInfo[] }>("GET", "/ssh/connections").then((r) => r.connections),
