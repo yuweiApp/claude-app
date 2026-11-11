@@ -570,6 +570,9 @@ main {
 @keyframes working-icon-pulse { 0%, 100% { opacity: 0.45; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
 @keyframes working-label-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 @media (prefers-reduced-motion: reduce) { .working .step-icon-glyph, .working-label { animation: none; } }
+/* 一轮结束后还在跑的后台任务：说明太长时截断 */
+.background-working { min-width: 0; }
+.background-working .working-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 工具调用：一行摘要，点击展开，鼠标移上去出现复制按钮（参照 codex-app-server 的 .step / .shell / .copy-btn） */
 .step, .step-group { min-width: 0; }
@@ -687,7 +690,6 @@ main {
 .msg-action:hover { background: var(--panel); color: var(--text); }
 @media (hover: none) { .msg-actions { opacity: 1; } }
 .notice-line { color: var(--muted); font-size: 12px; }
-.interrupted-line { color: var(--muted); font-size: 12px; text-align: center; margin: 4px 0; }
 .model-line { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; margin: 6px 0; white-space: nowrap; }
 .model-line::before, .model-line::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 .model-line::before { margin-right: 4px; }

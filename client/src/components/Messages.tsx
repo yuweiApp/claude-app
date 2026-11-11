@@ -229,6 +229,33 @@ export function Messages({ view }: { view: SessionView }) {
       )}
       {/* 换了模型还没发消息：先临时显示，新模型回复后由那条消息补出正式的一行 */}
       {!busy && view.model && view.shownModel && view.model !== view.shownModel && <ModelLine from={view.shownModel} to={view.model} />}
+      {view.state === "idle" && <BackgroundWorking tasks={view.backgroundTasks} />}
+    </div>
+  );
+}
+
+/**
+ * 这一轮已经结束、还有后台任务（子代理、后台命令等）在跑：任务结束时的通知会唤起新的一轮，
+ * 中间这段对话里没有别的动静，在最后显示一行运行中的任务，图标和「思考中…」一样呼吸
+ */
+function BackgroundWorking({ tasks }: { tasks: SessionView["backgroundTasks"] }) {
+  const running = tasks.filter((t) => t.status === "running");
+  if (!running.length) return null;
+  const first = running[0]!;
+  const label =
+    running.length > 1
+      ? `${running.length} 个后台任务运行中`
+      : first.type === "local_agent"
+        ? `子代理在后台运行：${shortLine(first.description)}`
+        : `后台任务运行中：${shortLine(first.description)}`;
+  const since = Math.min(...running.map((t) => t.startedAt));
+  return (
+    <div className="working background-working" title={running.map((t) => t.description).join("\n")}>
+      <ToolIcon icon="✳" running />
+      <span className="working-label">{label}</span>
+      <span className="step-time">
+        <Elapsed since={since} />
+      </span>
     </div>
   );
 }
@@ -452,7 +479,12 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
     case "notice":
       return <div className="notice-line">{item.text}</div>;
     case "interrupted":
-      return <div className="interrupted-line">已中断</div>;
+      // 同换模型的提示：居中一行，两边是分割线
+      return (
+        <div className="model-line">
+          <span>已中断</span>
+        </div>
+      );
     case "model":
       return <ModelLine from={item.from} to={item.to} />;
     case "task":

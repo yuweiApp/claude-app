@@ -174,8 +174,21 @@ export function App() {
     refresh();
   };
 
+  // 定时刷新列表失败留下的报错（如网关重启那几秒的 502）：之后刷新成功了就清掉，别的报错不动
+  const refreshError = useRef<string | null>(null);
   const refresh = useCallback(() => {
-    api.listSessions().then(setSessions, (e: Error) => setError(e.message));
+    api.listSessions().then(
+      (list) => {
+        setSessions(list);
+        const stale = refreshError.current;
+        refreshError.current = null;
+        if (stale) setError((current) => (current === stale ? null : current));
+      },
+      (e: Error) => {
+        refreshError.current = e.message;
+        setError(e.message);
+      },
+    );
   }, []);
 
   useEffect(() => {

@@ -152,6 +152,11 @@ export class AgentSession {
     await this.query.interrupt();
   }
 
+  /** 有后台子代理在跑：一轮结束后会话是 idle，但子进程关掉的话子代理也没了 */
+  get agentsRunning(): boolean {
+    return this.tasks.list().some((t) => t.status === "running" && t.type === "local_agent");
+  }
+
   /** 停止后台任务，之后 SDK 会发 status 为 stopped 的 task_notification */
   async stopTask(taskId: string): Promise<void> {
     await this.query.stopTask(taskId);
@@ -275,8 +280,9 @@ export class AgentSession {
           if (this.state === "starting") this.setState("idle");
           else this.publishState();
         }
-        // 排队的消息可能在上一轮的 result 之后直接开始下一轮
-        if ((message.type === "assistant" || message.type === "stream_event") && this.state === "idle") {
+        // 排队的消息可能在上一轮的 result 之后直接开始下一轮。只看主线程的：一轮结束后后台子代理还在出消息，
+        // 那不是新的一轮，算进去的话会话一直显示运行中、对话里却没有进行中的一轮（直到通知唤起新的一轮）
+        if ((message.type === "assistant" || message.type === "stream_event") && message.parent_tool_use_id === null && this.state === "idle") {
           this.setState("running");
         }
         // 后台任务通知唤起的新一轮：发出模型请求时就算开始（见 wakeAt）

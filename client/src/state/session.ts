@@ -324,7 +324,8 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
           finishCompact(view, "done");
         } else pushItem(view, null, { kind: "compact", uuid: message.uuid, at: Date.now(), status: "done", awaitingSummary: true });
       }
-      if (message.subtype === "task_notification" && !message.skip_transcript) {
+      // 子代理里的工具调用（它自己的 Bash 等）结束也发通知，但那不会开始主线程的新一轮
+      if (message.subtype === "task_notification" && !message.skip_transcript && !subagentCall(view, message.tool_use_id)) {
         view.pendingTasks = [...view.pendingTasks, liveTaskItem(view, message)];
       }
       if (message.subtype === "status" && message.status === "requesting") {
@@ -626,6 +627,14 @@ function liveTaskItem(view: SessionView, message: { task_id: string; tool_use_id
   }
   if (description === undefined) return item;
   return { ...item, text: `Agent "${description}" finished`, ...(message.summary ? { result: message.summary } : {}) };
+}
+
+/** 这个工具调用是子代理发出的（在某个子代理的消息里） */
+function subagentCall(view: SessionView, toolUseId: string | undefined): boolean {
+  if (!toolUseId) return false;
+  return Object.values(view.children).some((items) =>
+    items.some((it) => it.kind === "assistant" && it.blocks.some((b) => b.type === "tool_use" && b.id === toolUseId)),
+  );
 }
 
 /** 历史里后台任务完成的通知：Claude Code 用它开始新一轮时存成一条 user 消息，内容是 <task-notification> 段 */
