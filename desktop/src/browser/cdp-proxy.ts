@@ -221,11 +221,11 @@ export class CdpProxy {
         return {};
       // 所有会话的标签页共用一个 Electron 会话，cookie 也是共用的
       case "Storage.getCookies":
-        return getCookies(this.views.browserSession);
+        return getCookies(this.views.browserSessionOf(this.sessionId));
       case "Storage.setCookies":
-        return setCookies(this.views.browserSession, params);
+        return setCookies(this.views.browserSessionOf(this.sessionId), params);
       case "Storage.clearCookies":
-        return clearCookies(this.views.browserSession);
+        return clearCookies(this.views.browserSessionOf(this.sessionId));
       default:
         // 下载设置、权限重置、关闭浏览器等：这里没有对应的东西，当作成功
         return {};

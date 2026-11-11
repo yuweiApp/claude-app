@@ -44,13 +44,21 @@ export const RUNTIME_FACTS = [
 ].join("\n");
 
 /** files：saveFile 的说明（external.ts 的 saveFileFact），会话有工作目录时才有 */
-const instructions = (saveFileFact?: string) => [
+/** remote：远程会话所在主机的名称（docs/README.md「SSH 远程开发」） */
+const instructions = (saveFileFact?: string, remote?: string) => [
   "内置浏览器：用户界面右侧面板里的真实网页，用户能看到，也能自己操作。这些工具只能看到这个会话自己的标签页。",
+  ...(remote
+    ? [
+        `这个会话的工作目录在远程主机「${remote}」上（经 SSH），内置浏览器在用户的电脑上：网址里的 localhost、127.0.0.1、[::1]、*.localhost 经 SSH 连到「${remote}」上的同一个地址和端口（「${remote}」上只监听 127.0.0.1 或 ::1 的服务也能访问），其他网址从用户的电脑访问。` +
+          `这个会话的标签页的 Cookie、登录状态在「${remote}」专用的一份里，和用户电脑上本机会话的标签页不共用。`,
+      ]
+    : []),
   RUNTIME_FACTS,
   "标签页：用 context.newPage() 开的是临时标签页，一轮结束时自动关闭（用户当时正在面板里看着的除外）；关掉后用户在面板里看不到它，下一轮它也不在 context.pages() 里，page 换成剩下的最后一个标签页，没有就是 undefined。" +
     "全局函数 await keepTab() 把你最近操作的那个标签页留下：之后不再自动关闭，用户在面板里能看到、能操作，下一轮还在 context.pages() 里，直到用户关掉或会话被删除；返回 { title, url }，没有你操作过的标签页时返回 null。用户开的不会自动关。" +
     "标签页被新开、关闭、跳转时，下一次 browser_run_code 的结果里会列出变化和是谁做的（你、用户、网页自己、一轮结束）。",
-  "下载：网页里的下载（包括脚本触发的）不弹「另存为」，直接存进这个会话的工作目录，同名时文件名后加 (1)、(2)；Playwright 的 download 事件照常触发，download.suggestedFilename() 是实际存下的文件名，download.path() 是 Playwright 临时目录里的一份。" +
+  (remote ? "下载：网页里的下载（包括脚本触发的）不弹「另存为」，存进用户电脑上系统的「下载」文件夹（不在远端的工作目录里），同名时文件名后加 (1)、(2)；" : "下载：网页里的下载（包括脚本触发的）不弹「另存为」，直接存进这个会话的工作目录，同名时文件名后加 (1)、(2)；") +
+    "Playwright 的 download 事件照常触发，download.suggestedFilename() 是实际存下的文件名，download.path() 是 Playwright 临时目录里的一份。" +
     "全局函数 await downloads() 返回这个会话里的下载（进行中的和最近结束的，先开始的在前），每项有 filename、path、url（data: 地址只有类型和长度）、state（progressing / completed / cancelled / interrupted）、paused、receivedBytes、totalBytes（不知道时是 0）、bytesPerSecond、startTime（毫秒时间戳），是调用那一刻的数据。" +
       (saveFileFact ?? ""),
   "用户消息里的 @内置浏览器 指这个浏览器，@[标题](网址) 指这里的一个标签页。",
@@ -227,10 +235,12 @@ export function browserServer(
   resumed = false,
   externalNote = "",
   files?: { save: (name: string, data: unknown) => Promise<string>; fact: string },
+  /** 远程会话所在主机的名称 */
+  remote?: string,
 ): McpSdkServerConfigWithInstance {
   return browserMcpServer({
     name: BROWSER_SERVER,
-    instructions: instructions(files?.fact) + externalNote,
+    instructions: instructions(files?.fact, remote) + externalNote,
     repl: replFor(`${BROWSER_SERVER}:${sessionId}`, () => new WorkerRepl(host, sessionId, files?.save), resumed),
     temporaryTabs: () => host.temporaryTabs(sessionId),
   });

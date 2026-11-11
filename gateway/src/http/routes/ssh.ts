@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { SshConnectionInput } from "../../shared/types.js";
 import { addConnection, getConnection, removeConnection, updateConnection } from "../../ssh/connections.js";
-import { connectionInfos, dropHost, sshHost } from "../../ssh/hosts.js";
+import { connectionInfos, dropHost, existingHost, sshHost } from "../../ssh/hosts.js";
 import { configHosts } from "../../ssh/ssh-config.js";
 import { forgetHost } from "../../ssh/transcripts.js";
 
@@ -28,6 +28,8 @@ export function sshRoutes(app: FastifyInstance): void {
     const conn = updateConnection(req.params.id, req.body ?? {});
     // 主机、端口、密钥换了：断开，下次按新配置连
     if (before && (before.host !== conn.host || before.port !== conn.port || before.identityFile !== conn.identityFile)) dropHost(conn.id);
+    // 只改了反向转发：连着时马上按新的开、关
+    else if (existingHost(conn.id)?.isReady) await existingHost(conn.id)!.syncForwards().catch(() => undefined);
     return { connection: sshHost(conn.id).info() };
   });
 

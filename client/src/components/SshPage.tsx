@@ -151,6 +151,16 @@ function ConnectionRow({ conn: c, onEdit, onRemove, onError }: { conn: SshConnec
             </>
           )}
         </div>
+        {c.status === "ready" && c.forwards && c.forwards.length > 0 && (
+          <ul className="ssh-forwards">
+            {c.forwards.map((f) => (
+              <li key={`${f.remote}-${f.local}`} className={f.error ? "failed" : undefined} title={f.error}>
+                <span className="mono">远端 {f.remote}</span> → <span className="mono">本机 {f.local}</span>
+                {f.error ? `：${f.error}` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
         {c.status === "error" && c.hostKey && (
           <div className="ssh-hostkey">
             <p>
@@ -210,6 +220,7 @@ function ConnectionDialog({ conn, onClose, onSaved }: { conn: SshConnectionInfo 
   const [port, setPort] = useState(conn?.port ? String(conn.port) : "");
   const [identityFile, setIdentityFile] = useState(conn?.identityFile ?? "");
   const [startDirectory, setStartDirectory] = useState(conn?.startDirectory ?? "");
+  const [forwards, setForwards] = useState((conn?.remoteForwards ?? []).join("\n"));
   const [configHosts, setConfigHosts] = useState<SshConfigHost[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -228,6 +239,10 @@ function ConnectionDialog({ conn, onClose, onSaved }: { conn: SshConnectionInfo 
       ...(port.trim() ? { port: Number(port) } : {}),
       identityFile: identityFile.trim(),
       startDirectory: startDirectory.trim(),
+      remoteForwards: forwards
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean),
     };
     (conn ? api.updateSshConnection(conn.id, input) : api.addSshConnection(input))
       .then(
@@ -289,6 +304,17 @@ function ConnectionDialog({ conn, onClose, onSaved }: { conn: SshConnectionInfo 
           默认目录（可选）
           <input className="mono" value={startDirectory} onChange={(e) => setStartDirectory(e.target.value)} placeholder="选择文件夹时先打开的远端目录，默认是远端的用户目录" />
         </label>
+        <label>
+          反向转发（可选）
+          <textarea
+            className="mono"
+            rows={2}
+            value={forwards}
+            onChange={(e) => setForwards(e.target.value)}
+            placeholder={"一行一条，同 ssh -R：远端端口:本机地址:本机端口\n5432:127.0.0.1:5432"}
+          />
+        </label>
+        <p className="mcp-hint">反向转发让远端连自己的端口时连到这台电脑上的服务（比如本机的数据库）；~/.ssh/config 里写的 RemoteForward 也照样生效。</p>
         <p className="mcp-hint">只保存私钥文件的路径，不保存私钥内容。用密钥、ssh-agent 都登录不了时，连接时再输入密码（不保存）。</p>
         {error && <div className="settings-error">{error}</div>}
         <div className="dialog-actions">

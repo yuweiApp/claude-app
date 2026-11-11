@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import path from "node:path";
 import { config } from "../config.js";
 import type { SshConnectionInput } from "../shared/types.js";
-import { configHosts } from "./ssh-config.js";
+import { configHosts, parseForwardSpec } from "./ssh-config.js";
 
 /** 连上过之后记下的远端信息：会话列表在没连上时也要认出远端的普通会话（scratch 目录在远端用户目录下） */
 export interface RemoteFacts {
@@ -106,12 +106,16 @@ export function normalizeInput(input: Partial<SshConnectionInput>): SshConnectio
   if (startDirectory && !startDirectory.startsWith("/") && !startDirectory.startsWith("~") && !/^[A-Za-z]:[\\/]/.test(startDirectory)) {
     throw new SshConfigError("默认目录要是绝对路径或 ~ 开头");
   }
+  const remoteForwards = [...new Set((Array.isArray(input.remoteForwards) ? input.remoteForwards : []).map((f) => String(f).trim()).filter(Boolean))];
+  const bad = remoteForwards.find((f) => !parseForwardSpec(f));
+  if (bad) throw new SshConfigError(`反向转发「${bad}」的格式不对：同 ssh -R，写成 远端端口:本机地址:本机端口（如 5432:127.0.0.1:5432），要指定远端地址时在最前面加上（如 0.0.0.0:8080:127.0.0.1:80）`);
   return {
     name: input.name?.trim() || host,
     host,
     ...(port ? { port } : {}),
     ...(identityFile ? { identityFile } : {}),
     ...(startDirectory ? { startDirectory } : {}),
+    ...(remoteForwards.length ? { remoteForwards } : {}),
   };
 }
 

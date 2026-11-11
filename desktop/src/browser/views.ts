@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, clipboard, Menu, session, WebContentsView, type DownloadItem, type MenuItemConstructorOptions, type Rectangle, type Session, type WebContents } from "electron";
 import { BrowserHistory } from "./history.js";
+import type { SshProxies } from "./ssh-proxy.js";
 
 /**
  * 内置浏览器的标签页：每个标签页一个原生网页视图（WebContentsView），属于一个对话会话。
@@ -129,6 +130,8 @@ const MAX_DOWNLOADS = 20;
 interface SavedTab {
   key: string;
   sessionId: string;
+  /** 远程会话的 SSH 连接 id（标签页在这台主机的分区里），本机会话是 null；以前存的没有这一项 */
+  remote?: string | null;
   url: string;
   title: string;
   openedBy: "user" | "agent";
@@ -174,9 +177,9 @@ function sniffImage(b: Buffer): string | null {
   return null;
 }
 
-async function fetchInSession(url: string): Promise<{ type: string; bytes: Buffer } | null> {
+async function fetchInSession(url: string, ses: Session): Promise<{ type: string; bytes: Buffer } | null> {
   try {
-    const res = await session.fromPartition(PARTITION).fetch(url, { signal: AbortSignal.timeout(8000) });
+    const res = await ses.fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
     return iconOf(res.headers.get("content-type") ?? "", Buffer.from(await res.arrayBuffer()));
   } catch {
@@ -227,6 +230,11 @@ export interface BrowserViewsEvents {
 }
 
 const PARTITION = "persist:claude-browser";
+/**
+ * 远程会话的标签页：每台主机一个分区，分区的代理让 localhost 指那台主机（ssh-proxy.ts）。
+ * 登录状态、cookie 也和本机会话的分开（两边的 localhost:3000 本来就是不同的网站）
+ */
+const remotePartition = (remote: string) => `${PARTITION}-ssh-${remote}`;
 const isMac = process.platform === "darwin";
 
 /** 去掉 Electron 和应用名，和 Chrome 的一样（Google 等网站看到 Electron 会拒绝登录） */
@@ -236,6 +244,12 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   private readonly tabs = new Map<string, Tab>();
   /** 会话的工作目录（网关告诉的，bridge.ts），这个会话的标签页里的下载存到这里 */
   private readonly sessionDirs = new Map<string, string>();
+  /** 会话是不是远程的（网关告诉的）：SSH 连接 id，本机会话是 null；没有这一项是还不知道 */
+  private readonly sessionRemotes = new Map<string, string | null>();
+  /** 问网关一个会话是不是远程的（bridge.ts 设上）；网关没连上时是 null */
+  private remoteResolver: ((sessionId: string) => Promise<string | null>) | null = null;
+  /** 远程主机的分区：设好代理才能开标签页 */
+  private readonly remoteSessions = new Map<string, Promise<Session>>();
   /** 下载（guid 见 DownloadEvent）：进行中的和结束了的，按开始的先后；cancelDownload、downloadsOf 用，每个会话只留最近 MAX_DOWNLOADS 个 */
   private readonly downloads = new Map<string, { sessionId: string | null; item: DownloadItem; path: string }>();
   private park: BrowserWindow | null = null;
@@ -255,14 +269,42 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   /** 退出中：窗口关掉时视图跟着销毁，这些关闭不算，不再存 */
   private frozen = false;
 
-  constructor(private readonly mainWindow: () => BrowserWindow | undefined) {
+  constructor(
+    private readonly mainWindow: () => BrowserWindow | undefined,
+    private readonly proxies: SshProxies,
+  ) {
     super();
     for (const event of ["created", "changed", "closed"] as const) this.on(event, () => this.scheduleSave());
   }
 
-  /** 所有标签页共用的 Electron 会话（cookie、缓存都在这里），CDP 代理的 Storage.*Cookies 用它 */
-  get browserSession(): Session {
-    return session.fromPartition(PARTITION);
+  /** 一个会话的标签页所在的 Electron 会话（cookie、缓存都在这里）：本机会话共用一个，远程会话按主机分，CDP 代理的 Storage.*Cookies 用它 */
+  browserSessionOf(sessionId: string): Session {
+    const remote = this.sessionRemotes.get(sessionId);
+    return session.fromPartition(remote ? remotePartition(remote) : PARTITION);
+  }
+
+  /** 远程主机的分区：第一次用时设好（同本机分区的设置，再加上代理） */
+  private partitionFor(remote: string | null): Promise<string> {
+    if (!remote) return Promise.resolve(PARTITION);
+    let ready = this.remoteSessions.get(remote);
+    if (!ready) {
+      const ses = session.fromPartition(remotePartition(remote));
+      this.setupSession(ses);
+      ready = this.proxies.apply(ses, remote).then(() => ses);
+      ready.catch(() => this.remoteSessions.delete(remote));
+      this.remoteSessions.set(remote, ready);
+    }
+    return ready.then(() => remotePartition(remote));
+  }
+
+  /** 会话是不是远程的：知道的直接返回，不知道的问网关（问不到按本机会话） */
+  private async remoteOf(sessionId: string): Promise<string | null> {
+    if (this.sessionRemotes.has(sessionId)) return this.sessionRemotes.get(sessionId)!;
+    return (await this.remoteResolver?.(sessionId).catch(() => null)) ?? null;
+  }
+
+  setRemoteResolver(resolver: (sessionId: string) => Promise<string | null>): void {
+    this.remoteResolver = resolver;
   }
 
   /** app ready 之后调用一次 */
@@ -307,7 +349,9 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
       for (const s of saved) {
         if (!s || typeof s.sessionId !== "string" || typeof s.key !== "string") continue;
         try {
-          const view = this.newView();
+          // 以前存的没有 remote：按本机会话恢复，之后新开的标签页再问网关
+          if (s.remote !== undefined) this.sessionRemotes.set(s.sessionId, typeof s.remote === "string" ? s.remote : null);
+          const view = this.newView(await this.partitionFor(typeof s.remote === "string" ? s.remote : null));
           await view.webContents.loadURL("about:blank");
           const tab = await this.register(view, s.sessionId, s.openedBy === "agent" ? "agent" : "user", undefined, { key: s.key, kept: s.kept !== false });
           tab.title = s.title ?? "";
@@ -330,7 +374,15 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
 
   private save(): void {
     if (this.frozen) return;
-    const list: SavedTab[] = [...this.tabs.values()].map((t) => ({ key: t.key, sessionId: t.sessionId, url: t.pendingUrl || t.url, title: t.title, openedBy: t.openedBy, kept: t.kept }));
+    const list: SavedTab[] = [...this.tabs.values()].map((t) => ({
+      key: t.key,
+      sessionId: t.sessionId,
+      ...(this.sessionRemotes.has(t.sessionId) ? { remote: this.sessionRemotes.get(t.sessionId) ?? null } : {}),
+      url: t.pendingUrl || t.url,
+      title: t.title,
+      openedBy: t.openedBy,
+      kept: t.kept,
+    }));
     try {
       const tmp = `${this.tabsFile}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify(list));
@@ -340,10 +392,10 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     }
   }
 
-  private newView(): WebContentsView {
+  private newView(partition: string): WebContentsView {
     const view = new WebContentsView({
       // nodeIntegrationInSubFrames：预加载脚本（tab-preload.cts）在 iframe 里也跑；沙箱照开，网页拿不到 Node
-      webPreferences: { partition: PARTITION, backgroundThrottling: false, sandbox: true, contextIsolation: true, nodeIntegrationInSubFrames: true },
+      webPreferences: { partition, backgroundThrottling: false, sandbox: true, contextIsolation: true, nodeIntegrationInSubFrames: true },
     });
     this.park!.contentView.addChildView(view);
     view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
@@ -360,7 +412,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
 
   /** 新建标签页；created 事件在返回之前发出（CDP 代理靠这个顺序先报标签页、再回 createTarget） */
   async create(sessionId: string, url: string | undefined, openedBy: "user" | "agent"): Promise<Tab> {
-    const view = this.newView();
+    const view = this.newView(await this.partitionFor(await this.remoteOf(sessionId)));
     await view.webContents.loadURL("about:blank");
     const tab = await this.register(view, sessionId, openedBy);
     this.emitTabEvent(tab, "opened", openedBy, url);
@@ -426,6 +478,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   closeSession(sessionId: string): void {
     for (const tab of this.list(sessionId)) this.close(tab.id, "user");
     this.sessionDirs.delete(sessionId);
+    this.sessionRemotes.delete(sessionId);
     for (const [guid, d] of this.downloads) if (d.sessionId === sessionId && d.item.getState() !== "progressing") this.downloads.delete(guid);
   }
 
@@ -749,7 +802,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     if (url.startsWith("data:image/")) return url;
     const cached = this.favicons.get(url);
     if (cached !== undefined) return cached;
-    const icon = (await fetchInSession(url)) ?? (await fetchInPage(url, wc));
+    const icon = (await fetchInSession(url, wc.session)) ?? (await fetchInPage(url, wc));
     let result: string | null = null;
     if (icon) {
       const id = String(this.nextFaviconId++);
@@ -773,14 +826,19 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     return new Response(new Uint8Array(icon.bytes), { headers: { "content-type": icon.type, "cache-control": "max-age=86400" } });
   }
 
-  /** 记下会话的工作目录（下载存到这里）；null 是网关不知道这个会话，之后存进系统的「下载」文件夹 */
-  setSessionDir(sessionId: string, dir: string | null): void {
+  /**
+   * 网关告诉的会话信息：dir 是工作目录（下载存到这里；null 是网关不知道这个会话或者是远程会话，存进系统的「下载」文件夹），
+   * remote 是远程会话的 SSH 连接 id
+   */
+  setSessionInfo(sessionId: string, dir: string | null, remote: string | null): void {
     if (dir) this.sessionDirs.set(sessionId, dir);
     else this.sessionDirs.delete(sessionId);
+    this.sessionRemotes.set(sessionId, remote);
   }
 
-  hasSessionDir(sessionId: string): boolean {
-    return this.sessionDirs.has(sessionId);
+  /** 已经问过网关这个会话的信息 */
+  knowsSession(sessionId: string): boolean {
+    return this.sessionRemotes.has(sessionId);
   }
 
   /** 取消一个进行中的下载（Playwright 的 download.cancel()）；已经结束的不管 */

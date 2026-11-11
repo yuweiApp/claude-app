@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Item, SessionView, TaskItem } from "../state/session";
+import type { AgentItem, Item, SessionView, TaskItem } from "../state/session";
 import { Attachments } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { CopyAction, MessageActions } from "./MessageActions";
@@ -25,6 +25,8 @@ interface Turn {
   key: string;
   user: UserItem | null;
   task: TaskItem | null;
+  /** 其他 agent 发来的消息开始的一轮 */
+  agent: AgentItem | null;
   /** 这一段从压缩上下文开始 */
   compact: CompactItem | null;
   body: Item[];
@@ -48,15 +50,16 @@ function splitTurns(items: Item[]): Turn[] {
     if (item.kind === "result") {
       results.push(item);
       midTool = false;
-    } else if (item.kind === "user" || item.kind === "task" || item.kind === "compact" || !turns.length) {
-      const continued = (item.kind === "user" && midTool && !turnStarts.has(item.uuid)) || (item.kind === "compact" && turns.length > 0);
+    } else if (item.kind === "user" || item.kind === "task" || item.kind === "agent" || item.kind === "compact" || !turns.length) {
+      const continued = ((item.kind === "user" || item.kind === "agent") && midTool && !turnStarts.has(item.uuid)) || (item.kind === "compact" && turns.length > 0);
       if (continued) turns.at(-1)!.nextAt = item.at;
       turns.push({
         key: item.uuid,
         user: item.kind === "user" ? item : null,
         task: item.kind === "task" ? item : null,
+        agent: item.kind === "agent" ? item : null,
         compact: item.kind === "compact" ? item : null,
-        body: item.kind === "user" || item.kind === "task" || item.kind === "compact" ? [] : [item],
+        body: item.kind === "user" || item.kind === "task" || item.kind === "agent" || item.kind === "compact" ? [] : [item],
         result: null,
         continued,
       });
@@ -76,7 +79,7 @@ function splitTurns(items: Item[]): Turn[] {
   // 历史消息（getSessionMessages）里没有 result，事件流回放的 result 排在最后：按 SDK 的 user_message_uuid 挂回所属的那一轮。
   // 后台任务开始的轮没有 user_message_uuid，按 result 到达时最近的那条用户消息或任务通知（startUuid）找。
   // 都找不到（事件缓冲从某一轮中间开始）：从后往前，挂到前面最近一个还没有 result 的轮
-  const startOf = (uuid: string | undefined) => (uuid ? turns.findIndex((t) => (t.user ?? t.task)?.uuid === uuid) : -1);
+  const startOf = (uuid: string | undefined) => (uuid ? turns.findIndex((t) => (t.user ?? t.task ?? t.agent)?.uuid === uuid) : -1);
   let limit = turns.length;
   for (const r of results.toReversed()) {
     let i = startOf(r.userMessageUuid);
@@ -99,7 +102,7 @@ function turnDuration(turn: Turn): number | null {
     // 插入过消息的一轮，result 的用时是整轮的，最后一段只算它自己那部分
     if (!turn.continued) return turn.result.durationMs;
   }
-  const start = (turn.user ?? turn.task ?? turn.compact)?.at;
+  const start = (turn.user ?? turn.task ?? turn.agent ?? turn.compact)?.at;
   const end = turn.nextAt ?? turn.result?.at ?? turn.body.findLast((item) => item.kind === "assistant")?.at;
   return start && end && end > start ? end - start : null;
 }
@@ -137,6 +140,37 @@ function TaskLine({ task }: { task: TaskItem }) {
     <div className="task-line" title={task.detail ?? task.text}>
       {taskLabel(task)}
       {reason && <div className="task-reason">{reason}</div>}
+    </div>
+  );
+}
+
+/**
+ * 发消息的子代理的说明（Agent 调用的 description）：按 from 找 Agent 调用，
+ * 子代理的 from 是 agentId（Agent 工具的结果里有「agentId: …」），队友的是调用时给的 name
+ */
+function agentName(view: SessionView, from: string): string | undefined {
+  if (!from) return undefined;
+  const items = [view.items, ...Object.values(view.children)].flat();
+  for (const item of items) {
+    if (item.kind !== "assistant") continue;
+    for (const b of item.blocks) {
+      if (b.type !== "tool_use" || (b.name !== "Agent" && b.name !== "Task")) continue;
+      const input = (b.input ?? {}) as { name?: unknown; description?: unknown };
+      const result = view.toolResults[b.id]?.text ?? "";
+      if (input.name === from || result.includes(`agentId: ${from}`)) {
+        return typeof input.description === "string" && input.description ? input.description : typeof input.name === "string" ? input.name : undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** 其他 agent 发来的消息：不是用户写的，不用用户消息的气泡，显示成带来源的引用块；给模型看的说明不显示 */
+function AgentMessage({ item, name }: { item: AgentItem; name?: string }) {
+  return (
+    <div className="agent-message" title={item.from ? `来自 ${item.from}` : undefined}>
+      <div className="agent-message-head">{name ? `子代理「${name}」发来消息` : "子代理发来消息"}</div>
+      {item.text && <ReplyMarkdown>{item.text}</ReplyMarkdown>}
     </div>
   );
 }
@@ -211,6 +245,16 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
   return (
     <section className="turn">
       {turn.task && <TaskLine task={turn.task} />}
+      {turn.agent && (
+        <div className="msg-group">
+          <AgentMessage item={turn.agent} name={agentName(view, turn.agent.from)} />
+          {turn.agent.text && (
+            <MessageActions align="start">
+              <CopyAction text={turn.agent.text} title="复制消息" />
+            </MessageActions>
+          )}
+        </div>
+      )}
       {turn.compact && <CompactLine item={turn.compact} />}
       {turn.user && (
         <div className="msg-group msg-group-user">
@@ -233,7 +277,7 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
             >
               {live ? (
                 <>
-                  已处理 <Elapsed since={(turn.user ?? turn.task ?? turn.compact)?.at} />
+                  已处理 <Elapsed since={(turn.user ?? turn.task ?? turn.agent ?? turn.compact)?.at} />
                 </>
               ) : duration !== null ? (
                 `用时 ${formatShortDuration(duration)}`
@@ -381,6 +425,8 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
       return <ModelLine from={item.from} to={item.to} />;
     case "task":
       return <TaskLine task={item} />;
+    case "agent":
+      return <AgentMessage item={item} />;
     case "compact":
       return <CompactLine item={item} />;
   }

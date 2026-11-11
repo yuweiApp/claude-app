@@ -14,6 +14,7 @@ import type { DesktopTarget } from "../shared/types.js";
 import { nativePath, parseRemote } from "../ssh/location.js";
 import { sshHost } from "../ssh/hosts.js";
 import { remoteSpawner } from "../ssh/spawn.js";
+import { hostPort } from "../ssh/host.js";
 
 export interface SessionLaunch {
   sessionId: string;
@@ -106,10 +107,19 @@ function buildRemoteOptions(launch: SessionLaunch): Options {
   const host = sshHost(remote.host);
   const terminal = launch.terminals ? terminalServer(launch.terminals, launch.cwd) : null;
   const active = activeBrowsers();
+  const name = host.connection.name;
   const browser = launch.browser
-    ? browserServer(launch.browser, launch.sessionId, launch.resume, externalNote(active), { save: fileSaver(launch.cwd), fact: saveFileFact(launch.cwd) })
+    ? browserServer(launch.browser, launch.sessionId, launch.resume, externalNote(active), { save: fileSaver(launch.cwd), fact: saveFileFact(launch.cwd) }, name)
     : null;
-  const external = externalServers(active, launch.sessionId, launch.cwd, launch.resume);
+  const external = externalServers(active, launch.sessionId, launch.cwd, launch.resume, name);
+  // 反向转发（设置页、~/.ssh/config 的 RemoteForward）：远端连这些端口时连到用户电脑上的服务；会话启动时开着的
+  const forwards = host.activeForwards().map((f) => `- 「${name}」的 ${hostPort(f.bindHost, f.bindPort)} → 用户电脑的 ${hostPort(f.host, f.port)}`);
+  const append = [
+    config.appendSystemPrompt,
+    forwards.length ? `SSH 反向转发：在「${name}」上连下面这些地址，连到的是用户电脑（运行 claude-app 的那台）上的服务。\n${forwards.join("\n")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const allowedTools = [...(terminal ? TERMINAL_READ_TOOLS : []), ...(browser ? BROWSER_TOOLS : []), ...externalTools(active)];
   return {
     cwd: remote.path,
@@ -136,7 +146,7 @@ function buildRemoteOptions(launch: SessionLaunch): Options {
     systemPrompt: {
       type: "preset",
       preset: "claude_code",
-      ...(config.appendSystemPrompt ? { append: config.appendSystemPrompt } : {}),
+      ...(append ? { append } : {}),
     },
     includePartialMessages: true,
     abortController: launch.abortController,

@@ -69,9 +69,10 @@ export class BrowserHost {
   private readonly tabListeners = new Map<string, (event: TabEvent) => void>();
 
   /**
-   * @param sessionDir 会话的工作目录（不知道这个会话时 null）：桌面版问了就回答，这个会话的标签页里的下载存到那里
+   * @param sessionDir 桌面版问了就回答：dir 是会话的工作目录（不知道这个会话、远程会话时 null），这个会话的标签页里的下载存到那里；
+   * remote 是远程会话的 SSH 连接 id，桌面版给它的标签页用这台主机的分区，localhost 经 SSH 指远端（browser/tunnel.ts）
    */
-  constructor(private readonly sessionDir: (sessionId: string) => Promise<string | null> = async () => null) {}
+  constructor(private readonly sessionDir: (sessionId: string) => Promise<{ dir: string | null; remote: string | null }> = async () => ({ dir: null, remote: null })) {}
 
   get connected(): boolean {
     return this.socket !== null;
@@ -112,9 +113,9 @@ export class BrowserHost {
       else if (msg.type === "sessionDir" && msg.session) {
         const session = msg.session;
         void this.sessionDir(session)
-          .catch(() => null)
-          .then((dir) => {
-            if (this.socket === socket) this.post({ type: "sessionDir", session, dir });
+          .catch(() => ({ dir: null, remote: null }))
+          .then(({ dir, remote }) => {
+            if (this.socket === socket) this.post({ type: "sessionDir", session, dir, remote });
           });
       }
       else if ((msg.type === "kept" || msg.type === "temporary" || msg.type === "downloads") && typeof msg.id === "number") {

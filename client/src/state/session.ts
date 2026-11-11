@@ -54,9 +54,17 @@ export type Item =
       text: string;
       /** 失败的原因：网关补发的工具结果（task_result 事件），或历史通知里的 <result>；Bash 等其他任务没有 */
       detail?: string;
-    };
+    }
+  /**
+   * 同一会话里的其他 agent（子代理、队友）用 SendMessage 发来的消息。Claude Code 把它存成一条 user 消息：
+   * 「Another Claude session sent a message:」、<agent-message from="…">正文</agent-message>，后面跟一段给模型看的说明；
+   * 一轮进行中并进来的（会话记录里是 queued_command 附件）只有 <agent-message> 那段。
+   * 空闲时到的会开始新的一轮，和用户消息一样是一轮的开头。from 是发送方的 agentId（队友是名字）
+   */
+  | { kind: "agent"; uuid: string; at?: number; from: string; text: string };
 
 export type TaskItem = Extract<Item, { kind: "task" }>;
+export type AgentItem = Extract<Item, { kind: "agent" }>;
 export type UserItem = Extract<Item, { kind: "user" }>;
 
 /** 还没交给模型的用户消息（user_message 事件带 queued）：content 原样留着，交给模型时再归并进消息列表；preview 是显示用的 */
@@ -109,9 +117,15 @@ export interface SessionView {
   /**
    * 实时收到、还没开始那一轮的后台任务通知：等下一轮自己开始（state 变成 running）时再放进消息列表，作为那一轮的开头。
    * 这一轮里之后又发出了模型请求（status: requesting），说明 Claude Code 把通知并进了这一轮，就丢掉。
-   * 看的是请求发出、不是响应开始：通知到时已经在路上的请求不带它，响应回来后通知还会开新的一轮
+   * 看的是请求发出、不是响应开始：通知到时已经在路上的请求不带它，响应回来后通知还会开新的一轮。
+   * 子代理发给主线程的消息（Item 的 agent）也在这里：实时事件里没有那条 user 消息，子代理的 SendMessage 成功时
+   * （结果是「queued for the main conversation's next turn」）生成，同样等下一轮开始时放进去；
+   * Claude Code 在工具结果之后发下一次请求时才取队列：上次请求之后主线程有工具结果回来（toolResultSinceRequest），
+   * 这次请求就带上了它，这时放进去，和会话记录里它的位置一致；没有工具结果的请求（如没有输出时的重试）不带它
    */
-  pendingTasks: TaskItem[];
+  pendingTasks: Array<TaskItem | AgentItem>;
+  /** 上次发出模型请求（status: requesting）之后，主线程有工具结果回来 */
+  toolResultSinceRequest: boolean;
   /** 会话的后台任务（网关的 tasks 事件，整个列表）；backgroundTasksLive：已经从事件流收到过，不再用接口拉到的覆盖 */
   backgroundTasks: BackgroundTask[];
   backgroundTasksLive: boolean;
@@ -141,6 +155,7 @@ export function emptyView(): SessionView {
     needsReload: false,
     turnEnded: false,
     pendingTasks: [],
+    toolResultSinceRequest: false,
     backgroundTasks: [],
     backgroundTasksLive: false,
     queued: [],
@@ -181,7 +196,9 @@ export function reduce(view: SessionView, action: Action): SessionView {
     // 拉历史之前已经从事件流收到过消息的，以实时的为准；没有的按历史推出来的（最后一条主线程回复的 stop_reason），
     // 否则刚打开的会话一直当上一轮没结束，后台任务通知唤起的新一轮会接在上一轮后面、没有通知行
     if (view.items.length) next.turnEnded = view.turnEnded;
-    next.pendingTasks = view.pendingTasks;
+    // 子代理的消息已经在历史里的（Claude Code 已经交给模型）不再挂着
+    next.pendingTasks = view.pendingTasks.filter((pending) => !next.seen.has(pending.uuid));
+    next.toolResultSinceRequest = view.toolResultSinceRequest;
     next.backgroundTasks = view.backgroundTasks;
     next.backgroundTasksLive = view.backgroundTasksLive;
     next.desktopTarget = view.desktopTarget;
@@ -213,10 +230,14 @@ export function reduce(view: SessionView, action: Action): SessionView {
         flushQueued(next);
         finishCompact(next, "failed");
       }
-      // 上一轮结束后没有用户消息就又开始运行：是后台任务的通知让 Claude Code 自动开了新的一轮（实时事件里没有这条 user 消息）
+      // 上一轮结束后没有用户消息就又开始运行：是后台任务的通知或子代理的消息让 Claude Code 自动开了新的一轮（实时事件里没有这条 user 消息）。
+      // 后台任务通知和子代理消息各开各的一轮：放进开头连着的同一类，剩下的等下一轮
       if (event.state === "running" && view.turnEnded && view.pendingTasks.length) {
-        view.pendingTasks.forEach((task) => pushItem(next, null, { ...task, at: Date.now() }));
-        next.pendingTasks = [];
+        const kind = view.pendingTasks[0]!.kind;
+        const count = view.pendingTasks.findIndex((pending) => pending.kind !== kind);
+        const take = count < 0 ? view.pendingTasks : view.pendingTasks.slice(0, count);
+        take.forEach((pending) => pushItem(next, null, { ...pending, at: Date.now() }));
+        next.pendingTasks = view.pendingTasks.slice(take.length);
         next.turnEnded = false;
       }
       break;
@@ -237,7 +258,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
       // 紧跟在这个任务的 task_notification 后面到：通知生成的那一项还在 pendingTasks 里，或者已经放进了消息列表
       if (!event.isError) break;
       const uuid = `task:${event.taskId}`;
-      const withDetail = (task: TaskItem): TaskItem => (task.uuid === uuid ? { ...task, detail: event.text } : task);
+      const withDetail = <T extends Item>(item: T): T => (item.kind === "task" && item.uuid === uuid ? { ...item, detail: event.text } : item);
       next.pendingTasks = view.pendingTasks.map(withDetail);
       next.items = next.items.map((item) => (item.kind === "task" ? withDetail(item) : item));
       break;
@@ -280,7 +301,13 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       const last = view.items.at(-1);
       if (message.isSynthetic && !message.parent_tool_use_id && last?.kind === "compact" && last.awaitingSummary) {
         ingestCompactSummary(view, message.uuid, Date.now());
+      } else if (message.isSynthetic && syntheticPrompt(message.message.content)) {
+        // Claude Code 自己发给模型的提示（如「[Your previous response had no visible output…]」），不是用户写的，不显示
+        view.seen = new Set(view.seen).add(message.uuid);
       } else ingestMessage(view, "user", message.uuid, message.message, message.parent_tool_use_id, Date.now());
+      const content = message.message.content;
+      if (!message.parent_tool_use_id && Array.isArray(content) && content.some((b) => b.type === "tool_result")) view.toolResultSinceRequest = true;
+      if (message.parent_tool_use_id) queueAgentMessages(view, message.parent_tool_use_id, (message as { agent_id?: unknown }).agent_id, message.message.content);
       return;
     }
     case "system":
@@ -298,7 +325,15 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       if (message.subtype === "task_notification" && !message.skip_transcript) {
         view.pendingTasks = [...view.pendingTasks, { kind: "task", uuid: `task:${message.task_id}`, status: message.status, text: message.summary }];
       }
-      if (message.subtype === "status" && message.status === "requesting" && !view.turnEnded) view.pendingTasks = [];
+      if (message.subtype === "status" && message.status === "requesting") {
+        if (!view.turnEnded && view.pendingTasks.length) {
+          const merged = view.toolResultSinceRequest ? view.pendingTasks.filter((pending) => pending.kind === "agent") : [];
+          // 时间用 SendMessage 成功（进队列）的时刻：会话记录里并进这一轮的消息记的也是它
+          merged.forEach((pending) => pushItem(view, null, pending));
+          view.pendingTasks = view.pendingTasks.filter((pending) => pending.kind === "agent" && !merged.includes(pending));
+        }
+        view.toolResultSinceRequest = false;
+      }
       return;
     case "result": {
       view.streaming = { text: "" };
@@ -307,7 +342,7 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       finishCompact(view, "failed");
       // 中断的一轮也是 error_during_execution（errors 里是 [ede_diagnostic] …），前面已经有「已中断」，不算出错
       const interrupted = view.items.at(-1)?.kind === "interrupted";
-      const start = view.items.findLast((it) => it.kind === "user" || it.kind === "task");
+      const start = view.items.findLast((it) => it.kind === "user" || it.kind === "task" || it.kind === "agent");
       pushItem(view, null, {
         kind: "result",
         uuid: message.uuid,
@@ -333,8 +368,30 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
 function ingestUserMessage(view: SessionView, uuid: string, content: unknown): void {
   ingestMessage(view, "user", uuid, { content }, null, Date.now());
   view.turnEnded = false;
-  view.pendingTasks = [];
+  // 后台任务通知不会再开新的一轮了；子代理的消息会并进这一轮，等这一轮发请求时放进去
+  view.pendingTasks = view.pendingTasks.filter((pending) => pending.kind === "agent");
 }
+
+/**
+ * 子代理的 SendMessage 发给主线程（to: "main"）成功了：生成一条 agent 项挂进 pendingTasks。
+ * uuid 用发送方和正文，和会话记录里那条（agentMessage）一样，重新拉历史时不重复
+ */
+function queueAgentMessages(view: SessionView, parent: string, agentId: unknown, content: unknown): void {
+  if (typeof agentId !== "string" || !Array.isArray(content)) return;
+  for (const b of content as Array<Record<string, unknown>>) {
+    if (b.type !== "tool_result" || b.is_error === true) continue;
+    const call = view.children[parent]?.flatMap((item) => (item.kind === "assistant" ? item.blocks : [])).find((block) => block.type === "tool_use" && block.id === b.tool_use_id);
+    if (call?.type !== "tool_use" || call.name !== "SendMessage") continue;
+    const input = (call.input ?? {}) as { to?: unknown; message?: unknown };
+    if (input.to !== "main" || typeof input.message !== "string" || !/queued for the main conversation/i.test(resultText(b.content))) continue;
+    const text = input.message.trim();
+    const uuid = agentUuid(agentId, text);
+    if (!view.seen.has(uuid) && !view.pendingTasks.some((p) => p.uuid === uuid)) view.pendingTasks = [...view.pendingTasks, { kind: "agent", uuid, at: Date.now(), from: agentId, text }];
+  }
+}
+
+/** agent 项的 uuid：实时（SendMessage）和历史（会话记录里的 user 消息）两边对得上；同一个子代理发两条一模一样的只显示一条 */
+const agentUuid = (from: string, text: string) => `agent:${from}:${text}`;
 
 /** 排队的消息放进消息列表：给了 uuid 只放这一条，不给放全部（历史或事件里已经有的跳过） */
 function flushQueued(view: SessionView, uuid?: string): void {
@@ -395,6 +452,13 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       if (parent || view.turnEnded) pushItem(view, parent, { ...task, at });
       view.turnEnded = false;
       view.seen = new Set(view.seen).add(uuid);
+      return;
+    }
+    const agent = agentMessage(content);
+    if (agent) {
+      view.seen = new Set(view.seen).add(uuid);
+      pushItem(view, parent, { kind: "agent", uuid: agentUuid(agent.from, agent.text), at, ...agent });
+      if (!parent) view.turnEnded = false;
       return;
     }
     // 用技能时 Claude Code 把消息存成命令标签，后面跟着技能内容（isMeta，不是用户写的）
@@ -549,6 +613,32 @@ function taskNotification(text: string): TaskItem | null {
   return { kind: "task", uuid: `task:${field("task-id")}`, status, text: field("summary"), ...(detail ? { detail } : {}) };
 }
 
+/** 只有文字的 isSynthetic 消息（不是工具结果、中断、子代理的消息）：Claude Code 自己插给模型的提示 */
+function syntheticPrompt(content: unknown): boolean {
+  const blocks = typeof content === "string" ? [{ type: "text", text: content }] : Array.isArray(content) ? (content as Array<{ type?: unknown }>) : [];
+  return blocks.length > 0 && blocks.every((b) => b.type === "text") && !isInterruptNotice(content) && !agentMessage(content);
+}
+
+/** 其他 agent 发来的消息前面那句（空闲时、进行中、队友、协调者各有一种说法），见 Item 的 agent */
+const AGENT_MESSAGE_LEAD = /^(?:(?:Another Claude session|A peer session|The coordinator) sent a message[^:\n]*:|A message arrived from [^:\n]*:)\s*/;
+
+/** 其他 agent 发来的消息：取 <agent-message> 里的正文，后面给模型看的说明不要；不是这种消息返回 null */
+function agentMessage(content: unknown): { from: string; text: string } | null {
+  const raw =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content) && content.length > 0 && content.every((b) => b?.type === "text" && typeof b.text === "string")
+        ? content.map((b: { text: string }) => b.text).join("\n")
+        : null;
+  if (raw === null) return null;
+  const rest = raw.trim().replace(AGENT_MESSAGE_LEAD, "");
+  if (!rest.startsWith("<agent-message")) return null;
+  const parts = [...rest.matchAll(/<agent-message\b([^>]*)>([\s\S]*?)<\/agent-message>/g)];
+  if (!parts.length) return null;
+  const from = /\bfrom="([^"]*)"/.exec(parts[0]![1]!)?.[1] ?? "";
+  return { from, text: parts.map((m) => m[2]!.trim()).join("\n\n") };
+}
+
 /** Claude Code 加载技能时写进对话的内容，不是用户发的 */
 const SKILL_META = /^(Base directory for this skill:|Skill \/\S+ is already loaded above)/;
 
@@ -595,14 +685,14 @@ function resultText(content: unknown): string {
 /** 插到主线程当前这一轮的开头（最后一条用户消息或后台任务通知）前面 */
 /** 最近一轮（最后一条用户消息或后台任务通知之后）是不是已经有了主线程的回复；还没有任何一轮时算有 */
 function turnHasReply(view: SessionView): boolean {
-  const start = view.items.findLastIndex((i) => i.kind === "user" || i.kind === "task");
+  const start = view.items.findLastIndex((i) => i.kind === "user" || i.kind === "task" || i.kind === "agent");
   return start < 0 || view.items.slice(start + 1).some((i) => i.kind === "assistant");
 }
 
 function insertBeforeTurn(view: SessionView, item: Item): void {
   if (view.seen.has(item.uuid)) return;
   view.seen = new Set(view.seen).add(item.uuid);
-  const start = view.items.findLastIndex((i) => i.kind === "user" || i.kind === "task");
+  const start = view.items.findLastIndex((i) => i.kind === "user" || i.kind === "task" || i.kind === "agent");
   view.items = start < 0 ? [...view.items, item] : [...view.items.slice(0, start), item, ...view.items.slice(start)];
 }
 

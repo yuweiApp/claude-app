@@ -179,12 +179,13 @@ export function fileSaver(cwd: string) {
 export const saveFileFact = (cwd: string) =>
   `全局函数 await saveFile(name, data) 把数据写进这个会话的工作目录（${machinePathOf(cwd, fsFor(cwd).root)}）：name 是相对这个目录的路径，data 是 Buffer、Uint8Array、ArrayBuffer 或字符串（按 UTF-8 写），同名时文件名后加 (1)、(2)，返回写入的绝对路径。`;
 
-function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[], cwd: string): string {
+function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[], cwd: string, remote?: string): string {
   const others = active.filter((o) => o.id !== b.id);
   return [
     `用户自己的 ${b.name}：经 Playwright 扩展连接，带着用户的登录状态和 Cookie；右侧面板里的内置浏览器是另一组工具（mcp__inapp__）` +
       others.map((o) => `，用户自己的 ${o.name} 是 mcp__${o.id}__`).join("") +
       "。",
+    ...(remote ? [`这个会话的工作目录在远程主机「${remote}」上（经 SSH），${b.name} 在用户的电脑上：网址里的 localhost、127.0.0.1 指用户的电脑，不是「${remote}」。`] : []),
     tabGroupEnabled()
       ? `能看到的标签页只有 ${b.name} 里 Playwright 标签页组里的（用户连接时选的，加上通过这里新开的），所有会话共用这一组。`
       : `能看到的标签页只有交给 Playwright 的那些（用户连接时选的那一个，加上通过这里新开的和从它们弹出的），用户的其他标签页看不到，所有会话共用这一批。`,
@@ -202,13 +203,14 @@ function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[], cwd
  * 给模型用的外部浏览器工具，每个会话每个启用着的浏览器一个 MCP 服务器，共用这个浏览器的连接；REPL 按会话保留（replFor）。
  * 和内置浏览器不同，REPL 在网关主线程里：扩展同一时间只认一个客户端，所有会话共用一条连接，没法分到各自的 worker
  */
-export function externalServers(active: ExternalBrowserInfo[], sessionId: string, cwd: string, resumed = false): Record<string, McpSdkServerConfigWithInstance> {
+/** remote：远程会话所在主机的名称 */
+export function externalServers(active: ExternalBrowserInfo[], sessionId: string, cwd: string, resumed = false, remote?: string): Record<string, McpSdkServerConfigWithInstance> {
   return Object.fromEntries(
     active.map((b) => [
       b.id,
       browserMcpServer({
         name: b.id,
-        instructions: instructions(b, active, cwd),
+        instructions: instructions(b, active, cwd, remote),
         repl: replFor(`${b.id}:${sessionId}`, () => new BrowserRepl(() => bridgeOf(b).context(), undefined, undefined, fileSaver(cwd)), resumed),
       }),
     ]),

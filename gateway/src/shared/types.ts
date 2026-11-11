@@ -411,6 +411,8 @@ export interface SshConnectionInput {
   identityFile?: string;
   /** 新会话浏览文件夹时先打开的远端目录，不填是远端的用户目录 */
   startDirectory?: string;
+  /** 反向转发，同 ssh -R 的写法（[远端地址:]远端端口:本机地址:本机端口）：远端连这个端口，网关在本机连那个地址。~/.ssh/config 的 RemoteForward 另外照样生效 */
+  remoteForwards?: string[];
 }
 
 export type SshStatus = "disconnected" | "connecting" | "deploying" | "ready" | "error";
@@ -436,6 +438,8 @@ export interface SshConnectionInfo extends SshConnectionInput {
   /** 连上过之后记下的远端信息 */
   platform?: string;
   home?: string;
+  /** 连着时的反向转发（设置页填的和 ~/.ssh/config 的 RemoteForward）：远端的地址、本机的地址，远端开不了端口时有 error */
+  forwards?: { remote: string; local: string; error?: string }[];
 }
 
 /** 设置页添加连接时，从本机 ~/.ssh/config 里读出来的主机别名 */

@@ -21,7 +21,8 @@ import { uploadRoutes } from "./http/routes/uploads.js";
 import { sshRoutes } from "./http/routes/ssh.js";
 import { SshConfigError } from "./ssh/connections.js";
 import { SshError } from "./ssh/host.js";
-import { isRemote } from "./ssh/location.js";
+import { parseRemote } from "./ssh/location.js";
+import { handleTunnel } from "./browser/tunnel.js";
 
 // 终端里用 pino-pretty 格式化。不用 transport：它在 worker 线程里把 UTF-8 字节直接写 fd 1，
 // 中文 Windows 控制台按 GBK 显示会乱码；交给 process.stdout 由 Node 转成 UTF-16 写控制台。
@@ -52,10 +53,11 @@ export function buildApp(): App {
   const hub = new EventHub(config.eventBufferSize);
   const terminals = new TerminalManager();
   // 桌面版问会话的工作目录（内置浏览器的下载存到那里）时用 sessions 回答，两边互相引用，所以传函数
-  // 远程会话的工作目录在远端，内置浏览器的下载放不进去，交给桌面版按默认的下载位置存
+  // 远程会话的工作目录在远端，内置浏览器的下载放不进去，交给桌面版按默认的下载位置存；标签页按主机分区（browser/tunnel.ts）
   const browser = new BrowserHost(async (sessionId) => {
     const cwd = await sessions.cwd(sessionId);
-    return cwd && !isRemote(cwd) ? cwd : null;
+    const remote = cwd ? parseRemote(cwd) : null;
+    return { dir: cwd && !remote ? cwd : null, remote: remote?.host ?? null };
   });
   const conversationLog = new ConversationLog(config.conversationLog, app.log);
   setDesktopLog((entry) => conversationLog.recordDesktop(entry));
@@ -123,6 +125,8 @@ export function buildApp(): App {
       browser.attach(socket);
       socket.on("close", () => app.log.info("桌面版的内置浏览器断开了"));
     });
+    // 远程会话的内置浏览器访问远端 localhost 的连接，每条一个
+    scoped.get<{ Querystring: { host?: string; dest?: string; port?: string } }>("/browser/tunnel", { websocket: true }, (socket, req) => handleTunnel(socket, req.query));
   });
   return { app, sessions, terminals, browser };
 }

@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import net from "node:net";
 import { Duplex, type Readable, type Writable } from "node:stream";
 import ssh2, { Client, type AnyAuthMethod, type AuthHandlerMiddleware, type ClientChannel, type ExecOptions, type SFTPWrapper } from "ssh2";
 import type { SshConnectionInfo, SshStatus } from "../shared/types.js";
 import { getConnection, patchConnection, type SshConnection } from "./connections.js";
 import { HostKeyError, hostKeyOf, knownHostsHas, type HostKey } from "./host-key.js";
-import { resolveTarget, sshBin, type ResolvedTarget } from "./ssh-config.js";
+import { resolveTarget, sshBin, type RemoteForward, type ResolvedTarget } from "./ssh-config.js";
 import { prepareRemote, type RemoteEnv } from "./deploy.js";
 import { createModelProxy, type ModelProxy } from "./model-proxy.js";
 
@@ -33,6 +34,9 @@ const psCommand = (script: string) => {
 };
 
 export class SshError extends Error {}
+
+/** 127.0.0.1:80、[::1]:80 */
+export const hostPort = (host: string, port: number) => `${host.includes(":") ? `[${host}]` : host}:${port}`;
 
 /** 远端输出转成文字：不是合法 UTF-8 时按 GB18030 解（中文 Windows 的 cmd、PowerShell 输出的是 GBK） */
 export function decodeText(buf: Buffer): string {
@@ -76,6 +80,9 @@ export class SshHost {
   private proxy: ModelProxy | null = null;
   private readonly closeListeners = new Set<() => void>();
   private readonly changeListeners = new Set<() => void>();
+  /** 反向转发：远端端口 → 转发配置；没开成的记着原因（设置页显示） */
+  private readonly forwards = new Map<number, RemoteForward>();
+  private forwardErrors: { forward: RemoteForward; error: string }[] = [];
 
   constructor(readonly id: string) {}
 
@@ -103,7 +110,21 @@ export class SshHost {
       ...(conn.hostKey ? { trustedFingerprint: conn.hostKey.fingerprint } : {}),
       ...(this.progress !== undefined ? { progress: this.progress } : {}),
       ...(conn.facts ? { platform: conn.facts.platform, home: conn.facts.home } : {}),
+      ...(conn.remoteForwards ? { remoteForwards: conn.remoteForwards } : {}),
+      ...(this.client && (this.forwards.size || this.forwardErrors.length)
+        ? {
+            forwards: [
+              ...[...this.forwards.values()].map((f) => ({ remote: hostPort(f.bindHost, f.bindPort), local: hostPort(f.host, f.port) })),
+              ...this.forwardErrors.map(({ forward: f, error }) => ({ remote: hostPort(f.bindHost, f.bindPort), local: hostPort(f.host, f.port), error })),
+            ],
+          }
+        : {}),
     };
+  }
+
+  /** 现在开着的反向转发（远端地址 → 本机地址），给模型看的说明用 */
+  activeForwards(): RemoteForward[] {
+    return [...this.forwards.values()];
   }
 
   /** 连接断开（主动断开、网络断了）时通知，claude 进程、终端随之结束 */
@@ -207,8 +228,17 @@ export class SshHost {
     client.on("error", () => undefined);
     // 模型请求的反向转发：远端连 127.0.0.1:<端口>，经这条连接回到网关
     client.on("tcp connection", (details, accept, reject) => {
-      if (details.destPort !== this.proxyPort || !this.proxy) return reject();
-      this.proxy.handle(accept());
+      if (details.destPort === this.proxyPort && this.proxy) return this.proxy.handle(accept());
+      // 反向转发：在本机连配置里的地址
+      const forward = this.forwards.get(details.destPort);
+      if (!forward) return reject();
+      const stream = accept();
+      const local = net.connect({ host: forward.host, port: forward.port });
+      local.on("error", () => stream.close());
+      stream.on("error", () => local.destroy());
+      stream.on("close", () => local.destroy());
+      local.on("close", () => stream.close());
+      stream.pipe(local).pipe(stream);
     });
     this.setStatus("deploying");
     this.env = await prepareRemote(this, (p) => {
@@ -221,7 +251,47 @@ export class SshHost {
     this.proxyPort = await new Promise<number>((resolve, reject) =>
       client.forwardIn("127.0.0.1", 0, (err, port) => (err ? reject(new SshError(`远端不允许端口转发，模型请求转发不了：${err.message}`)) : resolve(port))),
     );
+    await this.syncForwards(target.remoteForwards);
     this.setStatus("ready");
+  }
+
+  /**
+   * 按配置开、关反向转发（连上时、设置页改了之后）：远端开不了的端口（被占了、sshd 不让）记下原因，不影响连接。
+   * list 不给时重新解析一次配置（~/.ssh/config 和设置页的）
+   */
+  async syncForwards(list?: RemoteForward[]): Promise<void> {
+    const client = this.client;
+    if (!client) return;
+    const wanted = list ?? (await resolveTarget(this.connection)).remoteForwards;
+    const key = (f: RemoteForward) => `${f.bindHost}|${f.bindPort}|${f.host}|${f.port}`;
+    const keep = new Set(wanted.map(key));
+    for (const [port, f] of [...this.forwards]) {
+      if (keep.has(key(f))) continue;
+      this.forwards.delete(port);
+      client.unforwardIn(f.bindHost, f.bindPort, () => undefined);
+    }
+    const have = new Set([...this.forwards.values()].map(key));
+    this.forwardErrors = [];
+    for (const f of wanted) {
+      if (have.has(key(f))) continue;
+      if ([...this.forwards.values()].some((o) => o.bindPort === f.bindPort)) {
+        this.forwardErrors.push({ forward: f, error: `远端端口 ${f.bindPort} 已经用于另一条转发` });
+        continue;
+      }
+      const error = await new Promise<string | null>((resolve) => client.forwardIn(f.bindHost, f.bindPort, (err) => resolve(err ? err.message : null)));
+      if (error) this.forwardErrors.push({ forward: f, error: `远端开不了这个端口（被占用，或者 sshd 不允许）：${error}` });
+      else this.forwards.set(f.bindPort, f);
+    }
+    this.emitChange();
+  }
+
+  /** 从网关这边连远端的 host:port（内置浏览器访问远端的 localhost 时用，见 browser/tunnel.ts） */
+  async forwardOut(host: string, port: number): Promise<ClientChannel> {
+    await this.ensureReady();
+    const client = this.rawClient();
+    return new Promise((resolve, reject) =>
+      client.forwardOut("127.0.0.1", 0, host, port, (err, channel) => (err ? reject(new SshError(`远端连不上 ${hostPort(host, port)}：${err.message}`)) : resolve(channel))),
+    );
   }
 
   private async verifyHostKey(conn: SshConnection, target: ResolvedTarget, blob: Buffer): Promise<void> {
@@ -246,6 +316,8 @@ export class SshHost {
     this.ready = null;
     this.sftpConn = null;
     this.proxyPort = null;
+    this.forwards.clear();
+    this.forwardErrors = [];
     if (this.status !== "error") this.setStatus("disconnected");
     for (const l of [...this.closeListeners]) l();
   }

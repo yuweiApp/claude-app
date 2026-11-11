@@ -319,7 +319,7 @@ client/
 3. **自定义工具**（`createSdkMcpServer()` 进程内 MCP）：内置浏览器（已完成第一版，只有桌面版，见第 12 节）、外部浏览器（用户的 Chrome、Edge 等，原型，见第 13 节）、终端读取（已完成）、会话管理、桌面操作（agent-desktop，设计中，见 [agent-desktop.md](agent-desktop.md)）。
 4. **多人部署**：沿用 codex-app-server 的 hub + 每用户一个容器，每个容器一个 `CLAUDE_CONFIG_DIR`。
 5. **桌面版**：Electron 外壳。
-6. **SSH 远程开发**（第一版已完成，见第 14 节）：以后可能做远端守护进程（断线不中断这一轮）、远端开发服务的端口自动转发到内置浏览器。
+6. **SSH 远程开发**（第一版已完成，见第 14 节）：以后可能做远端守护进程（断线不中断这一轮）、远端端口自动转发到本机（给外部浏览器和用户自己的浏览器用，同 VS Code Remote-SSH）。
 
 ## 10. 风险
 
@@ -426,8 +426,17 @@ client/
   - 网页（`client/src/remote.ts`）：`machinePath` 把 `/C:/…` 换回 `C:\…`，显示、复制路径、和模型写的路径比（回复里的文件链接）都用它，Windows 路径的处理（不分大小写、反斜杠）和本机是 Windows 时共用；`remoteUri` 接受 `C:\…`、`C:/…`（路径框里输入的、回复链接里的）。选择文件夹对话框的路径按钮按 Windows 路径分段（本机是 Windows 时也对了）。
 - **模型请求转发**（`model-proxy.ts`）：连上后 `forwardIn('127.0.0.1', 0)` 在远端开一个端口，远端 claude 的 `ANTHROPIC_BASE_URL` 指向它，`ANTHROPIC_AUTH_TOKEN` 是每次连接新生成的临时令牌。转发进来的连接交给一个不监听端口的 `http.Server`，验过令牌后去掉远端的认证头，按本机 `.env.local` 加上真正的 `ANTHROPIC_AUTH_TOKEN`（或 `ANTHROPIC_API_KEY`）和 `ANTHROPIC_CUSTOM_HEADERS`，流式转给 `ANTHROPIC_BASE_URL`；远端断开时上游请求一起断。远端不用能访问模型接口，真正的密钥不离开本机。远端 sshd 不允许端口转发（`AllowTcpForwarding no`）时连接报错。
 - **会话记录**（`transcripts.ts`）：远端 claude 把记录写在远端的 `claude-home/projects/` 下，网关按原样同步到本机 `$CLAUDE_CONFIG_DIR/projects/` 的同名目录（单向，只取新增的部分，远端变短了整个重取），会话列表、历史、标题、最后回复时间这些读本机记录的代码不用改，远端没连上时也能列出、查看。哪些会话是哪台主机的记在 `gateway-ssh-sessions.json`。列会话时连着的主机先同步一次（3 秒内的不重复，最多等 3 秒），打开会话、发消息前同步那一个。远端已经没有的会话（别处删了）本机的副本也删掉；列 `projects/` 出错（比如同步时正好断开）就放弃这次同步，某个项目目录读不出来时它下面的会话不动，只有目录不存在才当作空的（以前读不出来也当成空的，出现过断开连接后本机副本被全删、会话从列表里消失，下次连上同步回来才恢复）。改标题追加一行 `custom-title`（格式同 Claude Code 写的）到远端的记录再同步回来；删会话删远端的记录和本机的副本，远端的 scratch 目录是空的一起删；删 SSH 连接只删本机的副本。普通会话按远端用户目录下的 `~/.claude-app/workspace/scratch-…` 认（`scratch.ts` 的 `isChatCwd`，用户目录记在连接配置里）。
-- **工具**：远程会话只挂浏览器（本机的内置浏览器和启用着的外部浏览器，`browser_run_code` 的 `saveFile` 经 SFTP 写进远端的工作目录）和右侧面板的终端（远端的）；插件、技能白名单、设置页添加的连接器、桌面操作（Computer Use）都不给，远端只有 Claude Code 自带的技能和项目 `.claude/skills/` 里的。网页上远程会话的输入框上面只有「浏览器」。内置浏览器的下载不存进远端的工作目录（桌面版按默认的下载位置存）。
+- **工具**：远程会话只挂浏览器（本机的内置浏览器和启用着的外部浏览器，`browser_run_code` 的 `saveFile` 经 SFTP 写进远端的工作目录）和右侧面板的终端（远端的）；插件、技能白名单、设置页添加的连接器、桌面操作（Computer Use）都不给，远端只有 Claude Code 自带的技能和项目 `.claude/skills/` 里的。网页上远程会话的输入框上面只有「浏览器」。内置浏览器的下载不存进远端的工作目录（桌面版按默认的下载位置存）。浏览器的说明里写明会话在哪台主机上：内置浏览器里 localhost 指那台主机、下载存在用户电脑的「下载」文件夹；外部浏览器里 localhost 指用户的电脑。会话启动时开着的反向转发写进系统提示词（追加在 `APPEND_SYSTEM_PROMPT` 后面），之后改了要新会话才看得到。
 - **右侧面板**：文件接口（`routes/files.ts`）、选择文件夹（`routes/folders.ts`）经 `ssh/host-fs.ts` 的 `HostFs` 操作：本机是 fs，远端是 SFTP（递归建目录、删除用远端的 `mkdir -p`、`rm -rf`，`@` 搜索用远端的 `git ls-files`；Windows 上是 PowerShell 的对应写法，见 `remote-ops.ts`）。远端拿不到 inode，改名时只差大小写算同一个文件。终端（`terminal-manager.ts`）在 SSH 上开带 pty 的通道，在工作目录里 `exec $SHELL -l`；前台在跑什么拿不到（同 Windows），模型不能往已有的终端里接着写命令，每次 `run_in_terminal` 开新的。
 - **附件**：图片照旧以 base64 放进消息；其他文件发消息时经 SFTP 传到远端的 `~/.claude-app/workspace/.attachments/<id>/`（大小一样的不重传），`<attachments>` 里写远端路径。
-- **限制**：SSH 断开时远端 claude 随之结束，进行中的这一轮中断，下次发消息 resume（记录在远端，不丢）。远端支持 macOS、Linux、Windows。远端开发服务的端口不自动转发。设置页的密码只在网关内存里，网关重启后要重新输入。
+- **内置浏览器访问远端的 localhost**（`desktop/src/browser/ssh-proxy.ts`、`views.ts`，`gateway/src/browser/tunnel.ts`）：模型在远端起的开发服务监听的是远端的 127.0.0.1，内置浏览器在本机。远程会话的标签页开在这台主机自己的分区里（`persist:claude-browser-ssh-<连接 id>`，弹出窗口跟着原标签页），分区的代理是桌面版在本机 127.0.0.1 上开的（每台主机一个端口）：
+  - localhost、`*.localhost`、127.0.0.0/8、[::1] 的连接，每条开一个 WebSocket 到网关的 `/browser/tunnel?host=<连接 id>&dest=<主机名>&port=<端口>`（同网关的 API_TOKEN，桌面版连的是别处的网关也能用），网关经 SSH 的 `forwardOut` 连远端的同一个地址，主机名交给远端解析（`*.localhost` 换成 localhost），之后原样转发字节；网关只转 loopback 的地址。地址不用改，origin、Cookie、OAuth 回调、Vite 的 HMR（WebSocket 走 CONNECT）都和在远端本地访问时一样，本机自己占着同一个端口也不冲突，不用检测远端开了哪些端口。
+  - 其他地址照系统的代理设置（默认会话的 `resolveProxy`）：直连，或经 HTTP（CONNECT）、SOCKS5（不认证）代理连出去，同本机会话的标签页；PAC 给的别的类型跳过。
+  - 为什么不用 PAC：Chromium 对 loopback 的隐式直连在 PAC 下去不掉（`<-loopback>` 也没用，实测 Electron 44）；固定代理加 `proxyBypassRules: "<-loopback>"` 才行，而绕过规则分不出「只有 loopback 走代理」（`<local>` 把 localhost 也算进去），所以所有请求都到桌面版的代理，非 loopback 的由它按系统设置转。
+  - 代理要 Basic 认证（令牌每次启动新生成），Electron 的 `login` 事件回答，本机别的进程拿它当不了跳板。普通 http 请求用每台主机一个的长连接池（`http.Agent` 的 `keepAlive`）：远端每条连接都要新开一个 SSH 通道，要一个来回。远端发完（通道 EOF）网关就关 WebSocket（没有半关闭；ssh2 的通道要两边都结束才 close，不关会一直挂着）。
+  - 会话是不是远程的：桌面版新开标签页前问网关（`sessionDir` 的回答带上 `remote`，3 秒没回答、网关没连上按本机会话），记在打开的标签页记录里，重启后恢复到同一个分区。
+  - 远程会话的标签页的 Cookie、登录状态和本机会话的分开（两边的 localhost:3000 本来就是不同的网站），普通网站要在远程会话里再登录一次。
+  - 实测（mac，往返约 300 ms）：远端只监听 127.0.0.1 的服务在内置浏览器里按 localhost、127.0.0.1、`app.localhost` 都能打开，本机同一个端口上的服务不受影响，远端没开的端口显示「远端连不上」；HTTP/1.1 的服务连续请求每个约 750 ms（长连接复用后，同一条隧道里约 580 ms：远端 sshd 这条连接默认开着 Nagle，响应分两次写时第二段要等确认），HTTP/1.0 的每个约 1.5 秒。
+- **反向转发**（`ssh/host.ts` 的 `syncForwards`、`ssh/ssh-config.ts`）：远端访问用户电脑上的服务（本机的数据库、代理）。来源是 `~/.ssh/config` 的 `RemoteForward` 和设置页填的（`ssh -R` 的写法，一行一条，交给 `ssh -G` 时作为 `-R` 参数，和配置文件里的一起从 `ssh -G` 的 `remoteforward` 读出来；没有 ssh 命令时自己解析设置页的）。只认 TCP 端口转到 TCP 地址的，Unix 套接字、动态转发（`RemoteForward 1080`）、远端端口 0 跳过。连上时 `forwardIn` 开，远端连进来时网关在本机连目标地址；远端开不了的端口（被占用、sshd 不允许）记下原因显示在设置页，不影响连接。设置页改了马上按新的开、关，不用重连。远端没写监听地址时同 ssh 是 localhost，sshd 按 IPv4、IPv6 都绑，只绑得上一边也算成功（比如 IPv4 那边已经有服务）。
+- **限制**：SSH 断开时远端 claude 随之结束，进行中的这一轮中断，下次发消息 resume（记录在远端，不丢）。远端支持 macOS、Linux、Windows。外部浏览器（用户的 Chrome）和用户自己的浏览器访问不到远端的 localhost（远端端口不自动转发到本机）。设置页的密码只在网关内存里，网关重启后要重新输入。
 

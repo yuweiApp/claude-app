@@ -20,6 +20,45 @@ export interface ResolvedTarget {
   knownHostsFiles: string[];
   /** known_hosts 里按这个名字记（HostKeyAlias） */
   hostKeyAlias?: string;
+  /** 反向转发：~/.ssh/config 的 RemoteForward 和设置页填的（同 ssh -R），只认 TCP 端口转到 TCP 地址的 */
+  remoteForwards: RemoteForward[];
+}
+
+/** 远端 bindHost:bindPort 上来的连接，网关在本机连 host:port */
+export interface RemoteForward {
+  /** 远端监听的地址；没写时同 ssh，是 localhost */
+  bindHost: string;
+  bindPort: number;
+  host: string;
+  port: number;
+}
+
+/** ssh -R 的写法：[bind_address:]port:host:hostport，IPv6 地址写在 [] 里 */
+const R_SPEC = /^(?:(\[[^\]]+\]|[^:\s[\]]+):)?(\d{1,5}):(\[[^\]]+\]|[^:\s[\]]+):(\d{1,5})$/;
+
+/** 检查、解析一条 ssh -R 写法的反向转发（设置页填的）；格式不对返回 null */
+export function parseForwardSpec(spec: string): RemoteForward | null {
+  const m = R_SPEC.exec(spec.trim());
+  if (!m) return null;
+  const strip = (h: string) => h.replace(/^\[(.*)\]$/, "$1");
+  const f = { bindHost: m[1] ? strip(m[1]) : "localhost", bindPort: Number(m[2]), host: strip(m[3]!), port: Number(m[4]) };
+  return f.bindPort >= 1 && f.bindPort <= 65535 && f.port >= 1 && f.port <= 65535 ? f : null;
+}
+
+/**
+ * ssh -G 输出的 remoteforward：「5432 [localhost]:5432」「[0.0.0.0]:8080 [127.0.0.1]:80」。
+ * Unix 套接字（/ 开头）、动态转发（[socks]:0）、远端端口 0（让远端挑）不支持，跳过
+ */
+function parseGForward(value: string): RemoteForward | null {
+  const [listen, connect] = value.trim().split(/\s+/);
+  if (!listen || !connect || listen.startsWith("/") || connect.startsWith("/")) return null;
+  const l = /^(?:\[([^\]]*)\]:)?(\d+)$/.exec(listen);
+  const c = /^\[([^\]]*)\]:(\d+)$/.exec(connect);
+  if (!l || !c || c[1] === "socks") return null;
+  const bindPort = Number(l[2]);
+  const port = Number(c[2]);
+  if (!bindPort || bindPort > 65535 || !port || port > 65535) return null;
+  return { bindHost: l[1] || "localhost", bindPort, host: c[1]!, port };
 }
 
 export const sshBin = () => process.env.SSH_BIN?.trim() || "ssh";
@@ -30,6 +69,7 @@ function runSshG(input: SshConnectionInput): Promise<string | null> {
   const args = ["-G"];
   if (input.port) args.push("-p", String(input.port));
   if (input.identityFile) args.push("-i", expandHome(input.identityFile));
+  for (const f of input.remoteForwards ?? []) args.push("-R", f);
   args.push("--", input.host);
   return new Promise((resolve) => {
     execFile(sshBin(), args, { timeout: 5000, windowsHide: true }, (err, stdout) => resolve(err ? null : stdout));
@@ -48,6 +88,7 @@ export async function resolveTarget(input: SshConnectionInput): Promise<Resolved
       identityFiles: input.identityFile ? [expandHome(input.identityFile)] : ["id_ed25519", "id_ecdsa", "id_rsa"].map((n) => path.join(os.homedir(), ".ssh", n)),
       identitiesOnly: Boolean(input.identityFile),
       knownHostsFiles: [path.join(os.homedir(), ".ssh", "known_hosts")],
+      remoteForwards: (input.remoteForwards ?? []).map(parseForwardSpec).filter((f): f is RemoteForward => f !== null),
     };
   }
   const values = new Map<string, string[]>();
@@ -71,6 +112,7 @@ export async function resolveTarget(input: SshConnectionInput): Promise<Resolved
     proxyCommand: none(one("proxycommand")),
     knownHostsFiles: (values.get("userknownhostsfile") ?? []).flatMap((v) => v.split(/\s+/)).map(expandHome),
     hostKeyAlias: none(one("hostkeyalias")),
+    remoteForwards: (values.get("remoteforward") ?? []).map(parseGForward).filter((f): f is RemoteForward => f !== null),
   };
 }
 

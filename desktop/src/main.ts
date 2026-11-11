@@ -5,6 +5,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell, ty
 import { GatewayBridge } from "./browser/bridge.js";
 import { ElementInspector, pngBase64 } from "./browser/inspect.js";
 import { BrowserViews, FAVICON_SCHEME, tabInfo } from "./browser/views.js";
+import { SshProxies } from "./browser/ssh-proxy.js";
 import { findCaptureSource } from "./capture.js";
 
 // 桌面版：拉起网关和网页（Vite），在窗口里打开网页。已经在跑的（比如 VS Code 里先启动了「启动网页」）直接复用
@@ -171,7 +172,8 @@ ipcMain.handle("window:is-maximized", (e) => BrowserWindow.fromWebContents(e.sen
 // 内置浏览器（右侧面板的「浏览器」）：界面经 preload 的 browser 接口建标签页、导航、告诉外壳显示位置；
 // 标签页有变化时把整个列表推给界面（browser:tabs），AI 切标签页、用户在网页里点开新页面时让面板跟着切（browser:activate）
 let mainWindow: BrowserWindow | undefined;
-const browserViews = new BrowserViews(() => mainWindow);
+// 远程会话的内置浏览器：localhost 经网关、SSH 指远端（browser/ssh-proxy.ts）
+const browserViews = new BrowserViews(() => mainWindow, new SshProxies(gatewayUrl, gatewayToken));
 // 内置浏览器标签页的图标（views.ts 的 fetchFavicon 取下来的）：界面的 <img> 用 favicon://icon/<编号> 加载。要在 ready 之前注册
 protocol.registerSchemesAsPrivileged([{ scheme: FAVICON_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const fromUi = (sender: Electron.WebContents) => !!mainWindow && !mainWindow.isDestroyed() && sender === mainWindow.webContents;
