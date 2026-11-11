@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   deleteSession,
+  forkSession,
   getSessionInfo,
   listSessions,
   renameSession,
@@ -35,7 +36,7 @@ import { existingHost, sshHost } from "../ssh/hosts.js";
 import type { SshHost } from "../ssh/host.js";
 import { rmdirQuiet } from "../ssh/remote-ops.js";
 import { remoteFs } from "../ssh/host-fs.js";
-import { appendRemote, deleteRemoteSession, registerRemoteSession, remoteSessionHost, syncHost, syncSession } from "../ssh/transcripts.js";
+import { appendRemote, deleteRemoteSession, registerRemoteSession, remoteSessionHost, syncHost, syncSession, uploadForkedSession } from "../ssh/transcripts.js";
 import { listConnections } from "../ssh/connections.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
@@ -230,6 +231,39 @@ export class SessionManager {
     await this.writeTitle(sessionId, title);
     this.titles.set(sessionId, title);
     this.hub.publish(sessionId, { type: "title", title });
+  }
+
+  /**
+   * 从某条消息分叉：新会话的记录是源会话到这条消息为止（含）的部分（SDK 的 forkSession，消息换成新的 uuid），
+   * 工作目录、模型和推理强度跟源会话一样，标题是源会话的加「（分叉）」。新会话不拉起子进程，发消息时再 resume。
+   * 远程会话在本机副本上分叉，再把新记录传到远端
+   */
+  async fork(sessionId: string, upToMessageId: string): Promise<string> {
+    const hostId = remoteSessionHost(sessionId);
+    const host = hostId ? await readyHost(hostId) : undefined;
+    if (host) await syncSession(host, sessionId).catch(() => undefined);
+    const info = await getSessionInfo(sessionId);
+    if (!info) throw new NotFoundError(`会话不存在：${sessionId}`);
+    const source = this.titles.get(sessionId) || info.customTitle || info.summary;
+    const title = source ? `${source}（分叉）` : "分叉的会话";
+    const forked = await forkSession(sessionId, { upToMessageId, title }).catch((err: Error) => {
+      throw /not found/i.test(err.message) ? new BadRequestError("会话记录里没有这条消息") : err;
+    });
+    await restoreForkTime(sessionId, forked.sessionId).catch((err: Error) => this.log.warn({ err, sessionId }, "分叉记录的时间没改回来"));
+    if (host) {
+      try {
+        await uploadForkedSession(host, sessionId, forked.sessionId);
+      } catch (err) {
+        // 远端没写成：本机这份也删掉，不留一个 resume 不了的会话
+        await deleteSession(forked.sessionId).catch(() => undefined);
+        throw err;
+      }
+    }
+    this.titles.set(forked.sessionId, title);
+    const active = this.active.get(sessionId);
+    const settings = active ? { model: active.model, effort: active.effort } : this.lastSettings.get(sessionId);
+    if (settings) this.lastSettings.set(forked.sessionId, settings);
+    return forked.sessionId;
   }
 
   async closeSession(sessionId: string): Promise<void> {
@@ -453,6 +487,27 @@ async function fetchRemoteOutput(host: SshHost, file: string, tail: boolean): Pr
   if (size === 0) return null;
   await pipeline(sftp.createReadStream(file, { start, end: size - 1 }), createWriteStream(local, { mode: 0o600 }));
   return local;
+}
+
+/**
+ * forkSession 把新记录最后一条消息的时间改成了分叉的时刻，网页按它算那一轮的用时（历史里没有 result），
+ * 列表里的最后回复时间也按它：改回原记录里那条消息的时间（每行的 forkedFrom 指着原消息）
+ */
+async function restoreForkTime(sourceId: string, forkedId: string): Promise<void> {
+  const [sourceDir, forkedDir] = await Promise.all([sessionRecordDir(sourceId), sessionRecordDir(forkedId)]);
+  if (!sourceDir || !forkedDir) return;
+  const file = path.join(forkedDir, `${forkedId}.jsonl`);
+  const lines = (await readFile(file, "utf8")).split("\n");
+  const index = lines.findLastIndex((l) => l.includes('"forkedFrom"'));
+  if (index < 0) return;
+  const entry = JSON.parse(lines[index]!) as { timestamp?: string; forkedFrom?: { messageUuid?: string } };
+  const uuid = entry.forkedFrom?.messageUuid;
+  if (!uuid) return;
+  const source = (await readFile(path.join(sourceDir, `${sourceId}.jsonl`), "utf8")).split("\n").find((l) => l.includes(`"uuid":"${uuid}"`));
+  const original = source ? (JSON.parse(source) as { uuid?: string; timestamp?: string }) : undefined;
+  if (original?.uuid !== uuid || !original.timestamp || original.timestamp === entry.timestamp) return;
+  lines[index] = JSON.stringify({ ...entry, timestamp: original.timestamp });
+  await writeFile(file, lines.join("\n"));
 }
 
 export class NotFoundError extends Error {}

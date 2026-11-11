@@ -629,7 +629,14 @@ function Chat({
           </div>
         )}
         <AnnotationSessionContext.Provider value={sessionId}>
-          <Messages view={view} />
+          <Messages
+            view={view}
+            onFork={
+              sessionId
+                ? (messageId) => api.forkSession(sessionId, messageId).then(onCreated, (e: Error) => onError(`分叉失败：${e.message}`))
+                : undefined
+            }
+          />
         </AnnotationSessionContext.Provider>
         {view.permissions.map((request) => (
           <PermissionCard

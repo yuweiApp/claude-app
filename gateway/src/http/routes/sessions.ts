@@ -273,6 +273,17 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     },
   );
 
+  /** 从某条消息分叉出一个新会话（记录到这条消息为止），返回新会话 id */
+  app.post<{ Params: IdParams; Body: { messageId: string } }>(
+    "/sessions/:id/fork",
+    {
+      schema: {
+        body: { type: "object", required: ["messageId"], properties: { messageId: { type: "string", minLength: 1 } } },
+      },
+    },
+    async (req) => ({ sessionId: await sessions.fork(req.params.id, req.body.messageId) }),
+  );
+
   app.post<{ Params: IdParams }>("/sessions/:id/interrupt", async (req) => {
     await activeOr404(sessions, req.params.id).interrupt();
     return { ok: true };

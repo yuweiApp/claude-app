@@ -3,7 +3,7 @@ import { api } from "../api";
 import type { AgentItem, Item, SessionView, TaskItem } from "../state/session";
 import { Attachments } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
-import { CopyAction, MessageActions } from "./MessageActions";
+import { CopyAction, ForkAction, MessageActions } from "./MessageActions";
 import { desktopCommandLine, StepGroup, stepImages, ToolIcon, ToolStep, type ToolUse } from "./Steps";
 import { StepThumbs } from "./StepThumbs";
 import { formatShortDuration } from "./TasksPopover";
@@ -207,14 +207,15 @@ function AgentMessage({ item, name }: { item: AgentItem; name?: string }) {
   );
 }
 
-export function Messages({ view }: { view: SessionView }) {
+/** onFork：从某条消息（会话记录里的 uuid）分叉出新会话；不传不显示分叉按钮（新会话页） */
+export function Messages({ view, onFork }: { view: SessionView; onFork?: (messageId: string) => Promise<void> }) {
   const turns = splitTurns(view.items);
   // 只有 running 算进行中：续接的会话在第一条消息之前一直是 starting（子进程等输入，init 要等发消息才来）
   const busy = view.state === "running";
   return (
     <div className="messages">
       {turns.map((turn, i) => (
-        <TurnView key={turn.key} turn={turn} view={view} live={busy && i === turns.length - 1 && !turn.result} />
+        <TurnView key={turn.key} turn={turn} view={view} live={busy && i === turns.length - 1 && !turn.result} onFork={onFork} />
       ))}
       {/* 这一轮进行中发的、还没交给模型的消息：和普通消息一样显示，保持在最后，交给模型时才固定位置（见 SessionView.queued） */}
       {view.queued.map(
@@ -280,7 +281,7 @@ function Elapsed({ since }: { since?: number }) {
  * 用户消息 → 中间过程（工具调用、中间说明）折叠在「用时 Xs」下面 → 最终回复。模型的思考不显示。
  * 进行中显示「已处理 Xs」并默认展开；结束后默认收起
  */
-function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: boolean }) {
+function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView; live: boolean; onFork?: (messageId: string) => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [liveCollapsed, setLiveCollapsed] = useState(false);
   const units = toUnits(turn.body);
@@ -369,6 +370,7 @@ function TurnView({ turn, view, live }: { turn: Turn; view: SessionView; live: b
           {final.kind === "text" && (
             <MessageActions align="start">
               <CopyAction text={final.text} title="复制回复" />
+              {onFork && <ForkAction onFork={() => onFork(final.uuid)} />}
             </MessageActions>
           )}
         </div>
@@ -397,7 +399,8 @@ function processImages(units: Unit[], view: SessionView) {
  */
 type Unit =
   | { kind: "item"; key: string; item: Exclude<Item, { kind: "assistant" }> }
-  | { kind: "text"; key: string; text: string }
+  /** uuid：所在的那条 assistant 消息（会话记录里一行一个内容块） */
+  | { kind: "text"; key: string; uuid: string; text: string }
   | { kind: "steps"; key: string; messageId?: string; tools: ToolUse[] };
 
 function toUnits(items: Item[]): Unit[] {
@@ -409,7 +412,7 @@ function toUnits(items: Item[]): Unit[] {
     }
     item.blocks.forEach((block, i) => {
       const key = `${item.uuid}:${i}`;
-      if (block.type === "text") units.push({ kind: "text", key, text: block.text });
+      if (block.type === "text") units.push({ kind: "text", key, uuid: item.uuid, text: block.text });
       else {
         const last = units.at(-1);
         if (last?.kind === "steps" && item.messageId && last.messageId === item.messageId) last.tools.push(block);

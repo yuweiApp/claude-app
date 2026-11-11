@@ -214,6 +214,9 @@ export const api = {
   stopTask: (id: string, taskId: string) => request("POST", `/sessions/${id}/tasks/${encodeURIComponent(taskId)}/stop`),
   /** 清掉已经结束的后台任务 */
   clearTasks: (id: string) => request("DELETE", `/sessions/${id}/tasks`),
+  /** 从某条消息分叉出新会话（记录到这条消息为止），返回新会话 id */
+  forkSession: (id: string, messageId: string) =>
+    request<{ sessionId: string }>("POST", `/sessions/${id}/fork`, { messageId }).then((r) => r.sessionId),
   /** 改会话标题（写成自定义标题） */
   renameSession: (id: string, title: string) => request("PATCH", `/sessions/${id}`, { title }),
   /** 删除会话，会话记录一起删，不能恢复 */

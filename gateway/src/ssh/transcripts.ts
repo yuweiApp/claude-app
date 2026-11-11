@@ -1,11 +1,11 @@
 import { createWriteStream, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdir, rm, rmdir, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, rmdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { Stats } from "ssh2";
 import { config } from "../config.js";
 import type { SshHost } from "./host.js";
-import { appendText, rmdirQuiet, rmrf } from "./remote-ops.js";
+import { appendText, rmdirQuiet, rmrf, sftpWrite } from "./remote-ops.js";
 
 /**
  * 远程会话的记录（jsonl）由远端的 claude 写在远端的配置目录里。网关把它们按原样同步到本机配置目录的 projects/ 下（同样的目录名、文件名），
@@ -159,6 +159,21 @@ export async function appendRemote(host: SshHost, sessionId: string, entries: un
     throw new Error(`写远端会话记录失败：${err.message}`);
   });
   await syncSession(host, sessionId);
+}
+
+/**
+ * 分叉出来的远程会话：本机副本旁边新建的记录（forkSession 写在源会话的同一个目录里）原样传到远端的同一个目录，
+ * 远端的 claude resume 时读的是远端那份
+ */
+export async function uploadForkedSession(host: SshHost, sourceId: string, sessionId: string): Promise<void> {
+  const project = load().sessions[sourceId]?.project;
+  if (!project) throw new Error("远端还没有这个会话的记录");
+  const data = await readFile(path.join(PROJECTS, project, `${sessionId}.jsonl`));
+  await sftpWrite(await host.sftp(), `${remoteProjects(host)}/${project}/${sessionId}.jsonl`, data).catch((err: Error) => {
+    throw new Error(`写远端会话记录失败：${err.message}`);
+  });
+  load().sessions[sessionId] = { host: host.id, project };
+  save();
 }
 
 /** 删远程会话：远端的记录（jsonl 和同名文件夹）和本机的副本 */
