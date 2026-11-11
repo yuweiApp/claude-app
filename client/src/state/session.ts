@@ -54,6 +54,8 @@ export type Item =
       text: string;
       /** 失败的原因：网关补发的工具结果（task_result 事件），或历史通知里的 <result>；Bash 等其他任务没有 */
       detail?: string;
+      /** 子代理的最终回复（可能很长）：历史通知里的 <result>，实时通知里的 summary */
+      result?: string;
     }
   /**
    * 同一会话里的其他 agent（子代理、队友）用 SendMessage 发来的消息。Claude Code 把它存成一条 user 消息：
@@ -323,7 +325,7 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
         } else pushItem(view, null, { kind: "compact", uuid: message.uuid, at: Date.now(), status: "done", awaitingSummary: true });
       }
       if (message.subtype === "task_notification" && !message.skip_transcript) {
-        view.pendingTasks = [...view.pendingTasks, { kind: "task", uuid: `task:${message.task_id}`, status: message.status, text: message.summary }];
+        view.pendingTasks = [...view.pendingTasks, liveTaskItem(view, message)];
       }
       if (message.subtype === "status" && message.status === "requesting") {
         if (!view.turnEnded && view.pendingTasks.length) {
@@ -602,16 +604,46 @@ function parseAttachments(text: string): AttachmentChip[] | null {
     });
 }
 
+/**
+ * 实时的任务通知。子代理的 summary 是它的最终回复，不是一句话的说明：
+ * 按任务列表或 Agent 调用找到说明，整理成和历史通知一样的 Agent "说明" finished，回复放进 result
+ */
+function liveTaskItem(view: SessionView, message: { task_id: string; tool_use_id?: string; status: string; summary: string }): TaskItem {
+  const item: TaskItem = { kind: "task", uuid: `task:${message.task_id}`, status: message.status, text: message.summary };
+  const listed = view.backgroundTasks.find((t) => t.taskId === message.task_id);
+  let description = listed?.type === "local_agent" ? listed.description : undefined;
+  if (description === undefined && message.tool_use_id) {
+    for (const it of view.items) {
+      if (it.kind !== "assistant") continue;
+      const call = it.blocks.find((b) => b.type === "tool_use" && b.id === message.tool_use_id);
+      if (!call || call.type !== "tool_use") continue;
+      if (call.name === "Agent" || call.name === "Task") {
+        const input = (call.input ?? {}) as { description?: unknown; name?: unknown };
+        description = typeof input.description === "string" ? input.description : typeof input.name === "string" ? input.name : "";
+      }
+      break;
+    }
+  }
+  if (description === undefined) return item;
+  return { ...item, text: `Agent "${description}" finished`, ...(message.summary ? { result: message.summary } : {}) };
+}
+
 /** 历史里后台任务完成的通知：Claude Code 用它开始新一轮时存成一条 user 消息，内容是 <task-notification> 段 */
 function taskNotification(text: string): TaskItem | null {
   const body = /^<task-notification>([\s\S]*)<\/task-notification>$/.exec(text.trim())?.[1];
   if (body === undefined) return null;
-  const field = (name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(body)?.[1]?.trim() ?? "";
+  // 字段里的 & < > 是转义过的
+  const field = (name: string) => unescapeXml(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(body)?.[1]?.trim() ?? "");
   const status = field("status");
   // MCP 工具转到后台的任务，通知里带 <result>（结果原文，失败时以「Task failed: 」开头）；失败时拿它显示原因
   const detail = status === "failed" ? field("result").replace(/^Task failed:\s*/, "") || undefined : undefined;
-  return { kind: "task", uuid: `task:${field("task-id")}`, status, text: field("summary"), ...(detail ? { detail } : {}) };
+  const summary = field("summary");
+  // 子代理的通知：summary 是 Agent "说明" finished，<result> 是它的最终回复
+  const result = /^Agent "/.test(summary) ? field("result") : "";
+  return { kind: "task", uuid: `task:${field("task-id")}`, status, text: summary, ...(detail && !result ? { detail } : {}), ...(result ? { result } : {}) };
 }
+
+const unescapeXml = (text: string) => text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
 
 /** 只有文字的 isSynthetic 消息（不是工具结果、中断、子代理的消息）：Claude Code 自己插给模型的提示 */
 function syntheticPrompt(content: unknown): boolean {

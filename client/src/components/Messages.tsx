@@ -122,7 +122,7 @@ function taskLabel(task: TaskItem): string {
     : task.status === "completed" ? "后台任务已完成" : task.status === "failed" ? "后台任务失败" : task.status === "stopped" ? "后台任务已停止" : "后台任务结束";
   // Bash：Background command "…" completed；MCP 工具（历史里）：MCP task <id> (inapp/browser_run_code) failed.，实时的只有工具名
   const name = /"(.+)"/.exec(task.text)?.[1] ?? /^MCP task \S+ \((.+)\)/.exec(task.text)?.[1] ?? task.text;
-  const label = name ? `${status}：${name}` : status;
+  const label = name ? `${status}：${shortLine(name)}` : status;
   return exit ? `${label}（退出码 ${exit}）` : label;
 }
 
@@ -133,13 +133,45 @@ function taskReason(task: TaskItem): string | undefined {
   return line && (line.length > 200 ? `${line.slice(0, 200)}…` : line);
 }
 
-/** 后台任务的一行。失败也用灰色、不标红：模型接下来的回复里通常已经说明了原因，红色太扎眼 */
+/** 标签里的说明只取第一行，太长截断 */
+function shortLine(text: string): string {
+  const line = text.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  return line.length > 80 ? `${line.slice(0, 80)}…` : line;
+}
+
+/**
+ * 后台任务的一行。失败也用灰色、不标红：模型接下来的回复里通常已经说明了原因，红色太扎眼。
+ * 子代理的最终回复（result）默认折叠，点开在下面显示；没认出是子代理、summary 又是多行长文的，也按回复折叠
+ */
 function TaskLine({ task }: { task: TaskItem }) {
+  const [open, setOpen] = useState(false);
   const reason = taskReason(task);
+  const result = task.result ?? (task.text.includes("\n") || task.text.length > 120 ? task.text : undefined);
+  if (!result) {
+    return (
+      <div className="task-line" title={task.detail ?? task.text}>
+        {taskLabel(task)}
+        {reason && <div className="task-reason">{reason}</div>}
+      </div>
+    );
+  }
   return (
-    <div className="task-line" title={task.detail ?? task.text}>
-      {taskLabel(task)}
-      {reason && <div className="task-reason">{reason}</div>}
+    <div className="task-entry">
+      <button className="task-line task-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        {taskLabel(task)}
+        <span className="step-caret">{open ? "▾" : "›"}</span>
+      </button>
+      {reason && <div className="task-line task-reason">{reason}</div>}
+      {open && (
+        <div className="msg-group">
+          <div className="agent-message">
+            <ReplyMarkdown>{result}</ReplyMarkdown>
+          </div>
+          <MessageActions align="start">
+            <CopyAction text={result} title="复制回复" />
+          </MessageActions>
+        </div>
+      )}
     </div>
   );
 }
