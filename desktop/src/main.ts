@@ -315,7 +315,6 @@ if (!app.requestSingleInstanceLock()) {
         try { await mainWindow!.loadURL(clientUrl); }
         catch (err) { uiReady = false; throw err; }
       };
-      await mainWindow.loadFile(loginFile);
       if (loadAccount()) {
         startingSession = true;
         try { await startSession(); }
@@ -324,6 +323,8 @@ if (!app.requestSingleInstanceLock()) {
           services.length = 0;
           await mainWindow.loadFile(loginFile, { query: { error: (err as Error).message } });
         } finally { startingSession = false; }
+      } else {
+        await mainWindow.loadFile(loginFile);
       }
     } catch (err) {
       dialog.showErrorBox("Claude App 启动失败", (err as Error).message);

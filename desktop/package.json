@@ -17,6 +17,7 @@
     "dist": "npm run prepare:release && npm run verify:release && electron-builder --config electron-builder.config.cjs --win nsis --x64 && node scripts/verify-package.mjs --installer",
     "test": "node --test tests/*.test.cjs",
     "test:ui": "npm run build && electron tests/login-ui.cjs",
+    "test:startup": "npm run build && node --test tests/startup-ui.cjs",
     "start": "tsc -p tsconfig.json && electron .",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
