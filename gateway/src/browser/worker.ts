@@ -1,7 +1,7 @@
 import { parentPort } from "node:worker_threads";
 import { chromium, type Browser, type BrowserContext } from "playwright-core";
 import type { CdpTransport, DownloadInfo, TabEvent } from "./host.js";
-import { BrowserRepl, type ToolOutput } from "./repl.js";
+import { BrowserRepl, type RunResult } from "./repl.js";
 import type { ReplCall, ToMain, ToWorker } from "./worker-protocol.js";
 
 /**
@@ -88,21 +88,42 @@ function listDownloads(): Promise<DownloadInfo[]> {
   });
 }
 
-const repl = new BrowserRepl(getContext, () => tabEvents.splice(0), listDownloads);
+// ───────────── 留下标签页（REPL 的 keepTab()，经主线程问桌面版） ─────────────
+
+const keepReplies = new Map<number, (reply: { tab?: { title: string; url: string } | null; error?: string }) => void>();
+
+function keepTab(): Promise<{ title: string; url: string } | null> {
+  const req = nextReq++;
+  return new Promise((resolve, reject) => {
+    keepReplies.set(req, ({ tab, error }) => (error ? reject(new Error(error)) : resolve(tab ?? null)));
+    post({ type: "keep", req });
+  });
+}
+
+// ───────────── 写文件（REPL 的 saveFile()，主线程写进会话的工作目录） ─────────────
+
+const saveReplies = new Map<number, (reply: { path?: string; error?: string }) => void>();
+
+/** 同外部浏览器的 saveFile（external.ts 的 fileSaver）：vm 里建的 TypedArray 不是这边的类型，按 ArrayBuffer.isView 认，复制一份再发 */
+function saveFile(name: string, data: unknown): Promise<string> {
+  let payload: Uint8Array | string;
+  if (typeof data === "string") payload = data;
+  else if (ArrayBuffer.isView(data)) payload = new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice();
+  else if (Object.prototype.toString.call(data) === "[object ArrayBuffer]") payload = new Uint8Array(data as ArrayBuffer).slice();
+  else return Promise.reject(new Error("saveFile 的数据要是 Buffer、Uint8Array、ArrayBuffer 或字符串"));
+  const req = nextReq++;
+  return new Promise((resolve, reject) => {
+    saveReplies.set(req, ({ path, error }) => (path ? resolve(path) : reject(new Error(error ?? "没有写入文件"))));
+    post({ type: "save", req, name, data: payload });
+  });
+}
+
+const repl = new BrowserRepl(getContext, () => tabEvents.splice(0), listDownloads, saveFile, keepTab);
 /** 还在跑的调用，取消时用 */
 const running = new Map<number, AbortController>();
 
-function invoke(call: ReplCall, signal: AbortSignal): Promise<ToolOutput> {
-  switch (call.method) {
-    case "run":
-      return repl.run(call.args[0], call.args[1], signal);
-    case "snapshot":
-      return repl.snapshot();
-    case "screenshot":
-      return repl.screenshot(call.args[0]);
-    case "tabs":
-      return repl.tabs(call.args[0], call.args[1]);
-  }
+function invoke(call: ReplCall, signal: AbortSignal): Promise<RunResult> {
+  return repl.run(call.args[0], call.args[1], signal);
 }
 
 async function handleCall(id: number, call: ReplCall): Promise<void> {
@@ -146,6 +167,14 @@ port.on("message", (msg: ToWorker) => {
     case "downloads":
       downloadReplies.get(msg.req)?.(msg);
       downloadReplies.delete(msg.req);
+      break;
+    case "kept":
+      keepReplies.get(msg.req)?.(msg);
+      keepReplies.delete(msg.req);
+      break;
+    case "saved":
+      saveReplies.get(msg.req)?.(msg);
+      saveReplies.delete(msg.req);
       break;
   }
 });

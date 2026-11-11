@@ -110,7 +110,7 @@ export class CdpProxy {
       this.activate(tab, true);
       return {};
     }
-    // 记下 AI 实际在操作哪个标签页（Playwright 连上时给每个标签页发的初始化命令不算），browser_keep_tab 留的是最近这个
+    // 记下 AI 实际在操作哪个标签页（Playwright 连上时给每个标签页发的初始化命令不算），keepTab() 留的是最近这个
     if (AGENT_ACTIONS.test(method)) tab.lastAgentUse = Date.now();
     // AI 的点击、按键：判断弹出窗口是谁触发的，也用来把网页收到的输入事件里 AI 的排除掉（views.ts 的 input-event）
     if (method.startsWith("Input.")) tab.lastAgentInput = Date.now();

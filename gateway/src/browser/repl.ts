@@ -260,7 +260,7 @@ export interface ToolOutput {
 }
 
 export interface RunResult extends ToolOutput {
-  /** 这次调用前后的标签页和当前页网址，判断有没有打开新网页（内置浏览器用它提醒 browser_keep_tab） */
+  /** 这次调用前后的标签页和当前页网址，判断有没有打开新网页（内置浏览器用它提醒 keepTab()） */
   opened: boolean;
 }
 
@@ -272,28 +272,10 @@ export interface Repl {
   /** 有 browser_run_code 还在跑（包括转到后台的）：一轮结束时先不关内置浏览器的临时标签页，代码可能还在用 */
   readonly busy: boolean;
   run(code: string, timeoutMs: number, signal?: AbortSignal): Promise<RunResult>;
-  /** browser_snapshot：标签页列表和当前标签页的无障碍树 */
-  snapshot(): Promise<ToolOutput>;
-  /** browser_take_screenshot */
-  screenshot(fullPage: boolean): Promise<ToolOutput>;
-  /** browser_tabs：列出标签页，或者把第 index 个设为 page */
-  tabs(action: "list" | "select", index?: number): Promise<ToolOutput>;
   /** 删会话时调用 */
   dispose(): void;
 }
 
-const NO_PAGE = "现在没有标签页（page 是 undefined）。";
-
-/** 结果前面加上「上次调用以来标签页的变化」 */
-const withNotice = (notice: string | undefined, body: string) => (notice ? `${notice}\n\n${body}` : body);
-
-const textOutput = (text: string, isError = false): ToolOutput => ({ text, images: [], isError });
-
-/** 标签页列表，每个一行：[序号] 标题 — 网址 */
-async function describeTabs(pages: Page[], current: Page | undefined): Promise<string> {
-  const lines = await Promise.all(pages.map(async (p, i) => `[${i}]${p === current ? "（当前）" : ""} ${(await titleOf(p)) || "（无标题）"} — ${p.url()}`));
-  return lines.join("\n");
-}
 
 /**
  * 模型代码里没人接住的错误：定时器回调、page.on 的回调里抛的，没有 await 的调用被拒绝的。
@@ -384,7 +366,7 @@ export class BrowserRepl implements Repl {
   private readonly known = new WeakSet<Page>();
   /**
    * 代码里的 page（当前标签页）。vm 里的 page 是全局对象上的访问器（见构造函数）：模型给它赋了另一个标签页时
-   * 调用 bringToFront，内置浏览器的面板跟着切过去。网关这边换 page（标签页被关、browser_tabs select）直接改这个字段，不经访问器
+   * 调用 bringToFront，内置浏览器的面板跟着切过去。网关这边换 page（标签页被关）直接改这个字段，不经访问器
    */
   private currentPage: unknown;
   /** 已经挂上关闭事件的浏览器上下文（断开重连后是新的） */
@@ -394,6 +376,7 @@ export class BrowserRepl implements Repl {
    * @param tabEvents 内置浏览器：取走桌面版发来的标签页变化（带着是谁做的，见 host.ts 的 TabEvent）；
    *   Chrome 没有，在这里自己记（Playwright 的事件里看不出是用户还是网页，只能分出是不是 AI）
    * @param downloads 内置浏览器：这个会话的下载和进度，代码里的全局函数 downloads() 就是它；外部浏览器没有
+   * @param keepTab 内置浏览器：把 AI 最近操作的标签页留给用户，代码里的全局函数 keepTab() 就是它（经主线程问桌面版）
    * @param saveFile 外部浏览器：把数据写进这个会话的工作目录，代码里的全局函数 saveFile() 就是它（external.ts）。
    *   扩展连接的浏览器上 Playwright 的 download 事件不会触发，下载的文件在哪也不知道，代码拿到数据后自己存
    */
@@ -402,6 +385,7 @@ export class BrowserRepl implements Repl {
     private readonly tabEvents?: () => TabEvent[],
     downloads?: () => Promise<DownloadInfo[]>,
     saveFile?: (name: string, data: unknown) => Promise<string>,
+    keepTab?: () => Promise<{ title: string; url: string } | null>,
   ) {
     const capture =
       (prefix: string) =>
@@ -436,6 +420,7 @@ export class BrowserRepl implements Repl {
       },
       ...(downloads ? { downloads } : {}),
       ...(saveFile ? { saveFile } : {}),
+      ...(keepTab ? { keepTab } : {}),
     });
     Object.defineProperty(this.sandbox, "page", {
       enumerable: true,
@@ -473,7 +458,7 @@ export class BrowserRepl implements Repl {
     if (this.background.length < 20) this.background.push(errorText(err));
   }
 
-  /** 准备好 context 和 page（browser_snapshot 等工具也走这里，和代码里的 page 是同一个） */
+  /** 准备好 context 和 page（每次调用开头） */
   private async current(): Promise<{ context: BrowserContext; page: Page | undefined }> {
     return this.sync(true);
   }
@@ -583,42 +568,8 @@ export class BrowserRepl implements Repl {
       const list = await Promise.all(fresh.map(async (p) => `[${pages.indexOf(p)}] ${(await titleOf(p)) || "（无标题）"} — ${p.url()}`));
       out.push(`不是你开的新标签页（序号是在 context.pages() 里的位置）：${list.join("；")}。page 仍指向 ${page && !page.isClosed() ? page.url() : "undefined"}。`);
     }
-    if (turnEnd) out.push("你开的标签页在一轮结束时会自动关闭，除非调用过 browser_keep_tab；调用过的会一直留在用户的面板里，下一轮也还在。");
+    if (turnEnd) out.push("你开的标签页在一轮结束时会自动关闭，除非调用过 keepTab()；留下的会一直在用户的面板里，下一轮也还在。");
     return `（${out.join("\n")}）`;
-  }
-
-  async snapshot(): Promise<ToolOutput> {
-    const { context, page } = await this.current();
-    const notice = await this.takeNotice();
-    if (!page) return textOutput(withNotice(notice, NO_PAGE), true);
-    const snapshot = await page.ariaSnapshot({ mode: "ai", timeout: 15_000 });
-    return textOutput(withNotice(notice, `标签页：\n${await describeTabs(context.pages(), page)}\n\n当前标签页 ${page.url()} 的结构：\n${snapshot}`));
-  }
-
-  async screenshot(fullPage: boolean): Promise<ToolOutput> {
-    const { page } = await this.current();
-    const notice = await this.takeNotice();
-    if (!page) return textOutput(withNotice(notice, NO_PAGE), true);
-    // 整页可能很长，用 JPEG 压一下
-    const data = fullPage
-      ? await page.screenshot({ fullPage: true, type: "jpeg", quality: 80, timeout: 15_000 })
-      : await page.screenshot({ type: "png", timeout: 15_000 });
-    return { text: notice ?? "", images: [{ data: data.toString("base64"), mimeType: fullPage ? "image/jpeg" : "image/png" }], isError: false };
-  }
-
-  async tabs(action: "list" | "select", index?: number): Promise<ToolOutput> {
-    const { context, page } = await this.current();
-    const notice = await this.takeNotice();
-    const pages = context.pages();
-    if (action === "select") {
-      const target = index === undefined ? undefined : pages[index];
-      if (!target) return textOutput(withNotice(notice, `没有序号为 ${index ?? "（未指定）"} 的标签页。`), true);
-      // 网关这边换 page，不经 vm 里 page 的访问器，自己切到前台
-      this.currentPage = target;
-      await target.bringToFront().catch(() => undefined);
-      return textOutput(withNotice(notice, `已切换到：\n${await describeTabs(pages, target)}`));
-    }
-    return textOutput(withNotice(notice, pages.length ? await describeTabs(pages, page) : "没有标签页。"));
   }
 
   async run(code: string, timeoutMs: number, signal?: AbortSignal): Promise<RunResult> {

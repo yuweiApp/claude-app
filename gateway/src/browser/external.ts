@@ -8,7 +8,7 @@ import type { ExternalBrowserInfo, ExternalBrowserTabs } from "../shared/types.j
 import { listBrowsers, tabGroupEnabled, type ResolvedBrowser } from "./browser-settings.js";
 import { INSTALL_URL } from "./catalog.js";
 import { BrowserRepl } from "./repl.js";
-import { browserMcpServer, READ_TOOL_NAMES, replFor, RUNTIME_FACTS } from "./tool.js";
+import { browserMcpServer, replFor, RUN_CODE_TOOL, RUNTIME_FACTS } from "./tool.js";
 
 /**
  * 外部浏览器：用户自己的 Chrome、Edge、Brave 等 Chromium 内核浏览器，经 Playwright 扩展连接。
@@ -127,8 +127,8 @@ export function activeBrowsers(): ResolvedBrowser[] {
   return listBrowsers().filter((b) => b.enabled);
 }
 
-/** 只读的工具不用确认，browser_run_code 走权限卡片（「完全访问权限」下直接执行）：操作的是用户真实登录着的账号，不比内置浏览器放得更宽 */
-export const externalReadTools = (active: ExternalBrowserInfo[]) => active.flatMap((b) => READ_TOOL_NAMES.map((n) => `mcp__${b.id}__${n}`));
+/** 外部浏览器的 browser_run_code 也不弹权限卡片（用户定的，同内置浏览器）：操作的是用户真实登录着的账号 */
+export const externalTools = (active: ExternalBrowserInfo[]) => active.map((b) => `mcp__${b.id}__${RUN_CODE_TOOL}`);
 
 /** GET /external/tabs：启用着的外部浏览器，连上了的带上标签页 */
 export const externalTabs = (): Promise<ExternalBrowserTabs[]> =>
@@ -146,7 +146,7 @@ export function externalNote(active: ExternalBrowserInfo[]): string {
  * name 是相对工作目录的路径，不能跑到外面；同名时文件名后加 (1)、(2)，同内置浏览器的下载。
  * data：Buffer、Uint8Array 等 TypedArray、ArrayBuffer，或字符串（按 UTF-8 写）。vm 里建的对象不是这边的 Uint8Array，按 ArrayBuffer.isView 认
  */
-function fileSaver(cwd: string) {
+export function fileSaver(cwd: string) {
   return async (name: string, data: unknown): Promise<string> => {
     if (typeof name !== "string" || !name.trim()) throw new Error("saveFile 的第一个参数是文件名（相对工作目录的路径）");
     const target = path.resolve(cwd, name);
@@ -172,6 +172,10 @@ function fileSaver(cwd: string) {
   };
 }
 
+/** 说明里 saveFile 的那句，内置浏览器（tool.ts 的 browserServer）和外部浏览器共用 */
+export const saveFileFact = (cwd: string) =>
+  `全局函数 await saveFile(name, data) 把数据写进这个会话的工作目录（${cwd}）：name 是相对这个目录的路径，data 是 Buffer、Uint8Array、ArrayBuffer 或字符串（按 UTF-8 写），同名时文件名后加 (1)、(2)，返回写入的绝对路径。`;
+
 function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[], cwd: string): string {
   const others = active.filter((o) => o.id !== b.id);
   return [
@@ -186,7 +190,7 @@ function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[], cwd
     "标签页：通过这里开的标签页不会自动关闭。标签页被新开、关闭时，下一次工具结果里会列出变化，只能分出是不是你做的（扩展不提供是用户还是网页）。",
     `下载：网页里的下载（包括脚本触发的）由 ${b.name} 自己处理，按用户在浏览器里的设置保存（默认是系统的「下载」文件夹，设了下载前询问时会弹出另存为对话框），同名时浏览器自己在文件名后加 (1)；` +
       "Playwright 的 download 事件不会触发，page.waitForEvent('download') 一直等到超时，也拿不到文件存在哪。" +
-      `全局函数 await saveFile(name, data) 把数据写进这个会话的工作目录（${cwd}）：name 是相对这个目录的路径，data 是 Buffer、Uint8Array、ArrayBuffer 或字符串（按 UTF-8 写），同名时文件名后加 (1)、(2)，返回写入的绝对路径。`,
+      saveFileFact(cwd),
     `用户消息里的 @${b.name} 指这个浏览器（用户自己的 ${b.name}），@${b.id}[标题](网址) 指这里的一个标签页。`,
   ].join("\n");
 }

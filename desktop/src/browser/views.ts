@@ -28,7 +28,7 @@ export interface TabInfo {
   openerId?: string;
   /**
    * 一轮结束时留着：用户开的一直留着；AI 开的是临时标签页，这一轮结束时关掉，
-   * 除非 AI 用 browser_keep_tab 留给用户、用户在地址栏里自己跳转过、或者用户正在面板里看着它
+   * 除非 AI 用 keepTab() 留给用户、用户在地址栏里自己跳转过、或者用户正在面板里看着它
    */
   kept: boolean;
   /**
@@ -52,7 +52,7 @@ export interface TabInfo {
 
 export interface Tab extends TabInfo {
   view: WebContentsView;
-  /** AI 最近一次操作它的时间（CdpProxy 记），browser_keep_tab 留的是这个会话里最近操作过的 */
+  /** AI 最近一次操作它的时间（CdpProxy 记），keepTab() 留的是这个会话里最近操作过的 */
   lastAgentUse: number;
   /** AI 最近一次经 CDP 发点击、按键（Input.*）的时间（CdpProxy 记），判断弹出窗口是不是 AI 的操作触发的 */
   lastAgentInput: number;
@@ -399,14 +399,14 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     this.emit("changed", tab);
   }
 
-  /** 这个会话里 AI 最近操作过的标签页（CdpProxy 记的 lastAgentUse），browser_keep_tab 留的就是它 */
+  /** 这个会话里 AI 最近操作过的标签页（CdpProxy 记的 lastAgentUse），keepTab() 留的就是它 */
   private latestAgentTab(sessionId: string): Tab | undefined {
     return this.list(sessionId)
       .filter((t) => t.lastAgentUse > 0)
       .sort((a, b) => b.lastAgentUse - a.lastAgentUse)[0];
   }
 
-  /** AI 的 browser_keep_tab：把这个会话里 AI 最近操作过的标签页留给用户 */
+  /** AI 的 keepTab()：把这个会话里 AI 最近操作过的标签页留给用户 */
   keepLatest(sessionId: string): Tab | null {
     const latest = this.latestAgentTab(sessionId);
     if (!latest) return null;
@@ -414,7 +414,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     return latest;
   }
 
-  /** 这个会话里还没留下的临时标签页（一轮结束时会关）；latest 标出 AI 最近操作过的那个（browser_keep_tab 会留下它） */
+  /** 这个会话里还没留下的临时标签页（一轮结束时会关）；latest 标出 AI 最近操作过的那个（keepTab() 会留下它） */
   temporaryTabs(sessionId: string): { title: string; url: string; latest: boolean }[] {
     const latest = this.latestAgentTab(sessionId);
     return this.list(sessionId)

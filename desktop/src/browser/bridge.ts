@@ -6,7 +6,7 @@ import type { BrowserViews } from "./views.js";
  * 外壳和网关之间的连接（WebSocket，外壳连网关的 /browser/host）。AI 的浏览器工具（Playwright MCP）在网关里，
  * 每个对话会话一条 Playwright 连接，经这里转给这个会话的 CDP 代理。消息：
  * - 网关 → 外壳：{ type: "open", session }（新的 Playwright 连接）、{ type: "cdp", session, message }、{ type: "close", session }、
- *   { type: "turnEnded", session }（一轮结束，关掉 AI 的临时标签页）、{ type: "keep", session, id }（browser_keep_tab）、
+ *   { type: "turnEnded", session }（一轮结束，关掉 AI 的临时标签页）、{ type: "keep", session, id }（REPL 的 keepTab()）、
  *   { type: "closeSession", session }（会话删除了，关掉它的所有标签页）、
  *   { type: "temporary", session, id }（问这个会话现在有哪些临时标签页）、
  *   { type: "sessionDir", session, dir }（会话的工作目录，回答下面的问题；网关不知道这个会话时 dir 是 null）、

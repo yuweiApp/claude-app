@@ -1,5 +1,5 @@
 import type { DownloadInfo, TabEvent } from "./host.js";
-import type { RunResult, ToolOutput } from "./repl.js";
+import type { RunResult } from "./repl.js";
 
 /**
  * 网关主线程和内置浏览器 worker（worker.ts）之间的消息。只有类型，两边都 import type，不会把主线程的模块带进 worker。
@@ -10,11 +10,7 @@ import type { RunResult, ToolOutput } from "./repl.js";
  */
 
 /** 浏览器工具调用的方法，和 Repl 接口的方法一一对应 */
-export type ReplCall =
-  | { method: "run"; args: [code: string, timeoutMs: number] }
-  | { method: "snapshot"; args: [] }
-  | { method: "screenshot"; args: [fullPage: boolean] }
-  | { method: "tabs"; args: [action: "list" | "select", index?: number] };
+export type ReplCall = { method: "run"; args: [code: string, timeoutMs: number] };
 
 /** 主线程发给 worker 的 */
 export type ToWorker =
@@ -30,11 +26,15 @@ export type ToWorker =
   /** 桌面版发来的标签页变化 */
   | { type: "tabEvent"; event: TabEvent }
   /** 回复 downloads：这个会话的下载，或者没取到的原因 */
-  | { type: "downloads"; req: number; downloads?: DownloadInfo[]; error?: string };
+  | { type: "downloads"; req: number; downloads?: DownloadInfo[]; error?: string }
+  /** 回复 keep：留下的标签页（没有 AI 操作过的标签页时是 null），或者没留成的原因 */
+  | { type: "kept"; req: number; tab?: { title: string; url: string } | null; error?: string }
+  /** 回复 save：写入的路径，或者没写成的原因 */
+  | { type: "saved"; req: number; path?: string; error?: string };
 
 /** worker 发给主线程的 */
 export type ToMain =
-  | { type: "result"; id: number; output: ToolOutput | RunResult }
+  | { type: "result"; id: number; output: RunResult }
   | { type: "error"; id: number; message: string }
   /** 要开一条到内置浏览器的 CDP 通道 */
   | { type: "cdpOpen"; req: number }
@@ -43,4 +43,8 @@ export type ToMain =
   /** 关掉这条通道 */
   | { type: "cdpClose"; conn: number }
   /** REPL 的 downloads()：问这个会话的下载和进度 */
-  | { type: "downloads"; req: number };
+  | { type: "downloads"; req: number }
+  /** REPL 的 keepTab()：把这个会话里 AI 最近操作的标签页留给用户 */
+  | { type: "keep"; req: number }
+  /** REPL 的 saveFile(name, data)：主线程把数据写进会话的工作目录（data 已在 worker 里转成 Uint8Array 或字符串） */
+  | { type: "save"; req: number; name: string; data: Uint8Array | string };

@@ -26,7 +26,7 @@ export interface TabEvent {
   action?: "address" | "back" | "forward" | "reload";
 }
 
-/** 还没留下的临时标签页（desktop/src/browser/views.ts 的 temporaryTabs）；latest：AI 最近操作过的那个，browser_keep_tab 会留下它 */
+/** 还没留下的临时标签页（desktop/src/browser/views.ts 的 temporaryTabs）；latest：AI 最近操作过的那个，keepTab() 会留下它 */
 export interface TemporaryTab {
   title: string;
   url: string;
@@ -161,7 +161,7 @@ export class BrowserHost {
     this.post({ type: "turnEnded", session: sessionId });
   }
 
-  /** browser_keep_tab：把这个会话里 AI 最近操作过的标签页留给用户，返回它的标题和网址 */
+  /** REPL 的 keepTab()：把这个会话里 AI 最近操作过的标签页留给用户，返回它的标题和网址 */
   keep(sessionId: string): Promise<{ title: string; url: string } | null> {
     if (!this.socket) return Promise.reject(new Error("内置浏览器只在桌面版里有：桌面版没有运行"));
     return this.request<{ title: string; url: string }>("keep", sessionId, 5000);

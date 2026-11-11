@@ -9,17 +9,17 @@ import { WorkerRepl } from "./worker-repl.js";
 /**
  * MCP 服务器名：工具全名是 mcp__inapp__browser_run_code 这样。inapp 指应用内（in-app）的浏览器，
  * 和外部浏览器（用户的 Chrome、Edge，external.ts）的 mcp__chrome__、mcp__edge__ 一眼能分开。
- * 不叫 browser：工具名自带 browser_ 前缀，叫 browser 就成了 mcp__browser__browser_snapshot，又长又重复
+ * 不叫 browser：工具名自带 browser_ 前缀，叫 browser 就成了 mcp__browser__browser_run_code，又长又重复
  */
 export const BROWSER_SERVER = "inapp";
 
 /**
- * 只读的工具，内置浏览器和外部浏览器（external.ts）共用，不用确认（options.allowedTools）。
- * browser_run_code 不在里面：它在网关进程里跑任意代码，等同于 Bash，非「完全访问权限」时走权限卡片
+ * 浏览器只有一个工具 browser_run_code，内置浏览器和外部浏览器（external.ts）共用。看页面结构、截图、切换标签页、留下标签页都在代码里做。
+ * 不弹权限卡片（options.allowedTools，用户定的：浏览器、桌面工具默认开放）。它在网关进程里跑任意代码，等同于 Bash
  */
-export const READ_TOOL_NAMES = ["browser_snapshot", "browser_take_screenshot", "browser_tabs"];
+export const RUN_CODE_TOOL = "browser_run_code";
 
-export const BROWSER_READ_TOOLS = ["browser_keep_tab", ...READ_TOOL_NAMES].map((name) => `mcp__${BROWSER_SERVER}__${name}`);
+export const BROWSER_TOOLS = [`mcp__${BROWSER_SERVER}__${RUN_CODE_TOOL}`];
 
 /** MCP 调用跑多久后自动转到后台（config.ts 的 agentEnv 传给子进程的 CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS） */
 const BACKGROUND_SECONDS = (Number(process.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS) || MCP_AUTO_BACKGROUND_MS) / 1000;
@@ -35,22 +35,24 @@ export const RUNTIME_FACTS = [
   "- 顶层的 const / let / function 在之后的调用里保留，可以重新声明。",
   "- 返回最后一个表达式的值和 console.log 的输出；emitImage(buffer) 把图片加进结果。",
   `- 返回的文字里，数据部分超过 ${DATA_URL_KEEP_CHARS} 个字符的 data: 地址只保留类型（如 data:image/jpeg;base64,），数据换成「…（省略了 N 个字符）」；代码里拿到的值是完整的。`,
-  "- 给 page 赋另一个标签页时，那个标签页切到前台；browser_snapshot、browser_take_screenshot 读的是 page 指向的标签页。",
+  "- 给 page 赋另一个标签页时，那个标签页切到前台。",
   `- timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}；Playwright 单个动作默认 30 秒超时。`,
   `- 调用超过约 ${BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，代码继续跑，结束后结果作为通知送达；会话空闲时，这个通知会开始新的一轮。多次调用可以同时在跑，操作的是同一批标签页。`,
   "- 网页本身的变化不会通知你；一轮结束后，只有后台任务结束会再唤起你。",
   "- 连续同步执行（中间没有 await）超过 2 秒的代码会被中止。",
-  "browser_snapshot 返回的结构里元素带 [ref=e12]，代码里 page.locator('aria-ref=e12') 指向同一个元素。",
+  "- page.ariaSnapshot({ mode: 'ai' }) 返回页面的无障碍树（YAML 文本），元素带 [ref=e12]；之后 page.locator('aria-ref=e12') 指向同一个元素，页面变了要重新取。",
 ].join("\n");
 
-const INSTRUCTIONS = [
+/** files：saveFile 的说明（external.ts 的 saveFileFact），会话有工作目录时才有 */
+const instructions = (saveFileFact?: string) => [
   "内置浏览器：用户界面右侧面板里的真实网页，用户能看到，也能自己操作。这些工具只能看到这个会话自己的标签页。",
   RUNTIME_FACTS,
   "标签页：用 context.newPage() 开的是临时标签页，一轮结束时自动关闭（用户当时正在面板里看着的除外）；关掉后用户在面板里看不到它，下一轮它也不在 context.pages() 里，page 换成剩下的最后一个标签页，没有就是 undefined。" +
-    "browser_keep_tab 把你最近操作的那个标签页留下：之后不再自动关闭，用户在面板里能看到、能操作，下一轮还在 context.pages() 里，直到用户关掉或会话被删除。用户开的不会自动关。" +
-    "标签页被新开、关闭、跳转时，下一次工具结果里会列出变化和是谁做的（你、用户、网页自己、一轮结束）。",
+    "全局函数 await keepTab() 把你最近操作的那个标签页留下：之后不再自动关闭，用户在面板里能看到、能操作，下一轮还在 context.pages() 里，直到用户关掉或会话被删除；返回 { title, url }，没有你操作过的标签页时返回 null。用户开的不会自动关。" +
+    "标签页被新开、关闭、跳转时，下一次 browser_run_code 的结果里会列出变化和是谁做的（你、用户、网页自己、一轮结束）。",
   "下载：网页里的下载（包括脚本触发的）不弹「另存为」，直接存进这个会话的工作目录，同名时文件名后加 (1)、(2)；Playwright 的 download 事件照常触发，download.suggestedFilename() 是实际存下的文件名，download.path() 是 Playwright 临时目录里的一份。" +
-    "全局函数 await downloads() 返回这个会话里的下载（进行中的和最近结束的，先开始的在前），每项有 filename、path、url（data: 地址只有类型和长度）、state（progressing / completed / cancelled / interrupted）、paused、receivedBytes、totalBytes（不知道时是 0）、bytesPerSecond、startTime（毫秒时间戳），是调用那一刻的数据。",
+    "全局函数 await downloads() 返回这个会话里的下载（进行中的和最近结束的，先开始的在前），每项有 filename、path、url（data: 地址只有类型和长度）、state（progressing / completed / cancelled / interrupted）、paused、receivedBytes、totalBytes（不知道时是 0）、bytesPerSecond、startTime（毫秒时间戳），是调用那一刻的数据。" +
+      (saveFileFact ?? ""),
   "用户消息里的 @内置浏览器 指这个浏览器，@[标题](网址) 指这里的一个标签页。",
 ].join("\n");
 
@@ -63,7 +65,7 @@ function temporaryNote(tabs: TemporaryTab[]): string {
   return [
     "（这个会话现在的临时标签页（你开的，或从它们弹出的）：",
     ...lines,
-    "临时标签页在这一轮结束时自动关闭（用户那时正在面板里看着的除外），关闭后用户在面板里看不到，下一轮也不在了。browser_keep_tab 会留下你最近操作的那个标签页，留下后用户能看到，下一轮还能接着用。）",
+    "临时标签页在这一轮结束时自动关闭（用户那时正在面板里看着的除外），关闭后用户在面板里看不到，下一轮也不在了。keepTab() 会留下你最近操作的那个标签页，留下后用户能看到，下一轮还能接着用。）",
   ].join("\n");
 }
 
@@ -162,21 +164,19 @@ export interface ServerOptions {
   name: string;
   instructions: string;
   repl: Repl;
-  /** 内置浏览器的 browser_keep_tab：返回结果文字，null 表示没有可以留下的标签页 */
-  keep?: () => Promise<string | null>;
   /** 内置浏览器：这个会话现在还没留下的临时标签页，问不到时是 null */
   temporaryTabs?: () => Promise<TemporaryTab[] | null>;
 }
 
 /**
- * 给模型用的浏览器工具，内置浏览器和外部浏览器共用：browser_run_code 为主（同 Codex 的 js 工具），
- * 加上读页面结构、截图、列出 / 切换标签页三个只读的，和内置浏览器的 browser_keep_tab。
- * 以前挂的是 playwright-core 自带的 Playwright MCP（二十多个工具），点击、输入、等待这些现在都写在代码里
+ * 给模型用的浏览器工具，内置浏览器和外部浏览器共用：只有 browser_run_code（同 Codex 的 js 工具）。
+ * 以前挂的是 playwright-core 自带的 Playwright MCP（二十多个工具），后来还留过读页面结构、截图、列出 / 切换标签页、留下标签页四个专用工具，
+ * 现在都写在代码里（page.ariaSnapshot、page.screenshot + emitImage、context.pages()、keepTab()）
  */
-export function browserMcpServer({ name, instructions, repl, keep, temporaryTabs }: ServerOptions): McpSdkServerConfigWithInstance {
+export function browserMcpServer({ name, instructions, repl, temporaryTabs }: ServerOptions): McpSdkServerConfigWithInstance {
   const tools = [
     tool(
-      "browser_run_code",
+      RUN_CODE_TOOL,
       "在常驻的 REPL 里执行 JavaScript（Playwright API），支持顶层 await。全局有 page（当前标签页）、context（BrowserContext），顶层变量在之后的调用里保留；" +
         "返回最后一个表达式的值和 console.log 的输出，emitImage(buffer) 把图片加进结果。" +
         `timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}、最大 ${MAX_TIMEOUT_MS}；超过约 ${BACKGROUND_SECONDS} 秒转为后台任务，结束后结果作为通知送达。`,
@@ -206,69 +206,6 @@ export function browserMcpServer({ name, instructions, repl, keep, temporaryTabs
       },
       { annotations: { title: "Run browser code", readOnlyHint: false, destructiveHint: true, openWorldHint: true } },
     ),
-    tool(
-      "browser_snapshot",
-      "当前标签页（page）的无障碍树，元素带 [ref=e12]（代码里 page.locator('aria-ref=e12') 指向同一个元素），前面列出所有标签页。不改动页面。",
-      {},
-      async () => {
-        const notice = takeRestartNotice(repl);
-        try {
-          return toResult(withRestartNotice(notice, await repl.snapshot()));
-        } catch (err) {
-          return error(prefixed(notice, errorMessage(err)));
-        }
-      },
-      { annotations: { title: "Page snapshot", readOnlyHint: true, openWorldHint: false } },
-    ),
-    tool(
-      "browser_take_screenshot",
-      "当前标签页（page）的截图：默认可见区域，full_page 截整页。",
-      { full_page: z.boolean().optional().describe("截整个页面，默认只截可见区域") },
-      async ({ full_page }) => {
-        const notice = takeRestartNotice(repl);
-        try {
-          return toResult(withRestartNotice(notice, await repl.screenshot(full_page ?? false)));
-        } catch (err) {
-          return error(prefixed(notice, errorMessage(err)));
-        }
-      },
-      { annotations: { title: "Screenshot", readOnlyHint: true, openWorldHint: false } },
-    ),
-    tool(
-      "browser_tabs",
-      "action: list 列出标签页；action: select 把第 index 个设为 page，并切到前台。",
-      {
-        action: z.enum(["list", "select"]),
-        index: z.number().int().min(0).optional().describe("action 为 select 时：标签页序号（list 结果里的 [序号]）"),
-      },
-      async ({ action, index }) => {
-        const notice = takeRestartNotice(repl);
-        try {
-          return toResult(withRestartNotice(notice, await repl.tabs(action, index)));
-        } catch (err) {
-          return error(prefixed(notice, errorMessage(err)));
-        }
-      },
-      { annotations: { title: "Tabs", readOnlyHint: true, openWorldHint: false } },
-    ),
-    ...(keep
-      ? [
-          tool(
-            "browser_keep_tab",
-            "把你最近操作的那个标签页标记为保留：这一轮结束时不关闭，之后也不再自动关闭。留下的标签页用户在右侧面板里能看到、能操作，下一轮还在，直到用户关掉或会话被删除。",
-            {},
-            async () => {
-              try {
-                const result = await keep();
-                return result === null ? error("没有你操作过的标签页可以留下。") : text(result);
-              } catch (err) {
-                return error(errorMessage(err));
-              }
-            },
-            { annotations: { title: "Keep tab for the user", readOnlyHint: false, destructiveHint: false, openWorldHint: false } },
-          ),
-        ]
-      : []),
   ];
 
   return createSdkMcpServer({
@@ -282,17 +219,19 @@ export function browserMcpServer({ name, instructions, repl, keep, temporaryTabs
 
 /**
  * 给模型用的内置浏览器工具，每个会话一个 MCP 服务器；REPL 和连接按会话保留（replFor），在这个会话自己的 worker 线程里。
- * externalNote：说明里补的另外还有哪些浏览器（external.ts 的 externalNote）
+ * externalNote：说明里补的另外还有哪些浏览器（external.ts 的 externalNote）；files：REPL 的 saveFile()（external.ts 的 fileSaver、saveFileFact，按会话的工作目录）
  */
-export function browserServer(host: BrowserHost, sessionId: string, resumed = false, externalNote = ""): McpSdkServerConfigWithInstance {
+export function browserServer(
+  host: BrowserHost,
+  sessionId: string,
+  resumed = false,
+  externalNote = "",
+  files?: { save: (name: string, data: unknown) => Promise<string>; fact: string },
+): McpSdkServerConfigWithInstance {
   return browserMcpServer({
     name: BROWSER_SERVER,
-    instructions: INSTRUCTIONS + externalNote,
-    repl: replFor(`${BROWSER_SERVER}:${sessionId}`, () => new WorkerRepl(host, sessionId), resumed),
-    keep: async () => {
-      const tab = await host.keep(sessionId);
-      return tab ? `已留下标签页「${tab.title || tab.url}」（${tab.url}），这一轮结束后不会关闭。` : null;
-    },
+    instructions: instructions(files?.fact) + externalNote,
+    repl: replFor(`${BROWSER_SERVER}:${sessionId}`, () => new WorkerRepl(host, sessionId, files?.save), resumed),
     temporaryTabs: () => host.temporaryTabs(sessionId),
   });
 }

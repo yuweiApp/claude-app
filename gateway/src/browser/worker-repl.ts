@@ -50,9 +50,11 @@ export class WorkerRepl implements Repl {
   private exitNotice: string | undefined;
   private disposed = false;
 
+  /** saveFile：REPL 的 saveFile() 在主线程写文件（external.ts 的 fileSaver，按会话的工作目录） */
   constructor(
     private readonly host: BrowserHost,
     private readonly sessionId: string,
+    private readonly saveFile?: (name: string, data: unknown) => Promise<string>,
   ) {}
 
   get busy(): boolean {
@@ -61,18 +63,6 @@ export class WorkerRepl implements Repl {
 
   run(code: string, timeoutMs: number, signal?: AbortSignal): Promise<RunResult> {
     return this.call({ method: "run", args: [code, timeoutMs] }, signal) as Promise<RunResult>;
-  }
-
-  snapshot(): Promise<ToolOutput> {
-    return this.call({ method: "snapshot", args: [] });
-  }
-
-  screenshot(fullPage: boolean): Promise<ToolOutput> {
-    return this.call({ method: "screenshot", args: [fullPage] });
-  }
-
-  tabs(action: "list" | "select", index?: number): Promise<ToolOutput> {
-    return this.call({ method: "tabs", args: [action, index] });
   }
 
   dispose(): void {
@@ -179,6 +169,22 @@ export class WorkerRepl implements Repl {
         this.host.downloads(this.sessionId).then(
           (downloads) => this.send(worker, { type: "downloads", req: msg.req, downloads }),
           (err: unknown) => this.send(worker, { type: "downloads", req: msg.req, error: err instanceof Error ? err.message : String(err) }),
+        );
+        break;
+      case "save":
+        if (!this.saveFile) {
+          this.send(worker, { type: "saved", req: msg.req, error: "这个会话没有工作目录，saveFile 写不了文件" });
+          break;
+        }
+        this.saveFile(msg.name, msg.data).then(
+          (path) => this.send(worker, { type: "saved", req: msg.req, path }),
+          (err: unknown) => this.send(worker, { type: "saved", req: msg.req, error: err instanceof Error ? err.message : String(err) }),
+        );
+        break;
+      case "keep":
+        this.host.keep(this.sessionId).then(
+          (tab) => this.send(worker, { type: "kept", req: msg.req, tab }),
+          (err: unknown) => this.send(worker, { type: "kept", req: msg.req, error: err instanceof Error ? err.message : String(err) }),
         );
         break;
       case "cdpClose": {
