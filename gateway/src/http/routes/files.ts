@@ -213,9 +213,10 @@ export function fileRoutes(app: FastifyInstance): void {
     const ext = p.extname(abs).toLowerCase();
     const html = (ext === ".html" || ext === ".htm") && info.size <= MAX_TEXT_BYTES;
     const body = html ? Buffer.concat([await fs.readFile(abs), Buffer.from(`\n<script>${PAGE_PICKER_SCRIPT}</script>\n`)]) : fs.createReadStream(abs);
+    // PDF 不加 sandbox：Chromium 在沙箱里不显示 PDF（报被拦截）。PDF 由浏览器自带的查看器显示，PDF 里的脚本碰不到界面
+    if (ext !== ".pdf") reply.header("content-security-policy", "sandbox allow-scripts allow-forms allow-modals allow-popups");
     return reply
       .type(PAGE_TYPES[ext] ?? "application/octet-stream")
-      .header("content-security-policy", "sandbox allow-scripts allow-forms allow-modals allow-popups")
       .header("x-content-type-options", "nosniff")
       // 沙箱里的页面是单独的源，type="module" 的脚本、fetch 同目录的文件要 CORS
       .header("access-control-allow-origin", "*")

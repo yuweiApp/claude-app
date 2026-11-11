@@ -103,7 +103,8 @@ function createWindow(): BrowserWindow {
     // 不要系统标题栏：网页自己画（client/src/components/TitleBar.tsx），按钮通过 preload 调下面的 window:* 消息。
     // macOS 保留左上角的红绿灯按钮
     ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : { frame: false }),
-    webPreferences: { preload: path.join(import.meta.dirname, "preload.cjs") },
+    // plugins：Chromium 自带的 PDF 查看器，右侧面板预览 PDF 用（Electron 默认关着）
+    webPreferences: { preload: path.join(import.meta.dirname, "preload.cjs"), plugins: true },
   });
   win.once("ready-to-show", () => win.show());
   win.on("maximize", () => win.webContents.send("window:maximized", true));

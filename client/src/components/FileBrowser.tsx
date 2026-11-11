@@ -911,6 +911,7 @@ const EDITABLE_MAX_BYTES = 1024 * 1024;
 const POLL_MS = 3000;
 const MARKDOWN = /\.(md|markdown|mdx)$/i;
 const HTML = /\.html?$/i;
+const PDF = /\.pdf$/i;
 
 function FileViewer({
   cwd,
@@ -939,6 +940,7 @@ function FileViewer({
   const [content, setContent] = useState<FileContent | { error: string } | null>(null);
   const markdown = MARKDOWN.test(path);
   const html = HTML.test(path);
+  const pdf = PDF.test(path);
   // Markdown 默认显示渲染效果，开关切到源代码；要定位到行时显示源代码（行号对的是源代码）
   const [rendered, setRendered] = useState(line === null);
   // Ctrl/⌘+F：每按一次加一，文本编辑器打开查找栏（Markdown 渲染模式先切到源代码，行和查找都对着源代码）
@@ -1039,6 +1041,8 @@ function FileViewer({
         <ZoomableImage key={path} src={api.rawFileUrl(cwd, path, content.mtimeMs)} alt={path} />
       </div>
     );
+  // PDF 是二进制、也可能超过文本的上限，先认扩展名
+  else if (pdf) body = <PdfPreview cwd={cwd} path={path} mtimeMs={content.mtimeMs} />;
   else if (content.kind === "binary") body = <div className="panel-empty">二进制文件，无法预览（{formatBytes(content.size)}）</div>;
   else if (content.kind === "too-large") body = <div className="panel-empty">文件太大，无法预览（{formatBytes(content.size)}）</div>;
   else if (html)
@@ -1184,17 +1188,7 @@ function HtmlPreview({
   /** 网页里的标注脚本连上了（每次加载后），换地址时先报 false */
   onReady: (ready: boolean) => void;
 }) {
-  const [url, setUrl] = useState<{ ok: string } | { error: string } | null>(null);
-  useEffect(() => {
-    let live = true;
-    api.pageUrl(cwd, path).then(
-      (ok) => live && setUrl({ ok }),
-      (e: Error) => live && setUrl({ error: e.message }),
-    );
-    return () => {
-      live = false;
-    };
-  }, [cwd, path]);
+  const url = usePageUrl(cwd, path);
   const src = url && "ok" in url ? `${url.ok}?v=${Math.round(mtimeMs)}` : null;
 
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -1293,6 +1287,34 @@ function HtmlPreview({
       )}
     </>
   );
+}
+
+/** 文件的预览地址（网关的 /files/page/…），iframe 直接取 */
+function usePageUrl(cwd: string, path: string): { ok: string } | { error: string } | null {
+  const [url, setUrl] = useState<{ ok: string } | { error: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    setUrl(null);
+    api.pageUrl(cwd, path).then(
+      (ok) => live && setUrl({ ok }),
+      (e: Error) => live && setUrl({ error: e.message }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [cwd, path]);
+  return url;
+}
+
+/**
+ * PDF 交给浏览器自带的 PDF 查看器显示，文件改了（修改时间变了）就重新加载。
+ * iframe 不能加 sandbox：Chromium 在沙箱里不显示 PDF（网关给 PDF 的响应也不带 CSP 的 sandbox）
+ */
+function PdfPreview({ cwd, path, mtimeMs }: { cwd: string; path: string; mtimeMs: number }) {
+  const url = usePageUrl(cwd, path);
+  if (!url) return <div className="panel-empty">正在加载 PDF…</div>;
+  if ("error" in url) return <div className="panel-empty files-error">{url.error}</div>;
+  return <iframe className="viewer-frame" src={`${url.ok}?v=${Math.round(mtimeMs)}`} title={path} />;
 }
 
 interface PageRect {
