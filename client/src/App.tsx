@@ -202,7 +202,8 @@ export function App() {
             title={anyRunning ? "首页 · 有会话在运行" : "首页"}
             aria-label={anyRunning ? "首页，有会话在运行" : "首页"}
             aria-current={settingsOpen ? undefined : "page"}
-            onClick={() => (settingsOpen ? setSettingsOpen(false) : startNew())}
+            // 从设置回到首页，留在原来看的会话；已经在首页就不动（新建会话用侧栏的「新会话」）
+            onClick={() => setSettingsOpen(false)}
           >
             <IosIcon tone="orange" size={28}>
               <HomeGlyph />
