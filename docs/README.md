@@ -329,7 +329,7 @@ client/
 
 网关把用户的原始内容和模型的实际响应写到 `gateway/.data/logs/`（`LOG_DIR`），排查问题用，和 Fastify 的运行日志分开，实现在 `gateway/src/logging/conversation-log.ts`。
 
-- **格式**：每行一条 JSON，`{ time, sessionId, event }`，`event` 就是发给网页的事件（SDK 消息原样）。桌面工具另记 `{ time, sessionId, desktop }`（`gateway/src/desktop/log.ts`）：`kind` 为 `cli` 是一次 agent-desktop 调用（实际参数、耗时、退出码、原始结果，错误里含不交给模型的 `suggestion`、`recovery`），`guard` 是一次目标检查（本应用的进程号、目标窗口 / 同名应用、拦没拦），`own-pids` 是桌面版报来的进程号；网关自己列窗口时没有会话，`sessionId` 为空。文件名 `conversation-日期[.序号].jsonl`，日期按网关本机时区，`time` 是 UTC。
+- **格式**：每行一条 JSON，`{ time, sessionId, event }`，`event` 就是发给网页的事件（SDK 消息原样）。桌面工具另记 `{ time, sessionId, desktop }`（`gateway/src/desktop/log.ts`）：`kind` 为 `cli` 是一次 agent-desktop 调用（实际参数、耗时、退出码、原始结果），`guard` 是一次目标检查（本应用的进程号、目标窗口 / 同名应用、拦没拦），`own-pids` 是桌面版报来的进程号；网关自己列窗口时没有会话，`sessionId` 为空。文件名 `conversation-日期[.序号].jsonl`，日期按网关本机时区，`time` 是 UTC。
 - **记什么**：`user_message`、SDK 的 `assistant`（含思考和工具调用）、`user`（工具结果）、`result`、权限请求和回复、错误，以及 `api_retry`、`compact_boundary`、`task_notification` 等排查用得上的 system 消息。`stream_event` 是同一份内容的逐字片段，不记。
 - **图片**：消息里的 base64 内容（`source.type` 是 `base64`）存成 `images/<内容哈希>.<扩展名>`，同一张图只存一份；日志里的 `source` 换成 `{ type: "file", media_type, file }`，`file` 是绝对路径。`tool_use_result` 里同样内容的副本只留长度。
 - **不是 HTTP 抓包**：记录的是 SDK 交给网关的消息，不包含 Claude Code 发给模型接口的完整请求（系统提示、工具定义）和请求头，接口密钥不会写入。

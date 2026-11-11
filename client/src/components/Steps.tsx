@@ -42,9 +42,27 @@ function toolLabel(block: ToolUse, running: boolean): { icon: string; verb: stri
       return { icon: "⌘", verb: v("正在终端里运行", "已在终端里运行"), target: s("command") };
     case "mcp__terminal__stop_terminal_tab":
       return { icon: "⌘", verb: i.close ? v("正在关闭终端", "已关闭终端") : v("正在停止终端", "已停止终端"), target: "" };
+    // 桌面工具（网关的 desktop MCP 服务器，agent-desktop）
+    case "mcp__desktop__run":
+      return { icon: "▣", verb: v("正在操作桌面", "已操作桌面"), target: desktopCommandLine(i) };
+    case "mcp__desktop__run_code":
+      return { icon: "▣", verb: v("正在运行桌面脚本", "已运行桌面脚本"), target: firstLine(s("code")) };
     default:
       return { icon: "⚙", verb: v("正在调用", "已调用"), target: block.name };
   }
+}
+
+/** 桌面工具 run 的命令行：agent-desktop <命令> <参数…>，需要时加引号；headed 加 --headed */
+export function desktopCommandLine(input: Record<string, unknown>): string {
+  const argv = [typeof input.command === "string" ? input.command : "", ...(Array.isArray(input.args) ? input.args.map(String) : [])];
+  const quoted = argv.map((a) => (/^[\w@:.,=/+-]+$/.test(a) ? a : JSON.stringify(a))).join(" ");
+  return `${quoted}${input.headed ? " --headed" : ""}`;
+}
+
+/** 代码的第一行（空行跳过），太长截断 */
+function firstLine(code: string): string {
+  const line = code.split("\n").find((l) => l.trim())?.trim() ?? "";
+  return line.length > 80 ? `${line.slice(0, 80)}…` : line;
 }
 
 /** 一次工具调用结果里的图片，预览卡上的名字是这一行的动词和对象（文件只留文件名） */
@@ -125,6 +143,10 @@ function ToolDetail({ block, result, children }: { block: ToolUse; result?: Tool
     <>
       {block.name === "Edit" && typeof input.old_string === "string" ? (
         <EditDiff input={input} />
+      ) : block.name === "mcp__desktop__run" ? (
+        <pre className="output">agent-desktop {desktopCommandLine(input)}</pre>
+      ) : block.name === "mcp__desktop__run_code" && typeof input.code === "string" ? (
+        <pre className="output">{input.code}</pre>
       ) : (
         <pre className="output">{JSON.stringify(block.input, null, 2)}</pre>
       )}

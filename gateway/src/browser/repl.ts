@@ -24,7 +24,7 @@ export const MAX_TIMEOUT_MS = 15 * 60_000;
 const MAX_OUTPUT_CHARS = 40_000;
 
 /** 给 vm 上下文的全局对象（和 Playwright 自带 browser_run_code_unsafe 的 exposedGlobals 基本一致） */
-const EXPOSED_GLOBALS = [
+export const EXPOSED_GLOBALS = [
   "setTimeout",
   "clearTimeout",
   "setInterval",
@@ -84,7 +84,7 @@ function patternNames(pattern: Pattern, out: string[]): void {
  * - 一开始同步跑的那一段（第一个 await 之前）另外用 vm 的 timeout 兜底，管不是循环的同步卡顿（比如回溯爆炸的正则）
  * 不在循环里、又在 await 之后的同步卡顿管不到；递归死循环会栈溢出报错，不会卡住
  */
-const LOOP_GUARD = "__browserRunCodeLoopGuard__";
+export const LOOP_GUARD = "__browserRunCodeLoopGuard__";
 /** 事件循环最多被占住多久 */
 export const MAX_BLOCK_MS = 2000;
 let lastTick = Date.now();
@@ -93,7 +93,7 @@ setInterval(() => {
   lastTick = Date.now();
 }, 100).unref();
 
-function loopGuard(): void {
+export function loopGuard(): void {
   if (Date.now() - lastTick > MAX_BLOCK_MS) {
     lastTick = Date.now();
     throw new Error(`代码连续同步执行超过 ${MAX_BLOCK_MS / 1000} 秒（中间没有 await），已中止。`);
@@ -204,7 +204,7 @@ export function transform(original: string): string {
 }
 
 /** 值转成给模型看的文字：字符串原样，其他用 util.inspect */
-function show(value: unknown): string {
+export function show(value: unknown): string {
   if (typeof value === "string") return value;
   return inspect(value, { depth: 3, maxArrayLength: 100, maxStringLength: 10_000, breakLength: 120 });
 }
@@ -229,7 +229,7 @@ function elideDataUrls(text: string): string {
   });
 }
 
-function truncate(raw: string): string {
+export function truncate(raw: string): string {
   const text = elideDataUrls(raw);
   if (text.length <= MAX_OUTPUT_CHARS) return text;
   return `${text.slice(0, MAX_OUTPUT_CHARS)}\n…（输出太长，只留了前 ${MAX_OUTPUT_CHARS} 个字符，共 ${text.length} 个）`;
@@ -240,7 +240,7 @@ function truncate(raw: string): string {
  * 不带调用栈：行号对应的是改写后的代码，其余是网关内部的帧，对模型没用；Playwright 的 Call log 在 message 里，留着。
  * 去掉终端颜色码（Playwright 的 Call log 带）
  */
-function errorText(err: unknown): string {
+export function errorText(err: unknown): string {
   let message: string;
   if (err && typeof err === "object" && typeof (err as { message?: unknown }).message === "string") {
     const e = err as { message: string; name?: unknown };
@@ -303,16 +303,32 @@ async function describeTabs(pages: Page[], current: Page | undefined): Promise<s
  * 认不出的照 Node 默认的做法打印出来、退出进程，网关别处的错误不受影响。
  * 在内置浏览器的 worker 里（worker.ts）这些监听挂在 worker 自己的 process 上，退出的只是这个 worker
  */
-const registry = new Map<number, BrowserRepl>();
+/** 认领后台错误的 REPL：浏览器的 BrowserRepl，桌面脚本的 DesktopRepl（desktop/repl.ts），vm 的文件名是 <名字>_run_code_<编号>.js */
+export interface ErrorOwner {
+  owns(promise: Promise<unknown>): boolean;
+  backgroundError(err: unknown): void;
+}
+const registry = new Map<number, ErrorOwner>();
 let nextId = 1;
-const FILE_PATTERN = /browser_run_code_(\d+)\.js/;
+const FILE_PATTERN = /(?:browser|desktop)_run_code_(\d+)\.js/;
+
+/** 登记一个 REPL，返回它的编号（vm 文件名里用）；删掉时调 unregisterRepl */
+export function registerRepl(owner: ErrorOwner): number {
+  const id = nextId++;
+  registry.set(id, owner);
+  return id;
+}
+
+export function unregisterRepl(id: number): void {
+  registry.delete(id);
+}
 
 function stackOf(err: unknown): string {
   const stack = err && typeof err === "object" ? (err as { stack?: unknown }).stack : undefined;
   return typeof stack === "string" ? stack : "";
 }
 
-function ownerOf(err: unknown, promise?: Promise<unknown>): BrowserRepl | undefined {
+function ownerOf(err: unknown, promise?: Promise<unknown>): ErrorOwner | undefined {
   const match = FILE_PATTERN.exec(stackOf(err));
   if (match) return registry.get(Number(match[1]));
   if (promise) for (const repl of registry.values()) if (repl.owns(promise)) return repl;
@@ -350,7 +366,7 @@ export class BrowserRepl implements Repl {
   private readonly sandbox: Record<string, unknown>;
   private readonly vmContext: vm.Context;
   private readonly sinks: Sink[] = [];
-  private readonly id = nextId++;
+  private readonly id = registerRepl(this);
   /** 这个 REPL 的 vm 里的 Promise 构造函数：认被拒绝的 Promise 是不是它建的 */
   private readonly vmPromise: PromiseConstructor;
   /** 后台出的错（见 registry 上面的说明），下次调用的结果里带上 */
@@ -437,7 +453,6 @@ export class BrowserRepl implements Repl {
       `var ${LOOP_GUARD} = (() => { const check = __browserRunCodeCheckBlocked__; let n = 0; return () => { if ((++n & 1023) === 0) check(); }; })();`,
       this.vmContext,
     );
-    registry.set(this.id, this);
   }
 
   /** 有调用还在跑（包括转到后台的）：一轮结束时先不关内置浏览器的临时标签页，代码可能还在用 */
@@ -447,7 +462,7 @@ export class BrowserRepl implements Repl {
 
   /** 删会话时调用：不再认领它的错误 */
   dispose(): void {
-    registry.delete(this.id);
+    unregisterRepl(this.id);
   }
 
   owns(promise: Promise<unknown>): boolean {

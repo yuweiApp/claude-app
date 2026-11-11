@@ -19,14 +19,13 @@ tools:
     - mcp__*__browser_tabs
     - mcp__inapp__browser_keep_tab
     # 桌面操作（下面 desktop.enabled 打开时才有）
-    - mcp__desktop__snapshot
-    - mcp__desktop__screenshot
     - mcp__desktop__run
+    - mcp__desktop__run_code
 
 # 外部浏览器（操作用户自己的 Chrome、Edge 等）在设置页「浏览器」里管：检测到哪些、启用哪些、配置、扩展 token、建不建标签页组，
 # 存在 Claude Code 配置目录的 gateway-browsers.json，见 docs/README.md 第 13 节。
 
-# 桌面操作：模型多一组 mcp__desktop__… 工具，经 agent-desktop 读系统的无障碍树、操作网关所在电脑上的原生应用，见 docs/agent-desktop.md。
+# 桌面操作：模型多两个工具 mcp__desktop__run（一条命令）、mcp__desktop__run_code（JavaScript 里连着执行多条），不弹权限卡片，经 agent-desktop 读系统的无障碍树、操作网关所在电脑上的原生应用，见 docs/agent-desktop.md。
 # 能操作这台电脑上当前登录用户的所有窗口：快照、截图会发给模型接口；网关对外开放（设了 API_TOKEN）时等于让远程的人操作这台电脑的桌面。
 # 本应用（桌面版）自己的窗口网关会拦掉。macOS 要给桌面版（或启动网关的终端）「辅助功能」权限，截图还要「屏幕录制」。
 # 默认关；要用时改成 true，重启网关。

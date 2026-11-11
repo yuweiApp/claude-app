@@ -21,7 +21,6 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { BrowserHost } from "../browser/host.js";
 import { inappBusy, takeToolResult } from "../browser/tool.js";
 import { desktopWriteActive } from "../desktop/guard.js";
-import { DESKTOP_RUN_TOOL, describeRun, isReadOnlyRun } from "../desktop/tool.js";
 import { buildOptions } from "./options.js";
 import type { TaskList } from "./tasks.js";
 
@@ -209,11 +208,6 @@ export class AgentSession {
   }
 
   private canUseTool: CanUseTool = (toolName, input, options) => {
-    const desktopRun = toolName === DESKTOP_RUN_TOOL;
-    // 桌面工具 run 的只读命令（find、list-windows、--help 等）不用确认
-    if (desktopRun && Array.isArray(input.args) && isReadOnlyRun(input.args.map(String))) {
-      return Promise.resolve({ behavior: "allow", updatedInput: input });
-    }
     const requestId = randomUUID();
     return new Promise<PermissionResult>((resolve) => {
       const timer = setTimeout(
@@ -232,13 +226,11 @@ export class AgentSession {
         toolName,
         toolUseId: options.toolUseID,
         input,
-        title: desktopRun ? "允许执行这条桌面操作？" : options.title,
-        // 桌面操作：命令行、ref 指向哪个应用的哪个元素、headed 时会动鼠标
-        description: desktopRun ? describeRun(input) : options.description,
+        title: options.title,
+        description: options.description,
         decisionReason: options.decisionReason,
-        // 桌面操作不给「总是允许」：规则按工具名放行，放行了就是这个会话以后的所有桌面操作；
-        // AskUserQuestion 是向用户提问（网页渲染成选择题），每次都要回答，也不给
-        canAlways: Boolean(options.suggestions?.length) && !options.suppressAlwaysAllowRule && !desktopRun && toolName !== "AskUserQuestion",
+        // AskUserQuestion 是向用户提问（网页渲染成选择题），每次都要回答，不给「总是允许」
+        canAlways: Boolean(options.suggestions?.length) && !options.suppressAlwaysAllowRule && toolName !== "AskUserQuestion",
       });
     });
   };

@@ -4,7 +4,7 @@ import type { Item, SessionView, TaskItem } from "../state/session";
 import { Attachments } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { CopyAction, MessageActions } from "./MessageActions";
-import { StepGroup, stepImages, ToolIcon, ToolStep, type ToolUse } from "./Steps";
+import { desktopCommandLine, StepGroup, stepImages, ToolIcon, ToolStep, type ToolUse } from "./Steps";
 import { StepThumbs } from "./StepThumbs";
 import { formatShortDuration } from "./TasksPopover";
 import { MentionText, splitImageRefs } from "./MentionText";
@@ -437,6 +437,10 @@ export function toolBrief(name: string, input: unknown): string {
       return pick("description");
     case "mcp__terminal__run_in_terminal":
       return pick("command");
+    case "mcp__desktop__run":
+      return desktopCommandLine(i);
+    case "mcp__desktop__run_code":
+      return pick("code");
     case "AskUserQuestion":
       return Array.isArray(i.questions) ? (i.questions as { question?: string }[]).map((q) => q.question ?? "").join("\n") : "";
     default:

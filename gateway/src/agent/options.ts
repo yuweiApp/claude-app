@@ -9,7 +9,7 @@ import { BROWSER_READ_TOOLS, BROWSER_SERVER, browserServer } from "../browser/to
 import type { BrowserHost } from "../browser/host.js";
 import { activeBrowsers, externalNote, externalReadTools, externalServers } from "../browser/external.js";
 import { desktopEnabled } from "../config-file.js";
-import { DESKTOP_READ_TOOLS, DESKTOP_SERVER, desktopServer } from "../desktop/tool.js";
+import { DESKTOP_SERVER, DESKTOP_TOOLS, desktopServer } from "../desktop/tool.js";
 import type { DesktopTarget } from "../shared/types.js";
 
 export interface SessionLaunch {
@@ -49,7 +49,8 @@ export function buildOptions(launch: SessionLaunch): Options {
     ...(terminal ? TERMINAL_READ_TOOLS : []),
     ...(browser ? BROWSER_READ_TOOLS : []),
     ...externalReadTools(active),
-    ...(desktop ? DESKTOP_READ_TOOLS : []),
+    // 桌面工具（run、run_code）都不弹权限卡片
+    ...(desktop ? DESKTOP_TOOLS : []),
   ];
   return {
     cwd: launch.cwd,

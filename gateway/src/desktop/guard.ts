@@ -1,13 +1,13 @@
 import { rmSync } from "node:fs";
 import type { DesktopTarget } from "../shared/types.js";
-import { APP_ARGUMENT, flagValues, isHelp, NEEDS_TARGET, pointsIn, refsIn, snapshotIdOf } from "./commands.js";
+import { APP_ARGUMENT, flagValues, isHelp, NEEDS_TARGET, refsIn, snapshotIdOf, SYSTEM_SURFACES } from "./commands.js";
 import { runCli, sessionStateDir } from "./cli.js";
 import { desktopLog } from "./log.js";
-import type { SnapshotData } from "./render.js";
 
 /**
  * 桌面操作的拦截和记录，见 docs/agent-desktop.md 第 6、7 节：
- * - 本应用（桌面版）的窗口不能读、不能操作（6.1）：桌面版连上 /browser/host 时报自己的进程号（BrowserHost 调 setOwnPids）
+ * - 本应用（桌面版）的窗口不能读、不能操作（6.1）：桌面版连上 /browser/host 时报自己的进程号（BrowserHost 调 setOwnPids）。
+ *   只做不用另外读窗口列表的检查：按应用名、按窗口 id（在见过的 list-windows 结果里属于本应用的）、ref 的归属；不查坐标
  * - 桌面写操作进行中收到的权限回复不算数（6.2）：desktopWriteActive()
  * - 别的会话做过的桌面操作，下一次调用时告诉模型（7.2）：othersSince()
  * 另外记着每个会话正在操作的窗口，给网页右上角的浮窗：noteTarget()
@@ -18,66 +18,59 @@ import type { SnapshotData } from "./render.js";
 
 let ownPids = new Set<number>();
 
-/** 桌面版的进程号（主进程和它的子进程）；桌面版断开时传空数组 */
+/** 桌面版的进程号（主进程和它的子进程）；桌面版断开时传空数组。连上时读一次 list-apps，记下本应用的应用名 */
 export function setOwnPids(pids: number[]): void {
   ownPids = new Set(pids);
   desktopLog({ kind: "own-pids", pids });
+  if (pids.length) void learnApps().catch(() => {});
 }
 
 const OWN_APP = "这是本应用（claude-app）的窗口，桌面工具不能读取或操作它";
-
-interface Bounds {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
 
 interface WindowInfo {
   id: string;
   app_name?: string;
   pid?: number;
   title?: string;
-  is_focused?: boolean;
   minimized?: boolean;
-  visible?: boolean;
-  bounds?: Bounds;
 }
 
 /**
- * 网关自己查的 list-windows 结果留 1 秒：一次截图要查三遍（guard、右上角浮窗、截图的坐标说明），Windows 上一遍 0.4 秒。
- * 桌面写操作（restore、close-app 等）开始和结束时清掉，免得拿着操作前的窗口状态
+ * 见过的窗口（来自 list-windows 的结果：模型自己调用的，和输入框「Computer Use」查的）：窗口 id 属于哪个进程、标题。
+ * 拦本应用的窗口 id、浮窗显示标题都查它，不为此另外读窗口列表
  */
-const WINDOWS_TTL_MS = 1000;
-let windowsCache: { at: number; promise: Promise<WindowInfo[]> } | null = null;
+const knownWindows = new Map<string, WindowInfo>();
+const MAX_KNOWN_WINDOWS = 1000;
 
-/** 所有窗口（含本应用的，给 guard、截图前的检查和截图的坐标说明用，不交给模型） */
-export function listWindows(): Promise<WindowInfo[]> {
-  if (windowsCache && Date.now() - windowsCache.at < WINDOWS_TTL_MS) return windowsCache.promise;
-  const entry = {
-    at: Date.now(),
-    promise: runCli(["list-windows"], { timeoutMs: 10_000 }).then(({ envelope }) => {
-      if (envelope?.ok && Array.isArray(envelope.data)) return envelope.data as WindowInfo[];
-      if (windowsCache === entry) windowsCache = null;
-      return [];
-    }),
-  };
-  windowsCache = entry;
-  return entry.promise;
+function rememberWindows(windows: unknown): void {
+  if (!Array.isArray(windows)) return;
+  for (const w of windows as WindowInfo[]) {
+    if (!w || typeof w.id !== "string") continue;
+    knownWindows.delete(w.id);
+    knownWindows.set(w.id, { id: w.id, app_name: w.app_name, pid: w.pid, title: w.title, minimized: w.minimized });
+  }
+  while (knownWindows.size > MAX_KNOWN_WINDOWS) knownWindows.delete(knownWindows.keys().next().value as string);
 }
 
-/** 屏幕，顺序同 --screen 的序号 */
-export async function listDisplays(): Promise<{ bounds?: Bounds; is_primary?: boolean; scale?: number }[]> {
-  const { envelope } = await runCli(["list-displays"], { timeoutMs: 10_000 });
-  return envelope?.ok && Array.isArray(envelope.data) ? (envelope.data as { bounds?: Bounds }[]) : [];
+/** 最近一次见到的 list-apps（全部，含本应用的）：按应用名拦本应用时用 */
+let runningApps: { name: string; pid: number }[] | null = null;
+
+function rememberApps(data: unknown): void {
+  const apps = (data as { apps?: unknown } | undefined)?.apps;
+  if (Array.isArray(apps)) runningApps = (apps as { name?: unknown; pid?: unknown }[]).filter((a) => typeof a.name === "string" && typeof a.pid === "number") as { name: string; pid: number }[];
 }
 
-const contains = (b: Bounds, p: { x: number; y: number }) => p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height;
-
-async function listApps(): Promise<{ name: string; pid: number }[]> {
+async function learnApps(): Promise<void> {
   const { envelope } = await runCli(["list-apps"], { timeoutMs: 10_000 });
-  const apps = (envelope?.data as { apps?: { name: string; pid: number }[] } | undefined)?.apps;
-  return envelope?.ok && Array.isArray(apps) ? apps : [];
+  if (envelope?.ok) rememberApps(envelope.data);
+}
+
+/** 所有窗口（含本应用的，不交给模型），给输入框「Computer Use」的窗口列表用；顺便记进 knownWindows */
+export async function listWindows(): Promise<WindowInfo[]> {
+  const { envelope } = await runCli(["list-windows"], { timeoutMs: 10_000 });
+  if (!envelope?.ok || !Array.isArray(envelope.data)) return [];
+  rememberWindows(envelope.data);
+  return envelope.data as WindowInfo[];
 }
 
 /** list-apps、list-windows 等结果里去掉本应用的条目（带 pid 字段的对象） */
@@ -94,14 +87,19 @@ export function stripOwn(value: unknown, depth = 0): unknown {
   return value;
 }
 
-// ---------- 快照登记（ref 从哪来、指向什么） ----------
+// ---------- 快照登记（ref 从哪来、属于哪个应用和窗口） ----------
+
+interface SnapshotData {
+  app?: string;
+  snapshot_id?: string;
+  tree?: unknown;
+  window?: { id?: string; title?: string };
+}
 
 interface SnapshotEntry {
   session: string;
   app?: string;
   windowId?: string;
-  /** ref → 角色和名字（权限卡片上显示目标） */
-  refs: Map<string, { role?: string; name?: string }>;
 }
 
 const snapshots = new Map<string, SnapshotEntry>();
@@ -110,7 +108,6 @@ const MAX_SNAPSHOTS = 500;
 function remember(id: string, entry: SnapshotEntry): void {
   const old = snapshots.get(id);
   if (old) {
-    for (const [ref, info] of entry.refs) old.refs.set(ref, info);
     old.app ??= entry.app;
     old.windowId ??= entry.windowId;
     return;
@@ -119,44 +116,43 @@ function remember(id: string, entry: SnapshotEntry): void {
   if (snapshots.size > MAX_SNAPSHOTS) snapshots.delete(snapshots.keys().next().value as string);
 }
 
-/** snapshot 工具的结果：记下快照编号和里面每个 ref 的角色、名字 */
-export function registerSnapshot(session: string, data: SnapshotData): void {
-  if (!data.snapshot_id) return;
-  const refs = new Map<string, { role?: string; name?: string }>();
-  const walk = (node: NonNullable<SnapshotData["tree"]>) => {
-    if (node.ref_id) refs.set(node.ref_id, { role: node.role, name: node.name?.trim() || undefined });
-    node.children?.forEach(walk);
-  };
-  if (data.tree) walk(data.tree);
-  remember(data.snapshot_id, { session, app: data.app, windowId: data.window?.id, refs });
+/** 结果里带 snapshot_id 和 tree 的对象（snapshot 的 data 本身，或 ref 动作带 --wait-for 时嵌在里面的快照） */
+function findSnapshots(value: unknown, depth = 0, out: SnapshotData[] = []): SnapshotData[] {
+  if (!value || typeof value !== "object" || depth > 3) return out;
+  if (Array.isArray(value)) {
+    for (const item of value) findSnapshots(item, depth + 1, out);
+    return out;
+  }
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.snapshot_id === "string" && obj.tree && typeof obj.tree === "object") out.push(obj as SnapshotData);
+  else for (const v of Object.values(obj)) findSnapshots(v, depth + 1, out);
+  return out;
 }
 
-/** run 的结果里出现的 ref（find 等）：记下它们的快照编号属于这个会话 */
-export function registerRefsIn(session: string, output: string, app?: string): void {
-  for (const m of output.matchAll(/@[A-Za-z0-9]+:e\d+/g)) remember(snapshotIdOf(m[0]), { session, app, refs: new Map() });
-}
-
-/** 权限卡片上的目标描述：「mousepad 里的 menuitem「Save」」 */
-export function describeRefs(args: string[]): string[] {
-  return refsIn(args).map((ref) => {
-    const entry = snapshots.get(snapshotIdOf(ref));
-    const info = entry?.refs.get(ref);
-    const what = info ? `${info.role ?? "元素"}${info.name ? `「${info.name}」` : ""}` : "元素";
-    return `${ref}：${entry?.app ?? "未知应用"} 里的 ${what}`;
-  });
+/**
+ * 一次成功调用的结果：记下快照编号属于这个会话（ref 只认这个会话经网关拿到的）和它的应用、窗口，
+ * list-windows / list-apps 的窗口和应用。stdout 是原始输出，find 等结果里出现的 ref 也记上
+ */
+export function observeResult(session: string, args: string[], data: unknown, stdout: string): void {
+  const command = args[0];
+  if (command === "list-windows") rememberWindows(data);
+  if (command === "list-apps") rememberApps(data);
+  for (const snap of findSnapshots(data)) remember(snap.snapshot_id!, { session, app: snap.app, windowId: snap.window?.id });
+  const app = flagValues(args, "--app")[0];
+  for (const m of stdout.matchAll(/@[A-Za-z0-9]+:e\d+/g)) remember(snapshotIdOf(m[0]), { session, app });
 }
 
 // ---------- 检查 ----------
 
 /**
  * 执行前检查参数指向的目标，不行返回原因。args 是 agent-desktop 的参数（命令在第一个）。
- * - ref 必须是这个会话经 snapshot / find 拿到的（本应用的窗口拍不了快照，所以也拿不到它的 ref）
- * - --window-id、--app、launch / close-app 的应用名不能是本应用
- * - 坐标不能落在本应用的任何一个窗口里（不看叠放次序）
- * - 不带目标时作用于前台窗口的命令，要求带 --app / --window-id / ref
+ * - ref 必须是这个会话经网关拿到的（本应用的窗口拍不了快照，所以也拿不到它的 ref）
+ * - 不带目标时作用于前台窗口的命令（NEEDS_TARGET），要求带目标：前台可能就是本应用
+ * - --window-id 在见过的 list-windows 结果里属于本应用的，拒绝
+ * - --app、launch / close-app 的应用名是本应用的，拒绝
+ * 不查坐标：坐标点击（要 headed）能点到本应用的窗口，权限卡片靠 6.2
  */
 export async function checkTarget(session: string, args: string[]): Promise<string | null> {
-  // 日志里记下判断用到的东西：本应用的进程号、--window-id 在 list-windows 里对应的窗口、--app 在 list-apps 里同名的进程
   const context: Record<string, unknown> = {};
   const denied = await decide(session, args, context);
   desktopLog({ kind: "guard", session, args, ownPids: [...ownPids], ...context, ...(denied ? { denied } : { allowed: true }) });
@@ -170,36 +166,26 @@ async function decide(session: string, args: string[], context: Record<string, u
   const refs = refsIn(args);
   for (const ref of refs) {
     const entry = snapshots.get(snapshotIdOf(ref));
-    if (!entry || entry.session !== session) return `${ref} 不是这个会话经 snapshot 或 find 拿到的 ref（本应用重启后，之前拿到的 ref 也不再认）`;
+    if (!entry || entry.session !== session) return `${ref} 不是这个会话经 run 拿到的 ref（本应用重启后，之前拿到的 ref 也不再认）`;
   }
   const windowIds = flagValues(args, "--window-id");
   const appArg = APP_ARGUMENT.has(command) && args[1] && !args[1].startsWith("-") ? [args[1]] : [];
   const apps = [...flagValues(args, "--app"), ...appArg];
   const targets = NEEDS_TARGET[command];
-  if (targets && refs.length === 0 && windowIds.length === 0 && apps.length === 0) {
+  const systemSurface = command === "snapshot" && flagValues(args, "--surface").some((s) => SYSTEM_SURFACES.has(s));
+  const screens = flagValues(args, "--screen");
+  if (targets && !systemSurface && refs.length === 0 && windowIds.length === 0 && apps.length === 0 && screens.length === 0) {
     return `${command} 不指定目标时作用于前台窗口，这里要求指定目标；${command} 接受的目标参数：${targets.join("、")}`;
   }
   if (ownPids.size === 0) return null;
 
-  const points = pointsIn(args);
-  if (windowIds.length || points.length) {
-    const windows = await listWindows();
-    context.windows = windowIds.map((id) => windows.find((w) => w.id === id) ?? { id, found: false });
-    for (const id of windowIds) {
-      if (ownPids.has(windows.find((w) => w.id === id)?.pid ?? -1)) return OWN_APP;
-    }
-    const own = windows.filter((w) => ownPids.has(w.pid ?? -1) && w.bounds);
-    // 前台窗口在最上面：它不是本应用、又盖住了这个坐标时，点击落在它上面（实测紫鸟挪到主屏后盖住了 Claude App，
-    // 以前不看叠放次序，点紫鸟也被拦）。前台是本应用、或前台窗口没盖住这个坐标时，下面可能是本应用，照样拦
-    const front = windows.find((w) => w.is_focused && w.bounds && !ownPids.has(w.pid ?? -1));
-    for (const p of points) {
-      if (own.some((w) => contains(w.bounds!, p)) && !(front && contains(front.bounds!, p))) {
-        return `坐标 ${p.x},${p.y} 落在本应用（claude-app）的窗口范围里，而前台窗口不是盖住这个坐标的其他窗口，桌面工具不能点这里`;
-      }
-    }
+  context.windows = windowIds.map((id) => knownWindows.get(id) ?? { id, known: false });
+  for (const id of windowIds) {
+    if (ownPids.has(knownWindows.get(id)?.pid ?? -1)) return OWN_APP;
   }
   if (apps.length) {
-    const running = await listApps();
+    if (!runningApps) await learnApps().catch(() => {});
+    const running = runningApps ?? [];
     context.apps = running.filter((a) => apps.some((name) => name.toLowerCase() === a.name.toLowerCase()));
     const ownNames = new Set(running.filter((a) => ownPids.has(a.pid)).map((a) => a.name.toLowerCase()));
     const app = apps.find((a) => ownNames.has(a.toLowerCase()));
@@ -207,7 +193,7 @@ async function decide(session: string, args: string[], context: Record<string, u
       // 应用名和本应用相同的其他进程（实测 Windows 上开发模式的 Electron 应用都叫 electron.exe）：拦下的不一定是本应用的窗口，照实说
       const others = running.filter((a) => !ownPids.has(a.pid) && a.name.toLowerCase() === app.toLowerCase()).map((a) => a.pid);
       if (others.length === 0) return OWN_APP;
-      return `不接受 ${app} 这个应用名：本应用（claude-app）的进程也叫 ${app}，按应用名分不出是不是本应用（同名的其他进程：pid ${others.join("、")}）。只按窗口 id 指定（run 的 --window-id、snapshot / screenshot 的 window_id）、不给应用名时，按窗口所属的进程判断`;
+      return `不接受 ${app} 这个应用名：本应用（claude-app）的进程也叫 ${app}，按应用名分不出是不是本应用（同名的其他进程：pid ${others.join("、")}）。按窗口 id（--window-id）指定、不给应用名时，按窗口所属的进程判断`;
     }
   }
   return null;
@@ -223,14 +209,12 @@ const WRITE_GRACE_MS = 1000;
 /** 开始一次桌面写操作，返回结束时调用的函数 */
 export function beginWrite(): () => void {
   writesInFlight++;
-  windowsCache = null;
   let ended = false;
   return () => {
     if (ended) return;
     ended = true;
     writesInFlight--;
     lastWriteEnd = Date.now();
-    windowsCache = null;
   };
 }
 
@@ -276,50 +260,57 @@ export function othersSince(session: string): string | null {
 
 // ---------- 正在操作的窗口（网页右上角的浮窗） ----------
 
-/** 每个会话上次报出去的目标（JSON），没变不再报 */
-const reported = new Map<string, string>();
+/** 每个会话上次报出去的目标，没变不再报 */
+const reported = new Map<string, DesktopTarget | null>();
+
+const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
 
 /**
- * 这次调用作用于哪个窗口，变了就调 report：目标来自 --window-id、--app、launch / close-app 的应用名、
- * ref 所属快照的应用和窗口。只给应用名时在 list-windows 里按应用名找，前台的优先，其次没最小化的。
- * 找不到窗口（应用还没开出窗口）时只报应用名；close-app 报 null。没有目标的命令（list-apps 等）不报
+ * 这次调用作用于哪个窗口，变了就调 report。不另外读窗口列表，只用手上有的：
+ * 参数（--window-id、--app、launch / close-app 的应用名、ref 所属快照的应用和窗口）、调用结果（data 里的 app、window）、
+ * 见过的 list-windows 结果（按窗口 id 查标题）。只知道应用名时，应用和上次报的相同就沿用上次的窗口，否则只报应用名。
+ * close-app 报 null；没有目标的命令（list-apps 等）不报
  */
-export async function noteTarget(session: string, args: string[], report: (target: DesktopTarget | null) => void): Promise<void> {
+export function noteTarget(session: string, args: string[], data: unknown, report: (target: DesktopTarget | null) => void): void {
   const command = args[0] ?? "";
   if (isHelp(args)) return;
   const send = (target: DesktopTarget | null) => {
-    const key = JSON.stringify(target);
-    if (reported.get(session) === key) return;
-    reported.set(session, key);
+    if (JSON.stringify(reported.get(session) ?? null) === JSON.stringify(target) && reported.has(session)) return;
+    reported.set(session, target);
     report(target);
   };
   if (command === "close-app") return send(null);
-  let windowId = flagValues(args, "--window-id")[0];
-  let app = flagValues(args, "--app")[0] ?? (APP_ARGUMENT.has(command) && args[1] && !args[1].startsWith("-") ? args[1] : undefined);
+  const result = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
+  const resultWindow = result.window && typeof result.window === "object" ? (result.window as Record<string, unknown>) : {};
+  let windowId = flagValues(args, "--window-id")[0] ?? str(resultWindow.id);
+  let app = flagValues(args, "--app")[0] ?? (APP_ARGUMENT.has(command) && args[1] && !args[1].startsWith("-") ? args[1] : undefined) ?? str(result.app) ?? str(result.app_name);
   for (const ref of refsIn(args)) {
     const entry = snapshots.get(snapshotIdOf(ref));
     windowId ??= entry?.windowId;
     app ??= entry?.app;
   }
-  if (!windowId && !app) return;
-  const windows = (await listWindows()).filter((w) => !ownPids.has(w.pid ?? -1));
-  let win: WindowInfo | undefined;
-  if (windowId) win = windows.find((w) => w.id === windowId);
-  if (!win && app) {
-    const same = windows.filter((w) => w.app_name?.toLowerCase() === app!.toLowerCase());
-    win = same.find((w) => w.is_focused) ?? same.find((w) => !w.minimized && w.visible !== false) ?? same[0];
-  }
-  const name = win?.app_name ?? app;
+  const known = windowId ? knownWindows.get(windowId) : undefined;
+  if (known && ownPids.has(known.pid ?? -1)) return;
+  const name = known?.app_name ?? app;
   if (!name) return;
+  if (!windowId) {
+    const last = reported.get(session);
+    if (last?.windowId && last.app.toLowerCase() === name.toLowerCase()) return;
+    return send({ app: name });
+  }
+  const pid = known?.pid ?? (typeof result.pid === "number" ? result.pid : undefined);
   send({
     app: name,
-    ...(win ? { windowId: win.id, title: win.title || undefined, pid: win.pid, ...(win.minimized ? { minimized: true } : {}) } : {}),
+    windowId,
+    ...((str(resultWindow.title) ?? known?.title) ? { title: str(resultWindow.title) ?? known?.title } : {}),
+    ...(pid !== undefined ? { pid } : {}),
+    ...(known?.minimized ? { minimized: true } : {}),
   });
 }
 
 // ---------- 删会话 ----------
 
-export function disposeDesktopSession(session: string): void {
+export function disposeDesktopState(session: string): void {
   for (const [id, entry] of snapshots) if (entry.session === session) snapshots.delete(id);
   seen.delete(session);
   reported.delete(session);

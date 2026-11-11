@@ -26,7 +26,7 @@ import type { BrowserHost } from "../browser/host.js";
 import { generateTitle } from "./title.js";
 import { readAgentTranscript, readOutputTail, TaskList } from "./tasks.js";
 import { disposeRepls } from "../browser/tool.js";
-import { disposeDesktopSession } from "../desktop/guard.js";
+import { disposeDesktopSession } from "../desktop/tool.js";
 import { sessionHistory } from "./history.js";
 import { lastCustomTitle, lastResponseAt, lastResponseModel, recordedCwd, sessionRecordFiles } from "./session-records.js";
 import { createScratchDir, isChatCwd, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
