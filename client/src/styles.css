@@ -1449,6 +1449,10 @@ main {
 .menu-item-key { margin-left: 16px; font-size: 12px; color: var(--muted); }
 .viewer-image { flex: 1; min-height: 0; display: flex;
   background: repeating-conic-gradient(color-mix(in srgb, var(--text) 6%, transparent) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+/* 文件查看器里的视频、音频：居中，按区域大小缩放 */
+.viewer-media { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--bg); }
+.viewer-media video { max-width: 100%; max-height: 100%; background: #000; border-radius: 6px; outline: none; }
+.viewer-media audio { width: min(480px, 100%); }
 .viewer-frame { flex: 1; min-height: 0; width: 100%; border: none; background: #fff; }
 /* HTML 标注模式下贴在网页底部的提示 */
 .viewer-annotate-bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: calc(100% - 24px);

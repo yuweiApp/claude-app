@@ -26,10 +26,30 @@ const IMAGE_TYPES: Record<string, string> = {
   ".bmp": "image/bmp",
   ".ico": "image/x-icon",
 };
+/** 右侧面板用 <video>、<audio> 播放的，能不能放由浏览器支持的编码决定 */
+const VIDEO_TYPES: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+  ".ogv": "video/ogg",
+};
+const AUDIO_TYPES: Record<string, string> = {
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".oga": "audio/ogg",
+  ".opus": "audio/ogg",
+  ".flac": "audio/flac",
+};
+/** /files/raw 能直接取的 */
+const RAW_TYPES: Record<string, string> = { ...IMAGE_TYPES, ...VIDEO_TYPES, ...AUDIO_TYPES };
 const cache = new Map<string, { at: number; entries: Promise<ProjectEntry[]> }>();
 /** 网页预览按扩展名给的类型，没列的按 application/octet-stream */
 const PAGE_TYPES: Record<string, string> = {
-  ...IMAGE_TYPES,
+  ...RAW_TYPES,
   ".html": "text/html; charset=utf-8",
   ".htm": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -44,11 +64,6 @@ const PAGE_TYPES: Record<string, string> = {
   ".woff2": "font/woff2",
   ".ttf": "font/ttf",
   ".otf": "font/otf",
-  ".mp3": "audio/mpeg",
-  ".wav": "audio/wav",
-  ".ogg": "audio/ogg",
-  ".mp4": "video/mp4",
-  ".webm": "video/webm",
   ".pdf": "application/pdf",
 };
 const ENCODINGS = new Set<FileEncoding>(["utf-8", "gb18030", "utf-16le", "utf-16be"]);
@@ -129,7 +144,7 @@ export function fileRoutes(app: FastifyInstance): void {
     throw new BadRequestError("文件夹读取失败");
   });
 
-  // 右侧面板查看文件：文本直接给内容，图片让网页用 /files/raw 取
+  // 右侧面板查看文件：文本直接给内容，图片、音视频让网页用 /files/raw 取
   app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/read", async (req): Promise<FileContent> => {
     const { fs, p, abs } = resolveInProject(req.query.cwd, req.query.path);
     const info = await fs.stat(abs).catch((err: NodeJS.ErrnoException) => {
@@ -138,7 +153,10 @@ export function fileRoutes(app: FastifyInstance): void {
     if (!info.isFile) throw new BadRequestError(info.isDirectory ? "是文件夹，不是文件" : "不是普通文件");
     const rel = req.query.path ?? "";
     const meta = { path: rel, size: info.size, mtimeMs: info.mtimeMs };
-    if (IMAGE_TYPES[p.extname(abs).toLowerCase()]) return { ...meta, kind: "image" };
+    const ext = p.extname(abs).toLowerCase();
+    if (IMAGE_TYPES[ext]) return { ...meta, kind: "image" };
+    if (VIDEO_TYPES[ext]) return { ...meta, kind: "video" };
+    if (AUDIO_TYPES[ext]) return { ...meta, kind: "audio" };
     if (info.size > MAX_TEXT_BYTES) return { ...meta, kind: "too-large" };
     const buf = await fs.readFile(abs).catch((err: NodeJS.ErrnoException) => {
       throw new BadRequestError(fsError(err, "文件"));
@@ -259,11 +277,39 @@ export function fileRoutes(app: FastifyInstance): void {
     const { fs, p, abs } = resolveInProject(req.query.cwd, req.query.path);
     const info = await fs.stat(abs).catch(() => null);
     if (!info?.isFile) throw new BadRequestError("文件不存在");
-    const type = IMAGE_TYPES[p.extname(abs).toLowerCase()];
-    if (!type) throw new BadRequestError("只能直接取图片");
+    const type = RAW_TYPES[p.extname(abs).toLowerCase()];
+    if (!type) throw new BadRequestError("只能直接取图片、音频、视频");
     // svg 里可以有脚本，按附件的 CSP 禁掉
-    return reply.type(type).header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox").send(fs.createReadStream(abs));
+    reply.type(type).header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox").header("accept-ranges", "bytes");
+    // 音视频拖进度条时浏览器按 Range 取一段
+    const range = parseRange(req.headers.range, info.size);
+    if (range === "invalid") return reply.code(416).header("content-range", `bytes */${info.size}`).send();
+    if (range) {
+      return reply
+        .code(206)
+        .header("content-range", `bytes ${range.start}-${range.end}/${info.size}`)
+        .header("content-length", range.end - range.start + 1)
+        .send(fs.createReadStream(abs, range));
+    }
+    return reply.header("content-length", info.size).send(fs.createReadStream(abs));
   });
+}
+
+/** 单段的 Range 头（bytes=a-b、bytes=a-、bytes=-n），end 含在内；没有或是多段的给 null（整个文件），超出文件给 invalid */
+function parseRange(header: string | undefined, size: number): { start: number; end: number } | null | "invalid" {
+  const m = header?.match(/^bytes=(\d*)-(\d*)$/);
+  if (!m || (!m[1] && !m[2])) return null;
+  let start: number;
+  let end: number;
+  if (!m[1]) {
+    start = Math.max(0, size - Number(m[2]));
+    end = size - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+  }
+  if (start > end || start >= size) return "invalid";
+  return { start, end };
 }
 
 /** 解析出来的项目里的一个路径：key 是网页传来的 cwd（缓存、预览 id 按它），root 是项目文件夹在那台机器上的路径 */

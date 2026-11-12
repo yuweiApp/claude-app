@@ -425,8 +425,8 @@ export type TerminalClientMessage = { type: "input"; data: string; typed: boolea
 export interface FileContent {
   path: string;
   size: number;
-  /** text 带 text；image 用 /files/raw 取；binary、too-large 不显示内容 */
-  kind: "text" | "image" | "binary" | "too-large";
+  /** text 带 text；image、video、audio 用 /files/raw 取；binary、too-large 不显示内容 */
+  kind: "text" | "image" | "video" | "audio" | "binary" | "too-large";
   text?: string;
   /** text 的文件编码，保存时带回来按它写；gb18030 兼容 GBK、GB2312 */
   encoding?: FileEncoding;

@@ -45,7 +45,8 @@ export interface HostFs {
   /** 连同里面的东西删掉 */
   rm(p: string): Promise<void>;
   rename(from: string, to: string): Promise<void>;
-  createReadStream(p: string): Readable;
+  /** range：只读这一段，end 含在内 */
+  createReadStream(p: string, range?: { start: number; end: number }): Readable;
   /** git 仓库里的文件（含未跟踪、不含忽略的）；不是 git 仓库时 null */
   gitFiles(cwd: string): Promise<string[] | null>;
 }
@@ -83,7 +84,7 @@ export const localFs: HostFs = {
   },
   rm: (p) => rm(p, { recursive: true, force: true }),
   rename: (a, b) => rename(a, b),
-  createReadStream: (p) => createReadStream(p),
+  createReadStream: (p, range) => createReadStream(p, range),
   async gitFiles(cwd) {
     try {
       const { stdout } = await run("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { cwd, maxBuffer: 64 * 1024 * 1024 });
@@ -180,11 +181,11 @@ function createRemoteFs(host: SshHost): HostFs {
       const s = await sftp();
       await call<void>((cb) => s.rename(a, b, cb), a);
     },
-    createReadStream(p) {
+    createReadStream(p, range) {
       // SFTP 是异步拿到的，先给一个空的可读流，接上后再转
       const out = new PassThrough();
       sftp().then(
-        (s) => s.createReadStream(p).on("error", (err: Error) => out.destroy(nodeError(err, p))).pipe(out),
+        (s) => s.createReadStream(p, range).on("error", (err: Error) => out.destroy(nodeError(err, p))).pipe(out),
         (err: Error) => out.destroy(err),
       );
       return out;

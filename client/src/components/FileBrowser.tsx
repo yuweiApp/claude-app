@@ -1052,6 +1052,18 @@ function FileViewer({
         <ZoomableImage key={path} src={api.rawFileUrl(cwd, path, content.mtimeMs)} alt={path} />
       </div>
     );
+  else if (content.kind === "video")
+    body = (
+      <div className="viewer-media">
+        <video key={path} src={api.rawFileUrl(cwd, path, content.mtimeMs)} controls preload="metadata" />
+      </div>
+    );
+  else if (content.kind === "audio")
+    body = (
+      <div className="viewer-media">
+        <audio key={path} src={api.rawFileUrl(cwd, path, content.mtimeMs)} controls preload="metadata" />
+      </div>
+    );
   // PDF 是二进制、也可能超过文本的上限，先认扩展名
   else if (pdf) body = <PdfPreview cwd={cwd} path={path} mtimeMs={content.mtimeMs} />;
   else if (content.kind === "binary") body = <div className="panel-empty">二进制文件，无法预览（{formatBytes(content.size)}）</div>;
