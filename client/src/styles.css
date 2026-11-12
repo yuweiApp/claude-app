@@ -757,6 +757,7 @@ main {
 /* 其他 agent（子代理、队友）发来的消息，在用户消息的位置上：左边一道竖线的引用块，标明来源 */
 .agent-message { align-self: stretch; border-left: 2px solid var(--border); padding: 2px 0 2px 12px; }
 .agent-message-head { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.agent-message-preview { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .permission { border: 1px solid var(--accent); border-radius: 10px; padding: 12px; margin-top: 12px; }
 .permission-title { font-weight: 600; margin-bottom: 6px; }

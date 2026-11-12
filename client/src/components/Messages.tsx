@@ -197,12 +197,26 @@ function agentName(view: SessionView, from: string): string | undefined {
   return undefined;
 }
 
-/** 其他 agent 发来的消息：不是用户写的，不用用户消息的气泡，显示成带来源的引用块；给模型看的说明不显示 */
+/**
+ * 其他 agent 发来的消息：不是用户写的，不用用户消息的气泡，显示成带来源的引用块；给模型看的说明不显示。
+ * 这些消息是写给模型的，往往很长，默认折叠成标题加一行摘要，点标题展开；只有一行的短消息直接显示
+ */
 function AgentMessage({ item, name }: { item: AgentItem; name?: string }) {
+  const [open, setOpen] = useState(false);
+  const head = name ? `子代理「${name}」发来消息` : "子代理发来消息";
+  const text = item.text.trim();
+  const short = !text.includes("\n") && text.length <= 80;
   return (
     <div className="agent-message" title={item.from ? `来自 ${item.from}` : undefined}>
-      <div className="agent-message-head">{name ? `子代理「${name}」发来消息` : "子代理发来消息"}</div>
-      {item.text && <ReplyMarkdown>{item.text}</ReplyMarkdown>}
+      {short ? (
+        <div className="agent-message-head">{head}</div>
+      ) : (
+        <button className="agent-message-head task-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          {head}
+          <span className="step-caret">{open ? "▾" : "›"}</span>
+        </button>
+      )}
+      {text && (short || open ? <ReplyMarkdown>{text}</ReplyMarkdown> : <div className="agent-message-preview">{shortLine(text)}</div>)}
     </div>
   );
 }
