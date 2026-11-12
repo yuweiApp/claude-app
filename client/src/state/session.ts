@@ -20,9 +20,22 @@ export type Item =
   | { kind: "assistant"; uuid: string; at?: number; messageId?: string; blocks: Block[] }
   /**
    * userMessageUuid：SDKResultMessage.user_message_uuid，这一轮开头那条用户消息；后台任务通知唤起的轮没有。
-   * startUuid：result 到达时消息列表里最近一条主线程的用户消息或后台任务通知，没有 userMessageUuid 时按它归属
+   * startUuid：result 到达时消息列表里最近一条主线程的用户消息或后台任务通知，没有 userMessageUuid 时按它归属。
+   * beforeUuid：result 之后开始的第一轮的开头。两个都对不上时（事件流回放从某一轮中间开始，那一轮又是后台任务通知开始的），
+   * 只往这一轮之前找；否则拉回历史后它会挂到正在进行的这一轮上，这一轮当成已经结束，过程折叠、计时变成上一轮的用时
    */
-  | { kind: "result"; uuid: string; at?: number; userMessageUuid?: string; startUuid?: string; isError: boolean; text: string; durationMs: number; costUsd: number }
+  | {
+      kind: "result";
+      uuid: string;
+      at?: number;
+      userMessageUuid?: string;
+      startUuid?: string;
+      beforeUuid?: string;
+      isError: boolean;
+      text: string;
+      durationMs: number;
+      costUsd: number;
+    }
   | { kind: "error"; uuid: string; text: string }
   /** 本地命令的输出（setModel 等会发一条 <local-command-stdout> 的 user 消息），显示成一行灰字，不算用户消息 */
   | { kind: "notice"; uuid: string; text: string }
@@ -360,7 +373,7 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       finishCompact(view, "failed");
       // 中断的一轮也是 error_during_execution（errors 里是 [ede_diagnostic] …），前面已经有「已中断」，不算出错
       const interrupted = view.items.at(-1)?.kind === "interrupted";
-      const start = view.items.findLast((it) => it.kind === "user" || it.kind === "task" || it.kind === "agent" || (it.kind === "compact" && it.manual));
+      const start = view.items.findLast(isTurnStart);
       pushItem(view, null, {
         kind: "result",
         uuid: message.uuid,
@@ -760,9 +773,25 @@ function insertBeforeTurn(view: SessionView, item: Item): void {
   view.items = start < 0 ? [...view.items, item] : [...view.items.slice(0, start), item, ...view.items.slice(start)];
 }
 
+/** 主线程一轮的开头：用户消息、后台任务通知、其他 agent 发来的消息、空闲时手动压缩 */
+function isTurnStart(item: Item): boolean {
+  return item.kind === "user" || item.kind === "task" || item.kind === "agent" || (item.kind === "compact" && Boolean(item.manual));
+}
+
 function pushItem(view: SessionView, parent: string | null, item: Item): void {
   if (view.seen.has(item.uuid)) return;
   view.seen = new Set(view.seen).add(item.uuid);
-  if (parent) view.children = { ...view.children, [parent]: [...(view.children[parent] ?? []), item] };
-  else view.items = [...view.items, item];
+  if (parent) {
+    view.children = { ...view.children, [parent]: [...(view.children[parent] ?? []), item] };
+    return;
+  }
+  let items = view.items;
+  if (isTurnStart(item)) {
+    // 上一个开头之后到的 result 都不属于这一轮，记下这一轮的开头（见 Item 的 result）
+    for (let i = items.findLastIndex(isTurnStart) + 1; i < items.length; i++) {
+      const it = items[i]!;
+      if (it.kind === "result" && !it.beforeUuid) items = items.with(i, { ...it, beforeUuid: item.uuid });
+    }
+  }
+  view.items = [...items, item];
 }

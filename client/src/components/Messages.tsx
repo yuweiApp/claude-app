@@ -79,14 +79,18 @@ function splitTurns(items: Item[]): Turn[] {
   };
   // 历史消息（getSessionMessages）里没有 result，事件流回放的 result 排在最后：按 SDK 的 user_message_uuid 挂回所属的那一轮。
   // 后台任务开始的轮没有 user_message_uuid，按 result 到达时最近的那条用户消息或任务通知（startUuid）找。
-  // 都找不到（事件缓冲从某一轮中间开始）：从后往前，挂到前面最近一个还没有 result 的轮
+  // 都找不到（事件缓冲从某一轮中间开始）：从后往前，挂到前面最近一个还没有 result 的轮，不超过 result 之后开始的那一轮（beforeUuid）
   const startOf = (uuid: string | undefined) => (uuid ? turns.findIndex((t) => (t.user ?? t.task ?? t.agent ?? (t.compact?.manual ? t.compact : null))?.uuid === uuid) : -1);
   let limit = turns.length;
   for (const r of results.toReversed()) {
     let i = startOf(r.userMessageUuid);
     if (i < 0) i = startOf(r.startUuid);
     if (i >= 0) i = lastSegment(i);
-    if (i < 0) i = turns.findLastIndex((t, j) => j < limit && !t.result && !turns[j + 1]?.continued);
+    if (i < 0) {
+      const before = startOf(r.beforeUuid);
+      const bound = before >= 0 ? Math.min(limit, before) : limit;
+      i = turns.findLastIndex((t, j) => j < bound && !t.result && !turns[j + 1]?.continued);
+    }
     if (i < 0) continue;
     turns[i]!.result = r;
     limit = i;
