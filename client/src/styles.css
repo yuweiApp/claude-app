@@ -983,16 +983,9 @@ main {
 .send-btn:hover { background: var(--text); }
 .send-btn:hover:not(:disabled) { opacity: 0.85; }
 .send-btn:disabled { opacity: 0.35; }
-/* 运行中的停止按钮：和发送按钮一样大小、一样的底色，中间一个小方块；边缘一段强调色的弧线转圈 */
-.send-stop { position: relative; }
-.send-stop::before {
-  content: ""; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
-  border: 2px solid transparent; border-top-color: var(--accent);
-  animation: send-stop-spin 1s linear infinite;
-}
+/* 运行中的停止按钮：和发送按钮一样大小、一样的底色，中间一个小方块 */
 .stop-core { width: 10px; height: 10px; border-radius: 2px; background: currentColor; }
 @keyframes send-stop-spin { to { transform: rotate(1turn); } }
-@media (prefers-reduced-motion: reduce) { .send-stop::before { animation: none; } }
 .spacer { flex: 1; }
 
 /* 新会话输入框上面一栏（同 codex-app-server 的 .new-chat-bar / .new-chat-chip） */
