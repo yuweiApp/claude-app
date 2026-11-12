@@ -357,6 +357,14 @@ main {
 .skill-preview { flex: none; display: flex; align-items: center; gap: 8px; }
 .skill-dialog-body { min-height: 0; overflow-y: auto; font-size: 14px; }
 .skill-source { margin: 0; padding: 12px; border-radius: 8px; background: var(--code-bg); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+/* 子代理页「个人」标签下的写法说明和示例 */
+.agents-hint { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.agents-hint p { margin: 0 0 6px; }
+.agents-hint code { padding: 1px 5px; border-radius: 4px; background: var(--code-bg); font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.agents-hint summary { width: fit-content; cursor: pointer; color: var(--text); }
+.agents-example { position: relative; margin-top: 8px; }
+.agents-example .skill-source { color: var(--text); }
+.agents-example button { position: absolute; top: 8px; right: 8px; padding: 3px 10px; font-size: 12px; }
 .skill-fields { width: 100%; margin-bottom: 12px; border-collapse: collapse; font-size: 13px; }
 .skill-fields th, .skill-fields td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
 .skill-fields th { width: 120px; color: var(--muted); font-weight: 400; }

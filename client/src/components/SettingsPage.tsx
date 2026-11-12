@@ -126,6 +126,14 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
             {section === "plugins" && <ImportButton kind="plugins" onImported={() => load(false)} onError={setError} />}
             {section === "skills" && <ImportButton kind="skills" onImported={() => load(false)} onError={setError} />}
             {section === "mcp" && <AddServerButton onAdded={() => load(false)} />}
+            {section === "agents" && desktop && data && (
+              <button
+                className="primary"
+                onClick={() => void desktop!.openFolder(data.agentsDir).then((opened) => !opened && setError("这台电脑上没有这个文件夹（网关在别的机器上）"))}
+              >
+                打开文件夹
+              </button>
+            )}
           </header>
           {(section === "plugins" || section === "skills" || section === "agents") && !detail && (
             <div className="settings-tabs" role="tablist">
@@ -202,10 +210,11 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
               onError={setError}
             />
           )}
+          {section === "agents" && origin === "mine" && data && <AgentsHint dir={data.agentsDir} />}
           {section === "agents" && (
             <AgentGrid
               agents={agents}
-              empty={data ? (keyword ? "没有匹配的子代理" : origin === "mine" ? "还没有个人子代理，放在 Claude Code 配置目录或项目的 .claude/agents 里，或安装带子代理的插件" : "没有内置子代理") : "加载中…"}
+              empty={data ? (keyword ? "没有匹配的子代理" : origin === "mine" ? "还没有个人子代理" : "没有内置子代理") : "加载中…"}
               onOpen={setViewingAgent}
               onChanged={() => load(false)}
               onError={setError}
@@ -436,6 +445,45 @@ function AgentGrid({
         );
       })}
     </CardGrid>
+  );
+}
+
+const AGENT_EXAMPLE = `---
+name: test-runner
+description: 运行和这次改动相关的测试，只返回失败的用例和原因
+tools: Read, Grep, Glob, Bash
+model: inherit
+---
+
+你负责运行测试。找出和改动相关的测试并运行，只汇报失败的用例、报错和你判断的原因，不要修改代码。
+`;
+
+/** 个人子代理的写法：文件放在哪、开头写哪些字段，附一个可以复制的示例 */
+function AgentsHint({ dir }: { dir: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="agents-hint">
+      <p>
+        个人子代理是 <code>{dir}</code> 里的 .md 文件，项目的子代理放在项目的 <code>.claude/agents</code> 里。文件开头 <code>---</code> 之间写 name 和
+        description，可选 model 和 tools（不写时分别用默认的子代理模型和主会话的全部工具），正文是它的系统提示词。改完点「刷新」，对新会话生效。
+      </p>
+      <details>
+        <summary>示例</summary>
+        <div className="agents-example">
+          <pre className="skill-source">{AGENT_EXAMPLE}</pre>
+          <button
+            onClick={() =>
+              void navigator.clipboard.writeText(AGENT_EXAMPLE).then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              })
+            }
+          >
+            {copied ? "已复制" : "复制"}
+          </button>
+        </div>
+      </details>
+    </div>
   );
 }
 

@@ -104,6 +104,9 @@ export const setSkillEnabled = (name: string, enabled: boolean) => setListed(dis
 export const disabledAgents = () => readNames(disabledAgentsFile());
 export const setAgentEnabled = (name: string, enabled: boolean) => setListed(disabledAgentsFile(), name, !enabled);
 
+/** 用户的子代理：Claude Code 配置目录的 agents/ */
+export const userAgentsDir = () => path.join(config.claudeConfigDir, "agents");
+
 /** 文件夹下（含子文件夹）的 .md 文件；dirs 是从 root 到文件所在文件夹的各级名字 */
 function markdownFiles(root: string, dirs: string[] = []): { file: string; dirs: string[] }[] {
   const dir = path.join(root, ...dirs);
@@ -132,7 +135,7 @@ export function agentFiles(cwd: string, plugins: { name: string; path?: string }
   const add = (name: string, file: string) => {
     if (!found.has(name)) found.set(name, file);
   };
-  for (const root of [path.join(cwd, ".claude", "agents"), path.join(config.claudeConfigDir, "agents")]) {
+  for (const root of [path.join(cwd, ".claude", "agents"), userAgentsDir()]) {
     for (const { file } of markdownFiles(root)) add(agentName(file), file);
   }
   for (const plugin of plugins) {

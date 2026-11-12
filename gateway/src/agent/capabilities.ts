@@ -1,9 +1,10 @@
+import { mkdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { query, type McpServerStatus, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { agentEnv } from "../config.js";
 import type { Capabilities, McpServerInfo } from "../shared/types.js";
-import { agentFiles, disabledAgents, disabledSkills, importedPluginNames, importedPlugins, importedSkills, pluginManifest } from "./extensions.js";
+import { agentFiles, disabledAgents, userAgentsDir, disabledSkills, importedPluginNames, importedPlugins, importedSkills, pluginManifest } from "./extensions.js";
 import { enabledMcpServers, readMcpServers, type McpConfig } from "./mcp-config.js";
 import { noInput } from "./models.js";
 
@@ -94,6 +95,9 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
       }));
     const pluginList = plugins.map(({ name, path }) => ({ name, ...(path && isAbsolute(path) ? { path } : {}) }));
     const agentPaths = agentFiles(cwd, pluginList);
+    // 设置页「打开文件夹」要打开它，没有就先建上
+    const agentsDir = userAgentsDir();
+    await mkdir(agentsDir, { recursive: true });
     const value: Capabilities = {
       skills: skills.map(({ name, description, builtin }) => ({
         name,
@@ -118,6 +122,7 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
         };
       }),
       mcpServers: [...managed, ...others],
+      agentsDir,
       // 插件带的叫 插件名:…，跟着插件算内置的还是个人的；其余没有定义文件的是 Claude Code 自带的
       agents: agents.map(({ name, description, model }) => {
         const plugin = name.includes(":") ? name.split(":")[0] : undefined;

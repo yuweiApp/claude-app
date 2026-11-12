@@ -246,6 +246,12 @@ ipcMain.handle("shell:show-item", (e, target: unknown) => {
   return true;
 });
 
+// 子代理页的「打开文件夹」：用系统的文件管理器打开这个文件夹本身；不是这台机器上的文件夹时返回 false
+ipcMain.handle("shell:open-folder", async (e, target: unknown) => {
+  if (!fromUi(e.sender) || typeof target !== "string" || !path.isAbsolute(target) || !existsSync(target)) return false;
+  return (await shell.openPath(target)) === "";
+});
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {

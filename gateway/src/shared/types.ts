@@ -188,6 +188,8 @@ export interface Capabilities {
    * enabled：false 时新会话里模型看不到、也调用不了
    */
   agents: { name: string; description: string; model?: string; path?: string; plugin?: string; enabled: boolean; builtin: boolean }[];
+  /** 用户的子代理所在的文件夹（Claude Code 配置目录的 agents/，网关机器上的），列表时没有就建上 */
+  agentsDir: string;
 }
 
 /** GET /skills/:name：有 SKILL.md 文件的技能；GET /agents/:name：有定义文件的子代理 */

@@ -10,6 +10,8 @@ export interface DesktopApi {
   pickFolder(defaultPath?: string): Promise<string | null>;
   /** 用系统的文件管理器打开所在的文件夹并选中它；文件不在这台机器上时返回 false */
   showItemInFolder(path: string): Promise<boolean>;
+  /** 用系统的文件管理器打开这个文件夹本身；不在这台机器上时返回 false */
+  openFolder(path: string): Promise<boolean>;
   /** 返回取消订阅的函数 */
   onMaximizedChange(callback: (maximized: boolean) => void): () => void;
   /** 按标题找桌面上的窗口（桌面工具正在操作的那个），返回采集源，getUserMedia 用它的 id 取实时画面；找不到时 null。见 desktop/src/capture.ts */

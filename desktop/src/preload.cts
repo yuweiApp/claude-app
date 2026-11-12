@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("desktop", {
   isMaximized: (): Promise<boolean> => ipcRenderer.invoke("window:is-maximized"),
   pickFolder: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke("dialog:pick-folder", defaultPath),
   showItemInFolder: (target: string): Promise<boolean> => ipcRenderer.invoke("shell:show-item", target),
+  openFolder: (target: string): Promise<boolean> => ipcRenderer.invoke("shell:open-folder", target),
   onMaximizedChange: (callback: (maximized: boolean) => void) => {
     const listener = (_event: electron.IpcRendererEvent, maximized: boolean) => callback(maximized);
     ipcRenderer.on("window:maximized", listener);
