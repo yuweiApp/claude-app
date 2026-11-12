@@ -727,7 +727,6 @@ function Chat({
                 usage={view.context}
                 running={view.state === "running"}
                 compacting={view.items.some((it) => it.kind === "compact" && it.status === "running")}
-                model={view.model ?? view.shownModel}
                 onError={onError}
               />
             )}

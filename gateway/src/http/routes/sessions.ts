@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { listModels } from "../../agent/models.js";
 import type { FastifyInstance } from "fastify";
-import type { ContextSettings, ConnectorEntry, ConnectorInput, MarketPluginPage, McpAuthState, McpServerInput } from "../../shared/types.js";
+import type { ConnectorEntry, ConnectorInput, MarketPluginPage, McpAuthState, McpServerInput } from "../../shared/types.js";
 import { AttachmentError, type SelectedElementInput } from "../../agent/attachments.js";
 import { BadRequestError, NotFoundError, type SessionManager } from "../../agent/session-manager.js";
 import type { EventHub } from "../../events/event-hub.js";
@@ -336,36 +336,12 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
       const session = await sessions.activate(req.params.id);
       if (req.body.model !== undefined) await session.setModel(req.body.model || undefined);
       if (req.body.effort !== undefined) await session.setEffort(req.body.effort);
-      // 换到了上下文设置不一样的模型（各模型的默认窗口不同）：重启子进程
-      if (req.body.model !== undefined) await sessions.relaunchIfStale(req.params.id);
       return { ok: true };
     },
   );
 
-  /** 输入框上下文弹层：用量和设置 */
+  /** 输入框上下文圆环：最后一次取到的用量 */
   app.get<{ Params: IdParams }>("/sessions/:id/context", async (req) => sessions.contextInfo(req.params.id));
-
-  /** 改上下文窗口和自动压缩阈值（null 是不设，用模型默认、网关默认）；asModelDefault 时设成这个模型的默认 */
-  app.put<{ Params: IdParams; Body: ContextSettings & { asModelDefault?: boolean } }>(
-    "/sessions/:id/context",
-    {
-      schema: {
-        body: {
-          type: "object",
-          required: ["contextWindow", "autoCompactPercent"],
-          properties: {
-            contextWindow: { type: ["integer", "null"] },
-            autoCompactPercent: { type: ["number", "null"] },
-            asModelDefault: { type: "boolean" },
-          },
-        },
-      },
-    },
-    async (req) => {
-      const { asModelDefault = false, contextWindow, autoCompactPercent } = req.body;
-      return sessions.setContext(req.params.id, { contextWindow, autoCompactPercent }, asModelDefault);
-    },
-  );
 
   /** 压缩上下文（同 Claude Code 的 /compact） */
   app.post<{ Params: IdParams }>("/sessions/:id/compact", async (req) => {

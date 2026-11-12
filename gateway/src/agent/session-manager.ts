@@ -38,8 +38,8 @@ import { rmdirQuiet } from "../ssh/remote-ops.js";
 import { remoteFs } from "../ssh/host-fs.js";
 import { appendRemote, deleteRemoteSession, registerRemoteSession, remoteSessionHost, syncHost, syncSession, uploadForkedSession } from "../ssh/transcripts.js";
 import { listConnections } from "../ssh/connections.js";
-import type { ContextSettings, SessionContextInfo } from "../shared/types.js";
-import { compactedSinceReply, contextInfo, copySessionContext, forgetSession, launchModel, resolveLaunch, sameLaunch, saveUsage, setModelContext, setSessionContext } from "./context-settings.js";
+import type { SessionContextInfo } from "../shared/types.js";
+import { compactedSinceReply, forgetSession, savedUsage, saveUsage } from "./context-usage.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
 export class SessionManager {
@@ -265,43 +265,12 @@ export class SessionManager {
     const active = this.active.get(sessionId);
     const settings = active ? { model: active.model, effort: active.effort } : this.lastSettings.get(sessionId);
     if (settings) this.lastSettings.set(forked.sessionId, settings);
-    copySessionContext(sessionId, forked.sessionId);
     return forked.sessionId;
   }
 
-  /** 输入框上下文弹层要的：用量和设置。不拉起子进程，模型按在跑的、上次用的、记录里最后一次回复的 */
-  async contextInfo(sessionId: string): Promise<SessionContextInfo> {
-    const active = this.active.get(sessionId);
-    const model = active?.model ?? launchModel(this.lastSettings.get(sessionId)?.model ?? (await this.recordedModel(sessionId)));
-    return contextInfo(sessionId, model, active ? active.context : null);
-  }
-
-  /**
-   * 改上下文设置：asModelDefault 时设成这个会话的模型的默认（会话自己设的清掉），否则只设这个会话。
-   * 子进程在跑、设置变了的话重启它（窗口和自动压缩窗口都是启动时的环境变量）：这一轮还没结束、有后台子代理在跑时不重启，
-   * 下次子进程启动时生效
-   */
-  async setContext(sessionId: string, settings: ContextSettings, asModelDefault: boolean): Promise<SessionContextInfo> {
-    const info = await this.contextInfo(sessionId);
-    if (!info.adjustable || !info.model) throw new BadRequestError("这个模型的上下文窗口按 Claude Code 自己的模型表，不能改");
-    if (asModelDefault) {
-      setModelContext(info.model, settings);
-      setSessionContext(sessionId, { contextWindow: null, autoCompactPercent: null });
-    } else setSessionContext(sessionId, settings);
-    await this.relaunchIfStale(sessionId);
-    return this.contextInfo(sessionId);
-  }
-
-  /**
-   * 子进程启动时的上下文设置和现在该用的不一样了（改了设置、换了模型）：重启子进程（resume）。
-   * 这一轮还没结束、有后台子代理在跑时不重启，下次子进程启动时生效
-   */
-  async relaunchIfStale(sessionId: string): Promise<void> {
-    const active = this.active.get(sessionId);
-    if (!active || active.state === "running" || active.agentsRunning) return;
-    if (sameLaunch(active.context, resolveLaunch(sessionId, launchModel(active.modelOption)))) return;
-    await active.close();
-    await this.activate(sessionId);
+  /** 输入框上下文圆环要的：最后一次取到的用量。不拉起子进程 */
+  contextInfo(sessionId: string): SessionContextInfo {
+    return { usage: savedUsage(sessionId) };
   }
 
   /** 压缩上下文：子进程回收了的先 resume */
@@ -429,9 +398,8 @@ export class SessionManager {
         resume,
         cwd: opts.cwd,
         model: opts.model,
-        context: resolveLaunch(sessionId, launchModel(opts.model)),
         compacted: compactedSinceReply(sessionId),
-        onContext: (usage, buffer) => saveUsage(sessionId, usage, buffer),
+        onContext: (usage) => saveUsage(sessionId, usage),
         effort: opts.effort ?? config.defaultEffort,
         permissionMode: opts.permissionMode ?? config.defaultPermissionMode,
         // 远程会话不管技能（远端只有 Claude Code 自带的和项目里的）

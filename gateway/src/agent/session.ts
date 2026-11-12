@@ -25,7 +25,6 @@ import type { BrowserHost } from "../browser/host.js";
 import { inappBusy, takeToolResult } from "../browser/tool.js";
 import { desktopWriteActive } from "../desktop/guard.js";
 import { buildOptions } from "./options.js";
-import type { LaunchContext } from "./context-settings.js";
 import type { TaskList } from "./tasks.js";
 
 interface PendingPermission {
@@ -60,8 +59,6 @@ export class AgentSession {
   readonly cwd: string;
   permissionMode: PermissionMode;
   lastActiveAt = Date.now();
-  /** 启动时的上下文窗口和自动压缩窗口，会话中途改不了（见 context-settings.ts） */
-  readonly context: LaunchContext;
 
   private readonly input = new InputQueue();
   private readonly abortController = new AbortController();
@@ -83,7 +80,7 @@ export class AgentSession {
   private wakeAt = 0;
   private readonly done: Promise<void>;
   private closing = false;
-  private readonly onContext?: (usage: ContextUsage, buffer: number | null) => void;
+  private readonly onContext?: (usage: ContextUsage) => void;
   /** 压缩过、之后模型还没回复过（见 ContextUsage.compacted） */
   private compactedSinceReply = false;
 
@@ -96,11 +93,10 @@ export class AgentSession {
       effort?: EffortLevel;
       permissionMode: PermissionMode;
       skills?: string[];
-      context: LaunchContext;
       /** 刚压缩过、模型还没回复过（上一个子进程里压缩的），见 ContextUsage.compacted */
       compacted?: boolean;
-      /** 取到了上下文用量；buffer 是（自动压缩窗口 − 阈值），关掉了自动压缩时 null */
-      onContext?: (usage: ContextUsage, buffer: number | null) => void;
+      /** 取到了上下文用量 */
+      onContext?: (usage: ContextUsage) => void;
     },
     private readonly hub: EventHub,
     private readonly log: FastifyBaseLogger,
@@ -115,7 +111,6 @@ export class AgentSession {
     this.effort = opts.effort;
     this.cwd = opts.cwd;
     this.permissionMode = opts.permissionMode;
-    this.context = opts.context;
     this.onContext = opts.onContext;
     this.compactedSinceReply = opts.compacted ?? false;
     this.query = query({
@@ -128,7 +123,6 @@ export class AgentSession {
         effort: opts.effort,
         permissionMode: opts.permissionMode,
         skills: opts.skills,
-        context: opts.context,
         canUseTool: this.canUseTool,
         terminals,
         browser,
@@ -188,15 +182,15 @@ export class AgentSession {
     try {
       const u = await this.query.getContextUsage({ detail: "summary" });
       const threshold = u.isAutoCompactEnabled && u.autoCompactThreshold ? u.autoCompactThreshold : null;
-      // rawMaxTokens 是自动压缩窗口：设了比窗口小的自动压缩窗口时是它，模型窗口按启动时设的
+      // rawMaxTokens 是模型的窗口（.env.local 另设了更小的 CLAUDE_CODE_AUTO_COMPACT_WINDOW 时是它）
       const usage: ContextUsage = {
         used: u.totalTokens,
-        window: this.context.contextWindow ?? u.rawMaxTokens,
+        window: u.rawMaxTokens,
         threshold,
         at: Date.now(),
         ...(this.compactedSinceReply ? { compacted: true } : {}),
       };
-      this.onContext?.(usage, threshold === null ? null : u.rawMaxTokens - threshold);
+      this.onContext?.(usage);
       this.publish({ type: "context", usage });
     } catch (err) {
       this.log.debug({ sessionId: this.id, err }, "取上下文用量失败");

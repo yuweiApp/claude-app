@@ -84,11 +84,6 @@ export const config = {
   baseUrl: env.ANTHROPIC_BASE_URL?.trim() || undefined,
   /** 默认模型（新会话用它，模型菜单里排第一），不填时用 Claude Code 自己的默认（接第三方模型时必须填） */
   model: env.ANTHROPIC_MODEL?.trim() || undefined,
-  /**
-   * Claude Code 不认识的模型（不是 claude- 开头的，第三方模型都是）的上下文窗口（CLAUDE_CODE_MAX_CONTEXT_TOKENS），
-   * 会话、模型都没单独设时用它（见 agent/context-settings.ts）
-   */
-  defaultContextWindow: int("CLAUDE_CODE_MAX_CONTEXT_TOKENS", 200_000),
   /** 模型菜单只保留 id 匹配这个正则的（不区分大小写），例如 ^(gpt|deepseek|kimi)；不填时只按通用规则去掉非对话模型 */
   modelsFilter: regex("MODELS_FILTER"),
   /** 新会话的权限模式，默认完全访问（bypassPermissions，所有操作不询问） */
@@ -153,8 +148,7 @@ export function agentEnv(): Record<string, string | undefined> {
     // 上下文多大（token）：只对 Claude Code 不认识的模型名（不是 claude- 开头的，如 gpt-6-luna、qwen）生效，
     // Claude 官方模型按它自己的模型表。没设时 Claude Code 也是按 200000 算，这里写明，要改在 .env.local 里设，
     // 要和模型实际支持的一致：设大了请求会在模型那边超限报错，而不是及时压缩上下文
-    // 会话、模型单独设了窗口时启动会话时另外覆盖（agent/context-settings.ts 的 contextEnv）
-    CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(config.defaultContextWindow),
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS: env.CLAUDE_CODE_MAX_CONTEXT_TOKENS ?? "200000",
     CLAUDE_AGENT_SDK_CLIENT_APP: "claude-app-gateway/0.1.0",
     // 跑得久的工具调用自动转到后台（同 Claude Code 终端里的 Ctrl+B）：工具先返回「在后台运行」，这一轮接着走，
     // 模型可以先回复用户；跑完后结果以 task_notification 送回来，会话空闲时会自动开始新的一轮。

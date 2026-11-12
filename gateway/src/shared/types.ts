@@ -60,37 +60,10 @@ export interface ContextUsage {
   compacted?: boolean;
 }
 
-/** 上下文设置，不设的项为 null（用下一级的：会话 → 模型默认 → 网关默认） */
-export interface ContextSettings {
-  /** 模型的上下文窗口（CLAUDE_CODE_MAX_CONTEXT_TOKENS） */
-  contextWindow: number | null;
-  /** 用到窗口的百分之多少时自动压缩 */
-  autoCompactPercent: number | null;
-}
-
-/** 输入框上下文弹层要的：用量和设置 */
+/** 输入框上下文圆环要的：最后一次取到的用量 */
 export interface SessionContextInfo {
-  /** 会话的模型（实际模型名） */
-  model: string | null;
   /** 还没取到过时 null */
   usage: ContextUsage | null;
-  /**
-   * 窗口和自动压缩阈值能不能改：Claude Code 不认识的模型（不是 claude- 开头的，第三方模型都是）按设的窗口算；
-   * Claude 官方模型按 Claude Code 自己的模型表，不能改
-   */
-  adjustable: boolean;
-  /** 这个会话自己设的 */
-  session: ContextSettings;
-  /** 这个模型的默认（「设为模型默认」） */
-  modelDefault: ContextSettings;
-  /** 网关的默认窗口（.env.local 的 CLAUDE_CODE_MAX_CONTEXT_TOKENS，没设是 200000） */
-  defaultWindow: number;
-  /** 子进程现在用的设置；没在运行时 null */
-  applied: { contextWindow: number | null; autoCompactWindow: number | null } | null;
-  /** 窗口和自动压缩阈值的取值范围 */
-  limits: { minWindow: number; maxWindow: number; minAutoCompactWindow: number; maxAutoCompactWindow: number };
-  /** Claude Code 在自动压缩窗口里留给回复和摘要的部分：阈值 = 自动压缩窗口 − 它 */
-  buffer: number;
 }
 
 /** 桌面工具操作的窗口：网页右上角的浮窗显示它，桌面版按标题找到这个窗口显示实时画面 */
