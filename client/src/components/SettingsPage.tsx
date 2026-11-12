@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkCjkFriendly from "remark-cjk-friendly";
+import remarkCjkFriendlyGfmStrikethrough from "remark-cjk-friendly-gfm-strikethrough";
 import { api, type Capabilities, type McpServerInfo, type McpServerInput, type SkillDetail } from "../api";
 import { desktop, fileManagerName } from "../desktop";
 import { Avatar } from "./CapabilityPicker";
@@ -794,7 +796,7 @@ function DetailDialog({
                 </table>
               )}
               <div className="assistant">
-                <Markdown remarkPlugins={[remarkGfm]}>{parsed.body}</Markdown>
+                <Markdown remarkPlugins={[remarkGfm, remarkCjkFriendly, remarkCjkFriendlyGfmStrikethrough]}>{parsed.body}</Markdown>
               </div>
             </>
           )}

@@ -2,6 +2,8 @@ import { machinePath, parseRemote, remoteUri } from "../remote";
 import { createContext, isValidElement, useCallback, useContext, useRef, useState, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkCjkFriendly from "remark-cjk-friendly";
+import remarkCjkFriendlyGfmStrikethrough from "remark-cjk-friendly-gfm-strikethrough";
 import { createPortal } from "react-dom";
 import { api } from "../api";
 import type { LineRange } from "./FileBrowser";
@@ -25,14 +27,17 @@ export const FileLinkContext = createContext<{
 } | null>(null);
 
 /**
- * Claude 回复的 Markdown：GFM，本地文件链接点开在右侧面板，网址在内置浏览器（桌面版）或新窗口打开。
+ * Claude 回复的 Markdown：GFM（加上 cjk-friendly：`**……。**中文` 这种标点后面紧跟汉字的结尾，
+ * CommonMark 不算闭合，会原样显示星号），本地文件链接点开在右侧面板，网址在内置浏览器（桌面版）或新窗口打开。
  * 行内代码像文件路径（`index.html`、`src/a.ts:12`）、又是工作目录里存在的文件时，显示成文件链接，
  * 同写成 [index.html](index.html)；只改显示，消息内容不变。```mermaid 代码块渲染成图
  */
+const REMARK_PLUGINS = [remarkGfm, remarkCjkFriendly, remarkCjkFriendlyGfmStrikethrough, remarkKeepWindowsPaths];
+
 export function ReplyMarkdown({ children }: { children: string }) {
   return (
     <Markdown
-      remarkPlugins={[remarkGfm, remarkKeepWindowsPaths]}
+      remarkPlugins={REMARK_PLUGINS}
       urlTransform={urlTransform}
       components={COMPONENTS}
     >
