@@ -104,7 +104,10 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
     });
 
   // 同 codex-app-server 的侧边栏：「项目」是选了文件夹的会话，按文件夹分组；「会话」是没选文件夹的（各有网关建的 scratch 目录）
-  const projects = groupByFolder(sessions.filter((s) => !s.chat), workspaceDir);
+  // 项目按名称排；项目里的会话保持 sessions 的顺序（按最后回复时间倒序），同「会话」
+  const projects = groupByFolder(sessions.filter((s) => !s.chat), workspaceDir).sort(
+    (a, b) => folderName(a.cwd).localeCompare(folderName(b.cwd), undefined, { numeric: true, sensitivity: "base" }) || a.cwd.localeCompare(b.cwd),
+  );
   const chats = sessions.filter((s) => s.chat);
   const projectsOpen = !collapsed.has(SECTION_PROJECTS);
   const chatsOpen = !collapsed.has(SECTION_CHATS);
