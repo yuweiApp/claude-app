@@ -841,6 +841,24 @@ main {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent), 0 8px 28px -12px rgba(0, 0, 0, 0.22);
 }
 .composer.dragging { border-color: var(--accent); border-style: dashed; }
+/* 运行中：一道强调色的光沿边框绕圈。画在 ::after 上，盖住 1px 边框（::before 被毛玻璃皮肤占用了） */
+@property --composer-flow { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.composer.running::after {
+  content: ""; position: absolute; inset: -1px; padding: 1px; border-radius: inherit; pointer-events: none;
+  background: conic-gradient(
+    from var(--composer-flow),
+    transparent 0 50%,
+    color-mix(in srgb, var(--accent) 35%, transparent) 70%,
+    var(--accent) 88%,
+    color-mix(in srgb, var(--accent) 40%, #fff) 96%,
+    transparent
+  );
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: composer-flow 3.2s linear infinite;
+}
+@keyframes composer-flow { to { --composer-flow: 1turn; } }
+@media (prefers-reduced-motion: reduce) { .composer.running::after { animation: none; } }
 .composer textarea {
   display: block; width: 100%; border: none; resize: none; padding: 4px 6px; background: transparent; outline: none;
   /* 高度随内容增长，最高 40% 窗口高度，再多才出滚动条 */
