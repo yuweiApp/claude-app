@@ -1,3 +1,4 @@
+import type { SshConnectionInfo } from "../api";
 import { useSshConnections } from "../state/sshConnections";
 
 /**
@@ -51,4 +52,30 @@ export function HostIcon({ hostId, size = 16 }: { hostId: string; size?: number 
       <path d="m4.8 5.6 1.6 1.4-1.6 1.4M8 8.4h2.6" />
     </svg>
   );
+}
+
+/** 连接状态的文字（悬停提示用） */
+export function hostStatusText(c: SshConnectionInfo | undefined): string {
+  switch (c?.status) {
+    case "ready":
+      return "已连接";
+    case "connecting":
+      return "连接中…";
+    case "deploying":
+      return "正在准备远端…";
+    case "error":
+      return c.hostKey ? "要在设置里确认主机密钥" : c.needsPassword ? "需要密码，在设置里连接" : `连接失败${c.error ? `：${c.error}` : ""}`;
+    case "disconnected":
+      return "未连接，开始会话时连接";
+    default:
+      return "连接不存在（可能已经在设置里删掉了）";
+  }
+}
+
+/** 远程主机的连接状态：绿色已连接，黄色连接中（闪），红色失败，灰色未连接 */
+export function HostStatusDot({ hostId }: { hostId: string }) {
+  const conn = useSshConnections().find((c) => c.id === hostId);
+  const cls = conn?.status === "ready" ? " on" : conn?.status === "connecting" || conn?.status === "deploying" ? " busy" : conn?.status === "error" ? " err" : "";
+  const text = `${conn?.name ?? hostId}：${hostStatusText(conn)}`;
+  return <span className={`env-dot${cls}`} title={text} role="img" aria-label={text} />;
 }

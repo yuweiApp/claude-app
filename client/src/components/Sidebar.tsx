@@ -1,4 +1,4 @@
-import { HostIcon } from "./HostIcon";
+import { HostIcon, HostStatusDot } from "./HostIcon";
 import { machinePath, parseRemote } from "../remote";
 import { sshName, useSshConnections } from "../state/sshConnections";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
@@ -437,6 +437,7 @@ function ProjectGroup({
           {/* 远程主机上的项目：文件夹换成主机的系统图标（同 codex-app-server），主机名在悬停提示里 */}
           {remote ? <HostIcon hostId={remote.host} /> : <FolderIcon />}
           <span className="group-name">{folderName(g.cwd)}</span>
+          {remote && <HostStatusDot hostId={remote.host} />}
         </button>
         <div className="group-actions">
           <button className="icon-btn" title="在此项目中新建会话" aria-label={`在 ${folderName(g.cwd)} 中新建会话`} onClick={() => onNew(g.cwd)}>

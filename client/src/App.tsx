@@ -1,5 +1,5 @@
-import { HostIcon } from "./components/HostIcon";
-import { sshName } from "./state/sshConnections";
+import { HostIcon, HostStatusDot } from "./components/HostIcon";
+import { refreshSshConnections, sshName } from "./state/sshConnections";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { GearGlyph, HomeGlyph, IosIcon } from "./components/IosIcon";
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
@@ -177,6 +177,8 @@ export function App() {
   // 定时刷新列表失败留下的报错（如网关重启那几秒的 502）：之后刷新成功了就清掉，别的报错不动
   const refreshError = useRef<string | null>(null);
   const refresh = useCallback(() => {
+    // 远程主机的连接状态（侧栏、标题栏的小圆点）：会话用到主机时连上，断线、空闲时断开，跟会话列表一起刷新
+    void refreshSshConnections();
     api.listSessions().then(
       (list) => {
         setSessions(list);
@@ -613,6 +615,7 @@ function Chat({
             <span className="chat-folder" title={remoteHost ? `${sshName(remoteHost)}：${machinePath(cwd!)}` : (cwd ?? undefined)}>
               {remoteHost && <HostIcon hostId={remoteHost} size={12} />}
               {folder}
+              {remoteHost && <HostStatusDot hostId={remoteHost} />}
             </span>
           )}
           {sessionId && <TasksPopover sessionId={sessionId} tasks={view.backgroundTasks} onError={onError} />}

@@ -180,7 +180,8 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 .group-head:hover .group-actions, .group-head.menu-open .group-actions, .group-actions:focus-within { opacity: 1; pointer-events: auto; }
 .group-actions .icon-btn { width: 26px; height: 26px; color: var(--text); }
 .group-actions .icon-btn:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
-.group-head:hover .group-name, .group-head.menu-open .group-name { padding-right: 58px; }
+/* 悬停时右边让出按钮的位置：加在整行按钮上而不是名字上，远程项目的名字后面还有连接状态的圆点 */
+.sidebar .group-head:hover .group-toggle, .sidebar .group-head.menu-open .group-toggle { padding-right: 68px; }
 .group-toggle { flex: 1; padding: 6px 10px 6px 12px; font-size: 13.5px; }
 /* 文件夹行、分区标题行的按钮本身不画底色（盖过全局的 button:hover），悬停底色由外面一整行（.group-head、.section-head）画 */
 .sidebar .group-toggle, .sidebar .group-toggle:hover, .sidebar .section-toggle, .sidebar .section-toggle:hover { background: none; }
@@ -1078,6 +1079,8 @@ main {
 .env-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--muted) 45%, transparent); }
 .env-dot.on { background: var(--ok); }
 .env-dot.err { background: var(--err); }
+.env-dot.busy { background: var(--warn); animation: env-dot-pulse 1.2s ease-in-out infinite; }
+@keyframes env-dot-pulse { 50% { opacity: .35; } }
 
 /* 选择文件夹对话框 */
 .dialog-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.35); padding: 16px; -webkit-app-region: no-drag; }

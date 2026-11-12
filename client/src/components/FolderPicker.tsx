@@ -1,8 +1,8 @@
-import { HostIcon } from "./HostIcon";
+import { HostIcon, HostStatusDot } from "./HostIcon";
 import { useEffect, useRef, useState } from "react";
 import { desktop } from "../desktop";
 import { machinePath, parseRemote, remoteUri } from "../remote";
-import { useSshConnections } from "../state/sshConnections";
+import { refreshSshConnections, useSshConnections } from "../state/sshConnections";
 import { FolderPickerDialog } from "./FolderPickerDialog";
 import { folderName } from "./Sidebar";
 
@@ -47,7 +47,14 @@ export function EnvPicker({ value, onChange, onManage }: { value: string | null;
 
   return (
     <div className="folder-picker" ref={ref}>
-      <button className="new-chat-chip" onClick={() => setOpen((o) => !o)} title={current ? `在 ${current.name}（${current.host}）上运行` : "在这台电脑上运行"}>
+      <button
+        className="new-chat-chip"
+        onClick={() => {
+          // 列表里的连接状态可能是早先取的（会话用到主机时也会连上、断开），展开时刷新
+          if (!open) void refreshSshConnections();
+          setOpen((o) => !o);
+        }}
+        title={current ? `在 ${current.name}（${current.host}）上运行` : "在这台电脑上运行"}>
         {host ? <HostIcon hostId={host} /> : <LaptopIcon />}
         <span className="new-chat-chip-label">{host ? (current?.name ?? host) : "本机"}</span>
       </button>
@@ -67,7 +74,7 @@ export function EnvPicker({ value, onChange, onManage }: { value: string | null;
                 <span className="menu-item-name">{c.name}</span>
                 <span className="menu-item-sub">{c.host}</span>
               </span>
-              <span className={`env-dot${c.status === "ready" ? " on" : c.status === "error" ? " err" : ""}`} title={c.status === "ready" ? "已连接" : c.status === "error" ? "连接失败" : "未连接，开始会话时连接"} />
+              <HostStatusDot hostId={c.id} />
             </button>
           ))}
           <div className="menu-divider" />

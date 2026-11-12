@@ -12,14 +12,14 @@ export function SshPage() {
   const [editing, setEditing] = useState<SshConnectionInfo | "new" | null>(null);
   const [removing, setRemoving] = useState<SshConnectionInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const busy = connections.some((c) => c.status === "connecting" || c.status === "deploying");
 
-  // 连接、准备远端时轮询进度
+  // 共用的列表是早先取的（会话用到主机时也会连上、断开），打开设置页先刷新一次，开着时也定时刷新；
+  // 连接、准备远端时的每秒刷新在 state/sshConnections 里
   useEffect(() => {
-    if (!busy) return;
-    const timer = setInterval(() => void refreshSshConnections(), 1000);
+    void refreshSshConnections();
+    const timer = setInterval(() => void refreshSshConnections(), 5000);
     return () => clearInterval(timer);
-  }, [busy]);
+  }, []);
 
   return (
     <div className="appearance ssh-page">
