@@ -333,7 +333,7 @@ function SessionRow({
     if (active) rowRef.current?.scrollIntoView({ block: "nearest" });
   }, [active]);
   const title = sessionTitle(s);
-  // 「会话」里远程主机上的普通会话（ssh://<id>/…/.claude-app/workspace/scratch-…）：标题前带主机的系统图标，悬停提示里有主机名。
+  // 「会话」里远程主机上的普通会话（ssh://<id>/…/.claude-app/workspace/scratch-…）：标题后面是主机的系统图标和灰色的连接名（图标放后面，标题和其他会话对齐）。
   // 远程项目里的会话不用，项目那一行已经标了
   useSshConnections();
   const remote = s.chat ? parseRemote(s.cwd) : null;
@@ -358,8 +358,13 @@ function SessionRow({
         onDoubleClick={() => setRenaming(true)}
         title={remote ? `${title}（${sshName(remote.host)}）` : title}
       >
-        {remote && <HostIcon hostId={remote.host} size={13} />}
         <span className="session-title">{title}</span>
+        {remote && (
+          <span className="session-host">
+            <HostIcon hostId={remote.host} size={12} />
+            <span className="session-host-name">{sshName(remote.host)}</span>
+          </span>
+        )}
         <span className="session-meta">{relativeTime(s.lastResponseAt)}</span>
         {s.state === "running" && <span className="session-spinner" aria-label="运行中" />}
       </button>

@@ -212,7 +212,9 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 .session-row.active, .session-item:hover .session-row.active, .session-item.menu-open .session-row.active { background: var(--bg); box-shadow: var(--raised-shadow); font-weight: 500; }
 .session-item:hover .session-meta, .session-item.menu-open .session-meta, .session-row.running .session-meta { visibility: hidden; }
 .session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.session-row .host-icon { flex: none; margin-right: -2px; }
+.session-host { flex: none; display: inline-flex; align-items: center; gap: 3px; max-width: 35%; overflow: hidden; white-space: nowrap; color: var(--muted); font-size: 12px; font-weight: 400; }
+.session-host .host-icon { flex: none; }
+.session-host-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* 分区标题行：悬停整行变色，右边出现「…」（点开或右键是菜单） */
 .section-head { border-radius: 8px; }
 .section-head:hover, .section-head.menu-open { background: var(--frame-hover); }
