@@ -538,6 +538,9 @@ main {
 .scroll-content > * { max-width: var(--content-width); margin-left: auto; margin-right: auto; }
 .empty { text-align: center; color: var(--muted); margin-top: 20vh; font-size: 22px; }
 .empty-sub { font-size: 13px; margin-top: 8px; word-break: break-all; }
+/* 打开会话、历史还没回来：一般很快，晚一点才显示，免得一闪 */
+.history-loading { margin-top: 20vh; text-align: center; color: var(--muted); font-size: 13px; animation: history-loading-in 0.2s 0.4s both; }
+@keyframes history-loading-in { from { opacity: 0; } }
 
 .messages { display: flex; flex-direction: column; gap: 28px; font-size: var(--chat-font-size); }
 .user {

@@ -114,6 +114,11 @@ export interface SessionView {
   seen: Set<string>;
   /** 续传点已丢失，需要重新拉历史 */
   needsReload: boolean;
+  /**
+   * 历史已经拉回来（失败了也算，只显示事件流里的）。打开会话时先连事件流，回放的只是最近的事件，
+   * 历史回来之前显示的是后半截，滚动条会忽长忽短，这期间不显示消息
+   */
+  historyLoaded: boolean;
   /** 上一轮已经结束（收到 result，或 assistant 消息的 stop_reason 是 end_turn），之后还没有新的用户消息 */
   turnEnded: boolean;
   /**
@@ -155,6 +160,7 @@ export function emptyView(): SessionView {
     state: "closed",
     seen: new Set(),
     needsReload: false,
+    historyLoaded: false,
     turnEnded: false,
     pendingTasks: [],
     toolResultSinceRequest: false,
@@ -175,7 +181,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
   if (action.type === "tasks") return view.backgroundTasksLive ? view : { ...view, backgroundTasks: action.tasks };
   if (action.type === "history") {
     // 历史放在前面，已经从事件流收到的（按 uuid）不重复
-    const next = { ...emptyView(), state: view.state, model: view.model, effort: view.effort, permissionMode: view.permissionMode };
+    const next = { ...emptyView(), state: view.state, model: view.model, effort: view.effort, permissionMode: view.permissionMode, historyLoaded: true };
     for (const m of action.messages) {
       const at = m.timestamp ? Date.parse(m.timestamp) : undefined;
       if (m.isCompactSummary && !m.parent_tool_use_id) ingestCompactSummary(next, m.uuid, at);

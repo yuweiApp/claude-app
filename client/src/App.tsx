@@ -479,7 +479,14 @@ function Chat({
       dispatch({ type: "event", event });
       if (event.type === "state" || event.type === "title") onChanged();
     });
-    api.messages(sessionId).then((messages) => dispatch({ type: "history", messages }), (e: Error) => onError(e.message));
+    // 拉失败了也当拉完，显示事件流里收到的
+    api.messages(sessionId).then(
+      (messages) => dispatch({ type: "history", messages }),
+      (e: Error) => {
+        dispatch({ type: "history", messages: [] });
+        onError(e.message);
+      },
+    );
     api.tasks(sessionId).then((tasks) => dispatch({ type: "tasks", tasks }), () => undefined);
     return unsubscribe;
   }, [sessionId]);
@@ -633,15 +640,16 @@ function Chat({
             {cwd && <div className="empty-sub">新会话在 {remoteHost ? `${sshName(remoteHost)}${parseRemote(cwd)!.path ? `：${machinePath(cwd)}` : ""}` : cwd}</div>}
           </div>
         )}
+        {sessionId && !view.historyLoaded && <div className="history-loading">正在加载对话…</div>}
         <AnnotationSessionContext.Provider value={sessionId}>
-          <Messages
+          {(!sessionId || view.historyLoaded) && <Messages
             view={view}
             onFork={
               sessionId
                 ? (messageId) => api.forkSession(sessionId, messageId).then(onCreated, (e: Error) => onError(`分叉失败：${e.message}`))
                 : undefined
             }
-          />
+          />}
         </AnnotationSessionContext.Provider>
         {view.permissions.map((request) => (
           <PermissionCard
