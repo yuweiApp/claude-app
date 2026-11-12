@@ -1,5 +1,6 @@
 import { HostIcon, HostStatusDot } from "./HostIcon";
 import { machinePath, parseRemote } from "../remote";
+import { desktop, fileManagerName } from "../desktop";
 import { sshName, useSshConnections } from "../state/sshConnections";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { SessionListItem } from "../api";
@@ -463,7 +464,22 @@ function ProjectGroup({
           </button>
           <MoreButton className="group-more" label={`项目 ${folderName(g.cwd)} 的更多操作`} menu={menu} />
         </div>
-        <MenuPopup menu={menu} items={[{ label: "删除项目", danger: true, onClick: () => onDelete(g) }]} />
+        <MenuPopup
+          menu={menu}
+          items={[
+            // 用系统的文件管理器打开项目文件夹：桌面版、本机的项目才有（同文件浏览器里工作目录的菜单）
+            ...(desktop && !remote
+              ? [
+                  {
+                    label: `在${fileManagerName}中打开`,
+                    onClick: () =>
+                      void desktop!.openFolder(g.cwd).then((opened) => !opened && window.alert("这台电脑上没有这个文件夹（网关在别的机器上，或文件夹已被删除）")),
+                  },
+                ]
+              : []),
+            { label: "删除项目", danger: true, onClick: () => onDelete(g) },
+          ]}
+        />
       </div>
       {open && list}
     </div>
