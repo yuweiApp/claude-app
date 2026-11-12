@@ -74,7 +74,7 @@ export function App() {
   /** 有会话在运行时，图标栏的首页图标带动效 */
   const anyRunning = sessions.some((s) => s.state === "running");
   // 会话标题和工作目录，显示在对话上方那一行（右边是会话栏按钮）；新会话页没有。
-  // 项目会话显示项目文件夹名，悬停看完整路径；普通会话（侧栏「会话」里的）的 scratch-… 目录是网关建的，不显示
+  // 项目会话显示项目文件夹名，悬停看完整路径；普通会话（侧栏「会话」里的）的 scratch-… 目录是网关建的，不显示（远程的只显示主机，见 Chat）
   const title = currentId ? (current ? sessionTitle(current) : "新会话") : null;
   const folder = current?.cwd && !current.chat ? folderName(current.cwd) : null;
   const chatCwd = currentId ? (current?.cwd ?? null) : newCwd;
@@ -611,10 +611,12 @@ function Chat({
               {title}
             </span>
           )}
-          {folder && (
+          {/* 项目文件夹名；远程会话带主机的系统图标、连接名和连接状态，没选文件夹的远程会话只有主机 */}
+          {(folder || (sessionId && remoteHost)) && (
             <span className="chat-folder" title={remoteHost ? `${sshName(remoteHost)}：${machinePath(cwd!)}` : (cwd ?? undefined)}>
               {remoteHost && <HostIcon hostId={remoteHost} size={12} />}
               {folder}
+              {remoteHost && <span className={folder ? "chat-folder-host" : undefined}>{sshName(remoteHost)}</span>}
               {remoteHost && <HostStatusDot hostId={remoteHost} />}
             </span>
           )}

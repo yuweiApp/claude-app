@@ -333,6 +333,10 @@ function SessionRow({
     if (active) rowRef.current?.scrollIntoView({ block: "nearest" });
   }, [active]);
   const title = sessionTitle(s);
+  // 「会话」里远程主机上的普通会话（ssh://<id>/…/.claude-app/workspace/scratch-…）：标题前带主机的系统图标，悬停提示里有主机名。
+  // 远程项目里的会话不用，项目那一行已经标了
+  useSshConnections();
+  const remote = s.chat ? parseRemote(s.cwd) : null;
   if (renaming)
     return (
       <li ref={rowRef} className="session-item">
@@ -352,8 +356,9 @@ function SessionRow({
         className={`session-row${active ? " active" : ""}${s.state === "running" ? " running" : ""}`}
         onClick={() => onSelect(s.sessionId)}
         onDoubleClick={() => setRenaming(true)}
-        title={title}
+        title={remote ? `${title}（${sshName(remote.host)}）` : title}
       >
+        {remote && <HostIcon hostId={remote.host} size={13} />}
         <span className="session-title">{title}</span>
         <span className="session-meta">{relativeTime(s.lastResponseAt)}</span>
         {s.state === "running" && <span className="session-spinner" aria-label="运行中" />}
@@ -434,9 +439,10 @@ function ProjectGroup({
       <div className={`group-head${active ? " active" : ""}${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
         <button className="group-toggle" onClick={onToggle} title={remote ? `${sshName(remote.host)}：${machinePath(g.cwd)}` : g.cwd}>
           <CaretIcon open={open} />
-          {/* 远程主机上的项目：文件夹换成主机的系统图标（同 codex-app-server），主机名在悬停提示里 */}
+          {/* 远程主机上的项目：文件夹换成主机的系统图标（同 codex-app-server），名字后面是灰色的连接名和连接状态 */}
           {remote ? <HostIcon hostId={remote.host} /> : <FolderIcon />}
           <span className="group-name">{folderName(g.cwd)}</span>
+          {remote && <span className="group-host">{sshName(remote.host)}</span>}
           {remote && <HostStatusDot hostId={remote.host} />}
         </button>
         <div className="group-actions">

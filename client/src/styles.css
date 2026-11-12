@@ -186,6 +186,7 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 /* 文件夹行、分区标题行的按钮本身不画底色（盖过全局的 button:hover），悬停底色由外面一整行（.group-head、.section-head）画 */
 .sidebar .group-toggle, .sidebar .group-toggle:hover, .sidebar .section-toggle, .sidebar .section-toggle:hover { background: none; }
 .group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-host { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
 .ssh-hostkey { margin-top: 8px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .ssh-hostkey p { margin: 0; color: var(--muted); }
 .ssh-hostkey code { font-size: 12px; user-select: all; word-break: break-all; }
@@ -210,7 +211,8 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 .session-meta { flex: none; font-size: 11.5px; color: var(--muted); }
 .session-row.active, .session-item:hover .session-row.active, .session-item.menu-open .session-row.active { background: var(--bg); box-shadow: var(--raised-shadow); font-weight: 500; }
 .session-item:hover .session-meta, .session-item.menu-open .session-meta, .session-row.running .session-meta { visibility: hidden; }
-.session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-row .host-icon { flex: none; margin-right: -2px; }
 /* 分区标题行：悬停整行变色，右边出现「…」（点开或右键是菜单） */
 .section-head { border-radius: 8px; }
 .section-head:hover, .section-head.menu-open { background: var(--frame-hover); }
@@ -445,6 +447,7 @@ main {
 .chat-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14.5px; font-weight: 600; }
 /* 项目会话的文件夹名：标题后面一个小标签 */
 .chat-folder { flex: none; display: inline-flex; align-items: center; gap: 4px; max-width: 30%; overflow: hidden; padding: 2px 8px; border-radius: 6px; background: var(--panel); color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.chat-folder-host { opacity: 0.75; }
 .muted { color: var(--muted); }
 .scroll-area { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* 右上角的浮窗：桌面工具正在操作的软件（DesktopTargetFloat），点开是那个窗口的实时画面 */
