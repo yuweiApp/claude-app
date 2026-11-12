@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api, type FolderListing } from "../api";
 import { machinePath, remoteUri } from "../remote";
 import { sshName } from "../state/sshConnections";
@@ -62,11 +62,15 @@ export function FolderPickerDialog({ initial, host, onPick, onClose }: { initial
             <button onClick={() => go(dir.home)} title={machinePath(dir.home)}>
               ~
             </button>
+            <span className="folder-crumbs-gap" />
             <button onClick={() => go(target("/"))}>/</button>
-            {crumbs.map((c) => (
-              <button key={c.path} onClick={() => go(c.path)}>
-                {c.name}
-              </button>
+            {crumbs.map((c, i) => (
+              <Fragment key={c.path}>
+                <span className="folder-crumb-sep">›</span>
+                <button className={i === crumbs.length - 1 ? "current" : undefined} onClick={() => go(c.path)}>
+                  {c.name}
+                </button>
+              </Fragment>
             ))}
           </div>
         )}
