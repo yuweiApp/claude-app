@@ -1245,10 +1245,30 @@ main {
 .side-panel-resizer:hover::after, .side-panel-resizer:focus-visible::after { opacity: 0.45; transition-delay: 0.1s; }
 .side-panel-resizer:active::after { opacity: 0.7; transition-delay: 0s; }
 .panel-head { display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-.panel-tabs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+/*
+ * 标签栏同浏览器：标签默认 180px，放不下时一起变窄（最窄只剩图标），再放不下才横向滚动；
+ * 「＋」紧跟在最后一个标签后面，不跟着滚出去
+ */
+.panel-tabs { position: relative; flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.panel-tabs::-webkit-scrollbar { display: none; }
+.panel-head-spacer { flex: 1; min-width: 0; }
 .panel-tab {
-  display: flex; align-items: center; gap: 6px; flex-shrink: 0; max-width: 180px; height: 28px; padding: 0 4px 0 8px;
+  container-type: inline-size;
+  display: flex; align-items: center; gap: 6px; flex: 0 1 auto; width: 180px; min-width: 36px; height: 28px; padding: 0 4px 0 8px;
   border-radius: 8px; color: var(--muted); font-size: 13px; cursor: pointer; user-select: none;
+}
+.panel-tab.active { min-width: 58px; }
+/* 用鼠标关标签时其余标签先保持原来的宽度，鼠标离开标签栏再重新排 */
+.panel-tabs.frozen .panel-tab { width: var(--tab-frozen); flex-shrink: 0; }
+/* 窄了：不在前面的标签不显示关闭按钮（中键仍可关），当前标签不显示标题；再窄只留图标 */
+@container (max-width: 79px) {
+  .panel-tab:not(.active) .panel-tab-close:not(.unsaved) { display: none; }
+  .panel-tab.active .panel-tab-label { display: none; }
+  .panel-tab.active .panel-tab-icon { margin-right: auto; }
+}
+@container (max-width: 51px) {
+  .panel-tab:not(.active) .panel-tab-label { display: none; }
+  .panel-tab:not(.active) .panel-tab-icon { margin: 0 auto; }
 }
 .panel-tab:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
 .panel-tab.active { background: var(--panel); color: var(--text); }
@@ -1261,6 +1281,11 @@ main {
 .panel-tab-close:hover { background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
 .panel-head-btn { flex: none; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
 .panel-head-btn:hover, .panel-head-btn.active { color: var(--text); }
+.panel-tab-list { position: relative; flex: none; display: flex; }
+.panel-tab-list-menu { top: calc(100% + 6px); bottom: auto; left: auto; right: 0; min-width: 220px; max-height: 60vh; overflow-y: auto; }
+.panel-tab-list-item { flex-direction: row; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
+.panel-tab-list-item:hover { background: var(--panel); }
+.panel-tab-list-item .panel-tab-label { flex: 1; }
 .panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel-page[hidden] { display: none; }

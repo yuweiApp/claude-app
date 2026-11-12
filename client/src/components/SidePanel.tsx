@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { api } from "../api";
 import { desktop, type BrowserTabInfo } from "../desktop";
 import { BrowserTab, BrowserToolbar, GlobeIcon, SiteIcon } from "./BrowserTab";
 import { getDraft, setDraft, useHasDraft } from "../state/fileDrafts";
+import { useDismiss } from "./ComposerPickers";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FileBrowser, type LineRange } from "./FileBrowser";
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -323,6 +324,27 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
     });
   }, [visibleTabs.length, sessionId]);
 
+  // 标签栏：标签同浏览器一样一起变窄，窄到最小宽度还放不下才横向滚动（overflow 时多一个列出全部标签的按钮）
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const [overflow, setOverflow] = useState(false);
+  /** 用鼠标关标签时其余标签固定成这个宽度（px），鼠标离开标签栏后恢复 */
+  const [frozen, setFrozen] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    const check = () => {
+      setOverflow(el.scrollWidth > el.clientWidth + 1);
+      revealActiveTab(el);
+    };
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [visibleTabs.length, frozen]);
+  useLayoutEffect(() => {
+    if (tabsRef.current) revealActiveTab(tabsRef.current);
+  }, [activeId, overflow]);
+
   const select = (id: string) => onChange((s) => ({ ...s, active: id }));
   const addTab = () => {
     const tab: PanelTab = { id: crypto.randomUUID(), kind: "new" };
@@ -445,7 +467,16 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
         onKeyDown={onResizerKey}
       />
       <div className="panel-head">
-        <div className="panel-tabs">
+        <div
+          ref={tabsRef}
+          className={`panel-tabs${frozen !== null ? " frozen" : ""}`}
+          style={frozen !== null ? ({ "--tab-frozen": `${frozen}px` } as CSSProperties) : undefined}
+          onMouseLeave={() => setFrozen(null)}
+          onWheel={(e) => {
+            // 放不下时滚轮横着滚标签栏
+            if (overflow && e.deltaY && !e.deltaX) e.currentTarget.scrollLeft += e.deltaY;
+          }}
+        >
           {visibleTabs.map((tab) => (
             <TabButton
               key={tab.id}
@@ -455,13 +486,32 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
               active={tab.id === activeId}
               onSelect={() => select(tab.id)}
               onPin={() => pin(tab.id)}
-              onClose={() => requestClose(tab)}
+              onClose={() => {
+                // 同浏览器：用鼠标关标签时其余标签先不变宽，下一个标签的关闭按钮正好落在鼠标下面；鼠标离开标签栏再重新排。
+                // 当前标签有最小宽度，可能比别的宽，取不在前面的标签的宽度
+                const other = tabsRef.current?.querySelector<HTMLElement>(".panel-tab:not(.active)");
+                if (other) setFrozen(other.getBoundingClientRect().width);
+                requestClose(tab);
+              }}
             />
           ))}
-          <button className="icon-btn panel-head-btn" title="新标签页" aria-label="新标签页" onClick={addTab}>
-            ＋
-          </button>
         </div>
+        <button className="icon-btn panel-head-btn" title="新标签页" aria-label="新标签页" onClick={addTab}>
+          ＋
+        </button>
+        <div className="panel-head-spacer" />
+        {overflow && (
+          <TabList
+            tabs={visibleTabs}
+            activeId={activeId}
+            label={(tab) => {
+              const info = tab.kind === "browser" ? browserTabs?.get(tab.browserId) : undefined;
+              return (info && (info.pendingUrl || info.title || info.url)) || tabLabel(tab);
+            }}
+            icon={(tab) => (tab.kind === "browser" ? <SiteIcon src={browserTabs?.get(tab.browserId)?.favicon} /> : tabIcon(tab))}
+            onSelect={select}
+          />
+        )}
         <button className="icon-btn panel-head-btn active" title="收起面板" aria-label="收起面板" onClick={onClose}>
           <PanelIcon open />
         </button>
@@ -518,6 +568,14 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
       )}
     </aside>
   );
+}
+
+/** 当前标签滚进标签栏的可见范围（不用 scrollIntoView：它会连带滚动外层 overflow: hidden 的容器） */
+function revealActiveTab(strip: HTMLElement) {
+  const tab = strip.querySelector<HTMLElement>(".panel-tab.active");
+  if (!tab) return;
+  if (tab.offsetLeft < strip.scrollLeft) strip.scrollLeft = tab.offsetLeft;
+  else if (tab.offsetLeft + tab.offsetWidth > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = tab.offsetLeft + tab.offsetWidth - strip.clientWidth;
 }
 
 /** 「终端」「终端 2」…：取没被占用的最小序号 */
@@ -598,6 +656,41 @@ function TabButton({ cwd, tab, browserInfo, active, onSelect, onPin, onClose }: 
         <span className="tab-close-x">×</span>
         {unsaved && <span className="tab-unsaved-dot" />}
       </button>
+    </div>
+  );
+}
+
+/** 标签栏放不下时的「全部标签」下拉：列出当前会话的所有标签，点了切过去 */
+function TabList({ tabs, activeId, label, icon, onSelect }: { tabs: PanelTab[]; activeId?: string; label: (tab: PanelTab) => string; icon: (tab: PanelTab) => ReactNode; onSelect: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(ref, open, close);
+  return (
+    <div className="panel-tab-list" ref={ref}>
+      <button className={`icon-btn panel-head-btn${open ? " active" : ""}`} title="全部标签" aria-label="全部标签" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m4 6 4 4 4-4" />
+        </svg>
+      </button>
+      {open && (
+        <div className="menu panel-tab-list-menu" role="menu">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              role="menuitem"
+              className={`menu-item panel-tab-list-item${tab.id === activeId ? " selected" : ""}`}
+              onClick={() => {
+                onSelect(tab.id);
+                setOpen(false);
+              }}
+            >
+              <span className="panel-tab-icon">{icon(tab)}</span>
+              <span className="panel-tab-label">{label(tab)}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
