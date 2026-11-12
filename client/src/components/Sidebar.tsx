@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import type { SessionListItem } from "../api";
 import { useDismiss } from "./ComposerPickers";
 import { SidebarToggle } from "./SidebarToggle";
+import { SESSION_DRAG_TYPE } from "./MentionText";
 
 /** 会话标题：网关在第一条消息时生成的 customTitle；没有时用第一条提问。不用 summary，它没有自定义标题时跟着最新一条提问变 */
 /** 会话标题；第一条消息里引用的标签页 @[标题](网址)、@chrome[标题](网址) 这样的只留标题 */
@@ -356,6 +357,12 @@ function SessionRow({
         className={`session-row${active ? " active" : ""}${s.state === "running" ? " running" : ""}`}
         onClick={() => onSelect(s.sessionId)}
         onDoubleClick={() => setRenaming(true)}
+        // 拖到输入框里是引用这个会话（见 Composer）
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData(SESSION_DRAG_TYPE, JSON.stringify({ id: s.sessionId, title }));
+          e.dataTransfer.effectAllowed = "copy";
+        }}
         title={remote ? `${title}（${sshName(remote.host)}）` : title}
       >
         <span className="session-title">{title}</span>

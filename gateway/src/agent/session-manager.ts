@@ -17,7 +17,7 @@ import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
-import type { BackgroundTask, SessionListItem, TaskOutput } from "../shared/types.js";
+import type { Attachment, BackgroundTask, SessionListItem, TaskOutput } from "../shared/types.js";
 import { loadAttachments, loadElements, type SelectedElementInput } from "./attachments.js";
 import { enabledSkillNames } from "./capabilities.js";
 import { disabledSkills } from "./extensions.js";
@@ -29,6 +29,7 @@ import { readAgentTranscript, readOutputTail, TaskList } from "./tasks.js";
 import { disposeRepls } from "../browser/tool.js";
 import { disposeDesktopSession } from "../desktop/tool.js";
 import { sessionHistory } from "./history.js";
+import { exportSession } from "./session-export.js";
 import { lastCustomTitle, lastResponseAt, lastResponseModel, recordedCwd, sessionRecordFiles } from "./session-records.js";
 import { createScratchDir, isChatCwd, isScratchIn, newScratchName, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
 import { fromWindowsPath, nativePath, parseRemote, remoteUri } from "../ssh/location.js";
@@ -226,6 +227,15 @@ export class SessionManager {
     const host = hostId ? existingHost(hostId) : undefined;
     if (host?.isReady) await syncSession(host, sessionId).catch(() => undefined);
     return sessionHistory(sessionId);
+  }
+
+  /** 引用会话：历史消息导出成 Markdown 附件（见 session-export.ts） */
+  async exportForReference(sessionId: string): Promise<Attachment> {
+    const messages = await this.messages(sessionId);
+    const info = await getSessionInfo(sessionId);
+    if (!info && !messages.length) throw new NotFoundError(`会话不存在：${sessionId}`);
+    const title = this.titles.get(sessionId) ?? info?.customTitle ?? info?.summary ?? sessionId;
+    return exportSession({ sessionId, title, cwd: await this.cwd(sessionId) }, messages);
   }
 
   /** 用户改标题：写成自定义标题，打开这个会话的页面通过 title 事件跟着变 */

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -71,6 +71,16 @@ export async function saveUpload(filename: string, stream: Readable & { truncate
     throw err;
   }
   return { id, name, path: file, size: (await stat(file)).size };
+}
+
+/** 网关自己生成的文字存成附件（如引用会话导出的记录） */
+export async function saveTextAttachment(filename: string, text: string): Promise<Attachment> {
+  const id = randomUUID();
+  const dir = path.join(attachmentsDir, id);
+  const file = path.join(dir, safeName(filename));
+  await ensureDir(dir);
+  await writeFile(file, text);
+  return { id, name: path.basename(file), path: file, size: (await stat(file)).size };
 }
 
 /** 按 id 找回附件（目录里只有一个文件） */

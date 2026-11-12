@@ -166,6 +166,8 @@ SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类
 
 模型要能看图；接纯文本模型（如 DeepSeek 文本模型）时不要发图片。
 
+**引用会话**：把侧边栏的会话拖进输入框（拖动数据 `application/x-claude-app-session`，值是 `{ id, title }`），网页 `POST /sessions/:id/export`，网关把那个会话导出成一份 Markdown，存成附件（`会话-标题.md`），之后和上传的文件一样按附件 id 随消息发送，模型在 `<attachments>` 里看到路径、按需读。导出用的是网页显示用的历史（压缩前的也接上，见 `history.ts`）：只有用户消息和回复的文字，工具调用写名称和参数的开头（300 字截断），工具结果、思考、子代理的消息不写，压缩后的摘要单独标出（`gateway/src/agent/session-export.ts`）。上下文超限压缩不了的会话，可以开新会话引用它接着做。每次拖进来都重新导出，导出的是那一刻的内容。
+
 **回复注释**（参照 codex-app-server，`client/src/components/ResponseAnnotations.tsx`）：在 Claude 的回复里选中文字，浮出「回复」，写一句回复（可以不写）后加进输入框里的「N 条注释」，原文末尾显示编号，点编号或列表里的「编辑」可以改、删。注释按会话存在 localStorage，随下一条消息发出后清空；发送时纯在网页拼进用户文字的末尾（放末尾是因为 `/技能` 要在消息开头），网关不感知：
 
 ```
@@ -269,6 +271,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | POST | `/sessions/:id/model` | `{ model?, effort? }` 切换模型（`Query.setModel`）和推理强度（`Query.applyFlagSettings({ effortLevel })`）；子进程回收了的会话先 resume |
 | GET | `/sessions/:id/context` | 输入框上下文圆环：最后一次取到的用量（`SessionContextInfo`）；不拉起子进程 |
 | POST | `/sessions/:id/compact` | 压缩上下文（`/compact`）；子进程回收了的先 resume，这一轮还在进行时 409 |
+| POST | `/sessions/:id/export` | 引用会话：导出成 Markdown 附件 → `{ attachment: { id, name, path, size } }`，见第 5 节「引用会话」 |
 | POST | `/sessions/:id/permissions/:requestId` | `{ behavior: 'allow' \| 'deny', message?, always? }` |
 | GET | `/sessions/:id/events` | SSE |
 | DELETE | `/sessions/:id/process` | 关闭活跃进程（不删记录） |

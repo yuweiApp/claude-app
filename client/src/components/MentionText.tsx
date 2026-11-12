@@ -69,6 +69,9 @@ export const tabToken = (title: string, source?: MentionSource) => `@${source ??
  */
 export const PATH_DRAG_TYPE = "application/x-claude-app-path";
 
+/** 从侧边栏拖到输入框的会话：值是 JSON { id, title }，输入框把它导出成附件（引用会话） */
+export const SESSION_DRAG_TYPE = "application/x-claude-app-session";
+
 /** 插入输入框的文件引用：带空白的路径加引号 */
 export const fileMention = (path: string) => (/\s/.test(path) ? `@"${path}"` : `@${path}`);
 

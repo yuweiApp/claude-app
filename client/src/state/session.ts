@@ -635,7 +635,7 @@ function parseAttachments(text: string): AttachmentChip[] | null {
     .filter((line) => line.startsWith("- "))
     .map((line) => {
       const path = line.slice(2);
-      return { path, name: path.split("/").pop() || path };
+      return { path, name: path.split(/[\\/]/).pop() || path };
     });
 }
 

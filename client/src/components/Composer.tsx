@@ -4,7 +4,7 @@ import { AddMenu } from "./AddMenu";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { MentionMenu, type MentionOption } from "./MentionMenu";
-import { fileMention, fileRefParts, findMentions, IMAGE_EXT, MentionText, browserMention, PATH_DRAG_TYPE, MentionNamesContext, tabMention, tabToken, type Mention, type MentionSource } from "./MentionText";
+import { fileMention, fileRefParts, findMentions, IMAGE_EXT, MentionText, browserMention, PATH_DRAG_TYPE, SESSION_DRAG_TYPE, MentionNamesContext, tabMention, tabToken, type Mention, type MentionSource } from "./MentionText";
 
 /** 输入框下方的附件：选中后立刻上传，发送时只传 id */
 interface PendingFile {
@@ -18,6 +18,8 @@ interface PendingFile {
   preview?: string;
   /** 大段粘贴的文字转成的附件：卡片上显示开头一行和「粘贴的文本」 */
   pastedText?: string;
+  /** 从侧边栏拖进来的会话（引用会话）：网关导出成 Markdown 附件，卡片上显示会话标题 */
+  sessionTitle?: string;
   /** 从目录树拖进来的图片：不上传，发送时在文字末尾写成 @绝对路径，由 Claude Code 读给模型；preview 是网关的 /files/raw 地址 */
   path?: string;
 }
@@ -316,11 +318,33 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     }
   };
 
-  // 右侧面板目录树里拖来的文件、文件夹：插成绝对路径的文件引用（见 PATH_DRAG_TYPE）；系统里拖来的文件上传成附件
-  const acceptsDrop = (e: DragEvent) => e.dataTransfer.types.includes(PATH_DRAG_TYPE) || e.dataTransfer.types.includes("Files");
+  // 侧边栏拖来的会话：导出成附件（同一个会话只引用一次）
+  const addSession = (id: string, title: string) => {
+    const key = `session:${id}`;
+    if (files.some((f) => f.key === key)) return;
+    setFiles((prev) => [...prev, { key, name: title, size: 0, status: "uploading", sessionTitle: title }]);
+    api.exportSession(id).then(
+      (attachment) => setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, status: "done", size: attachment.size, attachment } : f))),
+      (e: Error) => setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, status: "error", error: e.message } : f))),
+    );
+  };
+
+  // 右侧面板目录树里拖来的文件、文件夹：插成绝对路径的文件引用（见 PATH_DRAG_TYPE）；侧边栏拖来的会话导出成附件；系统里拖来的文件上传成附件
+  const internalDrag = (e: DragEvent) => e.dataTransfer.types.includes(PATH_DRAG_TYPE) || e.dataTransfer.types.includes(SESSION_DRAG_TYPE);
+  const acceptsDrop = (e: DragEvent) => internalDrag(e) || e.dataTransfer.types.includes("Files");
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragging(false);
+    const session = e.dataTransfer.getData(SESSION_DRAG_TYPE);
+    if (session) {
+      try {
+        const { id, title } = JSON.parse(session) as { id: string; title: string };
+        addSession(id, title);
+      } catch {
+        // 不是这个页面拖出来的
+      }
+      return;
+    }
     const path = e.dataTransfer.getData(PATH_DRAG_TYPE);
     if (!path) {
       addFiles([...e.dataTransfer.files]);
@@ -355,7 +379,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
       onDragOver={(e) => {
         if (acceptsDrop(e)) {
           e.preventDefault();
-          if (e.dataTransfer.types.includes(PATH_DRAG_TYPE)) e.dataTransfer.dropEffect = "copy";
+          if (internalDrag(e)) e.dataTransfer.dropEffect = "copy";
           setDragging(true);
         }
       }}
@@ -379,6 +403,22 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
                   {f.status === "uploading" && <span className="image-chip-state">上传中…</span>}
                   {/* 缩略图只有 56px，完整的错误信息在悬停提示（title）里 */}
                   {f.status === "error" && <span className="image-chip-state error">上传失败</span>}
+                  <button className="image-chip-remove" onClick={remove} title="移除" aria-label="移除">
+                    ×
+                  </button>
+                </span>
+              );
+            }
+            if (f.sessionTitle !== undefined) {
+              return (
+                <span key={f.key} className={`chip pasted-chip ${f.status}`} title={f.error ?? `引用会话「${f.sessionTitle}」：导出成 Markdown 随消息发送`}>
+                  <span className="pasted-chip-icon">
+                    <SessionIcon />
+                  </span>
+                  <span className="pasted-chip-body">
+                    <span className="chip-name">{f.sessionTitle}</span>
+                    <span className="chip-meta">{f.status === "uploading" ? "导出中…" : f.status === "error" ? f.error : `会话 · ${formatSize(f.size)}`}</span>
+                  </span>
                   <button className="image-chip-remove" onClick={remove} title="移除" aria-label="移除">
                     ×
                   </button>
@@ -497,6 +537,15 @@ function expandPaths(text: string, paths: { token: string; full: string }[]): st
     const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return acc.replace(new RegExp(`(^|\\s)${escaped}(?=\\s|$)`, "g"), (_m, space: string) => space + full);
   }, text);
+}
+
+function SessionIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.5 3.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5v-2.5h-.5a1 1 0 0 1-1-1z" />
+      <path d="M5.5 5.5h5M5.5 7.5h3" />
+    </svg>
+  );
 }
 
 function PastedTextIcon() {
