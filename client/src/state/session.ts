@@ -480,9 +480,10 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
     if (task) {
       // 上一轮结束后到的通知让 Claude Code 开了新的一轮，显示成那一轮的开头；
       // 一轮还在进行时到的，Claude Code 把它并进当前这一轮（实时事件里也只有一个 result），对话里不单独显示，后台任务面板里有
+      // 并进去的也按任务 id 记下：几条通知一起到时实时会各开一轮（见 state 事件），重新拉历史后实时那项不能再接到最后
       if (parent || view.turnEnded) pushItem(view, parent, { ...task, at });
       view.turnEnded = false;
-      view.seen = new Set(view.seen).add(uuid);
+      view.seen = new Set(view.seen).add(uuid).add(task.uuid);
       return;
     }
     const agent = agentMessage(content);
