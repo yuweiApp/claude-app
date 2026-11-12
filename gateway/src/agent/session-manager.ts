@@ -17,8 +17,8 @@ import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
-import type { Attachment, BackgroundTask, SessionListItem, TaskOutput } from "../shared/types.js";
-import { loadAttachments, loadElements, type SelectedElementInput } from "./attachments.js";
+import type { BackgroundTask, SessionListItem, TaskOutput } from "../shared/types.js";
+import { loadAttachments, loadElements, type SelectedElementInput, type SessionExport } from "./attachments.js";
 import { enabledSkillNames } from "./capabilities.js";
 import { disabledSkills } from "./extensions.js";
 import { AgentSession } from "./session.js";
@@ -29,7 +29,7 @@ import { readAgentTranscript, readOutputTail, TaskList } from "./tasks.js";
 import { disposeRepls } from "../browser/tool.js";
 import { disposeDesktopSession } from "../desktop/tool.js";
 import { sessionHistory } from "./history.js";
-import { exportSession } from "./session-export.js";
+import { exportSession, SESSION_MENTION } from "./session-export.js";
 import { lastCustomTitle, lastResponseAt, lastResponseModel, recordedCwd, sessionRecordFiles } from "./session-records.js";
 import { createScratchDir, isChatCwd, isScratchIn, newScratchName, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
 import { fromWindowsPath, nativePath, parseRemote, remoteUri } from "../ssh/location.js";
@@ -98,7 +98,7 @@ export class SessionManager {
       // 没选文件夹：给这个会话新建一个工作目录（同 Claude 桌面版），不和别的普通会话共用
       cwd = opts.cwd ? await resolveDir(opts.cwd) : await createScratchDir();
     }
-    const attachments = await loadAttachments(opts.attachments ?? []);
+    const attachments = [...(await loadAttachments(opts.attachments ?? [])), ...(await this.referencedSessions(text))];
     const session = await this.launch(sessionId, false, { ...opts, cwd });
     await session.send(text, attachments);
     void this.nameSession(session.id, text || (attachments[0]?.name ?? ""));
@@ -125,7 +125,7 @@ export class SessionManager {
   /** 发送消息；会话不活跃时先 resume */
   async send(sessionId: string, text: string, attachmentIds: string[] = [], elementInputs: SelectedElementInput[] = []): Promise<string> {
     rejectDisabledSkill(text);
-    const attachments = await loadAttachments(attachmentIds);
+    const attachments = [...(await loadAttachments(attachmentIds)), ...(await this.referencedSessions(text))];
     const elements = await loadElements(elementInputs);
     return (await this.activate(sessionId)).send(text, attachments, elements);
   }
@@ -229,8 +229,14 @@ export class SessionManager {
     return sessionHistory(sessionId);
   }
 
+  /** 消息里引用的会话（@session[标题](session:会话 id)，同一个只算一次）：每个导出成一份 Markdown 附件，导出的是发送这一刻的内容 */
+  private async referencedSessions(text: string): Promise<SessionExport[]> {
+    const ids = new Set([...text.matchAll(SESSION_MENTION)].map((m) => m[1]!));
+    return Promise.all([...ids].map((id) => this.exportForReference(id)));
+  }
+
   /** 引用会话：历史消息导出成 Markdown 附件（见 session-export.ts） */
-  async exportForReference(sessionId: string): Promise<Attachment> {
+  private async exportForReference(sessionId: string): Promise<SessionExport> {
     const messages = await this.messages(sessionId);
     const info = await getSessionInfo(sessionId);
     if (!info && !messages.length) throw new NotFoundError(`会话不存在：${sessionId}`);

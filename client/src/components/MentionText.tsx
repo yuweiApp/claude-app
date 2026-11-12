@@ -69,8 +69,20 @@ export const tabToken = (title: string, source?: MentionSource) => `@${source ??
  */
 export const PATH_DRAG_TYPE = "application/x-claude-app-path";
 
-/** 从侧边栏拖到输入框的会话：值是 JSON { id, title }，输入框把它导出成附件（引用会话） */
+/** 从侧边栏拖到输入框的会话：值是 JSON { id, title }，输入框插成会话引用（引用会话，见 sessionToken） */
 export const SESSION_DRAG_TYPE = "application/x-claude-app-session";
+
+/** 会话引用的来源字样：发给模型的是 @session[标题](session:会话 id)，网关据此把那个会话导出成附件 */
+const SESSION_SOURCE = "session";
+
+/** 发给模型（和存在消息里）的会话引用，标题的写法同 tabToken */
+export const sessionMention = (title: string, id: string) => `${tabToken(title, SESSION_SOURCE)}(${SESSION_SOURCE}:${id})`;
+
+/**
+ * 输入框里的会话引用只写 @标题（@ 的位置叠对话气泡图标），会话 id 由输入框记着，发送时补成 sessionMention 的完整格式。
+ * 标题里的方括号、换行去掉
+ */
+export const sessionToken = (title: string) => `@${title.replace(/[[\]\n]/g, " ").trim()}`;
 
 /** 插入输入框的文件引用：带空白的路径加引号 */
 export const fileMention = (path: string) => (/\s/.test(path) ? `@"${path}"` : `@${path}`);
@@ -130,8 +142,8 @@ export interface MentionNames {
 export interface Mention {
   start: number;
   end: number;
-  kind: "skill" | "plugin" | "file" | "tab" | "browser";
-  /** 标签页引用的标题（消息里只显示标题） */
+  kind: "skill" | "plugin" | "file" | "tab" | "browser" | "session";
+  /** 标签页、会话引用的标题（消息里只显示标题） */
   title?: string;
   /** 标签页、浏览器的来源：外部浏览器的 id、桌面（desktop）；内置浏览器的没有 */
   source?: MentionSource;
@@ -141,9 +153,10 @@ export interface Mention {
  * 找出技能名、插件引用和文件引用，按位置排好。
  * 技能名在开头的都算（Claude Code 会展开），在中间的要在技能列表里；插件要在插件列表里；文件是带引号的，再加上：输入框里传 files（选过的文件），
  * 消息里不传，看着像路径的都算（输入框里不这么猜，不然 @README.m 还没打完就成了整体）。
- * 输入框里还传 tabTokens：「浏览器」「Computer Use」里选过的 @[标题]、@chrome[标题]、@desktop[标题] 这样的（不带网址的短格式，见 tabToken）
+ * 输入框里还传 tabTokens：「浏览器」「Computer Use」里选过的 @[标题]、@chrome[标题]、@desktop[标题] 这样的（不带网址的短格式，见 tabToken）；
+ * sessionTokens：拖进来的会话的 @标题（见 sessionToken）
  */
-export function findMentions(text: string, { plugins, skills, browsers }: MentionNames, files?: string[], tabTokens?: string[]): Mention[] {
+export function findMentions(text: string, { plugins, skills, browsers }: MentionNames, files?: string[], tabTokens?: string[], sessionTokens?: string[]): Mention[] {
   const mentions: Mention[] = [];
   const skill = SKILL_PREFIX.exec(text);
   if (skill) mentions.push({ start: 0, end: skill[0].length, kind: "skill" });
@@ -158,7 +171,8 @@ export function findMentions(text: string, { plugins, skills, browsers }: Mentio
   for (const { index, 0: whole, 1: space = "", 2: src, 3: title = "" } of text.matchAll(TAB_MENTION)) {
     const start = index + space.length;
     const source = src?.toLowerCase() as MentionSource | undefined;
-    tabs.push({ start, end: index + whole.length, kind: "tab", title, ...(source ? { source } : {}) });
+    if (source === SESSION_SOURCE) tabs.push({ start, end: index + whole.length, kind: "session", title });
+    else tabs.push({ start, end: index + whole.length, kind: "tab", title, ...(source ? { source } : {}) });
   }
   for (const token of tabTokens ?? []) {
     const [, source, title = ""] = /^@([a-z][a-z0-9]*)?\[(.*)\]$/.exec(token) as [string, MentionSource | undefined, string] | null ?? [];
@@ -173,6 +187,14 @@ export function findMentions(text: string, { plugins, skills, browsers }: Mentio
     const start = index + space.length;
     const source = name === INAPP_NAME ? undefined : name === DESKTOP_NAME ? "desktop" : browsers.find((b) => b.name === name)?.id;
     tabs.push({ start, end: start + 1 + name.length, kind: "browser", ...(source ? { source } : {}) });
+  }
+  // 会话的 @标题 可以带空格，一个标题可能是另一个的开头：长的先认，认过的位置不再认
+  for (const token of [...(sessionTokens ?? [])].sort((a, b) => b.length - a.length)) {
+    for (let start = text.indexOf(token); start >= 0; start = text.indexOf(token, start + token.length)) {
+      const end = start + token.length;
+      if ((start > 0 && !/\s/.test(text[start - 1]!)) || tabs.some((t) => start < t.end && end > t.start)) continue;
+      tabs.push({ start, end, kind: "session", title: token.slice(1) });
+    }
   }
   const inTab = (pos: number) => tabs.some((t) => pos >= t.start && pos < t.end);
   for (const { index, 1: space = "", 2: name = "" } of text.matchAll(AT_MENTION)) {
@@ -189,9 +211,9 @@ export function findMentions(text: string, { plugins, skills, browsers }: Mentio
  * 消息文字，技能名、插件、文件和标签页引用高亮；files、tabTokens 是输入框里选过的文件、标签页（见 findMentions）。
  * compact：标签页引用只显示标题、文件引用只显示文件名（消息里）；输入框的镜像层要和输入的字一一对齐，不能省
  */
-export function MentionText({ text, files, tabTokens, compact }: { text: string; files?: string[]; tabTokens?: string[]; compact?: boolean }) {
+export function MentionText({ text, files, tabTokens, sessionTokens, compact }: { text: string; files?: string[]; tabTokens?: string[]; sessionTokens?: string[]; compact?: boolean }) {
   const names = useContext(MentionNamesContext);
-  const mentions = findMentions(text, names, files, tabTokens);
+  const mentions = findMentions(text, names, files, tabTokens, sessionTokens);
   if (!mentions.length) return <>{text}</>;
   const parts: ReactNode[] = [];
   let pos = 0;
@@ -212,6 +234,26 @@ export function MentionText({ text, files, tabTokens, compact }: { text: string;
         ) : (
           <span key={start} className="mention mention-tab-input">
             <span className="mention-tab-at">@{icon}</span>
+            {text.slice(start + 1, end)}
+          </span>
+        ),
+      );
+      pos = end;
+      continue;
+    }
+    if (kind === "session") {
+      // 消息里：对话气泡加标题；输入框里 @ 透明占位、叠对话气泡（和 textarea 对齐）
+      parts.push(
+        compact ? (
+          <span key={start} className="mention mention-tab" title={`引用的会话：${title ?? ""}`}>
+            <SessionIcon />
+            {title}
+          </span>
+        ) : (
+          <span key={start} className="mention mention-tab-input">
+            <span className="mention-tab-at">
+              @<SessionIcon />
+            </span>
             {text.slice(start + 1, end)}
           </span>
         ),
@@ -278,4 +320,13 @@ export function MentionText({ text, files, tabTokens, compact }: { text: string;
   }
   if (pos < text.length) parts.push(text.slice(pos));
   return <>{parts}</>;
+}
+
+/** 会话引用的图标：对话气泡 */
+function SessionIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.5 3.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5v-2.5h-.5a1 1 0 0 1-1-1z" />
+    </svg>
+  );
 }

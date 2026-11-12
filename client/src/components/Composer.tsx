@@ -4,7 +4,7 @@ import { AddMenu } from "./AddMenu";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { MentionMenu, type MentionOption } from "./MentionMenu";
-import { fileMention, fileRefParts, findMentions, IMAGE_EXT, MentionText, browserMention, PATH_DRAG_TYPE, SESSION_DRAG_TYPE, MentionNamesContext, tabMention, tabToken, type Mention, type MentionSource } from "./MentionText";
+import { fileMention, fileRefParts, findMentions, IMAGE_EXT, MentionText, browserMention, PATH_DRAG_TYPE, SESSION_DRAG_TYPE, MentionNamesContext, sessionMention, sessionToken, tabMention, tabToken, type Mention, type MentionSource } from "./MentionText";
 
 /** 输入框下方的附件：选中后立刻上传，发送时只传 id */
 interface PendingFile {
@@ -18,8 +18,6 @@ interface PendingFile {
   preview?: string;
   /** 大段粘贴的文字转成的附件：卡片上显示开头一行和「粘贴的文本」 */
   pastedText?: string;
-  /** 从侧边栏拖进来的会话（引用会话）：网关导出成 Markdown 附件，卡片上显示会话标题 */
-  sessionTitle?: string;
   /** 从目录树拖进来的图片：不上传，发送时在文字末尾写成 @绝对路径，由 Claude Code 读给模型；preview 是网关的 /files/raw 地址 */
   path?: string;
 }
@@ -78,8 +76,11 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
   const [pickedTabs, setPickedTabs] = useState<{ token: string; full: string }[]>([]);
   // 右侧面板目录树拖进来的：输入框里只显示 token（@文件名，同名不同路径的加 (2)、(3)），发送时换成 full（绝对路径的引用）
   const [pickedPaths, setPickedPaths] = useState<{ token: string; full: string }[]>([]);
+  // 侧边栏拖进来的会话：输入框里只显示 token（@标题，同名的加 (2)、(3)），发送时换成 full（带会话 id 的 @session[标题](session:id)，网关据此导出那个会话）
+  const [pickedSessions, setPickedSessions] = useState<{ token: string; full: string }[]>([]);
   const fileRefs = [...picked, ...pickedPaths.map((p) => p.token.slice(1))];
-  const mentions = findMentions(text, names, fileRefs, pickedTabs.map((t) => t.token));
+  const sessionTokens = pickedSessions.map((p) => p.token);
+  const mentions = findMentions(text, names, fileRefs, pickedTabs.map((t) => t.token), sessionTokens);
   const highlighted = mentions.length > 0;
 
   // 光标前紧挨着的 @xxx：弹出项目里的文件候选（插件、浏览器标签页走上面的「插件」「浏览器」按钮，这里不列）；已经是整体的引用不弹，选中的文件夹接着列里面的
@@ -222,13 +223,14 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     setSending(true);
     try {
       // 拖进来的图片写在最后一段：@绝对路径，空格隔开（消息里据此显示成缩略图，见 splitImageRefs）
-      const body = expandPaths(expandTabs(text.trim(), pickedTabs), pickedPaths);
+      const body = expandSessions(expandPaths(expandTabs(text.trim(), pickedTabs), pickedPaths), pickedSessions);
       const refs = ready.flatMap((f) => (f.path ? [fileMention(f.path)] : [])).join(" ");
       await onSend([body, refs].filter(Boolean).join("\n\n"), ready.flatMap((f) => (f.attachment ? [f.attachment.id] : [])));
       setText("");
       setPicked([]);
       setPickedPaths([]);
       setPickedTabs([]);
+      setPickedSessions([]);
       files.forEach(revokePreview);
       setFiles([]);
     } finally {
@@ -318,18 +320,17 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     }
   };
 
-  // 侧边栏拖来的会话：导出成附件（同一个会话只引用一次）
-  const addSession = (id: string, title: string) => {
-    const key = `session:${id}`;
-    if (files.some((f) => f.key === key)) return;
-    setFiles((prev) => [...prev, { key, name: title, size: 0, status: "uploading", sessionTitle: title }]);
-    api.exportSession(id).then(
-      (attachment) => setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, status: "done", size: attachment.size, attachment } : f))),
-      (e: Error) => setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, status: "error", error: e.message } : f))),
-    );
+  // 侧边栏拖来的会话：在光标处插成会话引用（输入框里显示成对话气泡加标题）；同名不同会话的标题后面加 (2)、(3) 区分
+  const mentionSession = (id: string, title: string) => {
+    const full = (t: string) => sessionMention(t, id);
+    let name = title;
+    for (let n = 2; pickedSessions.some((p) => p.token === sessionToken(name) && p.full !== full(name)); n++) name = `${title} (${n})`;
+    const token = sessionToken(name);
+    setPickedSessions((prev) => (prev.some((p) => p.token === token) ? prev : [...prev, { token, full: full(name) }]));
+    insertAtCaret(token);
   };
 
-  // 右侧面板目录树里拖来的文件、文件夹：插成绝对路径的文件引用（见 PATH_DRAG_TYPE）；侧边栏拖来的会话导出成附件；系统里拖来的文件上传成附件
+  // 右侧面板目录树里拖来的文件、文件夹：插成绝对路径的文件引用（见 PATH_DRAG_TYPE）；侧边栏拖来的会话插成会话引用；系统里拖来的文件上传成附件
   const internalDrag = (e: DragEvent) => e.dataTransfer.types.includes(PATH_DRAG_TYPE) || e.dataTransfer.types.includes(SESSION_DRAG_TYPE);
   const acceptsDrop = (e: DragEvent) => internalDrag(e) || e.dataTransfer.types.includes("Files");
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
@@ -339,7 +340,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     if (session) {
       try {
         const { id, title } = JSON.parse(session) as { id: string; title: string };
-        addSession(id, title);
+        mentionSession(id, title);
       } catch {
         // 不是这个页面拖出来的
       }
@@ -409,22 +410,6 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
                 </span>
               );
             }
-            if (f.sessionTitle !== undefined) {
-              return (
-                <span key={f.key} className={`chip pasted-chip ${f.status}`} title={f.error ?? `引用会话「${f.sessionTitle}」：导出成 Markdown 随消息发送`}>
-                  <span className="pasted-chip-icon">
-                    <SessionIcon />
-                  </span>
-                  <span className="pasted-chip-body">
-                    <span className="chip-name">{f.sessionTitle}</span>
-                    <span className="chip-meta">{f.status === "uploading" ? "导出中…" : f.status === "error" ? f.error : `会话 · ${formatSize(f.size)}`}</span>
-                  </span>
-                  <button className="image-chip-remove" onClick={remove} title="移除" aria-label="移除">
-                    ×
-                  </button>
-                </span>
-              );
-            }
             if (f.pastedText) {
               return (
                 <span key={f.key} className={`chip pasted-chip ${f.status}`} title={f.error ?? f.pastedText.slice(0, 500)}>
@@ -478,7 +463,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
         />
         {highlighted && (
           <div ref={mirrorRef} className="composer-mirror" aria-hidden="true">
-            <MentionText text={text} files={fileRefs} tabTokens={pickedTabs.map((t) => t.token)} />
+            <MentionText text={text} files={fileRefs} tabTokens={pickedTabs.map((t) => t.token)} sessionTokens={sessionTokens} />
             {/* 结尾的换行在 div 里不占一行，在 textarea 里占 */}
             {"\n"}
           </div>
@@ -539,13 +524,14 @@ function expandPaths(text: string, paths: { token: string; full: string }[]): st
   }, text);
 }
 
-function SessionIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2.5 3.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5v-2.5h-.5a1 1 0 0 1-1-1z" />
-      <path d="M5.5 5.5h5M5.5 7.5h3" />
-    </svg>
-  );
+/** 发送前把拖进来的会话的 token（@标题）换成带会话 id 的引用；标题可能带空格、是别的标题的开头，长的先换 */
+function expandSessions(text: string, sessions: { token: string; full: string }[]): string {
+  return [...sessions]
+    .sort((a, b) => b.token.length - a.token.length)
+    .reduce((acc, { token, full }) => {
+      const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return acc.replace(new RegExp(`(^|\\s)${escaped}`, "g"), (_m, space: string) => space + full);
+    }, text);
 }
 
 function PastedTextIcon() {

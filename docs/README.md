@@ -159,14 +159,20 @@ SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类
            用户上传了以下文件，已保存在这些路径，需要时用 Read 工具读取：
            - /…/.attachments/<id>/report.pdf
            </attachments>          （只有非图片文件时才有）
+   [text]  <session-references>
+           消息里引用的会话（@session[标题](session:会话 id)）在发送时由系统导出成了 Markdown 文件，按会话 id 列出路径，需要时用 Read 工具读取：
+           - session:<会话 id>：/…/.attachments/<id>/会话-标题.md
+           </session-references>   （只有引用了会话时才有，见下面「引用会话」）
    ```
 
 3. 图片模型直接看到；其他文件模型按需用 Read 读取（在工作目录里，不用确认）。
-4. `user_message` 事件带的就是这份 `content`，和 `getSessionMessages()` 读回的历史格式一样：网页从 image 块直接显示缩略图，从 `<attachments>` 段还原文件附件。
+4. `user_message` 事件带的就是这份 `content`，和 `getSessionMessages()` 读回的历史格式一样：网页从 image 块直接显示缩略图，从 `<attachments>`、`<session-references>` 段还原文件附件。
 
 模型要能看图；接纯文本模型（如 DeepSeek 文本模型）时不要发图片。
 
-**引用会话**：把侧边栏的会话拖进输入框（拖动数据 `application/x-claude-app-session`，值是 `{ id, title }`），网页 `POST /sessions/:id/export`，网关把那个会话导出成一份 Markdown，存成附件（`会话-标题.md`），之后和上传的文件一样按附件 id 随消息发送，模型在 `<attachments>` 里看到路径、按需读。导出用的是网页显示用的历史（压缩前的也接上，见 `history.ts`）：只有用户消息和回复的文字，工具调用写名称和参数的开头（300 字截断），工具结果、思考、子代理的消息不写，压缩后的摘要单独标出（`gateway/src/agent/session-export.ts`）。上下文超限压缩不了的会话，可以开新会话引用它接着做。每次拖进来都重新导出，导出的是那一刻的内容。
+**引用会话**（参照 Claude 桌面版的会话引用）：把侧边栏的会话拖进输入框（拖动数据 `application/x-claude-app-session`，值是 `{ id, title }`），在光标处插成行内引用：输入框里只有 `@标题` 几个字，`@` 透明、叠一个对话气泡图标，整段是强调色，和文件、标签页引用一样整体删除、光标跳过（同名不同会话的标题加 (2)、(3)）；会话 id 由输入框记着，发送时换成 `@session[标题](session:会话 id)`。网关在发送时从文字里认出这种引用（同一个会话只算一次），把那个会话导出成一份 Markdown，存成附件（`会话-标题.md`），单独列在 `<session-references>` 段里（不混进写着「用户上传了」的 `<attachments>`），每行带会话 id，和文字里的引用对得上，模型按需读；导出的是发送那一刻的内容。消息里显示成对话气泡加标题，侧边栏标题只留标题。导出用的是网页显示用的历史（压缩前的也接上，见 `history.ts`）：只有用户消息和回复的文字，工具调用写名称和参数的开头（300 字截断），工具结果、思考、子代理的消息不写，压缩后的摘要单独标出（`gateway/src/agent/session-export.ts`）。上下文超限压缩不了的会话，可以开新会话引用它接着做。
+
+桌面版的做法（解包 `ion-dist.asar` 看到的）：输入框是 Tiptap（ProseMirror）的 contenteditable，会话引用是行内 atom 节点 `mention`（`providerId: "epitaxy-threads"`，属性有会话 id、标题），退格整体删、光标在节点前后由编辑器处理；拖放由插件的 `handleDrop` 按落点插入，前后不是空白就补空格；发送时节点写成会话 id，另带 `sessionMentions` 字段，模型那边收到 `<session-mentions>` 系统提示、用工具去读。本项目的输入框是 textarea 加高亮镜像层，所以沿用文件、标签页引用的 token 写法，不换编辑器；会话内容走已有的附件。
 
 **回复注释**（参照 codex-app-server，`client/src/components/ResponseAnnotations.tsx`）：在 Claude 的回复里选中文字，浮出「回复」，写一句回复（可以不写）后加进输入框里的「N 条注释」，原文末尾显示编号，点编号或列表里的「编辑」可以改、删。注释按会话存在 localStorage，随下一条消息发出后清空；发送时纯在网页拼进用户文字的末尾（放末尾是因为 `/技能` 要在消息开头），网关不感知：
 
@@ -271,7 +277,6 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | POST | `/sessions/:id/model` | `{ model?, effort? }` 切换模型（`Query.setModel`）和推理强度（`Query.applyFlagSettings({ effortLevel })`）；子进程回收了的会话先 resume |
 | GET | `/sessions/:id/context` | 输入框上下文圆环：最后一次取到的用量（`SessionContextInfo`）；不拉起子进程 |
 | POST | `/sessions/:id/compact` | 压缩上下文（`/compact`）；子进程回收了的先 resume，这一轮还在进行时 409 |
-| POST | `/sessions/:id/export` | 引用会话：导出成 Markdown 附件 → `{ attachment: { id, name, path, size } }`，见第 5 节「引用会话」 |
 | POST | `/sessions/:id/permissions/:requestId` | `{ behavior: 'allow' \| 'deny', message?, always? }` |
 | GET | `/sessions/:id/events` | SSE |
 | DELETE | `/sessions/:id/process` | 关闭活跃进程（不删记录） |

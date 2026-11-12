@@ -28,6 +28,13 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 export class AttachmentError extends Error {}
 
+/** 引用会话导出成的附件（见 session-export.ts）：消息里和上传的文件分开列，带上是哪个会话 */
+export interface SessionExport extends Attachment {
+  sessionId: string;
+}
+
+const isSessionExport = (a: Attachment): a is SessionExport => typeof (a as Partial<SessionExport>).sessionId === "string";
+
 /** 去掉路径部分和控制字符，空名字用 file */
 function safeName(name: string): string {
   const base = path.basename(name.replaceAll("\\", "/")).replace(/[\u0000-\u001f]/g, "").trim();
@@ -128,7 +135,8 @@ export async function loadElements(inputs: SelectedElementInput[]): Promise<Sele
  * 拼用户消息的内容，结构同 Claude 桌面版（会话 jsonl 里用户发的图片就是这样存的）：
  * 图片作为 Anthropic 的 image 块（base64）放在最前面，然后是用户的文字；
  * 网页上选中的元素接在用户的文字后面，每个是截图（image 块）和那段 <selected-element> 文字，同 Claude 桌面版的「选择元素」；
- * 其他文件用一段 <attachments> 列出路径（网页按这个格式还原附件），模型需要时用 Read 读
+ * 其他文件用一段 <attachments> 列出路径（网页按这个格式还原附件），模型需要时用 Read 读；
+ * 引用会话导出的文件另起一段 <session-references>，每行写会话 id 和路径，和文字里的 @session[标题](session:会话 id) 对得上
  */
 export async function buildUserContent(
   text: string,
@@ -155,15 +163,24 @@ export async function buildUserContent(
     if (mediaType) blocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data: (await readFile(element.screenshot!.path)).toString("base64") } });
     blocks.push({ type: "text", text: element.text });
   }
-  if (files.length) blocks.push({ type: "text", text: formatAttachments(files.map((a) => ({ ...a, path: remotePaths?.get(a.id) ?? a.path }))) });
+  const pathOf = (a: Attachment) => remotePaths?.get(a.id) ?? a.path;
+  const uploads = files.filter((a) => !isSessionExport(a));
+  const sessions = files.filter(isSessionExport);
+  if (uploads.length) blocks.push({ type: "text", text: formatAttachments(uploads.map(pathOf)) });
+  if (sessions.length) blocks.push({ type: "text", text: formatSessionReferences(sessions.map((a) => ({ sessionId: a.sessionId, path: pathOf(a) }))) });
   return blocks;
 }
 
-function formatAttachments(attachments: Attachment[]): string {
+function formatAttachments(paths: string[]): string {
+  return ["<attachments>", "用户上传了以下文件，已保存在这些路径，需要时用 Read 工具读取：", ...paths.map((p) => `- ${p}`), "</attachments>"].join("\n");
+}
+
+/** 每行 "- session:会话 id：路径"（网页按这个格式还原成附件） */
+function formatSessionReferences(refs: { sessionId: string; path: string }[]): string {
   return [
-    "<attachments>",
-    "用户上传了以下文件，已保存在这些路径，需要时用 Read 工具读取：",
-    ...attachments.map((a) => `- ${a.path}`),
-    "</attachments>",
+    "<session-references>",
+    "消息里引用的会话（@session[标题](session:会话 id)）在发送时由系统导出成了 Markdown 文件，按会话 id 列出路径，需要时用 Read 工具读取：",
+    ...refs.map((r) => `- session:${r.sessionId}：${r.path}`),
+    "</session-references>",
   ].join("\n");
 }

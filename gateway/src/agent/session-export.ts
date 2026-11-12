@@ -1,11 +1,13 @@
 import type { SessionMessage } from "@anthropic-ai/claude-agent-sdk";
-import { saveTextAttachment } from "./attachments.js";
-import type { Attachment } from "../shared/types.js";
+import { saveTextAttachment, type SessionExport } from "./attachments.js";
 
 /**
- * 引用会话（侧边栏的会话拖进输入框）：把会话导出成一份 Markdown，存成附件，随消息发给模型。
+ * 引用会话（侧边栏的会话拖进输入框，消息里写成 @session[标题](session:会话 id)）：发送时把会话导出成一份 Markdown，存成附件，随消息发给模型。
  * 只留用户消息和回复的文字；工具调用写名称和参数的开头，工具结果、思考、子代理的消息不写，压缩上下文后的摘要单独标出
  */
+
+/** 消息里的会话引用：@session[标题](session:会话 id)，前面是空白或开头（网页的输入框发送时写成这样） */
+export const SESSION_MENTION = /(?:^|\s)@session\[[^\]\n]*\]\(session:([\w-]+)\)/g;
 
 /** 工具参数只写开头这么多字 */
 const TOOL_INPUT_CHARS = 300;
@@ -76,7 +78,7 @@ export function sessionMarkdown(info: { sessionId: string; title: string; cwd: s
 }
 
 /** 导出成附件，文件名是「会话-标题.md」 */
-export function exportSession(info: { sessionId: string; title: string; cwd: string | null }, messages: SessionMessage[]): Promise<Attachment> {
+export async function exportSession(info: { sessionId: string; title: string; cwd: string | null }, messages: SessionMessage[]): Promise<SessionExport> {
   const name = `会话-${info.title.replace(/[\\/:*?"<>|\n]/g, " ").trim().slice(0, 80) || info.sessionId}.md`;
-  return saveTextAttachment(name, sessionMarkdown(info, messages));
+  return { ...(await saveTextAttachment(name, sessionMarkdown(info, messages))), sessionId: info.sessionId };
 }

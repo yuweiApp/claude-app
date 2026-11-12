@@ -626,15 +626,19 @@ function isInterruptNotice(content: unknown): boolean {
   return b.type === "text" && typeof b.text === "string" && INTERRUPT.test(b.text.trim());
 }
 
-/** 网关拼在用户消息里的 <attachments> 段（见 gateway/src/agent/attachments.ts），每行 "- 路径" */
+/**
+ * 网关拼在用户消息里的 <attachments> 段（见 gateway/src/agent/attachments.ts），每行 "- 路径"；
+ * 引用会话导出的文件在 <session-references> 段，每行 "- session:会话 id：路径"，也显示成附件
+ */
 function parseAttachments(text: string): AttachmentChip[] | null {
-  const m = /^<attachments>\n([\s\S]*)\n<\/attachments>$/.exec(text.trim());
+  const m = /^<(attachments|session-references)>\n([\s\S]*)\n<\/\1>$/.exec(text.trim());
   if (!m) return null;
-  return m[1]!
+  const sessions = m[1] === "session-references";
+  return m[2]!
     .split("\n")
     .filter((line) => line.startsWith("- "))
     .map((line) => {
-      const path = line.slice(2);
+      const path = sessions ? line.slice(2).replace(/^session:[\w-]+：/, "") : line.slice(2);
       return { path, name: path.split(/[\\/]/).pop() || path };
     });
 }

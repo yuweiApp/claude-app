@@ -736,21 +736,13 @@ function Chat({
   );
 }
 
-/** 对话区底部正中的「回到底部」：平时是向下箭头，代理运行中是跳动的三个点 */
+/** 对话区底部正中的「回到底部」：中间是向下箭头，代理运行中外圈多一道转圈的弧线 */
 function ScrollToBottom({ running, onClick }: { running: boolean; onClick: () => void }) {
   return (
     <button className={running ? "scroll-bottom running" : "scroll-bottom"} onClick={onClick} title="回到底部" aria-label="回到底部">
-      {running ? (
-        <span className="scroll-bottom-dots" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </span>
-      ) : (
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M8 3v10M3.5 8.5 8 13l4.5-4.5" />
-        </svg>
-      )}
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M8 3v10M3.5 8.5 8 13l4.5-4.5" />
+      </svg>
     </button>
   );
 }

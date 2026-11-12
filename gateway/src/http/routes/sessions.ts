@@ -258,9 +258,6 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     messages: await sessions.messages(req.params.id),
   }));
 
-  /** 引用会话：导出成 Markdown 附件，返回的附件 id 随消息发送 */
-  app.post<{ Params: IdParams }>("/sessions/:id/export", async (req) => ({ attachment: await sessions.exportForReference(req.params.id) }));
-
   app.post<{ Params: IdParams; Body: { text: string; attachments?: string[]; elements?: SelectedElementInput[] } }>(
     "/sessions/:id/messages",
     {
