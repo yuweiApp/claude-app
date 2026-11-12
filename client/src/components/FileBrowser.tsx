@@ -1,4 +1,4 @@
-import { machinePath } from "../remote";
+import { isRemote, machinePath } from "../remote";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { api, RequestError, type FileContent, type FileEncoding, type ProjectEntry } from "../api";
 import { getDraft, setDraft, useHasDraft } from "../state/fileDrafts";
@@ -11,7 +11,7 @@ import { MarkdownLiveEditor } from "./MarkdownLiveEditor";
 import { PATH_DRAG_TYPE } from "./MentionText";
 import { closePageAnnotation, editAnnotationAt, repositionAnnotationEditor, startPageAnnotation } from "./ResponseAnnotations";
 import { sanitizeElement, uploadElementScreenshot, useResponseAnnotations } from "../state/responseAnnotations";
-import { desktop } from "../desktop";
+import { desktop, fileManagerName } from "../desktop";
 
 /** 文件里的行范围，回复里的链接带了行号时面板滚到并选中这几行 */
 export type { LineRange } from "./CodeEditor";
@@ -526,6 +526,15 @@ function FileTree({
           ]
         : [{ label: "复制路径", onClick: () => void copyText(absolutePath(cwd, "")) }],
     );
+    // 工作目录本身可以用系统的文件管理器打开（桌面版，且网关和界面在同一台机器上）
+    if (!entry && desktop && !isRemote(cwd))
+      groups.push([
+        {
+          label: `在${fileManagerName}中打开`,
+          onClick: () =>
+            void desktop!.openFolder(absolutePath(cwd, "")).then((opened) => !opened && setOpError("这台电脑上没有这个文件夹（网关在别的机器上）")),
+        },
+      ]);
     if (entry)
       groups.push([
         { label: "重命名", onClick: () => startRename(entry) },
