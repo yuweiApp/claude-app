@@ -1289,6 +1289,7 @@ main {
 .file-menu-right { left: auto; right: 0; }
 .file-menu .menu-item:hover:not(:disabled) { background: var(--panel); }
 .file-menu .menu-item:disabled { opacity: 0.45; cursor: default; }
+.file-encoding { flex: none; margin-left: 6px; padding: 0 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); font-size: 11px; line-height: 18px; }
 .viewer-unsaved { flex: none; margin-left: 6px; padding: 1px 8px; border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent); border-radius: 999px; background: none; color: var(--warn); font-size: 12px; }
 .md-source-switch { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; cursor: pointer; user-select: none; }
 .switch { position: relative; width: 34px; height: 20px; flex-shrink: 0; padding: 0; border: none; border-radius: 999px; background: var(--border); cursor: pointer; transition: background 0.15s; }

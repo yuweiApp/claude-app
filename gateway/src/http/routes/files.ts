@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import iconv from "iconv-lite";
 import { BadRequestError } from "../../agent/session-manager.js";
-import type { FileContent, ProjectEntry } from "../../shared/types.js";
+import type { FileContent, FileEncoding, ProjectEntry } from "../../shared/types.js";
 import { fsFor, type HostFs } from "../../ssh/host-fs.js";
 import { PAGE_PICKER_SCRIPT } from "../page-picker.js";
 
@@ -50,6 +51,32 @@ const PAGE_TYPES: Record<string, string> = {
   ".webm": "video/webm",
   ".pdf": "application/pdf",
 };
+const ENCODINGS = new Set<FileEncoding>(["utf-8", "gb18030", "utf-16le", "utf-16be"]);
+/**
+ * 认文本文件的编码，认不出（像二进制）给 null：
+ * 有 UTF-16 的 BOM 就按 UTF-16；否则前 8KB 里有 0 字节当二进制；能按 UTF-8 解就是 UTF-8（带不带 BOM 都算）；
+ * 都不是按 GB18030 解（GBK、GB2312 是它的子集，Windows 中文环境下生成的文件多是这种）
+ */
+function detectEncoding(buf: Buffer): FileEncoding | null {
+  if (buf[0] === 0xff && buf[1] === 0xfe) return "utf-16le";
+  if (buf[0] === 0xfe && buf[1] === 0xff) return "utf-16be";
+  if (buf.subarray(0, 8192).includes(0)) return null;
+  try {
+    utf8.decode(buf);
+    return "utf-8";
+  } catch {
+    return "gb18030";
+  }
+}
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+/** BOM 留在文本里（\uFEFF），保存时原样写回 */
+function decodeText(buf: Buffer, encoding: FileEncoding): string {
+  return encoding === "utf-8" ? buf.toString("utf8") : iconv.decode(buf, encoding, { stripBOM: false });
+}
+function encodeText(text: string, encoding: FileEncoding): Buffer {
+  return encoding === "utf-8" ? Buffer.from(text, "utf8") : iconv.encode(text, encoding, { addBOM: false });
+}
+
 /**
  * 网页预览的地址是「/files/page/<项目文件夹的随机 id>/<相对路径>」，网页里的相对路径（样式、脚本、图片）照常按目录解析，不用带令牌。
  * id 只在内存里，网关重启后旧地址失效
@@ -116,13 +143,14 @@ export function fileRoutes(app: FastifyInstance): void {
     const buf = await fs.readFile(abs).catch((err: NodeJS.ErrnoException) => {
       throw new BadRequestError(fsError(err, "文件"));
     });
-    // 前 8KB 里有 0 字节就当二进制
-    if (buf.subarray(0, 8192).includes(0)) return { ...meta, kind: "binary" };
-    return { ...meta, kind: "text", text: buf.toString("utf8") };
+    const encoding = detectEncoding(buf);
+    if (!encoding) return { ...meta, kind: "binary" };
+    return { ...meta, kind: "text", text: decodeText(buf, encoding), encoding };
   });
 
   // 右侧面板编辑后保存（Ctrl+S）：mtimeMs 是读的时候的修改时间，对不上说明期间被改过（Claude 改了、终端里改了），不覆盖，除非 force
-  app.post<{ Body: { cwd?: string; path?: string; text?: string; mtimeMs?: number; force?: boolean } }>("/files/write", async (req, reply) => {
+  // encoding 是读的时候认出来的编码，按它写回去（GBK 的文件保存后还是 GBK）
+  app.post<{ Body: { cwd?: string; path?: string; text?: string; mtimeMs?: number; force?: boolean; encoding?: FileEncoding } }>("/files/write", async (req, reply) => {
     const { fs, abs } = resolveInProject(req.body?.cwd, req.body?.path);
     if (typeof req.body?.text !== "string") throw new BadRequestError("缺少文件内容");
     const info = await fs.stat(abs).catch(() => null);
@@ -130,8 +158,11 @@ export function fileRoutes(app: FastifyInstance): void {
     if (!req.body.force && req.body.mtimeMs !== undefined && Math.abs(info.mtimeMs - req.body.mtimeMs) > 1) {
       return reply.code(409).send({ error: "文件在打开之后被修改过", mtimeMs: info.mtimeMs });
     }
-    await fs.writeFile(abs, req.body.text);
-    return { mtimeMs: (await fs.stat(abs)).mtimeMs };
+    const encoding = req.body.encoding ?? "utf-8";
+    if (!ENCODINGS.has(encoding)) throw new BadRequestError("不支持的编码");
+    await fs.writeFile(abs, encodeText(req.body.text, encoding));
+    const after = await fs.stat(abs);
+    return { mtimeMs: after.mtimeMs, size: after.size };
   });
 
   // 文件树右键「新建文件」「新建文件夹」：已经有同名的不覆盖

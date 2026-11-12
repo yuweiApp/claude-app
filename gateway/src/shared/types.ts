@@ -403,9 +403,12 @@ export interface FileContent {
   /** text 带 text；image 用 /files/raw 取；binary、too-large 不显示内容 */
   kind: "text" | "image" | "binary" | "too-large";
   text?: string;
+  /** text 的文件编码，保存时带回来按它写；gb18030 兼容 GBK、GB2312 */
+  encoding?: FileEncoding;
   /** 修改时间，保存时带回来，文件在这期间被改过就报冲突 */
   mtimeMs: number;
 }
+export type FileEncoding = "utf-8" | "gb18030" | "utf-16le" | "utf-16be";
 
 /**
  * 远程会话的工作目录写成 ssh://<连接 id><远端绝对路径>（ssh://k3j9x2ab/home/me/proj），网页把它当普通的 cwd 用：

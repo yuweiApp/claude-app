@@ -1,6 +1,6 @@
 import { machinePath } from "../remote";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
-import { api, RequestError, type FileContent, type ProjectEntry } from "../api";
+import { api, RequestError, type FileContent, type FileEncoding, type ProjectEntry } from "../api";
 import { getDraft, setDraft, useHasDraft } from "../state/fileDrafts";
 import { useDismiss } from "./ComposerPickers";
 import { CodeEditor, type LineRange } from "./CodeEditor";
@@ -909,6 +909,8 @@ function TreeFileIcon({ cwd, entry }: { cwd: string; entry: ProjectEntry }) {
 const EDITABLE_MAX_BYTES = 1024 * 1024;
 /** 在前面时多久看一次文件有没有被改（Claude 改了、终端里改了） */
 const POLL_MS = 3000;
+/** 不是 UTF-8 的文件在文件名后面标出编码 */
+const ENCODING_LABELS: Record<FileEncoding, string> = { "utf-8": "UTF-8", gb18030: "GBK", "utf-16le": "UTF-16 LE", "utf-16be": "UTF-16 BE" };
 const MARKDOWN = /\.(md|markdown|mdx)$/i;
 const HTML = /\.html?$/i;
 const PDF = /\.pdf$/i;
@@ -1008,8 +1010,8 @@ function FileViewer({
     if (text === undefined) return;
     setSaving(true);
     try {
-      const { mtimeMs } = await api.writeFile(cwd, path, text, ok.mtimeMs, force);
-      setContent({ ...ok, text, mtimeMs, size: new Blob([text]).size });
+      const { mtimeMs, size } = await api.writeFile(cwd, path, text, ok.mtimeMs, ok.encoding, force);
+      setContent({ ...ok, text, mtimeMs, size });
       // 保存期间又输入了的，留着新的内容
       if (getDraft(cwd, path) === text) setDraft(cwd, path, undefined);
       setSaveError(null);
@@ -1094,6 +1096,11 @@ function FileViewer({
             {basename(path)}
           </span>
           <CopyPath cwd={cwd} path={path} />
+          {ok?.kind === "text" && ok.encoding && ok.encoding !== "utf-8" && (
+            <span className="file-encoding" title={`文件不是 UTF-8，按 ${ENCODING_LABELS[ok.encoding]} 读取，保存时也按这个编码写回`}>
+              {ENCODING_LABELS[ok.encoding]}
+            </span>
+          )}
           {dirty && (
             <button className="viewer-unsaved" title="有未保存的修改（Ctrl+S 保存）" disabled={saving} onClick={() => void save()}>
               {saving ? "保存中…" : "未保存"}
