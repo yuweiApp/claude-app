@@ -721,15 +721,13 @@ function Chat({
                 else switchModel(sessionId, { effort });
               }}
             />
-            {sessionId && (
-              <ContextMeter
-                sessionId={sessionId}
-                usage={view.context}
-                running={view.state === "running"}
-                compacting={view.items.some((it) => it.kind === "compact" && it.status === "running")}
-                onError={onError}
-              />
-            )}
+            <ContextMeter
+              sessionId={sessionId ?? undefined}
+              usage={view.context}
+              running={view.state === "running"}
+              compacting={view.items.some((it) => it.kind === "compact" && it.status === "running")}
+              onError={onError}
+            />
           </>
         }
       />
