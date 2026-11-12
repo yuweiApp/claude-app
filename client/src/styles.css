@@ -983,63 +983,16 @@ main {
 .send-btn:hover { background: var(--text); }
 .send-btn:hover:not(:disabled) { opacity: 0.85; }
 .send-btn:disabled { opacity: 0.35; }
-/* 运行中的停止按钮，和图标的设计语言一致（上浅下深的彩色底、上沿一道高光、里面一个图形）：
-   - 底：强调色的渐变，表面一道光泽缓缓扫过；
-   - 中间：方块一边转一边变成圆角更大的菱形再变回来（转 90° 正好回到原样，循环连贯），颜色是强调色配套的前景色；
-   - 外圈：三色（强调色和色相前后各挪 45° 的两色）的弧线在转，四周光晕一呼一吸，一道淡淡的波纹往外扩散。
-   颜色都从 --accent 来，跟着皮肤变 */
-@property --stop-sheen { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
-.send-stop {
-  --stop-c1: var(--accent);
-  --stop-c2: oklch(from var(--accent) l c calc(h + 45));
-  --stop-c3: oklch(from var(--accent) l c calc(h - 45));
-  --stop-face:
-    conic-gradient(from var(--stop-sheen), transparent 0 55%, rgb(255 255 255 / 0.32) 72%, transparent 88%),
-    linear-gradient(180deg, oklch(from var(--accent) calc(l + 0.1) c h), oklch(from var(--accent) calc(l - 0.12) c h));
-  --stop-bevel: inset 0 1px 0 rgb(255 255 255 / 0.35), inset 0 -1px 2px rgb(0 0 0 / 0.2);
-  position: relative; color: var(--accent-text); background: var(--stop-face);
-  animation: send-stop-glow 2s ease-in-out infinite, send-stop-sheen 3.2s linear infinite;
-}
-.send-stop:hover { background: var(--stop-face); }
-.send-stop::before, .send-stop::after { content: ""; position: absolute; border-radius: 50%; pointer-events: none; }
+/* 运行中的停止按钮：和发送按钮一样大小、一样的底色，中间一个小方块；边缘一段强调色的弧线转圈 */
+.send-stop { position: relative; }
 .send-stop::before {
-  inset: -4px;
-  background: conic-gradient(from 0deg, transparent 0 15%, var(--stop-c3) 40%, var(--stop-c2) 70%, var(--stop-c1));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
-  animation: send-stop-spin 1.2s linear infinite;
+  content: ""; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+  border: 2px solid transparent; border-top-color: var(--accent);
+  animation: send-stop-spin 1s linear infinite;
 }
-.send-stop::after { inset: 0; border: 1px solid var(--stop-c1); animation: send-stop-ripple 2s ease-out infinite; }
-/* 中间的核：不跟前景色（浅色强调色的皮肤上前景色是深色，成了一块黑），而是一颗发光的亮核——
-   左上一点白色高光，底下是三色调亮的渐变，外面一圈白光加彩色光晕，变形时光晕跟着一呼一吸 */
-.stop-core {
-  --core-glow: 0 0 0 1px rgb(255 255 255 / 0.75), 0 0 6px 1px rgb(255 255 255 / 0.55), 0 0 10px 2px color-mix(in srgb, var(--stop-c2) 60%, transparent);
-  width: 11px; height: 11px; border-radius: 3px;
-  background:
-    radial-gradient(circle at 30% 25%, #fff 0 20%, transparent 65%),
-    conic-gradient(from 45deg, oklch(from var(--stop-c3) 0.93 calc(c * 0.6) h), oklch(from var(--stop-c1) 0.97 calc(c * 0.4) h), oklch(from var(--stop-c2) 0.93 calc(c * 0.6) h), oklch(from var(--stop-c3) 0.93 calc(c * 0.6) h));
-  box-shadow: var(--core-glow);
-  animation: stop-core-morph 2.4s ease-in-out infinite;
-}
+.stop-core { width: 10px; height: 10px; border-radius: 2px; background: currentColor; }
 @keyframes send-stop-spin { to { transform: rotate(1turn); } }
-@keyframes send-stop-sheen { to { --stop-sheen: 1turn; } }
-@keyframes send-stop-glow {
-  0%, 100% { box-shadow: var(--stop-bevel), 0 0 6px 0 color-mix(in srgb, var(--stop-c1) 35%, transparent); }
-  50% { box-shadow: var(--stop-bevel), 0 0 16px 3px color-mix(in srgb, var(--stop-c2) 55%, transparent); }
-}
-@keyframes send-stop-ripple { from { opacity: 0.45; transform: scale(1); } to { opacity: 0; transform: scale(1.8); } }
-@keyframes stop-core-morph {
-  0% { transform: rotate(0deg) scale(1); border-radius: 3px; }
-  50% {
-    transform: rotate(45deg) scale(0.8); border-radius: 5.5px 2px;
-    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.9), 0 0 9px 2px rgb(255 255 255 / 0.7), 0 0 16px 4px color-mix(in srgb, var(--stop-c2) 75%, transparent);
-  }
-  100% { transform: rotate(90deg) scale(1); border-radius: 3px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .send-stop, .send-stop::before, .stop-core { animation: none; }
-  .send-stop { box-shadow: var(--stop-bevel); }
-  .send-stop::after { display: none; }
-}
+@media (prefers-reduced-motion: reduce) { .send-stop::before { animation: none; } }
 .spacer { flex: 1; }
 
 /* 新会话输入框上面一栏（同 codex-app-server 的 .new-chat-bar / .new-chat-chip） */
