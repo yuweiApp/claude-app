@@ -1,5 +1,5 @@
 import { machinePath, parseRemote, remoteUri } from "../remote";
-import { createContext, isValidElement, useCallback, useContext, useRef, useState, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
+import { createContext, isValidElement, memo, useCallback, useContext, useRef, useState, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkCjkFriendly from "remark-cjk-friendly";
@@ -34,7 +34,11 @@ export const FileLinkContext = createContext<{
  */
 const REMARK_PLUGINS = [remarkGfm, remarkCjkFriendly, remarkCjkFriendlyGfmStrikethrough, remarkKeepWindowsPaths];
 
-export function ReplyMarkdown({ children }: { children: string }) {
+/**
+ * 按文字 memo：会话里每来一个事件（流式的每个字、state、tasks 等）整个对话都会重新渲染，
+ * 文字没变的回复不再重新解析 Markdown。长会话里这是重新渲染的主要开销
+ */
+export const ReplyMarkdown = memo(function ReplyMarkdown({ children }: { children: string }) {
   return (
     <Markdown
       remarkPlugins={REMARK_PLUGINS}
@@ -44,7 +48,7 @@ export function ReplyMarkdown({ children }: { children: string }) {
       {children}
     </Markdown>
   );
-}
+});
 
 /**
  * 写在模块里、不在渲染时新建：react-markdown 把这些函数当组件类型，每次渲染换一个新函数，

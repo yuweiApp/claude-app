@@ -68,7 +68,7 @@ export function StepThumbs({ images }: { images: StepImage[] }) {
               setViewing(img);
             }}
           >
-            <img src={img.src} alt="" onError={() => setFailed((s) => new Set(s).add(img.src))} />
+            <img src={img.src} alt="" loading="lazy" onError={() => setFailed((s) => new Set(s).add(img.src))} />
           </button>
         );
       })}

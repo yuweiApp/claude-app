@@ -51,7 +51,8 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
 不另建数据库，直接用 SDK 读 Claude Code 落盘的 jsonl，返回给网页的也是 SDK 的数据格式：
 
 - 列表：`listSessions()`（不传 dir，所有工作目录），`GET /sessions` 原样返回 `SDKSessionInfo`，只加上活跃会话的 `state`
-- 消息：`getSessionMessages(id)`（`SessionMessage`）
+- 消息：`getSessionMessages(id)`（`SessionMessage`），压缩上下文之前的也接上（`gateway/src/agent/history.ts`）。会话文件只读、只解析一遍；结果按文件的修改时间和大小缓存最近 4 个会话，会话在跑、远程会话同步过来时文件一变就重读。
+  - 返回给网页前瘦身（`historyForDisplay`），这是历史里唯一不原样转发的地方：base64 图片换成取图地址（image 块的 `source` 换成 `{ type: "gateway", path, media_type }`，`HistoryImageSource`），图片走 `GET /sessions/:id/images/:uuid/:key`，网页加上前缀和令牌放进 `<img loading="lazy">`；思考块的内容清空（网页不显示，块留着，内容块序号和实时事件一致）。截图、贴图往往占历史的大半体积（实测 1.2MB 的历史里 0.78MB 是工具返回的截图），换掉后一般只剩三四成。引用会话导出用的是没瘦身的历史。
 - 改名：`renameSession(id, title)`
 - 分叉：最终回复下面的操作栏里有「从这里分叉」，`forkSession` 复制到这条回复为止的记录（消息换新 uuid），网页切到新会话，原会话不变。只有一轮结束后的最终回复有这个按钮（它所在的 assistant 消息 uuid 就是记录里那一行的）
 - 技能和插件：输入框上面的「技能」「插件」选择后插在光标处（前后补空格），可以有多个，只列导入的和项目里的，Claude Code 自带的（技能的 `builtin`、插件 source 为 `名字@builtin`）不列，设置页里照常显示。插件带的技能（`插件名:技能名`）在「技能」里按插件分组列在最后，组的第一行是插件名和技能数，整行点了折叠、展开，默认折叠，展开的组记在 localStorage 的 `skill-picker-expanded`，组里只显示冒号后面的部分，搜索时都展开；不能用 `@插件名` 代替：那只是文字，不会加载技能。技能写成 `/技能名`：在消息开头的由 Claude Code 展开成技能内容，在中间的只是文字，模型自己决定调不调 Skill 工具；插件写成 `@插件名`，只是文字引用，Claude Code 没有对应的命令。输入框和消息里，开头的 `/名字` 都高亮，中间的要在技能列表里才高亮。用技能的消息在历史里是 `<command-message>` 标签加一条技能内容，网页还原成 `/技能名 内容`，技能内容不显示。
@@ -130,6 +131,7 @@ SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类
 ### 3.3 客户端归并规则
 
 - 打开会话：先连 SSE，再拉 `GET /sessions/:id/messages` 的历史，两边按 `uuid` 去重合并。历史回来之前不显示消息（只显示「正在加载对话…」，0.4 秒后才出现）：事件流回放的只是缓冲里最近的事件，先显示的话是后半截，历史回来后前面一下子补上，滚动条忽长忽短；历史拉失败也算拉完，只显示事件流里的。
+- 长会话只先渲染最后 20 轮，滚到离顶部不到一屏时每次往前补 20 轮（`Messages.tsx` 的 `EarlierTurns`，`IntersectionObserver` 以对话区为根），补完按补之前离底部的距离设回 `scrollTop`，看到的内容不动。对话区平时 `overflow-anchor: none`（和跟随到底部打架）；用户往上翻着（不在底部）时换成 `auto`，上面的图片加载出来、内容变高时正在看的地方不跳。没补出来的部分页面内搜索（Ctrl+F）搜不到。回复的 Markdown 按文字 memo，每来一个事件整个对话重新渲染时，文字没变的不再重新解析。
 - 排队的用户消息（`user_message` 带 `queued`）：模型在写文字、或在等权限确认时发的消息不能用 `now`（会打断写到一半的回答），用 `next`（同 Claude 桌面版：实测不打断，写到一半的 952 字回答照常写完）。Claude Code 先放进队列，下一次工具结果之后并进这一轮（同一个 result），这一轮不再调用工具的话等它结束、作为下一轮的开头；有工具在跑时用 `now`，不排队（见第 12 节「跑久了自动转后台」）。以前用 `later`，要等整轮结束才送到。交给模型时 SDK 发 `command_lifecycle`（SDK 的类型定义里没有）：`command_uuid` 是消息的 uuid，`state` 依次是 `queued`、`started`（交给模型了）、`completed`。有工具在跑时用 `now` 发的也一样等 `started`（网关这时也标 `queued`）：`now` 有时并进这一轮，有时先结束这一轮（`result` 的 `stop_reason` 是 `tool_use`）再用它开新的一轮，实测两种都有；以前当它一定并进这一轮，结果上一轮的 `result` 挂到了它这一段上（显示「用时 0s」），之后并进来的后台任务通知被当成新一轮的开头，它自己那一轮的用时也没了。分轮时 `result` 的 `user_message_uuid` 指向的用户消息算一轮的开头，不算插入的一段（历史里它也紧跟在工具结果后面，光看位置分不出来）。网页收到排队的消息时不放进消息列表，先像普通消息一样显示在对话最后，这一轮剩下的回复排在它上面；收到它的 `started` 再放进消息列表，位置就固定了（并进这一轮的，显示上在那个工具结果后面分段，同进行中插入的消息）；`result`、状态变成 `idle` / `closed` 时还没放的也放进去，兜底。以前收到就放进去，这一轮剩下的回复排在它后面、被算进它那一轮，「用时」也从发消息时算起。并进这一轮的消息在会话文件里存成 `queued_command` 附件，`getSessionMessages` 读回来是同一个 uuid 的普通用户消息，位置和实时的一样；拉历史时已经在历史里的不再排队。
 - `stream_event` 只用来拼"正在生成"的那段文字；收到对应的完整 `assistant` 消息后丢掉临时内容。模型的思考（`thinking` 块）不显示。
 - 工具调用：`assistant` 里的 `tool_use` 块和随后 `user` 消息里同 `tool_use_id` 的 `tool_result` 配对显示。
@@ -253,6 +255,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | GET | `/sessions` | 所有文件夹的会话，SDK 的 `SDKSessionInfo` 加活跃会话的 `state`、最后一次 AI 回复的时间 `lastResponseAt`，按 `lastResponseAt` 倒序 |
 | POST | `/sessions` | 新建会话并发送第一条消息 `{ text, attachments?, cwd?, model?, effort?, permissionMode? }` → `{ sessionId }`；`cwd` 是会话的文件夹，`model` 是模型列表里的 value |
 | GET | `/sessions/:id/messages` | 历史消息 |
+| GET | `/sessions/:id/images/:uuid/:key` | 历史消息里换成地址的图片：`key` 是内容块序号，`tool_result` 里的是「块序号.结果里的序号」；同一条消息里的图片不会变，`cache-control` 是 immutable |
 | POST | `/sessions/:id/messages` | 发送消息 `{ text, attachments? }`（文字和附件至少有一样）；会话不活跃时自动 resume |
 | POST | `/sessions/:id/fork` | 从某条消息分叉 `{ messageId }` → `{ sessionId }`：SDK 的 `forkSession(id, { upToMessageId })`，新会话的记录是到这条消息为止（含）的部分，工作目录、模型、推理强度跟原会话一样，标题加「（分叉）」，原会话不变；forkSession 把最后一条消息的时间改成了分叉时刻，网关按 `forkedFrom` 改回原消息的时间（网页按它算历史轮的用时）；远程会话在本机副本上分叉后把新记录传到远端同一个目录 |
 | POST | `/uploads` | 上传附件（multipart，可多个）→ `{ attachments: [{ id, name, path, size }] }` |

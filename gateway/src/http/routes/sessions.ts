@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { listModels } from "../../agent/models.js";
+import { historyForDisplay, historyImage, sessionHistory } from "../../agent/history.js";
 import type { FastifyInstance } from "fastify";
 import type { ConnectorEntry, ConnectorInput, MarketPluginPage, McpAuthState, McpServerInput } from "../../shared/types.js";
 import { AttachmentError, type SelectedElementInput } from "../../agent/attachments.js";
@@ -255,8 +256,15 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
   });
 
   app.get<{ Params: IdParams }>("/sessions/:id/messages", async (req) => ({
-    messages: await sessions.messages(req.params.id),
+    messages: historyForDisplay(req.params.id, await sessions.messages(req.params.id)),
   }));
+
+  // 历史消息里换成地址的图片（见 history.ts 的 historyForDisplay）。会话记录只会追加，同一条消息里的图片不会变
+  app.get<{ Params: IdParams & { uuid: string; key: string } }>("/sessions/:id/images/:uuid/:key", async (req, reply) => {
+    const image = historyImage(await sessionHistory(req.params.id), req.params.uuid, req.params.key);
+    if (!image) throw new NotFoundError("图片不存在");
+    return reply.type(image.mediaType).header("cache-control", "private, max-age=31536000, immutable").send(image.data);
+  });
 
   app.post<{ Params: IdParams; Body: { text: string; attachments?: string[]; elements?: SelectedElementInput[] } }>(
     "/sessions/:id/messages",

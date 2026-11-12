@@ -373,6 +373,16 @@ export interface Attachment {
 }
 
 /**
+ * 历史消息（GET /sessions/:id/messages）里图片块的 source：会话记录里的 base64 换成了网关的取图地址，
+ * path 相对网关接口（同其他接口，网页加上前缀和令牌），见 gateway/src/agent/history.ts 的 historyForDisplay
+ */
+export interface HistoryImageSource {
+  type: "gateway";
+  path: string;
+  media_type?: string;
+}
+
+/**
  * GET /sessions 的列表项：SDK 的 SDKSessionInfo 原样返回，只加上网关里活跃会话的运行状态（不活跃时没有 state）。
  * cwd 是会话的工作目录，Claude Code 按它区分项目（会话存在 $CLAUDE_CONFIG_DIR/projects/<编码后的目录>/ 下）
  */

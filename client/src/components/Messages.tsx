@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { AgentItem, Item, SessionView, TaskItem } from "../state/session";
 import { Attachments } from "./Attachments";
@@ -226,15 +226,66 @@ function AgentMessage({ item, name }: { item: AgentItem; name?: string }) {
   );
 }
 
+/** 打开会话时只渲染最后这么多轮，往上滚到接近顶部时每次再往前补这么多 */
+const PAGE_TURNS = 20;
+
+/** 最近的能竖着滚动的祖先（对话区） */
+function scrollParent(el: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    if (/(auto|scroll)/.test(getComputedStyle(p).overflowY)) return p;
+  }
+  return null;
+}
+
+/**
+ * 前面还有没渲染的轮时放在最上面：离对话区顶部不到一屏时调用 onReach。
+ * count 变了（补过一批）重新开始观察，补完还在范围里（内容不满一屏）会接着补
+ */
+function EarlierTurns({ count, onReach }: { count: number; onReach: (scroller: HTMLElement) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const reach = useRef(onReach);
+  reach.current = onReach;
+  useEffect(() => {
+    const el = ref.current;
+    const scroller = el && scrollParent(el);
+    if (!el || !scroller) return;
+    const observer = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && reach.current(scroller), {
+      root: scroller,
+      rootMargin: `${scroller.clientHeight}px 0px 0px 0px`,
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [count]);
+  return <div ref={ref} className="earlier-turns" aria-hidden />;
+}
+
 /** onFork：从某条消息（会话记录里的 uuid）分叉出新会话；不传不显示分叉按钮（新会话页） */
 export function Messages({ view, onFork }: { view: SessionView; onFork?: (messageId: string) => Promise<void> }) {
   const turns = splitTurns(view.items);
+  // 长会话打开时只渲染最后几轮，前面的往上滚时再补：Markdown、工具步骤都要渲染，一次全挂上要卡好一阵。
+  // 记的是前面没渲染的轮数，之后新来的轮接在后面，不影响它
+  const [hidden, setHidden] = useState(() => Math.max(0, turns.length - PAGE_TURNS));
+  const start = Math.min(hidden, turns.length);
+  // 往前补的时候保持看到的内容不动：记下补之前离底部的距离，渲染后按它设回 scrollTop
+  const restore = useRef<{ scroller: HTMLElement; fromBottom: number } | null>(null);
+  const showEarlier = (scroller: HTMLElement) => {
+    if (restore.current) return;
+    restore.current = { scroller, fromBottom: scroller.scrollHeight - scroller.scrollTop };
+    setHidden(Math.max(0, start - PAGE_TURNS));
+  };
+  useLayoutEffect(() => {
+    const r = restore.current;
+    if (!r) return;
+    restore.current = null;
+    r.scroller.scrollTop = r.scroller.scrollHeight - r.fromBottom;
+  }, [start]);
   // 只有 running 算进行中：续接的会话在第一条消息之前一直是 starting（子进程等输入，init 要等发消息才来）
   const busy = view.state === "running";
   return (
     <div className="messages">
-      {turns.map((turn, i) => (
-        <TurnView key={turn.key} turn={turn} view={view} live={busy && i === turns.length - 1 && !turn.result} onFork={onFork} />
+      {start > 0 && <EarlierTurns count={start} onReach={showEarlier} />}
+      {turns.slice(start).map((turn, i) => (
+        <TurnView key={turn.key} turn={turn} view={view} live={busy && start + i === turns.length - 1 && !turn.result} onFork={onFork} />
       ))}
       {/* 这一轮进行中发的、还没交给模型的消息：和普通消息一样显示，保持在最后，交给模型时才固定位置（见 SessionView.queued） */}
       {view.queued.map(

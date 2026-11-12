@@ -1,5 +1,5 @@
 import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
-import type { BackgroundTask, ContextUsage, DesktopTarget, GatewayEvent, HistoryMessage } from "../api";
+import { withToken, type BackgroundTask, type ContextUsage, type DesktopTarget, type GatewayEvent, type HistoryMessage } from "../api";
 import { parseSelectedElement, splitResponseAnnotations, type SentResponseAnnotation } from "./responseAnnotations";
 
 /** 消息里显示的附件（历史消息里只有路径，没有大小） */
@@ -13,7 +13,7 @@ export interface AttachmentChip {
 export type Block = { type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: unknown };
 
 export type Item =
-  /** images：用户消息里的 image 块（Claude 的结构，base64），转成 data: 地址直接显示 */
+  /** images：用户消息里的 image 块（Claude 的结构，base64），转成 data: 地址直接显示；历史里的是网关的取图地址 */
   /** annotations：消息末尾带的回复注释（见 responseAnnotations.ts），text 里已去掉 */
   | { kind: "user"; uuid: string; at?: number; text: string; images: string[]; attachments: AttachmentChip[]; annotations?: SentResponseAnnotation[] }
   /** messageId：模型 API 那一次响应的 id。一次响应里的多个内容块会拆成多条消息，id 相同；同一个 id 下的多个工具调用是并行的 */
@@ -93,7 +93,7 @@ export interface QueuedMessage {
 
 export interface ToolResult {
   text: string;
-  /** 工具返回的图片（Read 读图片时在 tool_result 里），data: 地址 */
+  /** 工具返回的图片（Read 读图片时在 tool_result 里），data: 地址；历史里的是网关的取图地址 */
   images: string[];
   isError: boolean;
   /** 工具调用的耗时：调用到结果的时间差，历史按消息时间戳，实时按收到的时间 */
@@ -741,11 +741,15 @@ function localCommandText(text: string): string | null {
   return null;
 }
 
-/** Anthropic 的 image 块转成能直接放进 <img> 的地址：base64 → data:，url 原样 */
+/**
+ * Anthropic 的 image 块转成能直接放进 <img> 的地址：base64 → data:，url 原样；
+ * 历史消息里网关换成取图地址的（HistoryImageSource）加上接口前缀和令牌
+ */
 function imageSrc(block: unknown): string | null {
-  const b = block as { type?: string; source?: { type?: string; media_type?: string; data?: string; url?: string } } | null;
+  const b = block as { type?: string; source?: { type?: string; media_type?: string; data?: string; url?: string; path?: string } } | null;
   if (b?.type !== "image" || !b.source) return null;
   if (b.source.type === "base64" && b.source.data) return `data:${b.source.media_type ?? "image/png"};base64,${b.source.data}`;
+  if (b.source.type === "gateway" && b.source.path) return withToken(b.source.path);
   if (b.source.type === "url" && b.source.url) return b.source.url;
   return null;
 }

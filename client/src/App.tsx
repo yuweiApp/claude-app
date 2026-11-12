@@ -633,7 +633,7 @@ function Chat({
         </div>
       )}
       <div className="scroll-area">
-      <div className="scroll" ref={scrollRef} onScroll={onScroll} {...(sessionId && { [ANNOTATION_SCOPE_ATTR]: sessionId })}>
+      <div className={atBottom ? "scroll" : "scroll anchored"} ref={scrollRef} onScroll={onScroll} {...(sessionId && { [ANNOTATION_SCOPE_ATTR]: sessionId })}>
         <div className="scroll-content" ref={contentRef}>
         {!sessionId && (
           <div className="empty">
