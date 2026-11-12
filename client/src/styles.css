@@ -945,6 +945,41 @@ main {
 .model-pill[data-effort="high"] { --pill-bg: light-dark(#596be0, #4354ba); --pill-text: #fff; }
 .model-pill[data-effort="xhigh"] { --pill-bg: light-dark(#794ac8, #633aab); --pill-text: #fff; }
 .model-pill[data-effort="max"] { --pill-bg: light-dark(#50359b, #402a80); --pill-text: #fff; }
+/* 输入框底部的上下文用量圆环和弹层（同 codex-app-server 的 .context-meter） */
+/* 弹层相对整个输入框（.composer）右对齐，不跟着圆环：窄窗口里圆环换到第二行最左边时，跟着它会伸出输入框 */
+.context-meter { display: flex; }
+.context-ring {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0;
+  border: none; border-radius: 999px; background: none; color: var(--muted);
+}
+.context-ring:hover, .context-ring.active { background: var(--frame-hover); }
+.context-ring-track { fill: none; stroke: color-mix(in srgb, currentColor 30%, transparent); stroke-width: 2; }
+.context-ring-fill { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; transition: stroke-dasharray 0.3s; }
+.context-ring.warn .context-ring-fill { stroke: var(--warn); }
+.context-ring svg.compacting { animation: context-ring-spin 1.2s linear infinite; }
+@keyframes context-ring-spin { to { transform: rotate(360deg); } }
+.context-pop {
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 30; width: 340px; max-width: calc(100vw - 32px);
+  display: flex; flex-direction: column; gap: 10px; padding: 14px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); font-size: 13px;
+}
+.context-pop-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.context-pop-title { font-weight: 600; }
+.context-pop-value { color: var(--muted); font-variant-numeric: tabular-nums; }
+.context-pop-dim { color: var(--muted); font-size: 12.5px; }
+.context-bar { position: relative; height: 6px; border-radius: 999px; background: var(--panel); }
+.context-bar-fill { height: 100%; border-radius: 999px; background: var(--accent); }
+.context-bar-mark { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--warn); }
+.context-pop-btn { flex: none; padding: 3px 12px; border-radius: 999px; font-size: 12.5px; white-space: nowrap; }
+.context-pop-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.context-set { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--divider); }
+.context-set-row { display: grid; grid-template-columns: auto 1fr 84px; align-items: center; gap: 10px; }
+.context-set-label { font-weight: 600; }
+.context-set-row input[type="range"] { width: 100%; min-width: 0; margin: 0; accent-color: var(--accent); }
+.context-set-value { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.context-set-hint { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.context-set-hint.warn { color: var(--warn); }
+.context-set-actions { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
 .model-pop { right: 0; width: 280px; max-height: calc(100vh - 140px); overflow-y: auto; padding: 12px; border-radius: 16px; }
 .model-pop-title { color: var(--muted); font-size: 12px; margin: 2px 2px 6px; }
 .effort-seg { display: flex; gap: 2px; padding: 2px; margin-bottom: 10px; border-radius: 10px; background: var(--panel); }

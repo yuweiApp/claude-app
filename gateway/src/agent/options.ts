@@ -1,6 +1,7 @@
 import type { CanUseTool, EffortLevel, Options, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { agentEnv, config } from "../config.js";
 import { attachmentsDir } from "./attachments.js";
+import { contextEnv, type LaunchContext } from "./context-settings.js";
 import { disabledAgents, importedPlugins } from "./extensions.js";
 import { enabledMcpServers } from "./mcp-config.js";
 import { TERMINAL_READ_TOOLS, TERMINAL_SERVER, terminalServer } from "../terminal/tool.js";
@@ -25,6 +26,8 @@ export interface SessionLaunch {
   model?: string;
   effort?: EffortLevel;
   permissionMode: PermissionMode;
+  /** 上下文窗口和自动压缩窗口（见 context-settings.ts） */
+  context: LaunchContext;
   /** 启用的技能，不传是 Claude Code 的默认（全部） */
   skills?: string[];
   canUseTool: CanUseTool;
@@ -64,7 +67,7 @@ export function buildOptions(launch: SessionLaunch): Options {
     cwd: launch.cwd,
     // 附件存在 workspace/.attachments，工作目录不是 workspace 本身的会话（项目会话、普通会话的 scratch 目录）也要能不经确认读到
     ...(launch.cwd !== config.workspaceDir ? { additionalDirectories: [attachmentsDir] } : {}),
-    env: agentEnv(),
+    env: { ...agentEnv(), ...contextEnv(launch.context) },
     ...(launch.resume ? { resume: launch.sessionId } : { sessionId: launch.sessionId }),
     model: launch.model ?? config.model,
     ...(launch.effort ? { effort: launch.effort } : {}),
@@ -126,7 +129,7 @@ function buildRemoteOptions(launch: SessionLaunch): Options {
     // 远端的附件目录（发消息时上传到这里）
     ...(host.env ? { additionalDirectories: [nativePath(host.env.windows, host.env.attachments)] } : {}),
     // 只带 Claude Code 相关的变量过去，见 ssh/spawn.ts
-    env: agentEnv(),
+    env: { ...agentEnv(), ...contextEnv(launch.context) },
     spawnClaudeCodeProcess: remoteSpawner(host, launch.stderr),
     ...(launch.resume ? { resume: launch.sessionId } : { sessionId: launch.sessionId }),
     model: launch.model ?? config.model,

@@ -1,5 +1,5 @@
 import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
-import type { BackgroundTask, DesktopTarget, GatewayEvent, HistoryMessage } from "../api";
+import type { BackgroundTask, ContextUsage, DesktopTarget, GatewayEvent, HistoryMessage } from "../api";
 import { parseSelectedElement, splitResponseAnnotations, type SentResponseAnnotation } from "./responseAnnotations";
 
 /** 消息里显示的附件（历史消息里只有路径，没有大小） */
@@ -39,9 +39,11 @@ export type Item =
    * 实时：system/status 是 compacting 时开始（running，显示动画；压缩期间每 30 秒还会再来一次），compact_boundary 到了算完成（done），
    * 紧跟着一条 isSynthetic 的 user 消息是摘要，uuid 换成摘要的（awaitingSummary），重新拉历史时按 uuid 去重；
    * status 带 compact_result: failed、或者没等到 compact_boundary 这一轮就结束了，算没完成（failed）。
-   * 历史：网关接上了压缩前的消息，摘要（isCompactSummary）在分界处。at：实时是开始压缩的时间，历史是摘要的时间
+   * 历史：网关接上了压缩前的消息，摘要（isCompactSummary）在分界处。at：实时是开始压缩的时间，历史是摘要的时间。
+   * manual：空闲时用 /compact（输入框的「压缩会话」）压缩的，自成一轮，不是上一轮的一段。实时按开始压缩时上一轮已经结束判断，
+   * 历史按摘要后面紧跟着的 <command-name>/compact</command-name>
    */
-  | { kind: "compact"; uuid: string; at?: number; status: "running" | "done" | "failed"; awaitingSummary?: boolean }
+  | { kind: "compact"; uuid: string; at?: number; status: "running" | "done" | "failed"; awaitingSummary?: boolean; manual?: boolean }
   /**
    * 后台任务（Bash 后台命令、后台子代理等）完成的通知。模型空闲时 Claude Code 会拿它自动开始新的一轮，所以它和用户消息一样是一轮的开头。
    * uuid 用 task:<task_id>：实时的 system/task_notification 和历史里的 <task-notification> 消息 uuid 不同，按任务 id 去重
@@ -147,6 +149,8 @@ export interface SessionView {
   queued: QueuedMessage[];
   /** 桌面工具最近操作的窗口（网关的 desktop_target 事件），右上角的浮窗显示它 */
   desktopTarget: DesktopTarget | null;
+  /** 上下文用量（网关的 context 事件），还没收到时 null */
+  context: ContextUsage | null;
 }
 
 export function emptyView(): SessionView {
@@ -168,6 +172,7 @@ export function emptyView(): SessionView {
     backgroundTasksLive: false,
     queued: [],
     desktopTarget: null,
+    context: null,
   };
 }
 
@@ -210,6 +215,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
     next.backgroundTasks = view.backgroundTasks;
     next.backgroundTasksLive = view.backgroundTasksLive;
     next.desktopTarget = view.desktopTarget;
+    next.context = view.context;
     // 历史里已经有的（Claude Code 已经交给模型、写进了会话文件），不再排队
     next.queued = view.queued.filter((q) => !next.seen.has(q.uuid));
     return next;
@@ -274,6 +280,9 @@ export function reduce(view: SessionView, action: Action): SessionView {
     case "desktop_target":
       next.desktopTarget = event.target;
       break;
+    case "context":
+      next.context = event.usage;
+      break;
     case "reset":
       next.needsReload = true;
       break;
@@ -320,7 +329,7 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
     }
     case "system":
       if (message.subtype === "status" && message.status === "compacting") {
-        if (!runningCompact(view)) pushItem(view, null, { kind: "compact", uuid: `compact:${message.uuid}`, at: Date.now(), status: "running" });
+        if (!runningCompact(view)) pushItem(view, null, { kind: "compact", uuid: `compact:${message.uuid}`, at: Date.now(), status: "running", manual: view.turnEnded });
       } else if (message.subtype === "status" && message.compact_result === "failed") {
         finishCompact(view, "failed");
       }
@@ -328,7 +337,7 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
         if (runningCompact(view)) {
           view.seen = new Set(view.seen).add(message.uuid);
           finishCompact(view, "done");
-        } else pushItem(view, null, { kind: "compact", uuid: message.uuid, at: Date.now(), status: "done", awaitingSummary: true });
+        } else pushItem(view, null, { kind: "compact", uuid: message.uuid, at: Date.now(), status: "done", awaitingSummary: true, manual: message.compact_metadata.trigger === "manual" });
       }
       // 子代理里的工具调用（它自己的 Bash 等）结束也发通知，但那不会开始主线程的新一轮
       if (message.subtype === "task_notification" && !message.skip_transcript && !subagentCall(view, message.tool_use_id)) {
@@ -351,7 +360,7 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       finishCompact(view, "failed");
       // 中断的一轮也是 error_during_execution（errors 里是 [ede_diagnostic] …），前面已经有「已中断」，不算出错
       const interrupted = view.items.at(-1)?.kind === "interrupted";
-      const start = view.items.findLast((it) => it.kind === "user" || it.kind === "task" || it.kind === "agent");
+      const start = view.items.findLast((it) => it.kind === "user" || it.kind === "task" || it.kind === "agent" || (it.kind === "compact" && it.manual));
       pushItem(view, null, {
         kind: "result",
         uuid: message.uuid,
@@ -496,8 +505,14 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       return;
     }
     if (local !== null) {
-      if (local) pushItem(view, parent, { kind: "notice", uuid, text: local });
+      // /compact 成功时的「Compacted」：前面已经有「上下文已压缩」那一行
+      if (local && !/^Compacted\b/.test(local)) pushItem(view, parent, { kind: "notice", uuid, text: local });
       else view.seen = new Set(view.seen).add(uuid);
+      // 历史里手动压缩的：摘要后面跟着 /compact 命令本身的记录
+      const last = view.items.at(-1);
+      if (!parent && typeof content === "string" && /<command-name>\/compact<\/command-name>/.test(content) && last?.kind === "compact" && !last.manual) {
+        view.items = view.items.with(-1, { ...last, manual: true });
+      }
       return;
     }
     if (typeof content === "string") {
@@ -559,7 +574,7 @@ function ingestCompactSummary(view: SessionView, uuid: string, at: number | unde
   if (view.seen.has(uuid)) return;
   const i = view.items.findLastIndex((it) => it.kind === "compact" && it.awaitingSummary);
   const prev = view.items[i];
-  const item: Item = { kind: "compact", uuid, at: prev?.kind === "compact" ? prev.at : at, status: "done" };
+  const item: Item = { kind: "compact", uuid, at: prev?.kind === "compact" ? prev.at : at, status: "done", ...(prev?.kind === "compact" && prev.manual ? { manual: true } : {}) };
   if (i < 0) {
     pushItem(view, null, item);
     return;
@@ -701,7 +716,9 @@ function skillCommand(text: string): string | null {
  */
 function localCommandText(text: string): string | null {
   const out = /^<local-command-(?:stdout|stderr)>([\s\S]*)<\/local-command-(?:stdout|stderr)>$/.exec(text.trim());
-  if (out) return out[1]!.replace(/`/g, "").trim();
+  // 输出里可能带终端的颜色控制符（/compact 的是 ESC[2mCompacted ESC[22m）
+  // eslint-disable-next-line no-control-regex
+  if (out) return out[1]!.replace(/\x1b\[[0-9;]*m/g, "").replace(/`/g, "").trim();
   if (/^<(command-name|command-message|local-command-caveat)>/.test(text.trim())) return "";
   return null;
 }

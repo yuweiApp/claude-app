@@ -39,7 +39,59 @@ export type GatewayEvent =
   | { type: "task_result"; taskId: string; text: string; isError: boolean }
   /** 桌面工具（agent-desktop）这个会话最近操作的窗口，变了才发；null 是关掉了那个应用（close-app） */
   | { type: "desktop_target"; target: DesktopTarget | null }
+  /** 上下文用量：子进程启动后、每轮结束、压缩完成后各取一次（Query.getContextUsage） */
+  | { type: "context"; usage: ContextUsage }
   | { type: "reset" };
+
+/** 上下文用量，token 数 */
+export interface ContextUsage {
+  /** 已用：上一次模型回复报的用量加上之后新增的估算 */
+  used: number;
+  /** 模型的上下文窗口 */
+  window: number;
+  /** 用到这么多时自动压缩；关掉了自动压缩时 null */
+  threshold: number | null;
+  /** 取的时间（毫秒） */
+  at: number;
+  /**
+   * 刚压缩过、之后模型还没回复过：used 是按压缩请求本身的用量估的，不准（比压缩前还大），
+   * 下一次模型回复后才是压缩后的实际用量
+   */
+  compacted?: boolean;
+}
+
+/** 上下文设置，不设的项为 null（用下一级的：会话 → 模型默认 → 网关默认） */
+export interface ContextSettings {
+  /** 模型的上下文窗口（CLAUDE_CODE_MAX_CONTEXT_TOKENS） */
+  contextWindow: number | null;
+  /** 用到窗口的百分之多少时自动压缩 */
+  autoCompactPercent: number | null;
+}
+
+/** 输入框上下文弹层要的：用量和设置 */
+export interface SessionContextInfo {
+  /** 会话的模型（实际模型名） */
+  model: string | null;
+  /** 还没取到过时 null */
+  usage: ContextUsage | null;
+  /**
+   * 窗口和自动压缩阈值能不能改：Claude Code 不认识的模型（不是 claude- 开头的，第三方模型都是）按设的窗口算；
+   * Claude 官方模型按 Claude Code 自己的模型表，不能改
+   */
+  adjustable: boolean;
+  /** 这个会话自己设的 */
+  session: ContextSettings;
+  /** 这个模型的默认（「设为模型默认」） */
+  modelDefault: ContextSettings;
+  /** 网关的默认窗口（.env.local 的 CLAUDE_CODE_MAX_CONTEXT_TOKENS，没设是 200000） */
+  defaultWindow: number;
+  /** 子进程现在用的设置；没在运行时 null */
+  applied: { contextWindow: number | null; autoCompactWindow: number | null } | null;
+  /** 窗口和自动压缩阈值的取值范围 */
+  limits: { minWindow: number; maxWindow: number; minAutoCompactWindow: number; maxAutoCompactWindow: number };
+  /** Claude Code 在自动压缩窗口里留给回复和摘要的部分：阈值 = 自动压缩窗口 − 它 */
+  buffer: number;
+}
 
 /** 桌面工具操作的窗口：网页右上角的浮窗显示它，桌面版按标题找到这个窗口显示实时画面 */
 export interface DesktopTarget {

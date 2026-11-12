@@ -13,7 +13,7 @@ import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
-import type { Attachment, GatewayEvent, SessionState } from "../shared/types.js";
+import type { Attachment, ContextUsage, GatewayEvent, SessionState } from "../shared/types.js";
 import { buildUserContent, imageType, type SelectedElementContent } from "./attachments.js";
 import { parseRemote } from "../ssh/location.js";
 import { sshHost } from "../ssh/hosts.js";
@@ -25,6 +25,7 @@ import type { BrowserHost } from "../browser/host.js";
 import { inappBusy, takeToolResult } from "../browser/tool.js";
 import { desktopWriteActive } from "../desktop/guard.js";
 import { buildOptions } from "./options.js";
+import type { LaunchContext } from "./context-settings.js";
 import type { TaskList } from "./tasks.js";
 
 interface PendingPermission {
@@ -59,6 +60,8 @@ export class AgentSession {
   readonly cwd: string;
   permissionMode: PermissionMode;
   lastActiveAt = Date.now();
+  /** 启动时的上下文窗口和自动压缩窗口，会话中途改不了（见 context-settings.ts） */
+  readonly context: LaunchContext;
 
   private readonly input = new InputQueue();
   private readonly abortController = new AbortController();
@@ -80,10 +83,25 @@ export class AgentSession {
   private wakeAt = 0;
   private readonly done: Promise<void>;
   private closing = false;
+  private readonly onContext?: (usage: ContextUsage, buffer: number | null) => void;
+  /** 压缩过、之后模型还没回复过（见 ContextUsage.compacted） */
+  private compactedSinceReply = false;
 
   constructor(
     readonly id: string,
-    opts: { resume: boolean; cwd: string; model?: string; effort?: EffortLevel; permissionMode: PermissionMode; skills?: string[] },
+    opts: {
+      resume: boolean;
+      cwd: string;
+      model?: string;
+      effort?: EffortLevel;
+      permissionMode: PermissionMode;
+      skills?: string[];
+      context: LaunchContext;
+      /** 刚压缩过、模型还没回复过（上一个子进程里压缩的），见 ContextUsage.compacted */
+      compacted?: boolean;
+      /** 取到了上下文用量；buffer 是（自动压缩窗口 − 阈值），关掉了自动压缩时 null */
+      onContext?: (usage: ContextUsage, buffer: number | null) => void;
+    },
     private readonly hub: EventHub,
     private readonly log: FastifyBaseLogger,
     private readonly conversationLog: ConversationLog,
@@ -97,6 +115,9 @@ export class AgentSession {
     this.effort = opts.effort;
     this.cwd = opts.cwd;
     this.permissionMode = opts.permissionMode;
+    this.context = opts.context;
+    this.onContext = opts.onContext;
+    this.compactedSinceReply = opts.compacted ?? false;
     this.query = query({
       prompt: this.input,
       options: buildOptions({
@@ -107,6 +128,7 @@ export class AgentSession {
         effort: opts.effort,
         permissionMode: opts.permissionMode,
         skills: opts.skills,
+        context: opts.context,
         canUseTool: this.canUseTool,
         terminals,
         browser,
@@ -116,6 +138,8 @@ export class AgentSession {
       }),
     });
     this.done = this.consume();
+    // 不用等第一条消息（init 要等有输入才发）：resume 的会话一启动就能取到用量
+    void this.refreshContext();
   }
 
   async send(text: string, attachments: Attachment[] = [], elements: SelectedElementContent[] = []): Promise<string> {
@@ -146,6 +170,37 @@ export class AgentSession {
     this.publish({ type: "user_message", uuid, content, ...(queued ? { queued: true } : {}) });
     this.setState("running");
     return uuid;
+  }
+
+  /**
+   * 压缩上下文：交给 Claude Code 一条 /compact（同在它的终端里输入），不当成用户消息显示。
+   * 压缩的进度和结果照常是 system 消息（status: compacting、compact_boundary），这一轮以 result 结束
+   */
+  compact(): void {
+    // 刚 resume 的子进程在收到第一条输入前一直是 starting
+    if (this.state === "running" || this.state === "closed") throw Object.assign(new Error("这一轮结束后才能压缩"), { statusCode: 409 });
+    this.input.push({ type: "user", uuid: randomUUID(), message: { role: "user", content: "/compact" }, parent_tool_use_id: null, origin: { kind: "human" } });
+    this.setState("running");
+  }
+
+  /** 取一次上下文用量发给网页（不调模型：按上一次回复报的用量加上之后的估算） */
+  private async refreshContext(): Promise<void> {
+    try {
+      const u = await this.query.getContextUsage({ detail: "summary" });
+      const threshold = u.isAutoCompactEnabled && u.autoCompactThreshold ? u.autoCompactThreshold : null;
+      // rawMaxTokens 是自动压缩窗口：设了比窗口小的自动压缩窗口时是它，模型窗口按启动时设的
+      const usage: ContextUsage = {
+        used: u.totalTokens,
+        window: this.context.contextWindow ?? u.rawMaxTokens,
+        threshold,
+        at: Date.now(),
+        ...(this.compactedSinceReply ? { compacted: true } : {}),
+      };
+      this.onContext?.(usage, threshold === null ? null : u.rawMaxTokens - threshold);
+      this.publish({ type: "context", usage });
+    } catch (err) {
+      this.log.debug({ sessionId: this.id, err }, "取上下文用量失败");
+    }
   }
 
   async interrupt(): Promise<void> {
@@ -277,9 +332,17 @@ export class AgentSession {
         if (message.type === "system" && message.subtype === "init") {
           this.model = message.model;
           this.permissionMode = message.permissionMode;
-          if (this.state === "starting") this.setState("idle");
-          else this.publishState();
+          if (this.state === "starting") {
+            this.setState("idle");
+            void this.refreshContext();
+          } else this.publishState();
         }
+        // 压缩完成（自动的在一轮中间）：用量变了，但要等模型下一次回复才知道压缩后的实际用量
+        if (message.type === "system" && message.subtype === "compact_boundary") {
+          this.compactedSinceReply = true;
+          void this.refreshContext();
+        }
+        if (message.type === "assistant" && message.parent_tool_use_id === null && message.message.model !== "<synthetic>") this.compactedSinceReply = false;
         // 排队的消息可能在上一轮的 result 之后直接开始下一轮。只看主线程的：一轮结束后后台子代理还在出消息，
         // 那不是新的一轮，算进去的话会话一直显示运行中、对话里却没有进行中的一轮（直到通知唤起新的一轮）
         if ((message.type === "assistant" || message.type === "stream_event") && message.parent_tool_use_id === null && this.state === "idle") {
@@ -305,6 +368,7 @@ export class AgentSession {
         if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });
         if (message.type === "result") {
           this.setState("idle");
+          void this.refreshContext();
           // 一轮结束：内置浏览器关掉 AI 开的、没留下的临时标签页。还有转到后台的代码在跑（inappBusy），
           // 或者这一轮里有后台浏览器任务结束了（browserTaskEnded），先不关
           const deferred = inappBusy(this.id) || this.browserTaskEnded;

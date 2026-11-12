@@ -14,7 +14,7 @@ type Listener = (stored: StoredEvent) => void;
  * 一轮跑得久（每一小段输出都是一条 stream_event），开始时那条 state: running 早被挤出缓冲，
  * 这时打开、切回这个会话从头订阅，回放里就没有它，网页一直当这一轮没在运行（没有「停止」按钮）
  */
-const STICKY_TYPES = new Set<GatewayEvent["type"]>(["state", "desktop_target"]);
+const STICKY_TYPES = new Set<GatewayEvent["type"]>(["state", "desktop_target", "context"]);
 
 /** 一个会话的事件频道：环形缓冲 + 订阅；状态类事件另外记着最后一条，见 latestSticky */
 class Channel {

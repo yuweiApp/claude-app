@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ContextSettings, ContextUsage, SessionContextInfo, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
+export type { SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextSettings, ContextUsage, SessionContextInfo, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -162,6 +162,12 @@ export const api = {
     return request<{ attachments: Attachment[] }>("POST", "/uploads", form).then((r) => r.attachments);
   },
   interrupt: (id: string) => request("POST", `/sessions/${id}/interrupt`),
+  /** 上下文用量和设置（输入框的上下文弹层） */
+  context: (id: string) => request<SessionContextInfo>("GET", `/sessions/${id}/context`),
+  /** 改上下文窗口和自动压缩阈值，null 是不设；asModelDefault 时设成这个模型的默认。子进程空闲时网关会重启它 */
+  setContext: (id: string, settings: ContextSettings, asModelDefault = false) =>
+    request<SessionContextInfo>("PUT", `/sessions/${id}/context`, { ...settings, asModelDefault }),
+  compact: (id: string) => request("POST", `/sessions/${id}/compact`),
   /** 工作目录下可用的技能、插件、MCP 服务器和子代理，不传是默认工作目录；refresh 不用网关的缓存 */
   capabilities: (cwd?: string, refresh = false) => {
     const params = new URLSearchParams({ ...(cwd ? { cwd } : {}), ...(refresh ? { refresh: "1" } : {}) });

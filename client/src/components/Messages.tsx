@@ -51,7 +51,8 @@ function splitTurns(items: Item[]): Turn[] {
       results.push(item);
       midTool = false;
     } else if (item.kind === "user" || item.kind === "task" || item.kind === "agent" || item.kind === "compact" || !turns.length) {
-      const continued = ((item.kind === "user" || item.kind === "agent") && midTool && !turnStarts.has(item.uuid)) || (item.kind === "compact" && turns.length > 0);
+      // 一轮中间的自动压缩接着上一段；空闲时手动压缩的自成一轮
+      const continued = ((item.kind === "user" || item.kind === "agent") && midTool && !turnStarts.has(item.uuid)) || (item.kind === "compact" && !item.manual && turns.length > 0);
       if (continued) turns.at(-1)!.nextAt = item.at;
       turns.push({
         key: item.uuid,
@@ -79,7 +80,7 @@ function splitTurns(items: Item[]): Turn[] {
   // 历史消息（getSessionMessages）里没有 result，事件流回放的 result 排在最后：按 SDK 的 user_message_uuid 挂回所属的那一轮。
   // 后台任务开始的轮没有 user_message_uuid，按 result 到达时最近的那条用户消息或任务通知（startUuid）找。
   // 都找不到（事件缓冲从某一轮中间开始）：从后往前，挂到前面最近一个还没有 result 的轮
-  const startOf = (uuid: string | undefined) => (uuid ? turns.findIndex((t) => (t.user ?? t.task ?? t.agent)?.uuid === uuid) : -1);
+  const startOf = (uuid: string | undefined) => (uuid ? turns.findIndex((t) => (t.user ?? t.task ?? t.agent ?? (t.compact?.manual ? t.compact : null))?.uuid === uuid) : -1);
   let limit = turns.length;
   for (const r of results.toReversed()) {
     let i = startOf(r.userMessageUuid);
@@ -315,6 +316,8 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
   const toolRunning = units.some((u) => u.kind === "steps" && u.tools.some((t) => !view.toolResults[t.id]));
   // 正在压缩、压缩后还没有新的步骤：只显示压缩的动画，不显示「已处理」和「思考中…」
   const compacting = turn.compact?.status === "running" && !hasProcess;
+  // 空闲时手动压缩的一轮只有分界线：不显示「用时」
+  const bareCompact = Boolean(turn.compact?.manual) && turn.body.length === 0;
 
   return (
     <section className="turn">
@@ -341,7 +344,7 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
           )}
         </div>
       )}
-      {(hasProcess || live || duration !== null) && !compacting && (
+      {(hasProcess || live || duration !== null) && !compacting && !bareCompact && (
         <div className="process-wrap">
           <div className="process-toggle-row">
             <button
@@ -397,7 +400,8 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
       {errors.map((u) => (
         <UnitView key={u.key} unit={u} view={view} />
       ))}
-      {turn.result?.isError && <div className="result error">出错：{turn.result.text}</div>}
+      {/* 接口报错（余额不足、超出上下文等）时 result 是 success 加 is_error，没有文字，报错原文在前面那条 assistant 消息里 */}
+      {turn.result?.isError && turn.result.text && <div className="result error">出错：{turn.result.text}</div>}
     </section>
   );
 }
@@ -490,7 +494,7 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
     }
     case "result":
       // 一轮的用时显示在过程的折叠条上；子代理里出现的 result 只在出错时显示
-      return item.isError ? <div className="result error">出错：{item.text}</div> : null;
+      return item.isError && item.text ? <div className="result error">出错：{item.text}</div> : null;
     case "error":
       return <div className="result error">{item.text}</div>;
     case "notice":

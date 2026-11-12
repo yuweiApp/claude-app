@@ -106,7 +106,7 @@ Claude Code 默认读写 `~/.claude`。gateway 通过 `env.CLAUDE_CONFIG_DIR` �
 
 - 每个会话一个频道，环形缓冲最近 `EVENT_BUFFER_SIZE`（默认 5000）条事件，事件 id 在频道内单调递增。
 - `GET /sessions/:id/events`：首次连接回放整个缓冲；断线重连时浏览器自动带 `Last-Event-ID`，只回放之后的事件。缓冲已经被覆盖时先发一条 `reset`，客户端重新拉历史。
-- 状态类事件（`state`、`desktop_target`）只在变化时发一次，频道另外记着每种的最后一条：新连上来（首次连接、续不上重来）时它已经被挤出缓冲的话，回放之前先补发这一条（不带 id，浏览器的 `Last-Event-ID` 不变）。一轮跑得久，每一小段输出都是一条 `stream_event`，开始时那条 `state: running` 很快被挤掉；以前这时打开、切回会话，网页一直当这一轮没在运行（没有「停止」按钮、没有运行中的提示），侧边栏却在转圈。
+- 状态类事件（`state`、`desktop_target`、`context`）只在变化时发一次，频道另外记着每种的最后一条：新连上来（首次连接、续不上重来）时它已经被挤出缓冲的话，回放之前先补发这一条（不带 id，浏览器的 `Last-Event-ID` 不变）。一轮跑得久，每一小段输出都是一条 `stream_event`，开始时那条 `state: running` 很快被挤掉；以前这时打开、切回会话，网页一直当这一轮没在运行（没有「停止」按钮、没有运行中的提示），侧边栏却在转圈。
 - 每 15 秒发一次注释行心跳，防止代理断开空闲连接。
 
 ### 3.2 事件类型
@@ -122,6 +122,7 @@ Claude Code 默认读写 `~/.claude`。gateway 通过 `env.CLAUDE_CONFIG_DIR` �
 | `tasks` | `{ tasks: BackgroundTask[] }` | 会话的后台任务有变化，整个列表（见下面「后台任务」） |
 | `task_result` | `{ taskId, text, isError }` | 转到后台的网关工具调用（`browser_run_code` 等）的结果原文，跟在那个任务的 `task_notification` 后面发。SDK 的通知里只有 `summary`（工具名）和 `tool_use_id`，结果 Claude Code 直接交给了模型；网关的工具按 Claude Code 调用时放在 `_meta["claudecode/toolUseId"]` 里的 id 记下自己返回的结果（`takeToolResult`），对上后补发。网页在失败时把原因（第一行）显示在「后台任务失败」下面，悬停看全文；历史里的 `<task-notification>` 带 `<result>`（以 `Task failed: ` 开头），也从那里取 |
 | `desktop_target` | `{ target: { app, windowId?, title?, pid?, minimized? } \| null }` | 桌面工具（`mcp__desktop__…`）这个会话最近操作的窗口，变了才发（`gateway/src/desktop/guard.ts` 的 `noteTarget`）；`null` 是 `close-app` 关掉了它。网页在对话区右上角浮着显示，点开后桌面版按窗口标题找到采集源显示实时画面，见 [agent-desktop.md](agent-desktop.md) 第 10 节 |
+| `context` | `{ usage: { used, window, threshold, at, compacted? } }` | 上下文用量：子进程启动后、每轮结束、压缩完成后各取一次（`Query.getContextUsage({ detail: "summary" })`，不调模型，按上一次回复报的用量加之后的估算）。`threshold` 是自动压缩的用量，关掉自动压缩时 `null`。`compacted`：刚压缩过、模型还没回复过，这时的估算按压缩请求本身算，比压缩前还大，网页不显示数字，等下一次回复。网关同时记进 `claude-home/gateway-context.json`，子进程回收、网关重启后打开会话也有（见第 6 节「上下文窗口」） |
 | `reset` | — | 续传点已不在缓冲里 |
 
 SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类型比较全，转一遍只会丢字段；客户端可以直接 `import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'`。
@@ -224,7 +225,12 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 另外：
 
 - `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`：关掉遥测、错误上报、自动更新检查，不往 Anthropic 发东西。
-- `CLAUDE_CODE_MAX_CONTEXT_TOKENS`（默认 200000）：上下文大小。Claude Code 对不认识的模型名（不是 `claude-` 开头的，第三方模型都是）按这个值算，没设时也是 200000；Claude 官方模型按它自己的模型表（带 `[1m]` 的是 100 万），这个变量不管。快用满时自动压缩上下文（对话里的「上下文已压缩」），会提前留出回复的空间。网关写明默认值，要改在 `.env.local` 里设；所有第三方模型共用一个值，要和模型实际支持的一致，设大了请求会在模型那边超限报错。想更早压缩可以另设 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`（按它算什么时候压缩，不超过上下文大小）。（规则按 Claude Code 2.1.322 的程序核对。）
+- `CLAUDE_CODE_MAX_CONTEXT_TOKENS`（默认 200000）：上下文大小。Claude Code 对不认识的模型名（不是 `claude-` 开头的，第三方模型都是）按这个值算，没设时也是 200000；Claude 官方模型按它自己的模型表（带 `[1m]` 的是 100 万），这个变量不管。快用满时自动压缩上下文（对话里的「上下文已压缩」），会提前留出回复的空间。网关写明默认值，要改在 `.env.local` 里设；所有第三方模型共用一个值，要和模型实际支持的一致，设大了请求会在模型那边超限报错。想更早压缩可以另设 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`（按它算什么时候压缩，不超过上下文大小）。（规则按 Claude Code 2.1.322 的程序核对。）按会话、按模型单独设见下一条。
+- 上下文窗口（输入框底部的圆环，`client/src/components/ContextMeter.tsx`、`gateway/src/agent/context-settings.ts`）：圆环按用量占自动压缩阈值的比例画，点开显示用量、距自动压缩还剩多少、「压缩会话」，第三方模型还能改窗口大小和自动压缩阈值。
+  - 窗口大小就是这个会话的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`；自动压缩按「用到窗口的百分之多少」设，换算成 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` = 阈值 + Claude Code 留给回复和摘要的部分（实测 33000，取到用量后按实际的「压缩窗口 − 阈值」更新）。Claude Code 的压缩窗口最小 10 万（再小按 10 万算），所以阈值最低约 6.7 万；不设时阈值是窗口 − 33000（20 万的窗口是 16.7 万，83%）。Claude 官方模型的窗口按 Claude Code 自己的模型表，只显示用量、不能改。
+  - 两项都只能启动子进程时给：`settings` 选项里的 `autoCompactWindow` 也行，但会话中途 `applyFlagSettings({ autoCompactWindow })` 实测不生效（`getContextUsage` 报的阈值不变），所以用环境变量，改了重启子进程（关掉再 resume）。这一轮还没结束、有后台子代理在跑时不重启，下次子进程启动时生效；网页在一轮进行中不让改。换了模型（各模型的默认可能不同）也按这个规则重启。
+  - 取值顺序：会话自己设的 → 模型默认（「设为模型默认」，按模型名记）→ 网关默认（`.env.local` 的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，阈值用 Claude Code 自己的）。「恢复默认」去掉会话自己设的。都记在 `claude-home/gateway-context.json`，删会话时一起删，分叉出的会话沿用原会话的设置。
+  - 「压缩会话」交给 Claude Code 一条 `/compact`（同在它的终端里输入），不当成用户消息显示；压缩的进度和结果照常是 `status: compacting`、`compact_boundary`。空闲时手动压缩的自成一轮，不算上一轮的一段（不然上一轮的用时会算到压缩开始）：实时按开始压缩时上一轮已经结束判断，历史里按摘要后面紧跟着的 `<command-name>/compact</command-name>`。成功后的「Compacted」灰字不显示（已经有「上下文已压缩」）；没有可压缩的消息时 Claude Code 回一句「Not enough messages to compact.」，显示成「压缩上下文未完成」。
 - `WebSearch` 是 Anthropic 服务端工具，第三方模型用不了，默认放进 `disallowedTools`。
 - `WebFetch` 每次抓网页前会先请求 `api.anthropic.com/api/web/domain_info?domain=<域名>` 查域名黑名单，Anthropic 不支持的地区（如中国）这个接口一律返回 403，所有网址都报 "Unable to verify if domain … is safe to fetch"，网页本身其实能连上。网关在 SDK 的 `settings` 选项里设 `skipWebFetchPreflight: true` 跳过这一步。
 - Windows 上命令输出的编码：Claude Code 的 Bash 工具跑的是 Git Bash，模型在里面调 `powershell.exe`、`ipconfig` 等原生程序时，它们按控制台代码页输出（中文系统是 936，GBK），Claude Code 按 UTF-8 读，中文全是乱码。`agentEnv()` 在 Windows 上给子进程设 `CLAUDE_ENV_FILE`，指向网关写在 `$CLAUDE_CONFIG_DIR/claude-app-env.sh` 的脚本，Claude Code 每条 Bash 命令前在同一个 shell 里先执行它（`chcp.com 65001`）；环境里原来有 `CLAUDE_ENV_FILE` 的放进 `CLAUDE_APP_USER_ENV_FILE`，脚本最后接着 source 它。以前用的是 `BASH_ENV`，Claude Code 起 bash 时把它当不安全的变量去掉了，不生效（SSH 远程会话里在中文 Windows 上实测，见第 14 节）。Claude Code 自己的 PowerShell 工具（`CLAUDE_CODE_USE_POWERSHELL_TOOL=1`，预览）也是先 `chcp 65001` 再起 PowerShell。
@@ -263,6 +269,9 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | POST | `/sessions/:id/interrupt` | 打断当前一轮 |
 | POST | `/sessions/:id/permission-mode` | `{ mode }` |
 | POST | `/sessions/:id/model` | `{ model?, effort? }` 切换模型（`Query.setModel`）和推理强度（`Query.applyFlagSettings({ effortLevel })`）；子进程回收了的会话先 resume |
+| GET | `/sessions/:id/context` | 输入框上下文弹层：用量（在跑的或记下的）、能不能改、会话自己的设置、模型默认、网关默认窗口、子进程现在用的设置、取值范围（`SessionContextInfo`）；不拉起子进程 |
+| PUT | `/sessions/:id/context` | `{ contextWindow, autoCompactPercent, asModelDefault? }`（`null` 是不设）改上下文设置，`asModelDefault` 时设成模型默认并去掉会话自己的；子进程空闲时重启它，返回新的 `SessionContextInfo` |
+| POST | `/sessions/:id/compact` | 压缩上下文（`/compact`）；子进程回收了的先 resume，这一轮还在进行时 409 |
 | POST | `/sessions/:id/permissions/:requestId` | `{ behavior: 'allow' \| 'deny', message?, always? }` |
 | GET | `/sessions/:id/events` | SSE |
 | DELETE | `/sessions/:id/process` | 关闭活跃进程（不删记录） |

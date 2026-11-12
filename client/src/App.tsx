@@ -6,6 +6,7 @@ import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claud
 import { api, BROWSERS_CHANGED, subscribe, type Capabilities, type ExternalBrowserInfo, type GatewayConfig, type SessionListItem } from "./api";
 import { CapabilityPicker } from "./components/CapabilityPicker";
 import { MentionNamesContext } from "./components/MentionText";
+import { ContextMeter } from "./components/ContextMeter";
 import { Composer, type ComposerHandle } from "./components/Composer";
 import { Messages } from "./components/Messages";
 import { PermissionCard } from "./components/PermissionCard";
@@ -700,25 +701,37 @@ function Chat({
           </>
         }
         right={
-          <ModelPicker
-            models={models}
-            model={
-              // 网关重启后子进程没起来的会话没有 state 事件：按历史里最后一次回复的模型，resume 时网关也用它
-              sessionId
-                ? (resolveModel(models, switching?.model) ?? view.model ?? view.shownModel ?? config.model ?? undefined)
-                : (resolveModel(models, newModel) ?? config.model ?? undefined)
-            }
-            effort={sessionId ? (switching?.effort ?? view.effort ?? config.effort) : newEffort}
-            switching={switching !== null}
-            onModel={(value) => {
-              if (!sessionId) setNewModel(value);
-              else switchModel(sessionId, { model: value });
-            }}
-            onEffort={(effort) => {
-              if (!sessionId) setNewEffort(effort);
-              else switchModel(sessionId, { effort });
-            }}
-          />
+          <>
+            <ModelPicker
+              models={models}
+              model={
+                // 网关重启后子进程没起来的会话没有 state 事件：按历史里最后一次回复的模型，resume 时网关也用它
+                sessionId
+                  ? (resolveModel(models, switching?.model) ?? view.model ?? view.shownModel ?? config.model ?? undefined)
+                  : (resolveModel(models, newModel) ?? config.model ?? undefined)
+              }
+              effort={sessionId ? (switching?.effort ?? view.effort ?? config.effort) : newEffort}
+              switching={switching !== null}
+              onModel={(value) => {
+                if (!sessionId) setNewModel(value);
+                else switchModel(sessionId, { model: value });
+              }}
+              onEffort={(effort) => {
+                if (!sessionId) setNewEffort(effort);
+                else switchModel(sessionId, { effort });
+              }}
+            />
+            {sessionId && (
+              <ContextMeter
+                sessionId={sessionId}
+                usage={view.context}
+                running={view.state === "running"}
+                compacting={view.items.some((it) => it.kind === "compact" && it.status === "running")}
+                model={view.model ?? view.shownModel}
+                onError={onError}
+              />
+            )}
+          </>
         }
       />
     </div>
