@@ -56,6 +56,26 @@ export interface BrowserTabInfo {
   pendingUrl?: string;
 }
 
+/** 内置浏览器标签页里的一次下载，和 desktop/src/browser/views.ts 的 UiDownload 一致 */
+export interface BrowserDownload {
+  guid: string;
+  /** 在哪个标签页里下载的 */
+  tabId: string | null;
+  sessionId: string | null;
+  /** 存下的文件名（同名时带 (1)）和本机上的位置 */
+  filename: string;
+  path: string;
+  url: string;
+  state: "progressing" | "completed" | "cancelled" | "interrupted";
+  paused: boolean;
+  receivedBytes: number;
+  /** 不知道时是 0 */
+  totalBytes: number;
+  bytesPerSecond: number;
+  /** 毫秒时间戳 */
+  startTime: number;
+}
+
 /** 地址栏的建议（浏览历史） */
 export interface BrowserSuggestion {
   url: string;
@@ -80,6 +100,12 @@ export interface DesktopBrowserApi {
   onTabs(callback: (tabs: BrowserTabInfo[]) => void): () => void;
   /** AI 切到了某个标签页 */
   onActivate(callback: (id: string) => void): () => void;
+  /** 全部下载（进行中的和结束了的，每个会话只留最近 20 个） */
+  downloads(): Promise<BrowserDownload[]>;
+  /** 下载开始、有进度、结束时推来这一个的现状；返回取消订阅的函数 */
+  onDownload(callback: (download: BrowserDownload) => void): () => void;
+  /** 用系统默认程序打开存好的文件、在文件管理器里显示它、取消进行中的下载；文件不在了、还没存好时返回 false */
+  downloadAction(guid: string, action: "open" | "show" | "cancel"): Promise<boolean>;
   /** 选择元素：传取元素的函数（gateway/src/shared/element-context.ts）打开检查模式，传 null 关掉；打不开时返回 false */
   inspect(id: string, fn: string | null): Promise<boolean>;
   /** 检查模式下选中了一个元素，见 desktop/src/browser/inspect.ts */

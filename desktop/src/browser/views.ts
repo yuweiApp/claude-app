@@ -113,6 +113,28 @@ export interface DownloadInfo {
   startTime: number;
 }
 
+/** 界面（右侧面板的浏览器标签页底部的下载条）看到的一次下载：DownloadInfo 加上是哪个标签页的；main.ts 经 browser:download 推给界面 */
+export interface UiDownload extends DownloadInfo {
+  guid: string;
+  tabId: string | null;
+  sessionId: string | null;
+}
+
+/** 一次下载的现状，进度是 Electron 下载对象上的实时数据 */
+function downloadInfo(item: DownloadItem, file: string): DownloadInfo {
+  return {
+    filename: path.basename(file),
+    path: file,
+    url: shortUrl(item.getURL()),
+    state: item.getState(),
+    paused: item.isPaused(),
+    receivedBytes: item.getReceivedBytes(),
+    totalBytes: item.getTotalBytes(),
+    bytesPerSecond: item.getState() === "progressing" ? item.getCurrentBytesPerSecond() : 0,
+    startTime: Math.round(item.getStartTime() * 1000),
+  };
+}
+
 /**
  * 下载地址：data: 地址是整个文件的内容编码进链接（可能有几 MB），只留类型和长度，写成 data:image/png;base64,…（共 1438554 个字符）；
  * 其他地址原样（截断了就打不开了）
@@ -227,6 +249,8 @@ export interface BrowserViewsEvents {
   tabEvent: [sessionId: string, event: TabEvent];
   /** 标签页里的下载开始、结束 */
   download: [tab: Tab, event: DownloadEvent];
+  /** 下载开始、有进度（最多每 300ms 一次）、结束，给界面 */
+  downloadChanged: [download: UiDownload];
 }
 
 const PARTITION = "persist:claude-browser";
@@ -251,7 +275,7 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   /** 远程主机的分区：设好代理才能开标签页 */
   private readonly remoteSessions = new Map<string, Promise<Session>>();
   /** 下载（guid 见 DownloadEvent）：进行中的和结束了的，按开始的先后；cancelDownload、downloadsOf 用，每个会话只留最近 MAX_DOWNLOADS 个 */
-  private readonly downloads = new Map<string, { sessionId: string | null; item: DownloadItem; path: string }>();
+  private readonly downloads = new Map<string, { sessionId: string | null; tabId: string | null; item: DownloadItem; path: string }>();
   private park: BrowserWindow | null = null;
   private shown: Tab | null = null;
   /** 网页图标的缓存：图标网址 → favicon:// 地址（取不到是 null）；编号 → 图片 */
@@ -848,19 +872,23 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
 
   /** 这个会话的标签页里的下载（进行中的和结束了的，先开始的在前），进度是 Electron 下载对象上的实时数据 */
   downloadsOf(sessionId: string): DownloadInfo[] {
-    return [...this.downloads.values()]
-      .filter((d) => d.sessionId === sessionId)
-      .map(({ item, path: file }) => ({
-        filename: path.basename(file),
-        path: file,
-        url: shortUrl(item.getURL()),
-        state: item.getState(),
-        paused: item.isPaused(),
-        receivedBytes: item.getReceivedBytes(),
-        totalBytes: item.getTotalBytes(),
-        bytesPerSecond: item.getState() === "progressing" ? item.getCurrentBytesPerSecond() : 0,
-        startTime: Math.round(item.getStartTime() * 1000),
-      }));
+    return [...this.downloads.values()].filter((d) => d.sessionId === sessionId).map(({ item, path: file }) => downloadInfo(item, file));
+  }
+
+  /** 全部下载（界面打开时取一次，之后靠 downloadChanged） */
+  uiDownloads(): UiDownload[] {
+    return [...this.downloads.keys()].map((guid) => this.uiDownload(guid)!);
+  }
+
+  private uiDownload(guid: string): UiDownload | null {
+    const d = this.downloads.get(guid);
+    return d ? { guid, tabId: d.tabId, sessionId: d.sessionId, ...downloadInfo(d.item, d.path) } : null;
+  }
+
+  /** 存好了的下载在磁盘上的位置；没有这个下载、还没存好时 null */
+  downloadedPath(guid: string): string | null {
+    const d = this.downloads.get(guid);
+    return d && d.item.getState() === "completed" ? d.path : null;
   }
 
   /** 发出标签页的变化（bridge 转给网关）；url 不给时用标签页现在的网址 */
@@ -937,14 +965,28 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
       // 报给 Playwright 的文件名用实际存下的（同名时带 (1)），download.suggestedFilename() 就是磁盘上的名字
       const base = { guid, url: item.getURL(), suggestedFilename: path.basename(target), path: target };
       const sessionId = tab?.sessionId ?? null;
-      this.downloads.set(guid, { sessionId, item, path: target });
+      this.downloads.set(guid, { sessionId, tabId: tab?.id ?? null, item, path: target });
       // 每个会话只留最近的几个（进行中的不删）
       const mine = [...this.downloads].filter(([, d]) => d.sessionId === sessionId && d.item.getState() !== "progressing");
       for (const [old] of mine.slice(0, Math.max(0, mine.length - MAX_DOWNLOADS))) this.downloads.delete(old);
       if (tab) this.emit("download", tab, { ...base, state: "started", receivedBytes: 0, totalBytes: item.getTotalBytes() });
+      // 给界面的：被挤出 downloads 的（太旧）就不再报
+      const changed = () => {
+        const info = this.uiDownload(guid);
+        if (info) this.emit("downloadChanged", info);
+      };
+      changed();
+      let last = 0;
+      item.on("updated", () => {
+        const now = Date.now();
+        if (now - last < 300) return;
+        last = now;
+        changed();
+      });
       item.once("done", (_e, state) => {
         downloading.delete(target);
         if (tab) this.emit("download", tab, { ...base, state, receivedBytes: item.getReceivedBytes(), totalBytes: item.getTotalBytes() });
+        changed();
       });
     });
   }

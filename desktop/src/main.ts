@@ -222,6 +222,23 @@ ipcMain.handle("window:capture", async (e, rect: Rectangle) => {
   if (area.width < 1 || area.height < 1) return null;
   return pngBase64(await mainWindow.webContents.capturePage(area)) ?? null;
 });
+// 标签页里的下载（views.ts 的 UiDownload）：开始、进度、结束推给界面，浏览器标签页底部显示下载条；条上的打开、在文件夹中显示、取消
+browserViews.on("downloadChanged", (d) => mainWindow?.webContents.send("browser:download", d));
+ipcMain.handle("browser:downloads", (e) => (fromUi(e.sender) ? browserViews.uiDownloads() : []));
+ipcMain.handle("browser:download-action", async (e, guid: unknown, action: unknown) => {
+  if (!fromUi(e.sender) || typeof guid !== "string") return false;
+  if (action === "cancel") {
+    browserViews.cancelDownload(guid);
+    return true;
+  }
+  const file = browserViews.downloadedPath(guid);
+  if (!file || !existsSync(file)) return false;
+  if (action === "show") {
+    shell.showItemInFolder(file);
+    return true;
+  }
+  return action === "open" && (await shell.openPath(file)) === "";
+});
 ipcMain.handle("browser:suggest", (e, query: unknown) => (fromUi(e.sender) && typeof query === "string" ? browserViews.history.suggest(query) : []));
 
 // 桌面工具正在操作的窗口的实时画面（网页右上角的浮窗）：按标题找采集源，见 capture.ts

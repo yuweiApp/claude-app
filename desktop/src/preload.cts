@@ -50,6 +50,13 @@ contextBridge.exposeInMainWorld("desktop", {
       ipcRenderer.on("browser:tabs", listener);
       return () => void ipcRenderer.removeListener("browser:tabs", listener);
     },
+    downloads: (): Promise<unknown[]> => ipcRenderer.invoke("browser:downloads"),
+    downloadAction: (guid: string, action: string): Promise<boolean> => ipcRenderer.invoke("browser:download-action", guid, action),
+    onDownload: (callback: (download: unknown) => void) => {
+      const listener = (_event: electron.IpcRendererEvent, download: unknown) => callback(download);
+      ipcRenderer.on("browser:download", listener);
+      return () => void ipcRenderer.removeListener("browser:download", listener);
+    },
     onActivate: (callback: (id: string) => void) => {
       const listener = (_event: electron.IpcRendererEvent, id: string) => callback(id);
       ipcRenderer.on("browser:activate", listener);

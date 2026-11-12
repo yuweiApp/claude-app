@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { ELEMENT_CONTEXT_FUNCTION } from "@gateway/shared/element-context";
 import type { BrowserLogo } from "../api";
-import type { BrowserSuggestion, BrowserTabInfo, DesktopBrowserApi } from "../desktop";
+import { fileManagerName, type BrowserDownload, type BrowserSuggestion, type BrowserTabInfo, type DesktopBrowserApi } from "../desktop";
+import { dismissDownloads, useTabDownloads } from "../state/browserDownloads";
 import { sanitizeElement, uploadElementScreenshot } from "../state/responseAnnotations";
 import { closePageAnnotation, startPageAnnotation } from "./ResponseAnnotations";
 
@@ -208,7 +209,119 @@ export function BrowserTab({ api, id, info, active }: Props) {
           )
         )}
       </div>
+      <DownloadBar api={api} tabId={id} />
     </div>
+  );
+}
+
+/** 下载条最多显示几个（最近的） */
+const MAX_SHOWN_DOWNLOADS = 3;
+
+/**
+ * 画面区域下面的下载条：这个标签页里的下载（Chromium 不显示、要下载的响应，网页不会变，只在这里看得到）。
+ * 每个显示文件名、进度或结果、存在哪；存好的能打开、在文件管理器里显示，进行中的能取消。右边 × 关掉整条
+ */
+function DownloadBar({ api, tabId }: { api: DesktopBrowserApi; tabId: string }) {
+  const downloads = useTabDownloads(tabId);
+  /** 打开、显示失败（文件被删、移走了）的 */
+  const [missing, setMissing] = useState<Set<string>>(() => new Set());
+  if (downloads.length === 0) return null;
+  const shown = downloads.slice(-MAX_SHOWN_DOWNLOADS);
+  const act = (d: BrowserDownload, action: "open" | "show" | "cancel") =>
+    void api.downloadAction(d.guid, action).then((ok) => {
+      if (!ok && action !== "cancel") setMissing((m) => new Set(m).add(d.guid));
+    });
+  return (
+    <div className="browser-downloads" role="status">
+      <div className="browser-downloads-list">
+        {shown.map((d) => {
+          const done = d.state === "completed";
+          const gone = missing.has(d.guid);
+          return (
+            <div key={d.guid} className={`browser-download ${d.state}`} title={`${d.path}\n${d.url}`}>
+              <DownloadIcon state={d.state} />
+              <div className="browser-download-text">
+                {done && !gone ? (
+                  <button className="browser-download-name" onClick={() => act(d, "open")}>
+                    {d.filename}
+                  </button>
+                ) : (
+                  <span className="browser-download-name">{d.filename}</span>
+                )}
+                <span className="browser-download-status">{gone ? "文件已被删除或移走" : downloadStatus(d)}</span>
+              </div>
+              {d.state === "progressing" && <DownloadProgress d={d} />}
+              {done && !gone && (
+                <button className="btn-small" onClick={() => act(d, "show")}>
+                  在{fileManagerName}中显示
+                </button>
+              )}
+              {d.state === "progressing" && (
+                <button className="btn-small" onClick={() => act(d, "cancel")}>
+                  取消
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <button className="icon-btn browser-btn" title="关闭下载栏" aria-label="关闭下载栏" onClick={() => dismissDownloads(downloads.map((d) => d.guid))}>
+        <StopIcon />
+      </button>
+    </div>
+  );
+}
+
+function DownloadProgress({ d }: { d: BrowserDownload }) {
+  const ratio = d.totalBytes > 0 ? Math.min(1, d.receivedBytes / d.totalBytes) : null;
+  return (
+    <div className={`browser-download-bar${ratio === null ? " unknown" : ""}`} aria-hidden="true">
+      <div style={ratio === null ? undefined : { width: `${ratio * 100}%` }} />
+    </div>
+  );
+}
+
+/** 下载的进度或结果，加上存在哪个文件夹 */
+function downloadStatus(d: BrowserDownload): string {
+  const size = d.totalBytes > 0 ? formatBytes(d.totalBytes) : "";
+  switch (d.state) {
+    case "progressing": {
+      const got = formatBytes(d.receivedBytes) + (size ? ` / ${size}` : "");
+      if (d.paused) return `已暂停 · ${got}`;
+      return d.bytesPerSecond > 0 ? `${got} · ${formatBytes(d.bytesPerSecond)}/s` : got;
+    }
+    case "completed":
+      return `${formatBytes(d.receivedBytes || d.totalBytes)} · 已存到 ${folderOf(d.path)}`;
+    case "cancelled":
+      return "已取消";
+    default:
+      return "下载失败";
+  }
+}
+
+function folderOf(file: string): string {
+  const i = Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"));
+  return i > 0 ? file.slice(0, i) : file;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n / 1024;
+  let u = 0;
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024;
+    u++;
+  }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[u]}`;
+}
+
+/** 下载：向下的箭头落到托盘上；失败、取消时是灰的（颜色在样式里） */
+function DownloadIcon({ state }: { state: BrowserDownload["state"] }) {
+  return (
+    <svg className="browser-download-icon" data-state={state} width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 2.5v7.5M4.8 6.8 8 10l3.2-3.2M2.5 11.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" />
+    </svg>
   );
 }
 

@@ -1444,6 +1444,24 @@ main {
 .browser-error-retry { margin-top: 8px; color: var(--text); }
 .browser-covered img { width: 100%; height: 100%; object-fit: fill; display: block; }
 .browser-covered:has(img) { padding: 0; }
+/* 画面区域下面的下载条（BrowserTab.tsx 的 DownloadBar） */
+.browser-downloads { flex: none; display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px 6px 12px; border-top: 1px solid var(--border); background: var(--panel); }
+.browser-downloads-list { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.browser-download { display: flex; align-items: center; gap: 10px; min-height: 30px; }
+.browser-download-icon { flex: none; color: var(--accent); }
+.browser-download-icon[data-state="cancelled"], .browser-download-icon[data-state="interrupted"] { color: var(--muted); }
+.browser-download-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.browser-download-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text); text-align: left; }
+button.browser-download-name { padding: 0; border: none; background: none; cursor: pointer; }
+button.browser-download-name:hover { color: var(--accent); text-decoration: underline; }
+.browser-download-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
+.browser-download.interrupted .browser-download-status { color: var(--err); }
+.browser-download-bar { flex: none; width: 80px; height: 4px; border-radius: 2px; overflow: hidden; background: var(--border); }
+.browser-download-bar > div { height: 100%; background: var(--accent); transition: width 0.3s; }
+.browser-download-bar.unknown > div { width: 30%; animation: browser-download-unknown 1.2s ease-in-out infinite alternate; }
+@keyframes browser-download-unknown { from { margin-left: 0; } to { margin-left: 70%; } }
+@media (prefers-reduced-motion: reduce) { .browser-download-bar.unknown > div { animation: none; width: 100%; opacity: 0.5; } }
+.browser-downloads .btn-small { flex: none; color: var(--text); }
 /* 快照上正在写要求的那个元素，颜色同 HTML 预览里的选中框 */
 .browser-picked { position: absolute; box-sizing: border-box; border: 2px solid #2563eb; border-radius: 3px; background: rgba(37, 99, 235, 0.12); pointer-events: none; }
 .mention-tab { display: inline-flex; align-items: center; gap: 3px; vertical-align: bottom; }
