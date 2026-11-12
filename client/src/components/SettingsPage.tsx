@@ -23,11 +23,14 @@ type Origin = "mine" | "builtin" | "directory";
 /** 连接器页顶部的标签：已经添加的（设置页添加的、插件和配置文件带来的）和连接器市场（MCP 注册表） */
 type ConnectorTab = "added" | "directory";
 
-const SECTIONS: { key: Section; label: string; icon: ReactNode; group?: string }[] = [
+/** 「子代理」先隐藏：设置页导航里不显示，插件列表和详情里也不列插件带的子代理。代码和网关接口都留着，改成 true 就恢复 */
+const SHOW_AGENTS = false;
+
+const SECTIONS: { key: Section; label: string; icon: ReactNode; group?: string; hidden?: boolean }[] = [
   { key: "appearance", label: "外观", icon: <IosIcon tone="orange"><AppearanceIcon /></IosIcon>, group: "个人" },
   { key: "plugins", label: "插件", icon: <IosIcon tone="blue"><PluginIcon /></IosIcon>, group: "集成" },
   { key: "skills", label: "技能", icon: <IosIcon tone="purple"><SkillIcon /></IosIcon> },
-  { key: "agents", label: "子代理", icon: <IosIcon tone="teal"><AgentIcon /></IosIcon> },
+  { key: "agents", label: "子代理", icon: <IosIcon tone="teal"><AgentIcon /></IosIcon>, hidden: !SHOW_AGENTS },
   { key: "mcp", label: "连接器", icon: <IosIcon tone="pink"><McpIcon /></IosIcon> },
   { key: "browsers", label: "浏览器", icon: <IosIcon tone="green"><BrowsersIcon /></IosIcon> },
   { key: "ssh", label: "SSH 连接", icon: <IosIcon tone="gray"><SshIcon /></IosIcon>, group: "远程" },
@@ -89,7 +92,7 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
     <div className="settings">
       <nav className="settings-nav" aria-label="设置" hidden={navCollapsed}>
         <h2>设置</h2>
-        {SECTIONS.map((s) => [
+        {SECTIONS.filter((s) => !s.hidden).map((s) => [
           s.group && <div key={s.group} className="settings-group">{s.group}</div>,
           <button key={s.key} className={`settings-nav-item${s.key === section ? " active" : ""}`} aria-current={s.key === section ? "page" : undefined} onClick={() => setSection(s.key)}>
             {s.icon}
@@ -263,7 +266,7 @@ function pluginParts(name: string, data: Capabilities) {
   return {
     skills: data.skills.filter((s) => s.name.startsWith(`${name}:`)),
     servers: data.mcpServers.filter((m) => m.name.startsWith(`plugin:${name}:`)),
-    agents: data.agents.filter((a) => a.plugin === name),
+    agents: SHOW_AGENTS ? data.agents.filter((a) => a.plugin === name) : [],
   };
 }
 
