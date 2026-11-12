@@ -1,7 +1,7 @@
 import type { CanUseTool, EffortLevel, Options, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { agentEnv, config } from "../config.js";
 import { attachmentsDir } from "./attachments.js";
-import { importedPlugins } from "./extensions.js";
+import { disabledAgents, importedPlugins } from "./extensions.js";
 import { enabledMcpServers } from "./mcp-config.js";
 import { TERMINAL_READ_TOOLS, TERMINAL_SERVER, terminalServer } from "../terminal/tool.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -73,7 +73,7 @@ export function buildOptions(launch: SessionLaunch): Options {
     allowDangerouslySkipPermissions: true,
     canUseTool: launch.canUseTool,
     ...(allowedTools.length ? { allowedTools } : {}),
-    disallowedTools: config.disallowedTools,
+    disallowedTools: [...config.disallowedTools, ...disabledAgents().map((name) => `Agent(${name})`)],
     settingSources: ["user", "project", "local"],
     // WebFetch 抓网页前先问 api.anthropic.com 这个域名能不能抓，不支持的地区（如中国）一律 403，所有网址都报
     // "Unable to verify if domain … is safe to fetch"，网页本身其实能连上。跳过这一步

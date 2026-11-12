@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 /** iOS 设置里那种图标：彩色圆角方块（上浅下深的渐变），里面一个白色图形；颜色见 styles.css 的 .ios-icon-* */
-export function IosIcon({ tone, size = 26, children }: { tone: "gray" | "orange" | "blue" | "purple" | "pink" | "green"; size?: number; children: ReactNode }) {
+export function IosIcon({ tone, size = 26, children }: { tone: "gray" | "orange" | "blue" | "purple" | "pink" | "green" | "teal"; size?: number; children: ReactNode }) {
   return (
     <span className={`ios-icon ios-icon-${tone}`} style={{ width: size, height: size }} aria-hidden="true">
       {children}

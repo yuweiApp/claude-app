@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { listModels } from "../../agent/models.js";
 import type { FastifyInstance } from "fastify";
@@ -7,7 +8,7 @@ import { BadRequestError, NotFoundError, type SessionManager } from "../../agent
 import type { EventHub } from "../../events/event-hub.js";
 import { streamSession } from "../sse.js";
 import { clearCapabilitiesCache, listCapabilities } from "../../agent/capabilities.js";
-import { ExtensionError, importPlugin, importSkill, readSkill, removePlugin, removeSkill, setSkillEnabled } from "../../agent/extensions.js";
+import { ExtensionError, importPlugin, importSkill, readSkill, removePlugin, removeSkill, setAgentEnabled, setSkillEnabled } from "../../agent/extensions.js";
 import { removeMcpServer, saveMcpServer, setMcpServerEnabled } from "../../agent/mcp-config.js";
 import { addConnector, ConnectorError, listConnectors } from "../../agent/connectors.js";
 import { cancelMcpAuth, clearMcpAuth, getMcpAuth, McpAuthError, startMcpAuth, submitMcpAuthCallback } from "../../agent/mcp-auth.js";
@@ -50,7 +51,7 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
   /** Claude Code 的模型列表（SDK 的 ModelInfo） */
   app.get("/models", async () => ({ models: await listModels() }));
 
-  /** 可用的技能、插件和 MCP 服务器；cwd 不传是默认工作目录，refresh=1 不用缓存 */
+  /** 可用的技能、插件、MCP 服务器和子代理；cwd 不传是默认工作目录，refresh=1 不用缓存 */
   app.get<{ Querystring: { cwd?: string; refresh?: string } }>("/capabilities", async (req) => {
     if (req.query.refresh === "1") clearCapabilitiesCache();
     // 远程会话不管技能、插件、连接器（网页上也不显示），按默认工作目录回答
@@ -65,6 +66,22 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     const skill = await readSkill(req.params.name, cwd, pluginDir);
     if (!skill) throw new NotFoundError("这个技能没有可查看的文件");
     return skill;
+  });
+
+  /** 子代理的定义文件；内置的没有文件，返回 404。只读列表里有路径的文件 */
+  app.get<{ Params: { name: string }; Querystring: { cwd?: string } }>("/agents/:name", async (req) => {
+    const cwd = req.query.cwd || config.workspaceDir;
+    const file = (await listCapabilities(cwd)).agents.find((a) => a.name === req.params.name)?.path;
+    const content = file ? await readFile(file, "utf8").catch(() => null) : null;
+    if (!file || content === null) throw new NotFoundError("这个子代理没有可查看的文件");
+    return { name: req.params.name, path: file, content };
+  });
+
+  /** 启用、停用子代理（内置的也可以）。对新会话和子进程重启后的会话生效 */
+  app.patch<{ Params: { name: string }; Body: { enabled: boolean } }>("/agents/:name", async (req) => {
+    setAgentEnabled(req.params.name, req.body.enabled !== false);
+    clearCapabilitiesCache();
+    return { ok: true };
   });
 
   /** 导入技能、插件：path 是网关机器上的文件夹，复制到 Claude Code 配置目录 */

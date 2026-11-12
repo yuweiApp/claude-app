@@ -16,9 +16,9 @@ import { AppearancePage } from "./AppearancePage";
 import { BrowsersPage } from "./BrowsersPage";
 import { SshPage } from "./SshPage";
 
-export type SettingsSection = "appearance" | "plugins" | "skills" | "mcp" | "browsers" | "ssh";
+export type SettingsSection = "appearance" | "plugins" | "skills" | "agents" | "mcp" | "browsers" | "ssh";
 type Section = SettingsSection;
-/** 技能、插件页顶部的标签：个人（导入的、项目里的、导入插件带的、从市场装的）和 Claude Code 自带的；插件页还有插件市场 */
+/** 技能、子代理、插件页顶部的标签：个人（导入的、项目里的、导入插件带的、从市场装的）和 Claude Code 自带的；插件页还有插件市场 */
 type Origin = "mine" | "builtin" | "directory";
 /** 连接器页顶部的标签：已经添加的（设置页添加的、插件和配置文件带来的）和连接器市场（MCP 注册表） */
 type ConnectorTab = "added" | "directory";
@@ -27,6 +27,7 @@ const SECTIONS: { key: Section; label: string; icon: ReactNode; group?: string }
   { key: "appearance", label: "外观", icon: <IosIcon tone="orange"><AppearanceIcon /></IosIcon>, group: "个人" },
   { key: "plugins", label: "插件", icon: <IosIcon tone="blue"><PluginIcon /></IosIcon>, group: "集成" },
   { key: "skills", label: "技能", icon: <IosIcon tone="purple"><SkillIcon /></IosIcon> },
+  { key: "agents", label: "子代理", icon: <IosIcon tone="teal"><AgentIcon /></IosIcon> },
   { key: "mcp", label: "连接器", icon: <IosIcon tone="pink"><McpIcon /></IosIcon> },
   { key: "browsers", label: "浏览器", icon: <IosIcon tone="green"><BrowsersIcon /></IosIcon> },
   { key: "ssh", label: "SSH 连接", icon: <IosIcon tone="gray"><SshIcon /></IosIcon>, group: "远程" },
@@ -44,6 +45,7 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
   /** 插件市场、连接器市场的「刷新」：换个 key 让市场列表重新加载 */
   const [directoryKey, setDirectoryKey] = useState(0);
   const [viewing, setViewing] = useState<Capabilities["skills"][number] | null>(null);
+  const [viewingAgent, setViewingAgent] = useState<Capabilities["agents"][number] | null>(null);
   /** 插件页里打开详情的插件名 */
   const [openPlugin, setOpenPlugin] = useState<string | null>(null);
 
@@ -75,6 +77,7 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
   const inOrigin = (item: { builtin: boolean }) => item.builtin === (origin === "builtin");
   const plugins = (data?.plugins ?? []).filter((p) => inOrigin(p) && match(p.name, p.source));
   const skills = (data?.skills ?? []).filter((s) => inOrigin(s) && match(s.name, s.description));
+  const agents = (data?.agents ?? []).filter((a) => inOrigin(a) && match(a.name, a.description));
   const count = (items: { builtin: boolean }[] | undefined, builtin: boolean) => items?.filter((i) => i.builtin === builtin).length ?? 0;
   const servers = (data?.mcpServers ?? []).filter((m) => match(m.name, m.target, m.connector?.title));
   const browsing = section === "mcp" && connectorTab === "directory";
@@ -104,6 +107,8 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
               <p>
                 {section === "plugins" && `已安装 ${data?.plugins.length ?? 0} 个插件。`}
                 {section === "skills" && `共 ${data?.skills.length ?? 0} 个技能，已启用 ${data?.skills.filter((s) => s.enabled).length ?? 0} 个，启停对新会话生效。`}
+                {section === "agents" &&
+                  `子代理由 Claude 用 Agent 工具调起，在自己的上下文里处理交给它的任务。共 ${data?.agents.length ?? 0} 个，已启用 ${data?.agents.filter((a) => a.enabled).length ?? 0} 个，启停对新会话生效。`}
                 {section === "mcp" &&
                   `连接器（MCP 服务器）把 Figma、Notion、GitHub 等外部服务接进对话，提供工具和数据。已添加 ${data?.mcpServers.length ?? 0} 个，已启用 ${data?.mcpServers.filter((m) => m.enabled).length ?? 0} 个。`}
               </p>
@@ -122,7 +127,7 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
             {section === "skills" && <ImportButton kind="skills" onImported={() => load(false)} onError={setError} />}
             {section === "mcp" && <AddServerButton onAdded={() => load(false)} />}
           </header>
-          {(section === "plugins" || section === "skills") && !detail && (
+          {(section === "plugins" || section === "skills" || section === "agents") && !detail && (
             <div className="settings-tabs" role="tablist">
               {(section === "plugins" ? (["mine", "builtin", "directory"] as const) : (["mine", "builtin"] as const)).map((o) => (
                 <button key={o} role="tab" aria-selected={o === origin} className={`settings-tab${o === origin ? " active" : ""}`} onClick={() => setOrigin(o)}>
@@ -132,7 +137,7 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
                     <>
                       {o === "mine" ? "个人" : "内置"}
                       {label}
-                      <span className="settings-tab-count">{count(section === "skills" ? data?.skills : data?.plugins, o === "builtin")}</span>
+                      <span className="settings-tab-count">{count(section === "skills" ? data?.skills : section === "agents" ? data?.agents : data?.plugins, o === "builtin")}</span>
                     </>
                   )}
                 </button>
@@ -156,6 +161,7 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
               data={data}
               onBack={() => setOpenPlugin(null)}
               onViewSkill={setViewing}
+              onViewAgent={setViewingAgent}
               onChanged={() => load(false)}
               onDeleted={() => {
                 setOpenPlugin(null);
@@ -178,7 +184,7 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
             <List empty={data ? (keyword ? "没有匹配的插件" : origin === "mine" ? "还没有个人插件，在「插件市场」里安装，或点右上角导入" : "没有内置插件") : "加载中…"}>
               {plugins.map((p) => {
                 const parts = pluginParts(p.name, data!);
-                const meta = [`${parts.skills.length} 个技能`, `${parts.servers.length} 个连接器`, p.version && `版本 ${p.version}`].filter(Boolean).join(" · ");
+                const meta = [`${parts.skills.length} 个技能`, `${parts.servers.length} 个连接器`, parts.agents.length > 0 && `${parts.agents.length} 个子代理`, p.version && `版本 ${p.version}`].filter(Boolean).join(" · ");
                 return (
                   <Row key={p.name} name={p.name} sub={p.description ?? p.source} wrap meta={meta} onOpen={() => setOpenPlugin(p.name)}>
                     {p.managed && <PluginDeleteButton plugin={p} onDeleted={() => load(false)} onError={setError} />}
@@ -196,6 +202,15 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
               onError={setError}
             />
           )}
+          {section === "agents" && (
+            <AgentGrid
+              agents={agents}
+              empty={data ? (keyword ? "没有匹配的子代理" : origin === "mine" ? "还没有个人子代理，放在 Claude Code 配置目录或项目的 .claude/agents 里，或安装带子代理的插件" : "没有内置子代理") : "加载中…"}
+              onOpen={setViewingAgent}
+              onChanged={() => load(false)}
+              onError={setError}
+            />
+          )}
           {browsing && <ConnectorDirectory key={directoryKey} search={search} servers={data?.mcpServers ?? []} onChanged={() => load(false)} />}
           {section === "mcp" && !browsing && (
             <List empty={data ? (keyword ? "没有匹配的连接器" : "还没有连接器，在「连接器市场」里添加，或点右上角手动添加") : "加载中…"}>
@@ -206,7 +221,26 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
           )}
         </main>
       )}
-      {viewing && <SkillDialog skill={viewing} onClose={() => setViewing(null)} />}
+      {viewing && (
+        <DetailDialog
+          name={viewing.name}
+          origin={skillOrigin(viewing)}
+          description={viewing.description}
+          load={() => api.skill(viewing.name)}
+          missing={viewing.builtin ? "这是 Claude Code 自带的技能，没有可查看的文件。" : "没有找到这个技能的 SKILL.md 文件。"}
+          onClose={() => setViewing(null)}
+        />
+      )}
+      {viewingAgent && (
+        <DetailDialog
+          name={viewingAgent.name}
+          origin={agentOrigin(viewingAgent)}
+          description={viewingAgent.description}
+          load={() => api.agent(viewingAgent.name)}
+          missing={viewingAgent.path ? "读不到这个子代理的定义文件。" : "这个子代理没有可查看的定义文件（Claude Code 自带的）。"}
+          onClose={() => setViewingAgent(null)}
+        />
+      )}
     </div>
   );
 }
@@ -215,20 +249,22 @@ function List({ empty, children }: { empty: string; children: ReactNode[] }) {
   return children.length ? <div className="settings-list">{children}</div> : <div className="settings-empty">{empty}</div>;
 }
 
-/** 插件带的技能（插件名:技能名）和 MCP 服务器（plugin:插件名:服务器名） */
+/** 插件带的技能（插件名:技能名）、MCP 服务器（plugin:插件名:服务器名）和子代理（插件名:…） */
 function pluginParts(name: string, data: Capabilities) {
   return {
     skills: data.skills.filter((s) => s.name.startsWith(`${name}:`)),
     servers: data.mcpServers.filter((m) => m.name.startsWith(`plugin:${name}:`)),
+    agents: data.agents.filter((a) => a.plugin === name),
   };
 }
 
-/** 插件详情（同 Claude 桌面版）：描述、作者、版本，下面分「技能」「连接器」两个标签 */
+/** 插件详情（同 Claude 桌面版）：描述、作者、版本，下面分「技能」「连接器」标签，带子代理的插件还有「子代理」 */
 function PluginDetail({
   plugin,
   data,
   onBack,
   onViewSkill,
+  onViewAgent,
   onChanged,
   onDeleted,
   onError,
@@ -237,12 +273,16 @@ function PluginDetail({
   data: Capabilities;
   onBack: () => void;
   onViewSkill: (skill: Capabilities["skills"][number]) => void;
+  onViewAgent: (agent: Capabilities["agents"][number]) => void;
   onChanged: () => void;
   onDeleted: () => void;
   onError: (message: string) => void;
 }) {
-  const { skills, servers } = pluginParts(plugin.name, data);
-  const [tab, setTab] = useState<"skills" | "connectors">(skills.length === 0 && servers.length > 0 ? "connectors" : "skills");
+  const { skills, servers, agents } = pluginParts(plugin.name, data);
+  const [tab, setTab] = useState<"skills" | "connectors" | "agents">(
+    skills.length > 0 ? "skills" : servers.length > 0 ? "connectors" : agents.length > 0 ? "agents" : "skills",
+  );
+  const tabs = agents.length > 0 ? (["skills", "connectors", "agents"] as const) : (["skills", "connectors"] as const);
   const meta = [plugin.author && `作者：${plugin.author}`, plugin.version && `版本 ${plugin.version}`, plugin.source].filter(Boolean).join(" · ");
   const [updating, setUpdating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -286,16 +326,17 @@ function PluginDetail({
       {notice && <p className="plugin-notice">{notice}</p>}
       {plugin.description && <p className="plugin-description">{plugin.description}</p>}
       <div className="settings-tabs" role="tablist">
-        {(["skills", "connectors"] as const).map((t) => (
+        {tabs.map((t) => (
           <button key={t} role="tab" aria-selected={t === tab} className={`settings-tab${t === tab ? " active" : ""}`} onClick={() => setTab(t)}>
-            {t === "skills" ? "技能" : "连接器"}
-            <span className="settings-tab-count">{t === "skills" ? skills.length : servers.length}</span>
+            {t === "skills" ? "技能" : t === "connectors" ? "连接器" : "子代理"}
+            <span className="settings-tab-count">{t === "skills" ? skills.length : t === "connectors" ? servers.length : agents.length}</span>
           </button>
         ))}
       </div>
       {tab === "skills" && (
         <SkillGrid skills={skills} plugin={plugin.name} empty="这个插件没有技能" onOpen={onViewSkill} onChanged={onChanged} onError={onError} />
       )}
+      {tab === "agents" && <AgentGrid agents={agents} plugin={plugin.name} empty="这个插件没有子代理" onOpen={onViewAgent} onChanged={onChanged} onError={onError} />}
       {tab === "connectors" && (
         <List empty="这个插件没有连接器">
           {servers.map((server) => (
@@ -341,6 +382,56 @@ function SkillGrid({
             description={plugin ? s.description.replace(`(${plugin}) `, "") : s.description}
             dimmed={!s.enabled}
             onOpen={() => onOpen(s)}
+          />
+        );
+      })}
+    </CardGrid>
+  );
+}
+
+/** 子代理卡片：同技能卡片，标题后面是它用的模型（inherit 显示成「同主会话」），菜单里只有停用/启用 */
+function AgentGrid({
+  agents,
+  plugin,
+  empty,
+  onOpen,
+  onChanged,
+  onError,
+}: {
+  agents: Capabilities["agents"];
+  plugin?: string;
+  empty: string;
+  onOpen: (agent: Capabilities["agents"][number]) => void;
+  onChanged: () => void;
+  onError: (message: string) => void;
+}) {
+  if (!agents.length) return <div className="settings-empty">{empty}</div>;
+  return (
+    <CardGrid>
+      {agents.map((a) => {
+        const name = plugin ? a.name.slice(plugin.length + 1) : a.name;
+        return (
+          <Card
+            key={a.name}
+            icon={<Avatar name={name} />}
+            title={name}
+            badge={
+              !a.enabled ? (
+                <span className="settings-tag">已停用</span>
+              ) : (
+                a.model && <span className="settings-tag" title="使用的模型">{a.model === "inherit" ? "同主会话" : a.model}</span>
+              )
+            }
+            menu={
+              <ItemMenu
+                name={a.name}
+                enabled={a.enabled}
+                onToggle={() => api.setAgentEnabled(a.name, !a.enabled).then(onChanged, (e: Error) => onError(e.message))}
+              />
+            }
+            description={a.description}
+            dimmed={!a.enabled}
+            onOpen={() => onOpen(a)}
           />
         );
       })}
@@ -465,8 +556,23 @@ function DeleteButton({ kind, name, onDeleted, onError }: { kind: "skills" | "pl
 
 /** 技能行右边的「⋮」：启用、停用；导入的技能还能移除（内置和项目里的技能不归网关管，只能停用） */
 function SkillMenu({ skill, onChanged, onError }: { skill: Capabilities["skills"][number]; onChanged: () => void; onError: (message: string) => void }) {
-  const [at, setAt] = useState<{ right: number; top: number } | null>(null);
   const [removing, setRemoving] = useState(false);
+  return (
+    <>
+      <ItemMenu
+        name={skill.name}
+        enabled={skill.enabled}
+        onToggle={() => api.setSkillEnabled(skill.name, !skill.enabled).then(onChanged, (e: Error) => onError(e.message))}
+        onRemove={skill.managed ? () => setRemoving(true) : undefined}
+      />
+      {removing && <ConfirmDelete kind="skills" name={skill.name} onClose={() => setRemoving(false)} onDeleted={onChanged} onError={onError} />}
+    </>
+  );
+}
+
+/** 卡片右上角的「⋮」：启用或停用，传了 onRemove 的还有「移除」 */
+function ItemMenu({ name, enabled, onToggle, onRemove }: { name: string; enabled: boolean; onToggle: () => void; onRemove?: () => void }) {
+  const [at, setAt] = useState<{ right: number; top: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   useDismiss(menuRef, at !== null, () => setAt(null));
 
@@ -481,7 +587,7 @@ function SkillMenu({ skill, onChanged, onError }: { skill: Capabilities["skills"
       <button
         className="icon-btn"
         title="更多"
-        aria-label={`${skill.name} 的更多操作`}
+        aria-label={`${name} 的更多操作`}
         aria-haspopup="menu"
         aria-expanded={at !== null}
         // 菜单开着时按下这个按钮不算点到外面，由 onClick 收起
@@ -497,12 +603,12 @@ function SkillMenu({ skill, onChanged, onError }: { skill: Capabilities["skills"
             className="menu-item"
             onClick={() => {
               setAt(null);
-              api.setSkillEnabled(skill.name, !skill.enabled).then(onChanged, (e: Error) => onError(e.message));
+              onToggle();
             }}
           >
-            <span className="menu-item-name">{skill.enabled ? "停用" : "启用"}</span>
+            <span className="menu-item-name">{enabled ? "停用" : "启用"}</span>
           </button>
-          {skill.managed && (
+          {onRemove && (
             <>
               <div className="menu-divider" />
               <button
@@ -510,7 +616,7 @@ function SkillMenu({ skill, onChanged, onError }: { skill: Capabilities["skills"
                 className="menu-item danger"
                 onClick={() => {
                   setAt(null);
-                  setRemoving(true);
+                  onRemove();
                 }}
               >
                 <span className="menu-item-name menu-item-icon">
@@ -522,12 +628,11 @@ function SkillMenu({ skill, onChanged, onError }: { skill: Capabilities["skills"
           )}
         </div>
       )}
-      {removing && <ConfirmDelete kind="skills" name={skill.name} onClose={() => setRemoving(false)} onDeleted={onChanged} onError={onError} />}
     </>
   );
 }
 
-/** 拆开 SKILL.md 开头 --- 之间的字段和正文 */
+/** 拆开 SKILL.md、子代理定义文件开头 --- 之间的字段和正文 */
 function splitFrontmatter(content: string): { fields: [string, string][]; body: string } {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(content);
   if (!match) return { fields: [], body: content };
@@ -546,15 +651,36 @@ function skillOrigin(skill: Capabilities["skills"][number]): string {
   return plugin ? `插件 ${plugin}` : "项目或插件";
 }
 
-/** 技能详情：路径、字段和正文；内置技能没有文件，只显示描述 */
-function SkillDialog({ skill, onClose }: { skill: Capabilities["skills"][number]; onClose: () => void }) {
+/** 子代理的来处 */
+function agentOrigin(agent: Capabilities["agents"][number]): string {
+  if (agent.plugin) return `插件 ${agent.plugin}`;
+  return agent.builtin ? "内置" : "个人或项目";
+}
+
+/** 技能、子代理的详情：路径、字段和正文；没有文件的（内置的）只显示描述和 missing */
+function DetailDialog({
+  name,
+  origin,
+  description,
+  load,
+  missing,
+  onClose,
+}: {
+  name: string;
+  origin: string;
+  description: string;
+  load: () => Promise<SkillDetail>;
+  missing: string;
+  onClose: () => void;
+}) {
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [preview, setPreview] = useState(true);
   const [revealFailed, setRevealFailed] = useState(false);
   useEffect(() => {
-    api.skill(skill.name).then(setDetail, () => undefined).finally(() => setLoaded(true));
-  }, [skill.name]);
+    load().then(setDetail, () => undefined).finally(() => setLoaded(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 按名字加载一次
+  }, [name]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", onKey);
@@ -564,12 +690,12 @@ function SkillDialog({ skill, onClose }: { skill: Capabilities["skills"][number]
 
   return (
     <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="dialog skill-dialog" role="dialog" aria-label={skill.name}>
+      <div className="dialog skill-dialog" role="dialog" aria-label={name}>
         <div className="skill-dialog-head">
-          <Avatar name={skill.name} />
+          <Avatar name={name} />
           <div className="settings-row-main">
-            <div className="settings-row-name">{skill.name}</div>
-            <div className="settings-row-sub">{skillOrigin(skill)}</div>
+            <div className="settings-row-name">{name}</div>
+            <div className="settings-row-sub">{origin}</div>
           </div>
           <button className="icon-btn" title="关闭" aria-label="关闭" onClick={onClose}>
             ×
@@ -597,8 +723,8 @@ function SkillDialog({ skill, onClose }: { skill: Capabilities["skills"][number]
           {!loaded && <div className="settings-empty">加载中…</div>}
           {loaded && !detail && (
             <>
-              <p>{skill.description}</p>
-              <p className="settings-row-sub">{skill.builtin ? "这是 Claude Code 自带的技能，没有可查看的文件。" : "没有找到这个技能的 SKILL.md 文件。"}</p>
+              <p>{description}</p>
+              <p className="settings-row-sub">{missing}</p>
             </>
           )}
           {parsed && !preview && <pre className="skill-source">{detail!.content}</pre>}
@@ -998,6 +1124,17 @@ function SkillIcon() {
     <svg className="ic ic-skill" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" aria-hidden="true">
       <path d="M8 1.8 13.4 4.9v6.2L8 14.2l-5.4-3.1V4.9z" fill="currentColor" fillOpacity="0.18" />
       <path d="M8 5.2 10.5 6.6v2.8L8 10.8 5.5 9.4V6.6z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function AgentIcon() {
+  return (
+    <svg className="ic ic-agent" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="3.6" r="2" fill="currentColor" fillOpacity="0.2" />
+      <circle cx="3.6" cy="12.4" r="1.6" />
+      <circle cx="12.4" cy="12.4" r="1.6" />
+      <path d="M8 5.6v2.6M8 8.2 4.6 11M8 8.2l3.4 2.8" />
     </svg>
   );
 }

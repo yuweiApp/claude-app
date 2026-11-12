@@ -161,7 +161,7 @@ export interface TaskOutput {
   prompt?: string;
 }
 
-/** 可用的技能和插件（GET /capabilities）。技能在消息里写 /name 使用（开头的由 Claude Code 展开），插件在消息里写 @name 引用 */
+/** 可用的技能、插件、MCP 服务器和子代理（GET /capabilities）。技能在消息里写 /name 使用（开头的由 Claude Code 展开），插件在消息里写 @name 引用 */
 export interface Capabilities {
   /** managed：导入的，可以删除；enabled：false 时新会话里模型看不到、也调用不了；builtin：Claude Code 自带的 */
   skills: { name: string; description: string; managed: boolean; enabled: boolean; builtin: boolean }[];
@@ -182,9 +182,15 @@ export interface Capabilities {
     builtin: boolean;
   }[];
   mcpServers: McpServerInfo[];
+  /**
+   * 子代理（模型用 Agent 工具调起的），包括停用的。builtin：Claude Code 自带的（没有定义文件）和内置插件带的；plugin：插件带的（名字是 插件名:…）；
+   * path：定义文件（网关机器上的）；model：别名、模型 ID 或 inherit（跟主会话一样），没有时用默认的子代理模型；
+   * enabled：false 时新会话里模型看不到、也调用不了
+   */
+  agents: { name: string; description: string; model?: string; path?: string; plugin?: string; enabled: boolean; builtin: boolean }[];
 }
 
-/** GET /skills/:name：有 SKILL.md 文件的技能 */
+/** GET /skills/:name：有 SKILL.md 文件的技能；GET /agents/:name：有定义文件的子代理 */
 export interface SkillDetail {
   name: string;
   path: string;

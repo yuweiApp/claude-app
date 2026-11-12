@@ -84,18 +84,62 @@ export async function removeSkill(name: string): Promise<boolean> {
 }
 export const removePlugin = (name: string) => remove(pluginsDir(), name);
 
-/** 设置页停用的技能 */
-const disabledFile = () => path.join(config.claudeConfigDir, "gateway-disabled-skills.json");
+/** 设置页停用的技能、子代理：各存一个名字列表 */
+const disabledSkillsFile = () => path.join(config.claudeConfigDir, "gateway-disabled-skills.json");
+const disabledAgentsFile = () => path.join(config.claudeConfigDir, "gateway-disabled-agents.json");
 
-export function disabledSkills(): string[] {
-  return existsSync(disabledFile()) ? (JSON.parse(readFileSync(disabledFile(), "utf8")) as string[]) : [];
+const readNames = (file: string): string[] => (existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as string[]) : []);
+
+function setListed(file: string, name: string, listed: boolean): void {
+  const names = new Set(readNames(file));
+  if (listed) names.add(name);
+  else names.delete(name);
+  writeFileSync(file, JSON.stringify([...names], null, 2));
 }
 
-export function setSkillEnabled(name: string, enabled: boolean): void {
-  const disabled = new Set(disabledSkills());
-  if (enabled) disabled.delete(name);
-  else disabled.add(name);
-  writeFileSync(disabledFile(), JSON.stringify([...disabled], null, 2));
+export const disabledSkills = () => readNames(disabledSkillsFile());
+export const setSkillEnabled = (name: string, enabled: boolean) => setListed(disabledSkillsFile(), name, !enabled);
+
+/** 停用的子代理：会话的 disallowedTools 里写成 Agent(名字)，模型看不到、也调用不了 */
+export const disabledAgents = () => readNames(disabledAgentsFile());
+export const setAgentEnabled = (name: string, enabled: boolean) => setListed(disabledAgentsFile(), name, !enabled);
+
+/** 文件夹下（含子文件夹）的 .md 文件；dirs 是从 root 到文件所在文件夹的各级名字 */
+function markdownFiles(root: string, dirs: string[] = []): { file: string; dirs: string[] }[] {
+  const dir = path.join(root, ...dirs);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isDirectory()) return markdownFiles(root, [...dirs, entry.name]);
+    return entry.isFile() && entry.name.endsWith(".md") ? [{ file: path.join(dir, entry.name), dirs }] : [];
+  });
+}
+
+/** 子代理的名字：文件开头的 name 字段，没有时取文件名 */
+function agentName(file: string): string {
+  try {
+    return frontmatter(readFileSync(file, "utf8")).name || path.basename(file, ".md");
+  } catch {
+    return path.basename(file, ".md");
+  }
+}
+
+/**
+ * 子代理的定义文件，按名字对上。Claude Code 的命名（实测 2.1.322）：项目的 .claude/agents 和用户的 ~/.claude/agents 里，
+ * 名字是 name 字段（没有时取文件名），子文件夹不算进名字；插件的 agents/ 里是「插件名:子文件夹:名字」。同名时项目的优先
+ */
+export function agentFiles(cwd: string, plugins: { name: string; path?: string }[]): Map<string, string> {
+  const found = new Map<string, string>();
+  const add = (name: string, file: string) => {
+    if (!found.has(name)) found.set(name, file);
+  };
+  for (const root of [path.join(cwd, ".claude", "agents"), path.join(config.claudeConfigDir, "agents")]) {
+    for (const { file } of markdownFiles(root)) add(agentName(file), file);
+  }
+  for (const plugin of plugins) {
+    if (!plugin.path) continue;
+    for (const { file, dirs } of markdownFiles(path.join(plugin.path, "agents"))) add([plugin.name, ...dirs, agentName(file)].join(":"), file);
+  }
+  return found;
 }
 
 function subdirectories(root: string): string[] {

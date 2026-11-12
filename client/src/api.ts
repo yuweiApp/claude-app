@@ -162,7 +162,7 @@ export const api = {
     return request<{ attachments: Attachment[] }>("POST", "/uploads", form).then((r) => r.attachments);
   },
   interrupt: (id: string) => request("POST", `/sessions/${id}/interrupt`),
-  /** 工作目录下可用的技能、插件和 MCP 服务器，不传是默认工作目录；refresh 不用网关的缓存 */
+  /** 工作目录下可用的技能、插件、MCP 服务器和子代理，不传是默认工作目录；refresh 不用网关的缓存 */
   capabilities: (cwd?: string, refresh = false) => {
     const params = new URLSearchParams({ ...(cwd ? { cwd } : {}), ...(refresh ? { refresh: "1" } : {}) });
     return request<Capabilities>("GET", `/capabilities?${params}`);
@@ -170,6 +170,9 @@ export const api = {
   /** 技能的 SKILL.md，内置技能没有文件时报错 */
   skill: (name: string) => request<SkillDetail>("GET", `/skills/${encodeURIComponent(name)}`),
   setSkillEnabled: (name: string, enabled: boolean) => request("PATCH", `/skills/${encodeURIComponent(name)}`, { enabled }),
+  /** 子代理的定义文件，内置的没有文件时报错 */
+  agent: (name: string) => request<SkillDetail>("GET", `/agents/${encodeURIComponent(name)}`),
+  setAgentEnabled: (name: string, enabled: boolean) => request("PATCH", `/agents/${encodeURIComponent(name)}`, { enabled }),
   /** 导入技能、插件：path 是网关机器上的文件夹 */
   importExtension: (kind: "skills" | "plugins", path: string) => request<{ name: string }>("POST", `/${kind}/import`, { path }),
   deleteExtension: (kind: "skills" | "plugins", name: string) => request("DELETE", `/${kind}/${encodeURIComponent(name)}`),
