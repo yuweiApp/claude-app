@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { BrowserWindow, screen, type NativeImage, type WebContents } from "electron";
+import { BrowserWindow, type NativeImage, type WebContents } from "electron";
 import { AGENT_INPUT_ECHO_MS, type BrowserViews, type Tab } from "./views.js";
 
 /**
@@ -122,42 +122,34 @@ export class ElementInspector extends EventEmitter<{ picked: [PickedElement]; en
   }
 
   /**
-   * 鼠标按下的位置找元素。主框架里的点击用事件的 x、y（相对网页视图，DIP）。
-   * 点在跨进程的 iframe 上时事件的 x、y 是相对那个 iframe 的，找到的是主框架里不相干的元素，
-   * 所以再用鼠标的屏幕位置（screen.getCursorScreenPoint() 减去窗口内容区和网页视图的位置）找一次，那里是 <iframe> 时选它。
-   * 不直接用屏幕位置：事件里的 globalX、globalY 在 Windows 上和 getContentBounds() 对不上（实测选中的元素偏了几百像素），
-   * 屏幕坐标换算在多显示器、缩放下都不可靠
+   * 鼠标按下的位置找元素。点在跨进程的 iframe 上时 mouse.x、y 是相对那个 iframe 的，
+   * 所以用屏幕坐标减去窗口内容区和网页视图的位置；找不到视图所在的窗口时才用 x、y
    */
   private async pickAt(tab: Tab, mouse: Electron.MouseInputEvent): Promise<void> {
     const wc = tab.view.webContents;
     if (wc.isDestroyed()) return;
     const zoom = wc.getZoomFactor();
-    const dbg = wc.debugger;
-    const nodeAt = async (x: number, y: number) =>
-      (
-        (await dbg.sendCommand("DOM.getNodeForLocation", {
-          x: Math.round(x / zoom),
-          y: Math.round(y / zoom),
-          includeUserAgentShadowDOM: false,
-          ignorePointerEventsNone: true,
-        })) as { backendNodeId?: number }
-      ).backendNodeId;
-    // 点在滚动条等没有元素的地方时 getNodeForLocation 报错
-    let node = await nodeAt(mouse.x, mouse.y).catch(() => undefined);
     const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.contentView.children.includes(tab.view));
-    const view = tab.view.getBounds();
-    if (win) {
+    let { x, y } = mouse;
+    if (win && mouse.globalX !== undefined && mouse.globalY !== undefined) {
       const content = win.getContentBounds();
-      const cursor = screen.getCursorScreenPoint();
-      const cx = cursor.x - content.x - view.x;
-      const cy = cursor.y - content.y - view.y;
-      const inside = cx >= 0 && cy >= 0 && cx < view.width && cy < view.height;
-      if (inside && (Math.abs(cx - mouse.x) > 2 || Math.abs(cy - mouse.y) > 2)) {
-        const other = await nodeAt(cx, cy).catch(() => undefined);
-        if (other && other !== node && (await isFrame(wc, other))) node = other;
-      }
+      const view = tab.view.getBounds();
+      x = mouse.globalX - content.x - view.x;
+      y = mouse.globalY - content.y - view.y;
     }
-    if (node) await this.pick(tab, node);
+    try {
+      // getNodeForLocation 的坐标是整个文档里的（CSS 像素），不是视口里的：加上页面滚过的距离，不然滚动后选中的元素偏上
+      const { cssVisualViewport } = (await wc.debugger.sendCommand("Page.getLayoutMetrics")) as { cssVisualViewport: { pageX: number; pageY: number } };
+      const { backendNodeId } = (await wc.debugger.sendCommand("DOM.getNodeForLocation", {
+        x: Math.round(x / zoom + cssVisualViewport.pageX),
+        y: Math.round(y / zoom + cssVisualViewport.pageY),
+        includeUserAgentShadowDOM: false,
+        ignorePointerEventsNone: true,
+      })) as { backendNodeId?: number };
+      if (backendNodeId) await this.pick(tab, backendNodeId);
+    } catch {
+      // 点在滚动条等没有元素的地方
+    }
   }
 
   private async pick(tab: Tab, backendNodeId: number): Promise<void> {
@@ -172,10 +164,7 @@ export class ElementInspector extends EventEmitter<{ picked: [PickedElement]; en
         ((await dbg.sendCommand("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration, returnByValue: true })) as { result: { value?: T } }).result.value;
       const element = await call<unknown>(current.fn);
       const box = await call<{ x: number; y: number; width: number; height: number; vw: number; vh: number }>(RECT_FUNCTION);
-      if (!element || !box) {
-        console.warn(`[inspect] ${tab.id}: 取元素信息没有结果`);
-        return;
-      }
+      if (!element || !box) return;
       // 检查器的高亮框和提示会被拍进去：拍的时候先关掉检查模式，拍完再打开
       await dbg.sendCommand("Overlay.setInspectMode", { mode: "none", highlightConfig: {} }).catch(() => undefined);
       await dbg.sendCommand("Overlay.hideHighlight").catch(() => undefined);
@@ -190,22 +179,11 @@ export class ElementInspector extends EventEmitter<{ picked: [PickedElement]; en
         viewport: { width: box.vw, height: box.vh },
         ...(screenshot ? { screenshot } : {}),
       });
-    } catch (err) {
+    } catch {
       // 元素在点完之后没了、网页跳走了
-      console.warn(`[inspect] ${tab.id}: 取元素失败：${(err as Error).message}`);
     } finally {
       await dbg.sendCommand("Runtime.releaseObjectGroup", { objectGroup: OBJECT_GROUP }).catch(() => undefined);
     }
-  }
-}
-
-/** 是不是 <iframe>、<frame> 元素 */
-async function isFrame(wc: WebContents, backendNodeId: number): Promise<boolean> {
-  try {
-    const { node } = (await wc.debugger.sendCommand("DOM.describeNode", { backendNodeId })) as { node: { nodeName: string } };
-    return node.nodeName === "IFRAME" || node.nodeName === "FRAME";
-  } catch {
-    return false;
   }
 }
 
