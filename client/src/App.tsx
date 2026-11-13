@@ -63,13 +63,15 @@ export function App() {
       return !c;
     });
   /** 删掉的会话正在看的话回到新会话页 */
-  const forget = (ids: string[]) => setCurrentId((id) => (id && ids.includes(id) ? null : id));
+  const forget = (ids: string[]) => {
+    setCurrentId((id) => (id && ids.includes(id) ? null : id));
+    setPanelOpenBy((all) => (ids.some((id) => all[id]) ? Object.fromEntries(Object.entries(all).filter(([id]) => !ids.includes(id))) : all));
+  };
   const select = (id: string | null) => setCurrentId(id);
-  /** 切到新会话页：右侧面板默认收起，要用再点开 */
+  /** 切到新会话页（右侧面板在新会话页不显示，会话建好后默认收起，要用再点开） */
   const startNew = (cwd?: string) => {
     setNewCwd(cwd ?? null);
     select(null);
-    showPanel(false);
   };
   const current = sessions.find((s) => s.sessionId === currentId);
   /** 有会话在运行（包括一轮结束了、后台任务还在跑）时，图标栏的首页图标带动效 */
@@ -81,9 +83,17 @@ export function App() {
   const chatCwd = currentId ? (current?.cwd ?? null) : newCwd;
   // 右侧面板（文件、终端、浏览器）开在会话的工作目录：项目文件夹，或者普通会话自己的 scratch 目录。
   // 发出第一条消息、会话建好（列表里有了）之后才能用：新会话页还没有工作目录（普通会话的 scratch 目录是建会话时才有的），按钮置灰。
-  // 旧的普通会话工作目录就是 workspace 本身，文件树列的就是整个 workspace。开着还是收起全局记住，标签页按文件夹分开
+  // 旧的普通会话工作目录就是 workspace 本身，文件树列的就是整个 workspace。开着还是收起按会话记住（切到别的会话不跟着打开），标签页按文件夹分开
   const panelCwd = config && current ? current.cwd || config.workspaceDir : null;
-  const [panelOpen, setPanelOpen] = useState(initialPanelOpen);
+  const [panelOpenBy, setPanelOpenBy] = useState<Record<string, boolean>>(initialPanelOpen);
+  const panelOpen = !!(currentId && panelOpenBy[currentId]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(PANEL_OPEN_KEY, JSON.stringify(panelOpenBy));
+    } catch {
+      // 忽略
+    }
+  }, [panelOpenBy]);
   // 标签页按文件夹存在 localStorage，重启、刷新后恢复（浏览器标签按 key 对回桌面版恢复的标签页，终端标签按网关上还在不在）
   const [panels, setPanels] = useState<Record<string, PanelState>>(initialPanels);
   useEffect(() => {
@@ -99,13 +109,14 @@ export function App() {
   // 还没改过的项目用同一个默认状态（每次渲染新建的话标签页 id 会变）
   const defaultPanels = useRef<Record<string, PanelState>>({});
   const panelOf = (all: Record<string, PanelState>, cwd: string) => all[cwd] ?? (defaultPanels.current[cwd] ??= newPanelState());
+  /** 当前会话的右侧面板开 / 关；只记开着的会话 */
   const showPanel = (open: boolean) => {
-    setPanelOpen(open);
-    try {
-      localStorage.setItem(PANEL_OPEN_KEY, String(open));
-    } catch {
-      // 忽略
-    }
+    if (!currentId) return;
+    setPanelOpenBy((all) => {
+      if (!!all[currentId] === open) return all;
+      const { [currentId]: _, ...rest } = all;
+      return open ? { ...rest, [currentId]: true } : rest;
+    });
   };
   const togglePanel = () => showPanel(!panelOpen);
   // 回复里指向本地文件的链接：打开右侧面板，在文件标签里显示；指向文件夹的在目录树里定位。root 是工作目录外的，标签以它为根。
@@ -352,7 +363,8 @@ export function App() {
 }
 
 const COLLAPSED_KEY = "sidebarCollapsed";
-const PANEL_OPEN_KEY = "sidePanelOpen";
+/** 各会话的右侧面板开着没有（sessionId → true），以前全局一个开关的 sidePanelOpen 不再用 */
+const PANEL_OPEN_KEY = "sidePanelOpenBySession";
 const PANELS_KEY = "sidePanelStates";
 
 function initialPanels(): Record<string, PanelState> {
@@ -365,11 +377,13 @@ function initialPanels(): Record<string, PanelState> {
   }
 }
 
-function initialPanelOpen(): boolean {
+function initialPanelOpen(): Record<string, boolean> {
   try {
-    return localStorage.getItem(PANEL_OPEN_KEY) === "true";
+    localStorage.removeItem("sidePanelOpen");
+    const saved = JSON.parse(localStorage.getItem(PANEL_OPEN_KEY) ?? "{}") as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(saved).filter(([, open]) => open === true)) as Record<string, boolean>;
   } catch {
-    return false;
+    return {};
   }
 }
 const SIDEBAR_WIDTH_KEY = "sidebarWidth";
