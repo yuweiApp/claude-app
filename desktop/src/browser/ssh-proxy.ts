@@ -108,18 +108,27 @@ export class SshProxies {
     if (url.protocol !== "http:") return void res.writeHead(400).end();
     const headers = { ...req.headers };
     for (const h of ["proxy-authorization", "proxy-connection", "connection", "keep-alive"]) delete headers[h];
-    const out = http.request({ host: url.hostname, port: Number(url.port) || 80, method: req.method, path: `${url.pathname}${url.search}`, headers, agent: this.agentFor(remote) }, (up) => {
-      const h = { ...up.headers };
-      for (const k of ["connection", "keep-alive", "transfer-encoding"]) delete h[k];
-      res.writeHead(up.statusCode ?? 502, up.statusMessage, h);
-      up.pipe(res);
-    });
-    out.on("error", (err) => {
-      if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
-      res.end(err.message);
-    });
-    res.on("close", () => out.destroy());
-    req.pipe(out);
+    const idempotent = req.method === "GET" || req.method === "HEAD";
+    const send = (first: boolean): void => {
+      const out = http.request({ host: url.hostname, port: Number(url.port) || 80, method: req.method, path: `${url.pathname}${url.search}`, headers, agent: this.agentFor(remote) }, (up) => {
+        const h = { ...up.headers };
+        for (const k of ["connection", "keep-alive", "transfer-encoding"]) delete h[k];
+        res.writeHead(up.statusCode ?? 502, up.statusMessage, h);
+        up.pipe(res);
+      });
+      out.on("error", (err) => {
+        // 分到的空闲连接恰好在这时被远端关掉：GET、HEAD 换一条连接重发一次（同浏览器自己的做法）
+        if (first && idempotent && out.reusedSocket && !res.headersSent) return send(false);
+        if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
+        res.end(err.message);
+      });
+      const abort = () => out.destroy();
+      res.on("close", abort);
+      out.on("close", () => res.off("close", abort));
+      if (first) req.pipe(out);
+      else out.end();
+    };
+    send(true);
   }
 
   private agentFor(remote: string): http.Agent {
@@ -275,14 +284,22 @@ function readUntil(s: net.Socket, done: (b: Buffer) => number): Promise<Buffer> 
   });
 }
 
-/** 一条 WebSocket 当成字节流用（每条连接一个，到网关的 /browser/tunnel）；连上前写的先存着 */
+/**
+ * 一条 WebSocket 当成字节流用（每条连接一个，到网关的 /browser/tunnel）；连上前写的先存着。
+ * http.Agent 的连接池把它当 net.Socket 用，空闲连接的回收靠的是 net.Socket 的这两点，这里照做：
+ * - 不半开（allowHalfOpen: false）：远端关了（网关关 WebSocket）就整个关掉，连接池听 close 把它移出去；
+ * - setTimeout 到点真的发 timeout：连接池按服务器的 Keep-Alive: timeout=N 提前 1 秒回收空闲连接（Vite 等 Node 服务器是 5 秒）。
+ * 以前两样都没有：远端关掉的空闲连接一直留在池里，下一个请求分到它，写进已经关了的 WebSocket 被丢掉，网页一直转圈
+ */
 class WsStream extends Duplex {
   private readonly ws: WebSocket;
   private queue: Buffer[] = [];
   private opened = false;
+  private idleMs = 0;
+  private idleTimer: NodeJS.Timeout | undefined;
 
   constructor(url: string) {
-    super();
+    super({ allowHalfOpen: false });
     this.ws = new WebSocket(url);
     this.ws.binaryType = "arraybuffer";
     this.ws.addEventListener("open", () => {
@@ -292,9 +309,11 @@ class WsStream extends Duplex {
     });
     this.ws.addEventListener("message", (e) => {
       const data = e.data instanceof ArrayBuffer ? Buffer.from(e.data) : Buffer.from(String(e.data));
+      this.touch();
       this.push(data);
     });
     this.ws.addEventListener("close", (e) => {
+      clearTimeout(this.idleTimer);
       // 网关在连远端之前、连不上时关闭，原因写在 reason 里
       if (!this.opened || (e.code !== 1000 && e.code !== 1005 && e.reason)) this.destroy(new Error(e.reason || `连不上网关的转发（${e.code}）`));
       else this.push(null);
@@ -309,8 +328,14 @@ class WsStream extends Duplex {
   setNoDelay(): this {
     return this;
   }
-  setTimeout(_ms: number, cb?: () => void): this {
-    if (cb) this.once("timeout", cb);
+  /** 同 net.Socket：ms 内没有收发就发一次 timeout（不自己关），0 是不限 */
+  setTimeout(ms: number, cb?: () => void): this {
+    if (cb) {
+      if (ms === 0) this.off("timeout", cb);
+      else this.once("timeout", cb);
+    }
+    this.idleMs = ms;
+    this.touch();
     return this;
   }
   ref(): this {
@@ -320,6 +345,11 @@ class WsStream extends Duplex {
     return this;
   }
 
+  private touch(): void {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = this.idleMs > 0 && !this.destroyed ? setTimeout(() => this.emit("timeout"), this.idleMs) : undefined;
+  }
+
   override _read(): void {}
 
   override _write(chunk: Buffer, _enc: BufferEncoding, cb: (err?: Error | null) => void): void {
@@ -327,6 +357,9 @@ class WsStream extends Duplex {
       this.queue.push(chunk);
       return cb();
     }
+    // 已经关了的 WebSocket，send 不报错、数据直接丢掉：这里报错，请求马上失败，不会一直等回复
+    if (this.ws.readyState !== WebSocket.OPEN) return cb(new Error("到远端的连接已经断开"));
+    this.touch();
     this.ws.send(chunk);
     // 发不出去的积太多时等一等
     const wait = () => (this.ws.bufferedAmount > 4 * 1024 * 1024 && this.ws.readyState === WebSocket.OPEN ? setTimeout(wait, 20) : cb());
@@ -339,6 +372,7 @@ class WsStream extends Duplex {
   }
 
   override _destroy(err: Error | null, cb: (err?: Error | null) => void): void {
+    clearTimeout(this.idleTimer);
     if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) this.ws.close(1000);
     cb(err);
   }
