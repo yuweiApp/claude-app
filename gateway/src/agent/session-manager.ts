@@ -207,6 +207,7 @@ export class SessionManager {
           ...(cwd ? { cwd } : {}),
           chat: isChatCwd(cwd),
           state: this.active.get(info.sessionId)?.state,
+          tasksRunning: this.active.get(info.sessionId)?.tasksRunning || undefined,
           lastResponseAt: responded ?? info.createdAt ?? info.lastModified,
         };
       }),
@@ -215,7 +216,7 @@ export class SessionManager {
     for (const session of this.active.values()) {
       if (!stored.some((s) => s.sessionId === session.id)) {
         const customTitle = this.titles.get(session.id);
-        stored.push({ sessionId: session.id, summary: customTitle ?? "", ...(customTitle ? { customTitle } : {}), lastModified: session.lastActiveAt, lastResponseAt: session.lastActiveAt, cwd: session.cwd, chat: isChatCwd(session.cwd), state: session.state });
+        stored.push({ sessionId: session.id, summary: customTitle ?? "", ...(customTitle ? { customTitle } : {}), lastModified: session.lastActiveAt, lastResponseAt: session.lastActiveAt, cwd: session.cwd, chat: isChatCwd(session.cwd), state: session.state, tasksRunning: session.tasksRunning || undefined });
       }
     }
     return stored.sort((a, b) => b.lastResponseAt - a.lastResponseAt);

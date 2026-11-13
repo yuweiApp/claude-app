@@ -12,7 +12,7 @@ import { Messages } from "./components/Messages";
 import { PermissionCard } from "./components/PermissionCard";
 import { EnvPicker, FolderPicker } from "./components/FolderPicker";
 import { ModelPicker, PermissionPicker, resolveModel } from "./components/ComposerPickers";
-import { Sidebar, folderName, groupByFolder, sessionTitle } from "./components/Sidebar";
+import { Sidebar, folderName, groupByFolder, isWorking, sessionTitle } from "./components/Sidebar";
 import { DEFAULT_SIDEBAR_WIDTH, SidebarResizer } from "./components/SidebarResizer";
 import { SidebarToggle } from "./components/SidebarToggle";
 import { SettingsPage, type SettingsSection } from "./components/SettingsPage";
@@ -72,8 +72,8 @@ export function App() {
     showPanel(false);
   };
   const current = sessions.find((s) => s.sessionId === currentId);
-  /** 有会话在运行时，图标栏的首页图标带动效 */
-  const anyRunning = sessions.some((s) => s.state === "running");
+  /** 有会话在运行（包括一轮结束了、后台任务还在跑）时，图标栏的首页图标带动效 */
+  const anyRunning = sessions.some(isWorking);
   // 会话标题和工作目录，显示在对话上方那一行（右边是会话栏按钮）；新会话页没有。
   // 项目会话显示项目文件夹名，悬停看完整路径；普通会话（侧栏「会话」里的）的 scratch-… 目录是网关建的，不显示（远程的只显示主机，见 Chat）
   const title = currentId ? (current ? sessionTitle(current) : "新会话") : null;
@@ -476,9 +476,18 @@ function Chat({
   // 先连事件流再拉历史，两边按 uuid 去重，见 docs/README.md「客户端归并规则」
   useEffect(() => {
     if (!sessionId) return;
+    let tasksRunning: boolean | undefined;
     const unsubscribe = subscribe(sessionId, (event) => {
       dispatch({ type: "event", event });
+      // 后台任务开始、全部结束时也刷新列表（侧栏的转圈、首页图标的动效看它）
       if (event.type === "state" || event.type === "title") onChanged();
+      else if (event.type === "tasks") {
+        const running = event.tasks.some((t) => t.status === "running");
+        if (running !== tasksRunning) {
+          tasksRunning = running;
+          onChanged();
+        }
+      }
     });
     // 拉失败了也当拉完，显示事件流里收到的
     api.messages(sessionId).then(
@@ -601,6 +610,8 @@ function Chat({
   // 最后一轮是中断的（后面只有 result、换模型之类的提示）：输入框空着时可以一键「继续」
   const lastItem = view.items.findLast((item) => item.kind !== "result" && item.kind !== "model" && item.kind !== "notice");
   const interrupted = !!sessionId && view.state !== "running" && lastItem?.kind === "interrupted";
+  // 运行中的动效：一轮在跑，或者一轮结束了、后台任务还在跑（任务结束的通知会再唤起新的一轮）
+  const working = view.state === "running" || (view.state === "idle" && view.backgroundTasks.some((t) => t.status === "running"));
 
   const permissionMode = sessionId ? (view.permissionMode ?? config.permissionMode) : newMode;
   const changeMode = (mode: string) => {
@@ -665,13 +676,14 @@ function Chat({
         ))}
         </div>
       </div>
-      {!atBottom && <ScrollToBottom running={view.state === "running"} onClick={() => scrollToBottom("smooth")} />}
+      {!atBottom && <ScrollToBottom running={working} onClick={() => scrollToBottom("smooth")} />}
       {sessionId && view.desktopTarget && <DesktopTargetFloat key={sessionId} target={view.desktopTarget} running={view.state === "running"} />}
       </div>
       <AnnotationSelectionButton scrollRef={scrollRef} />
       <AnnotationEditor sessionId={sessionId} onSaved={() => composerRef.current?.focus()} />
       <Composer
         running={view.state === "running"}
+        working={working}
         maxUploadMb={config.maxUploadMb}
         onSend={send}
         onInterrupt={() => sessionId && api.interrupt(sessionId).catch((e: Error) => onError(e.message))}

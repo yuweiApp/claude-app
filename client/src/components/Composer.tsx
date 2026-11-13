@@ -44,6 +44,8 @@ export interface ComposerHandle {
 
 interface Props {
   running: boolean;
+  /** 边框的流光动效：running，或者一轮结束了、后台任务还在跑。只管动效，按钮仍看 running */
+  working?: boolean;
   maxUploadMb: number;
   onSend: (text: string, attachmentIds: string[]) => Promise<void>;
   onInterrupt: () => void;
@@ -65,7 +67,7 @@ interface Props {
 }
 
 /** 输入框，样式同 codex-app-server：一个圆角框，上面输入，下面一行「+」、权限、模型、发送 */
-export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, onContinue, notes, hasNotes = false }: Props) {
+export function Composer({ running, working = running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, onContinue, notes, hasNotes = false }: Props) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
@@ -376,7 +378,7 @@ export function Composer({ running, maxUploadMb, onSend, onInterrupt, left, righ
     <div className="composer-wrap">
     {top && <div className="new-chat-bar" ref={barRef}>{top}</div>}
     <div
-      className={["composer", dragging && "dragging", running && "running"].filter(Boolean).join(" ")}
+      className={["composer", dragging && "dragging", working && "running"].filter(Boolean).join(" ")}
       onDragOver={(e) => {
         if (acceptsDrop(e)) {
           e.preventDefault();

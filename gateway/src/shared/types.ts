@@ -390,6 +390,8 @@ export interface HistoryImageSource {
 export type SessionListItem = SDKSessionInfo & {
   chat: boolean;
   state?: SessionState;
+  /** 有后台任务（后台命令、后台子代理、转到后台的工具调用）在跑；一轮结束后 state 是 idle，任务结束的通知会再唤起新的一轮 */
+  tasksRunning?: boolean;
   /** 最后一次 AI 回复的时间（毫秒），列表按它倒序；还没回复过的是创建时间。不用 lastModified：打开会话也会改到记录文件 */
   lastResponseAt: number;
 };

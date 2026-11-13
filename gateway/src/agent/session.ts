@@ -201,6 +201,11 @@ export class AgentSession {
     await this.query.interrupt();
   }
 
+  /** 有后台任务在跑 */
+  get tasksRunning(): boolean {
+    return this.tasks.list().some((t) => t.status === "running");
+  }
+
   /** 有后台子代理在跑：一轮结束后会话是 idle，但子进程关掉的话子代理也没了 */
   get agentsRunning(): boolean {
     return this.tasks.list().some((t) => t.status === "running" && t.type === "local_agent");
