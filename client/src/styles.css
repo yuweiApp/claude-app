@@ -924,8 +924,8 @@ main {
 
 .perm-picker, .model-picker { position: relative; }
 .perm-btn {
-  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border: none; border-radius: 999px;
-  background: none; color: var(--muted); font-size: 13px;
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: none; border-radius: 999px;
+  background: none; color: var(--muted);
 }
 .perm-btn:hover { background: var(--panel); color: var(--text); }
 .perm-btn-full { color: var(--warn); }

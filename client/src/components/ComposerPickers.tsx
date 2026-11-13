@@ -32,11 +32,11 @@ export function PermissionPicker({ value, onChange }: { value: string; onChange:
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
   const current = PERMISSION_MODES.find((m) => m.mode === value) ?? PERMISSION_MODES[0]!;
+  const label = `${current.label}，更改权限`;
   return (
     <div className="perm-picker" ref={ref}>
-      <button className={`perm-btn${current.full ? " perm-btn-full" : ""}`} onClick={() => setOpen((o) => !o)} title="更改权限" aria-haspopup="menu" aria-expanded={open}>
+      <button className={`perm-btn${current.full ? " perm-btn-full" : ""}`} onClick={() => setOpen((o) => !o)} title={label} aria-label={label} aria-haspopup="menu" aria-expanded={open}>
         {current.icon}
-        {current.label}
       </button>
       {open && (
         <div className="perm-pop" role="menu">
