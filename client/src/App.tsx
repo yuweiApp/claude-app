@@ -690,6 +690,7 @@ function Chat({
         onContinue={interrupted ? () => void send("继续", []).catch(() => undefined) : undefined}
         left={<PermissionPicker value={permissionMode} onChange={changeMode} />}
         handle={composerRef}
+        draftKey={sessionId ?? "new"}
         cwd={cwd}
         notes={sessionId && <NotesChip sessionId={sessionId} annotations={annotations} />}
         hasNotes={annotations.length > 0}

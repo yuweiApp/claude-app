@@ -1,26 +1,11 @@
 import { useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref } from "react";
-import { api, type Attachment } from "../api";
+import { api } from "../api";
+import { clearComposerDraft, useDraftField, type PendingFile } from "../state/composerDrafts";
 import { AddMenu } from "./AddMenu";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { MentionMenu, type MentionOption } from "./MentionMenu";
 import { fileMention, fileRefParts, findMentions, IMAGE_EXT, MentionText, browserMention, PATH_DRAG_TYPE, SESSION_DRAG_TYPE, MentionNamesContext, sessionMention, sessionToken, tabMention, tabToken, type Mention, type MentionSource } from "./MentionText";
-
-/** 输入框下方的附件：选中后立刻上传，发送时只传 id */
-interface PendingFile {
-  key: string;
-  name: string;
-  size: number;
-  status: "uploading" | "done" | "error";
-  attachment?: Attachment;
-  error?: string;
-  /** 图片的本地预览地址（URL.createObjectURL），移除或发送后释放 */
-  preview?: string;
-  /** 大段粘贴的文字转成的附件：卡片上显示开头一行和「粘贴的文本」 */
-  pastedText?: string;
-  /** 从目录树拖进来的图片：不上传，发送时在文字末尾写成 @绝对路径，由 Claude Code 读给模型；preview 是网关的 /files/raw 地址 */
-  path?: string;
-}
 
 /** 释放本地预览地址（拖进来的图片用的是网关地址，不用释放） */
 const revokePreview = (f: PendingFile) => f.preview?.startsWith("blob:") && URL.revokeObjectURL(f.preview);
@@ -60,6 +45,8 @@ interface Props {
   cwd?: string | null;
   /** 上一轮被中断了：输入框空着时发送按钮变成「继续」 */
   onContinue?: () => void;
+  /** 草稿的键（会话 id，新会话用 "new"）：没发出去的文字、引用和附件按这个存，切走再回来还在 */
+  draftKey: string;
   /** 输入框里、文字上方：待发送的回复注释（「N 条注释」） */
   notes?: ReactNode;
   /** 有待发送的注释：没写文字也能发送 */
@@ -67,19 +54,19 @@ interface Props {
 }
 
 /** 输入框，样式同 codex-app-server：一个圆角框，上面输入，下面一行「+」、权限、模型、发送 */
-export function Composer({ running, working = running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, onContinue, notes, hasNotes = false }: Props) {
-  const [text, setText] = useState("");
+export function Composer({ running, working = running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, draftKey, onContinue, notes, hasNotes = false }: Props) {
+  const [text, setText] = useDraftField(draftKey, "text");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
   const names = useContext(MentionNamesContext);
   // @ 菜单里选过的文件，只有这些（和带引号的）算文件引用，手打的 @xxx 不算
-  const [picked, setPicked] = useState<string[]>([]);
+  const [picked, setPicked] = useDraftField(draftKey, "picked");
   // 「浏览器」里选过的：输入框里只显示 token（@[标题]），发送时换成 full（带网址的 @[标题](网址)）
-  const [pickedTabs, setPickedTabs] = useState<{ token: string; full: string }[]>([]);
+  const [pickedTabs, setPickedTabs] = useDraftField(draftKey, "pickedTabs");
   // 右侧面板目录树拖进来的：输入框里只显示 token（@文件名，同名不同路径的加 (2)、(3)），发送时换成 full（绝对路径的引用）
-  const [pickedPaths, setPickedPaths] = useState<{ token: string; full: string }[]>([]);
+  const [pickedPaths, setPickedPaths] = useDraftField(draftKey, "pickedPaths");
   // 侧边栏拖进来的会话：输入框里只显示 token（@标题，同名的加 (2)、(3)），发送时换成 full（带会话 id 的 @session[标题](session:id)，网关据此导出那个会话）
-  const [pickedSessions, setPickedSessions] = useState<{ token: string; full: string }[]>([]);
+  const [pickedSessions, setPickedSessions] = useDraftField(draftKey, "pickedSessions");
   const fileRefs = [...picked, ...pickedPaths.map((p) => p.token.slice(1))];
   const sessionTokens = pickedSessions.map((p) => p.token);
   const mentions = findMentions(text, names, fileRefs, pickedTabs.map((t) => t.token), sessionTokens);
@@ -194,7 +181,7 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
     },
     focus: () => textareaRef.current?.focus(),
   }));
-  const [files, setFiles] = useState<PendingFile[]>([]);
+  const [files, setFiles] = useDraftField(draftKey, "files");
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -228,13 +215,9 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
       const body = expandSessions(expandPaths(expandTabs(text.trim(), pickedTabs), pickedPaths), pickedSessions);
       const refs = ready.flatMap((f) => (f.path ? [fileMention(f.path)] : [])).join(" ");
       await onSend([body, refs].filter(Boolean).join("\n\n"), ready.flatMap((f) => (f.attachment ? [f.attachment.id] : [])));
-      setText("");
-      setPicked([]);
-      setPickedPaths([]);
-      setPickedTabs([]);
-      setPickedSessions([]);
+      // 发送期间可能切到了别的会话，按键清，不靠这个组件的 state
       files.forEach(revokePreview);
-      setFiles([]);
+      clearComposerDraft(draftKey);
     } finally {
       setSending(false);
     }
