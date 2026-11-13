@@ -5,6 +5,7 @@ import type { TerminalInfo } from "../shared/types.js";
 import type { TerminalManager } from "./terminal-manager.js";
 import { parseRemote } from "../ssh/location.js";
 import { machinePathOf } from "../ssh/host-fs.js";
+import { rememberResult } from "../browser/tool.js";
 
 /** MCP 服务器名：工具全名是 mcp__terminal__read_terminal 这样 */
 export const TERMINAL_SERVER = "terminal";
@@ -27,10 +28,28 @@ export function terminalServer(terminals: TerminalManager, cwd: string): McpSdkS
       "用 read_terminal 读屏幕上的内容，用 run_in_terminal 在终端里敲命令（用户能在面板里看到、接着操作）。" +
       "需要在本轮拿到结果的短命令照常用 Bash；要让用户看着、长时间运行或交互的（开发服务、日志、REPL）用 run_in_terminal。",
     // config.yml 里配了常驻的：第一轮就给完整定义（默认都不常驻，用到时 ToolSearch）
-    tools: terminalTools(terminals, cwd).map((t) =>
-      isAlwaysLoad(`mcp__${TERMINAL_SERVER}__${t.name}`) ? { ...t, _meta: { ...t._meta, [ALWAYS_LOAD_META]: true } } : t,
-    ),
+    tools: terminalTools(terminals, cwd).map((t) => {
+      const recorded = recordingResult(t);
+      return isAlwaysLoad(`mcp__${TERMINAL_SERVER}__${t.name}`) ? { ...recorded, _meta: { ...recorded._meta, [ALWAYS_LOAD_META]: true } } : recorded;
+    }),
   });
+}
+
+/**
+ * 调用结束时按 tool_use_id 记下结果原文：read_terminal 带 wait_for_output_ms 等久了会被 Claude Code 转到后台，
+ * 结果只交给模型，网页的后台任务里靠这里记的显示输出（见 browser/tool.ts 的 rememberResult）
+ */
+function recordingResult<T extends { handler: (args: never, extra: unknown) => Promise<{ content: unknown[]; isError?: boolean }> }>(t: T): T {
+  const handler = t.handler as (args: unknown, extra: unknown) => ReturnType<T["handler"]>;
+  return {
+    ...t,
+    handler: async (args: unknown, extra: unknown) => {
+      const result = await handler(args, extra);
+      const out = (result.content as Array<{ type?: unknown; text?: unknown }>).map((c) => (c.type === "text" && typeof c.text === "string" ? c.text : "")).join("\n");
+      rememberResult(extra, out, result.isError === true);
+      return result;
+    },
+  };
 }
 
 /** 工具定义（单独拿出来，测试时可以直接调 handler） */

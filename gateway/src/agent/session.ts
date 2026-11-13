@@ -21,6 +21,7 @@ import { uploadAttachments } from "../ssh/remote-attachments.js";
 import { InputQueue } from "./input-queue.js";
 import { listModels } from "./models.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
+import { TERMINAL_SERVER } from "../terminal/tool.js";
 import type { BrowserHost } from "../browser/host.js";
 import { inappBusy, takeToolResult } from "../browser/tool.js";
 import { desktopWriteActive } from "../desktop/guard.js";
@@ -356,13 +357,14 @@ export class AgentSession {
         logTaskMessage(this.log, this.id, message);
         let tasksChanged = this.tasks.ingest(message);
         this.publish({ type: "sdk", message });
-        // 转到后台的浏览器工具调用结束了：把结果原文补发给网页（通知里只有工具名），失败时显示原因
+        // 转到后台的网关工具调用（浏览器、桌面、终端）结束了：把结果原文补发给网页（通知里只有工具名），失败时显示原因
         if (message.type === "system" && message.subtype === "task_notification" && message.tool_use_id) {
           const result = takeToolResult(message.tool_use_id);
           if (result) {
             this.publish({ type: "task_result", taskId: message.task_id, text: result.text, isError: result.isError });
             tasksChanged = this.tasks.setResult(message.task_id, result.text, result.isError) || tasksChanged;
-            this.browserTaskEnded = true;
+            const tool = this.tasks.list().find((t) => t.taskId === message.task_id)?.tool;
+            if (!tool?.startsWith(`mcp__${TERMINAL_SERVER}__`)) this.browserTaskEnded = true;
           }
         }
         if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });

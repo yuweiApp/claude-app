@@ -148,7 +148,7 @@ export function rememberResult(extra: unknown, text: string, isError: boolean): 
   if (toolResults.size > MAX_TOOL_RESULTS) toolResults.delete(toolResults.keys().next().value as string);
 }
 
-/** 取出（并删掉）一次工具调用的结果；不是网关的浏览器工具、或者已经被挤掉了返回 undefined */
+/** 取出（并删掉）一次工具调用的结果；不是记了结果的网关工具（浏览器、桌面、终端）、或者已经被挤掉了返回 undefined */
 export function takeToolResult(toolUseId: string): { text: string; isError: boolean } | undefined {
   const result = toolResults.get(toolUseId);
   toolResults.delete(toolUseId);
