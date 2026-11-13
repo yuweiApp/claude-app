@@ -131,10 +131,19 @@ function taskLabel(task: TaskItem): string {
   return exit ? `${label}（退出码 ${exit}）` : label;
 }
 
-/** 失败的后台任务的原因：结果原文的第一行（浏览器工具出错时是 Playwright 的报错），太长截断；全文在悬停提示里 */
+/** 报错的开头：TimeoutError: …、TypeError: …、Error: … */
+const ERROR_START = /\b[A-Z]\w*(?:Error|Exception): /;
+
+/**
+ * 失败的后台任务的原因，太长截断；全文在悬停提示里。
+ * 结果原文里代码的 console 输出在前、抛出的报错在后（历史里的通知还会把换行压成空格），
+ * 所以从后往前找带报错开头的那一行，从报错开头取；找不到（比如被中止的说明）就用第一行
+ */
 function taskReason(task: TaskItem): string | undefined {
   if (task.status !== "failed" || !task.detail) return undefined;
-  const line = task.detail.split("\n").map((l) => l.trim()).find(Boolean);
+  const lines = task.detail.split("\n").map((l) => l.trim()).filter(Boolean);
+  const errorLine = lines.findLast((l) => ERROR_START.test(l));
+  const line = errorLine ? errorLine.slice(ERROR_START.exec(errorLine)!.index) : lines[0];
   return line && (line.length > 200 ? `${line.slice(0, 200)}…` : line);
 }
 
