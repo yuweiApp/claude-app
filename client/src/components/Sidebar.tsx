@@ -53,6 +53,36 @@ export function groupByFolder(sessions: SessionListItem[], workspaceDir: string)
   return groups;
 }
 
+/** 分支固定压到最上层会话下展示，侧栏最多两层 */
+function sessionTree(sessions: SessionListItem[]): { session: SessionListItem; branch: boolean }[] {
+  const byId = new Map(sessions.map((session) => [session.sessionId, session]));
+  const groups = new Map<string, { root: SessionListItem; children: SessionListItem[] }>();
+  for (const session of sessions) {
+    let root = session;
+    const visited = new Set<string>();
+    while (root.forkedFromSessionId && byId.has(root.forkedFromSessionId)) {
+      visited.add(root.sessionId);
+      if (visited.has(root.forkedFromSessionId)) {
+        // 异常循环关系也保留会话，作为独立根节点显示
+        root = session;
+        break;
+      }
+      root = byId.get(root.forkedFromSessionId)!;
+    }
+    let group = groups.get(root.sessionId);
+    if (!group) {
+      group = { root, children: [] };
+      groups.set(root.sessionId, group);
+    }
+    if (session.sessionId !== root.sessionId) group.children.push(session);
+  }
+  // 输入按最后回复时间倒序，组按包括分支在内的最近活动排序
+  return [...groups.values()].flatMap(({ root, children }) => [
+    { session: root, branch: false },
+    ...children.map((session) => ({ session, branch: true })),
+  ]);
+}
+
 interface Props {
   sessions: SessionListItem[];
   /** 默认工作目录：没有 cwd 的会话按它分组（普通会话看 SessionListItem.chat，不看这个） */
@@ -118,8 +148,8 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
   const deleteSession = (s: SessionListItem) => onDelete([s.sessionId]);
   const deleteProject = (g: FolderGroup) => onDelete(g.sessions.map((s) => s.sessionId));
 
-  const row = (s: SessionListItem) => (
-    <SessionRow key={s.sessionId} session={s} active={s.sessionId === currentId} onSelect={onSelect} onDelete={deleteSession} onRename={onRename} />
+  const row = (s: SessionListItem, branch: boolean, branchEnd: boolean) => (
+    <SessionRow key={s.sessionId} session={s} branch={branch} branchEnd={branchEnd} active={s.sessionId === currentId} onSelect={onSelect} onDelete={deleteSession} onRename={onRename} />
   );
 
   /** 「会话」和各个项目当前列出的会话数（键是 SECTION_CHATS 或项目文件夹），没记的是默认个数；不保存，刷新后都回到默认 */
@@ -136,13 +166,15 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
    * 当前会话排在后面时一直列到它为止，打开的会话不会藏在「展开更多」里
    */
   const sessionList = (key: string, items: SessionListItem[], className?: string) => {
-    const pinned = items.findIndex((s) => s.sessionId === currentId) + 1;
+    const tree = sessionTree(items);
+    const pinned = tree.findIndex(({ session }) => session.sessionId === currentId) + 1;
     const count = Math.max(shownCounts.get(key) ?? PREVIEW_COUNT, pinned);
-    const canExpand = items.length > count;
+    const canExpand = tree.length > count;
     const canCollapse = count > Math.max(PREVIEW_COUNT, pinned);
+    const visible = tree.slice(0, count);
     return (
       <ul className={className}>
-        {items.slice(0, count).map(row)}
+        {visible.map(({ session, branch }, index) => row(session, branch, !visible[index + 1]?.branch))}
         {(canExpand || canCollapse) && (
           <li className="list-toggle">
             {canExpand && (
@@ -322,12 +354,16 @@ function SectionHead({ className, menu: items, children }: { className?: string;
 /** 一个会话：悬停时右边出现「…」（运行中的转圈让位），点它或右键弹出菜单；重命名时这一行换成输入框，双击标题也能改 */
 function SessionRow({
   session: s,
+  branch,
+  branchEnd,
   active,
   onSelect,
   onDelete,
   onRename,
 }: {
   session: SessionListItem;
+  branch: boolean;
+  branchEnd: boolean;
   active: boolean;
   onSelect: (id: string) => void;
   onDelete: (s: SessionListItem) => void;
@@ -344,9 +380,10 @@ function SessionRow({
   // 远程项目里的会话不用，项目那一行已经标了
   useSshConnections();
   const remote = s.chat ? parseRemote(s.cwd) : null;
+  const itemClass = `session-item${branch ? " branch-row" : ""}${branch && branchEnd ? " branch-end" : ""}${menu.at ? " menu-open" : ""}`;
   if (renaming)
     return (
-      <li ref={rowRef} className="session-item">
+      <li ref={rowRef} className={itemClass}>
         <TitleInput
           initial={title}
           onDone={(next) => {
@@ -358,7 +395,7 @@ function SessionRow({
       </li>
     );
   return (
-    <li ref={rowRef} className={`session-item${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
+    <li ref={rowRef} className={itemClass} onContextMenu={menu.openAtPointer}>
       <button
         className={`session-row${active ? " active" : ""}${isWorking(s) ? " running" : ""}`}
         onClick={() => onSelect(s.sessionId)}

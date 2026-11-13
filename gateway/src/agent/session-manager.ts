@@ -30,7 +30,7 @@ import { disposeRepls } from "../browser/tool.js";
 import { disposeDesktopSession } from "../desktop/tool.js";
 import { sessionHistory } from "./history.js";
 import { exportSession, SESSION_MENTION } from "./session-export.js";
-import { lastCustomTitle, lastResponseAt, lastResponseModel, recordedCwd, sessionRecordFiles } from "./session-records.js";
+import { lastCustomTitle, lastResponseAt, lastResponseModel, recordedCwd, recordedForkParent, sessionRecordFiles } from "./session-records.js";
 import { createScratchDir, isChatCwd, isScratchIn, newScratchName, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
 import { fromWindowsPath, nativePath, parseRemote, remoteUri } from "../ssh/location.js";
 import { existingHost, sshHost } from "../ssh/hosts.js";
@@ -198,6 +198,7 @@ export class SessionManager {
           if (customTitle) this.titles.set(info.sessionId, customTitle);
         }
         const responded = file ? await lastResponseAt(file) : undefined;
+        const forkedFromSessionId = file ? await recordedForkParent(file) : undefined;
         const recorded = await this.infoCwd(info, file);
         const hostId = remoteSessionHost(info.sessionId);
         const cwd = hostId && recorded ? remoteUri(hostId, recorded) : recorded;
@@ -205,6 +206,7 @@ export class SessionManager {
           ...info,
           ...(customTitle ? { customTitle } : {}),
           ...(cwd ? { cwd } : {}),
+          ...(forkedFromSessionId ? { forkedFromSessionId } : {}),
           chat: isChatCwd(cwd),
           state: this.active.get(info.sessionId)?.state,
           tasksRunning: this.active.get(info.sessionId)?.tasksRunning || undefined,

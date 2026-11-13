@@ -18,6 +18,7 @@ const MAX_SCAN = 4 * 1024 * 1024;
 const responseCache = new Map<string, { size: number; mtimeMs: number; at: number | undefined }>();
 const titleCache = new Map<string, { size: number; mtimeMs: number; title: string | undefined }>();
 const cwdCache = new Map<string, string>();
+const forkCache = new Map<string, { size: number; mtimeMs: number; parent: string | undefined }>();
 
 /** 所有会话的记录文件，键是 sessionId */
 export async function sessionRecordFiles(): Promise<Map<string, string>> {
@@ -109,6 +110,40 @@ export async function recordedCwd(file: string): Promise<string | undefined> {
     stream.destroy();
   }
   return undefined;
+}
+
+/** SDK 分叉时在复制的消息中记录 forkedFrom.sessionId，旧分支和远程副本同样适用 */
+export async function recordedForkParent(file: string): Promise<string | undefined> {
+  const info = await stat(file).catch(() => undefined);
+  if (!info) return undefined;
+  const cached = forkCache.get(file);
+  if (cached && cached.size === info.size && cached.mtimeMs === info.mtimeMs) return cached.parent;
+  const stream = createReadStream(file, { encoding: "utf8" });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  let parent: string | undefined;
+  try {
+    for await (const line of lines) {
+      try {
+        const entry = JSON.parse(line) as { type?: string; sessionId?: string; forkedFrom?: { sessionId?: unknown } };
+        const source = entry.forkedFrom?.sessionId;
+        if (typeof source === "string" && source && source !== entry.sessionId) {
+          parent = source;
+          break;
+        }
+        // 普通会话的第一条消息没有来源，无需扫描剩下的记录
+        if (entry.type === "user" || entry.type === "assistant") break;
+      } catch {
+        // 跳过写到一半的行
+      }
+    }
+  } catch {
+    return undefined;
+  } finally {
+    lines.close();
+    stream.destroy();
+  }
+  forkCache.set(file, { size: info.size, mtimeMs: info.mtimeMs, parent });
+  return parent;
 }
 
 /** 从末尾往前一块块读，逐行找最后一条 pick 给出结果的记录；跨块的行拼起来再看 */

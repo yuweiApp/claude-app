@@ -240,6 +240,19 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 @media (prefers-reduced-motion: reduce) { .session-spinner { animation: none; } }
 /* 会话行悬停或菜单开着：右边出现「…」，转圈让位，标题让出位置 */
 .session-item { position: relative; }
+.branch-row { margin-left: 22px; }
+.branch-row::before {
+  content: ""; position: absolute; left: -10px; top: -2px; bottom: 0;
+  border-left: 1px solid var(--border);
+  pointer-events: none;
+}
+.branch-row::after {
+  content: ""; position: absolute; left: -10px; top: 50%; width: 10px;
+  border-top: 1px solid var(--border); pointer-events: none;
+}
+.branch-end::before { bottom: 50%; }
+.group-list .branch-row { margin-left: 44px; }
+.branch-row .session-row { padding-left: 12px; }
 .row-more {
   position: absolute; top: 50%; right: 6px; transform: translateY(-50%); width: 26px; height: 26px; color: var(--text);
   opacity: 0; pointer-events: none;
@@ -254,6 +267,7 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
   background: var(--bg); color: var(--text); font: inherit; font-size: 13.5px; outline: none;
 }
 .group-list .session-title-input { padding-left: 33px; }
+.branch-row .session-title-input { padding-left: 11px; }
 
 main {
   flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;

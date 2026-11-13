@@ -389,6 +389,8 @@ export interface HistoryImageSource {
 /** chat：普通会话（没选文件夹，工作目录是网关建的 workspace/scratch-…，或者旧会话的 workspace 本身），列在侧边栏「会话」里；否则是项目会话 */
 export type SessionListItem = SDKSessionInfo & {
   chat: boolean;
+  /** Fork 源会话；侧栏据此把分支显示在源会话下 */
+  forkedFromSessionId?: string;
   state?: SessionState;
   /** 有后台任务（后台命令、后台子代理、转到后台的工具调用）在跑；一轮结束后 state 是 idle，任务结束的通知会再唤起新的一轮 */
   tasksRunning?: boolean;
