@@ -146,6 +146,8 @@ export class TaskList {
 
   /** 子进程退出时它拉起的后台任务也跟着结束 */
   processExited(): boolean {
+    // 在跑的后台任务列表是按子进程算的，新的子进程从空的开始
+    this.liveBackground = new Set();
     let changed = false;
     for (const task of this.tasks.values()) {
       if (task.status !== "running") continue;
@@ -183,8 +185,20 @@ export class TaskList {
       case "background_tasks_changed": {
         // 完整的在跑列表（SDK 说 task_started 这类边沿消息可能漏掉，以它为准）：没登记过的也补上
         const live = message.tasks.filter((t) => !t.ambient);
+        const previous = this.liveBackground;
         this.liveBackground = new Set(live.map((t) => t.task_id));
         let changed = false;
+        // 上一条里还在、这一条里没了的就是结束了。结束的边沿消息（task_updated、task_notification）一般先到，
+        // 但不保证：会话停在一轮中间时，后台命令跑完了也可能一直没有完成通知，只靠边沿会一直显示运行中。
+        // 这时不知道结果，记成已完成；之后补来的完成通知会改成实际的状态
+        for (const id of previous) {
+          const task = this.tasks.get(id);
+          if (this.liveBackground.has(id) || task?.status !== "running") continue;
+          task.status = "completed";
+          task.progress = undefined;
+          task.endedAt = Date.now();
+          changed = true;
+        }
         for (const t of live) {
           const known = this.tasks.get(t.task_id);
           if (known?.backgrounded) continue;
@@ -286,7 +300,8 @@ export class TaskList {
       }
       const task = [...this.tasks.values()].find((t) => t.toolUseId === block.tool_use_id && !t.outputFile);
       if (!task) continue;
-      const file = new RegExp(`(/[^\\s"'\\\\]*${task.taskId}\\.output)`).exec(text)?.[1];
+      // Windows 上是 C:\…\tasks\<id>.output；按原文找，JSON 里的反斜杠是转义过的
+      const file = new RegExp(`((?:[A-Za-z]:)?[\\\\/][^\\s"']*[\\\\/]${task.taskId}\\.output)`).exec(plain)?.[1];
       if (file) {
         task.outputFile = file;
         changed = true;

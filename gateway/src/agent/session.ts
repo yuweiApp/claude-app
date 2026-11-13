@@ -353,6 +353,7 @@ export class AgentSession {
           if (message.subtype === "status" && message.status === "requesting" && Date.now() - this.wakeAt < WAKE_WINDOW_MS) this.setState("running");
         }
         this.trackTools(message);
+        logTaskMessage(this.log, this.id, message);
         let tasksChanged = this.tasks.ingest(message);
         this.publish({ type: "sdk", message });
         // 转到后台的浏览器工具调用结束了：把结果原文补发给网页（通知里只有工具名），失败时显示原因
@@ -406,5 +407,27 @@ export class AgentSession {
   private publish(event: GatewayEvent): void {
     this.hub.publish(this.id, event);
     this.conversationLog.record(this.id, event);
+  }
+}
+
+/**
+ * 调试用：后台任务相关的系统消息（开始、状态变化、完成通知、在跑列表）记一行日志，
+ * 排查任务一直显示运行中时看 SDK 实际发了哪些
+ */
+function logTaskMessage(log: FastifyBaseLogger, sessionId: string, message: SDKMessage): void {
+  if (message.type !== "system") return;
+  switch (message.subtype) {
+    case "task_started":
+      log.info({ sessionId, taskId: message.task_id, taskType: message.task_type, backgrounded: message.is_backgrounded, toolUseId: message.tool_use_id }, "后台任务：task_started");
+      break;
+    case "task_updated":
+      log.info({ sessionId, taskId: message.task_id, patch: message.patch }, "后台任务：task_updated");
+      break;
+    case "task_notification":
+      log.info({ sessionId, taskId: message.task_id, status: message.status, skipTranscript: message.skip_transcript }, "后台任务：task_notification");
+      break;
+    case "background_tasks_changed":
+      log.info({ sessionId, live: message.tasks.map((t) => `${t.task_id}${t.ambient ? "(ambient)" : ""}`) }, "后台任务：background_tasks_changed");
+      break;
   }
 }
