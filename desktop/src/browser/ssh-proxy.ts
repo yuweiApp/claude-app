@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import net, { type AddressInfo } from "node:net";
 import { Duplex } from "node:stream";
@@ -208,14 +209,53 @@ function pipeBoth(a: Duplex, b: Duplex): void {
   a.pipe(b).pipe(a);
 }
 
-function direct(host: string, port: number): Promise<net.Socket> {
+/**
+ * 直连 host:port。域名解析出多个地址时同 Chromium：先连第一个，300ms 没连上再同时连下一个（IPv4、IPv6 交替），
+ * 已经在连的不放弃，谁先连上用谁。不用 Node 自带的 autoSelectFamily：它每个地址只等 250ms，到点就放弃，
+ * 慢一点的网络上能连通的 IPv4 被放弃、剩下连不通的 IPv6 立刻失败，整个报 ETIMEDOUT（login.dingtalk.com 就是这样）
+ */
+async function direct(host: string, port: number): Promise<net.Socket> {
+  const addrs = net.isIP(host) ? [{ address: host, family: net.isIP(host) }] : await lookup(host, { all: true });
+  const first = addrs[0]?.family;
+  const a = addrs.filter((x) => x.family === first);
+  const b = addrs.filter((x) => x.family !== first);
+  const order = Array.from({ length: Math.max(a.length, b.length) }, (_, i) => [a[i], b[i]]).flat().filter((x) => x !== undefined);
+  if (!order.length) throw new Error(`${host} 没有解析到地址`);
   return new Promise((resolve, reject) => {
-    const s = net.connect({ host, port });
-    s.once("connect", () => {
-      s.off("error", reject);
-      resolve(s);
-    });
-    s.once("error", reject);
+    const connecting = new Set<net.Socket>();
+    const errors: Error[] = [];
+    let next = 0;
+    let done = false;
+    let timer: NodeJS.Timeout | undefined;
+    const tryNext = (): void => {
+      clearTimeout(timer);
+      if (done || next >= order.length) return;
+      const { address, family } = order[next++]!;
+      const s = net.connect({ host: address, port, family, autoSelectFamily: false });
+      connecting.add(s);
+      const onError = (err: Error): void => {
+        connecting.delete(s);
+        errors.push(err);
+        if (done) return;
+        if (next < order.length) return tryNext();
+        if (!connecting.size) {
+          done = true;
+          reject(errors.length === 1 ? errors[0] : new AggregateError(errors, errors.map((e) => e.message).join("；")));
+        }
+      };
+      s.once("error", onError);
+      s.once("connect", () => {
+        s.off("error", onError);
+        connecting.delete(s);
+        if (done) return void s.destroy();
+        done = true;
+        clearTimeout(timer);
+        for (const other of connecting) other.destroy();
+        resolve(s);
+      });
+      if (next < order.length) timer = setTimeout(tryNext, 300);
+    };
+    tryNext();
   });
 }
 
