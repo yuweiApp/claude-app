@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent, type ReactNode } from "react";
 import { api } from "../api";
 import { desktop, type BrowserTabInfo } from "../desktop";
 import { BrowserTab, BrowserToolbar, GlobeIcon, SiteIcon } from "./BrowserTab";
@@ -350,29 +350,41 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
     const tab: PanelTab = { id: crypto.randomUUID(), kind: "new" };
     onChange((s) => ({ tabs: [...s.tabs, tab], active: tab.id }));
   };
-  // 有没保存的修改的文件标签：先问
-  const [confirmClose, setConfirmClose] = useState<PanelTab | null>(null);
-  const requestClose = (tab: PanelTab) => {
-    if (tab.kind === "files" && tab.path !== null && getDraft(tab.root ?? cwd, tab.path) !== undefined) setConfirmClose(tab);
-    else closeTab(tab);
+  // 要关的标签里有没保存修改的文件：先问。focus 是关完要切过去的标签（「关闭其他标签页」留下的那个）
+  const [confirmClose, setConfirmClose] = useState<{ tabs: PanelTab[]; unsaved: PanelTab[]; focus?: string } | null>(null);
+  const hasDraft = (t: PanelTab) => t.kind === "files" && t.path !== null && getDraft(t.root ?? cwd, t.path) !== undefined;
+  const requestClose = (list: PanelTab[], focus?: string) => {
+    if (!list.length) return;
+    const unsaved = list.filter(hasDraft);
+    if (unsaved.length) setConfirmClose({ tabs: list, unsaved, focus });
+    else closeTabs(list, focus);
   };
-  const closeTab = (tab: PanelTab) => {
-    if (tab.kind === "terminal") void api.closeTerminal(tab.terminalId).catch(() => undefined);
-    if (tab.kind === "browser") browserApi?.close(tab.browserId);
-    if (tab.kind === "files" && tab.path !== null) setDraft(tab.root ?? cwd, tab.path, undefined);
+  const closeTabs = (list: PanelTab[], focus?: string) => {
+    for (const tab of list) {
+      if (tab.kind === "terminal") void api.closeTerminal(tab.terminalId).catch(() => undefined);
+      if (tab.kind === "browser") browserApi?.close(tab.browserId);
+      if (tab.kind === "files" && tab.path !== null) setDraft(tab.root ?? cwd, tab.path, undefined);
+    }
+    const ids = new Set(list.map((t) => t.id));
     onChange((s) => {
-      const tabs = s.tabs.filter((t) => t.id !== tab.id);
+      const tabs = s.tabs.filter((t) => !ids.has(t.id));
       if (!tabs.length) return newPanelState();
-      if (s.active !== tab.id) return { tabs, active: s.active };
-      // 关的是当前标签：切到同一个会话里看得见的、原来在它旁边的那个
+      if (focus && tabs.some((t) => t.id === focus)) return { tabs, active: focus };
+      if (!ids.has(s.active)) return { tabs, active: s.active };
+      // 关了当前标签：切到同一个会话里看得见的、原来在它右边最近的那个，右边没有就左边最近的
       const visible = s.tabs.filter((t) => t.kind !== "browser" || t.sessionId === sessionId);
-      const index = visible.findIndex((t) => t.id === tab.id);
-      const rest = visible.filter((t) => t.id !== tab.id);
-      return { tabs, active: rest[Math.min(index, rest.length - 1)]?.id ?? tabs[0]!.id };
+      const index = visible.findIndex((t) => t.id === s.active);
+      const next = visible.slice(index + 1).find((t) => !ids.has(t.id)) ?? visible.slice(0, Math.max(index, 0)).reverse().find((t) => !ids.has(t.id));
+      return { tabs, active: next?.id ?? tabs[0]!.id };
     });
-    // 关的是当前会话看得见的最后一个标签：收起面板，下次打开是新标签页
-    if (visibleTabs.length === 1 && visibleTabs[0]!.id === tab.id) onClose();
+    // 当前会话看得见的标签全关了：收起面板，下次打开是新标签页
+    if (visibleTabs.every((t) => ids.has(t.id))) onClose();
   };
+  // 标签上右键的菜单（位置是视口坐标）
+  const [tabMenu, setTabMenu] = useState<{ tab: PanelTab; left: number; top: number } | null>(null);
+  const tabMenuRef = useRef<HTMLDivElement>(null);
+  const closeTabMenu = useCallback(() => setTabMenu(null), []);
+  useDismiss(tabMenuRef, tabMenu !== null, closeTabMenu);
   /** 新标签页里选了工具：这个标签页变成那个工具 */
   const replaceTab = (id: string, tab: PanelTab) =>
     onChange((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? tab : t)), active: tab.id }));
@@ -491,7 +503,11 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
                 // 当前标签有最小宽度，可能比别的宽，取不在前面的标签的宽度
                 const other = tabsRef.current?.querySelector<HTMLElement>(".panel-tab:not(.active)");
                 if (other) setFrozen(other.getBoundingClientRect().width);
-                requestClose(tab);
+                requestClose([tab]);
+              }}
+              onMenu={(e) => {
+                e.preventDefault();
+                setTabMenu({ tab, left: Math.min(e.clientX, window.innerWidth - 180), top: e.clientY });
               }}
             />
           ))}
@@ -554,13 +570,35 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
           </div>
         ))}
       </div>
+      {tabMenu && (
+        <div ref={tabMenuRef} className="menu context-menu" role="menu" style={{ left: tabMenu.left, top: tabMenu.top }}>
+          {[
+            { label: "关闭", tabs: [tabMenu.tab] },
+            { label: "关闭其他标签页", tabs: visibleTabs.filter((t) => t.id !== tabMenu.tab.id), focus: tabMenu.tab.id },
+            { label: "关闭所有标签页", tabs: visibleTabs },
+          ].map((item) => (
+            <button
+              key={item.label}
+              role="menuitem"
+              className="menu-item"
+              disabled={!item.tabs.length}
+              onClick={() => {
+                setTabMenu(null);
+                requestClose(item.tabs, item.focus);
+              }}
+            >
+              <span className="menu-item-name">{item.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {confirmClose && (
         <ConfirmDialog
           title="放弃未保存的修改？"
-          message={`「${tabLabel(confirmClose)}」有未保存的修改，关闭后会丢失。`}
+          message={`${confirmClose.unsaved.map((t) => `「${tabLabel(t)}」`).join("")}有未保存的修改，关闭后会丢失。`}
           confirmLabel="不保存，关闭"
           onConfirm={() => {
-            closeTab(confirmClose);
+            closeTabs(confirmClose.tabs, confirmClose.focus);
             setConfirmClose(null);
           }}
           onCancel={() => setConfirmClose(null)}
@@ -619,7 +657,25 @@ function tabIcon(tab: PanelTab): ReactNode {
 }
 
 /** 标签：预览打开的文件是斜体（双击固定），有没保存的修改时关闭按钮的位置显示圆点（鼠标移上去变回 ×） */
-function TabButton({ cwd, tab, browserInfo, active, onSelect, onPin, onClose }: { cwd: string; tab: PanelTab; browserInfo?: BrowserTabInfo; active: boolean; onSelect: () => void; onPin: () => void; onClose: () => void }) {
+function TabButton({
+  cwd,
+  tab,
+  browserInfo,
+  active,
+  onSelect,
+  onPin,
+  onClose,
+  onMenu,
+}: {
+  cwd: string;
+  tab: PanelTab;
+  browserInfo?: BrowserTabInfo;
+  active: boolean;
+  onSelect: () => void;
+  onPin: () => void;
+  onClose: () => void;
+  onMenu: (e: ReactMouseEvent) => void;
+}) {
   const unsaved = useHasDraft(tab.kind === "files" ? (tab.root ?? cwd) : cwd, tab.kind === "files" ? tab.path : null);
   // 工作目录外的显示完整路径
   const filePath = tab.kind === "files" && tab.path !== null ? (tab.root ? `${tab.root.replace(/[\\/]+$/, "")}/${tab.path}` : tab.path) : null;
@@ -641,6 +697,7 @@ function TabButton({ cwd, tab, browserInfo, active, onSelect, onPin, onClose }: 
       onClick={onSelect}
       onDoubleClick={onPin}
       onAuxClick={(e) => e.button === 1 && onClose()}
+      onContextMenu={onMenu}
     >
       <span className="panel-tab-icon">{tab.kind === "browser" ? <SiteIcon src={browserInfo?.favicon} /> : tabIcon(tab)}</span>
       <span className="panel-tab-label">{(tab.kind === "browser" && (browserInfo?.pendingUrl || browserInfo?.title || browserInfo?.url)) || tabLabel(tab)}</span>

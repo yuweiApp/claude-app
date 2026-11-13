@@ -496,6 +496,12 @@ function LoadingBar({ loading }: { loading: boolean }) {
 
 /** 画面区域上取 5×5 个点（四边各取一排），最上面的元素不是它自己（或里面的东西），就是被对话框、菜单、地址栏建议盖住了 */
 function isCovered(el: HTMLElement, r: DOMRect): boolean {
+  // 弹出的菜单（右键菜单之类）不大，可能落在下面采样的点之间：和区域有交叠就算盖住
+  for (const menu of document.querySelectorAll<HTMLElement>(".menu")) {
+    if (el.contains(menu)) continue;
+    const m = menu.getBoundingClientRect();
+    if (m.width > 0 && m.height > 0 && m.left < r.right && m.right > r.left && m.top < r.bottom && m.bottom > r.top) return true;
+  }
   // 离边 6px：面板左边缘拖动调宽度的那条（.side-panel-resizer）伸进面板 3px，不算盖住
   const xs = [r.left + 6, r.left + r.width / 4, r.left + r.width / 2, r.left + (r.width * 3) / 4, r.right - 6];
   const ys = [r.top + 6, r.top + r.height / 4, r.top + r.height / 2, r.top + (r.height * 3) / 4, r.bottom - 6];
