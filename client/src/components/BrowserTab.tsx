@@ -56,6 +56,17 @@ export function BrowserTab({ api, id, info, active }: Props) {
     };
   }, [api, id, picking, active]);
   useEffect(() => api.onInspectEnded((tab) => tab === id && setPicking(false)), [api, id]);
+  // 网页里按 Esc 由外壳处理（推来 onInspectEnded）；检查模式下点网页不会把焦点给网页，焦点多半还在界面上，这里也接 Esc。
+  // 正在写要求时 Esc 只关编辑框（它自己处理），别的地方已经用掉的 Esc（例如关掉输入框的补全列表）不管
+  useEffect(() => {
+    if (!picking || !active) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || pickedRef.current) return;
+      setPicking(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [picking, active]);
   useEffect(() => {
     if (!picking) closePageAnnotation();
   }, [picking]);
