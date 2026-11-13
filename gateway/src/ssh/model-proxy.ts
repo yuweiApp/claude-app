@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import https from "node:https";
-import type { Duplex } from "node:stream";
+import { type Duplex, pipeline } from "node:stream";
 import { config } from "../config.js";
 
 /**
@@ -60,10 +60,14 @@ async function forward(req: IncomingMessage, res: ServerResponse, token: string)
   }
   const upstream = (target.protocol === "https:" ? https : http).request(target, { method: req.method, headers }, (up) => {
     res.writeHead(up.statusCode ?? 502, up.statusMessage, filterResponseHeaders(up.headers));
-    up.pipe(res);
+    // 上游回到一半断开（流没完整结束）时，pipeline 会把发给远端的响应也断开，远端 claude 立刻看到连接中断、自己重试；
+    // 只用 pipe 的话远端这边的响应一直不结束，要等远端自己超时
+    pipeline(up, res, () => {});
   });
   upstream.on("error", (err) => {
-    if (!res.headersSent) res.writeHead(502, { "content-type": "application/json" });
+    // 响应已经开始往远端发（SSE 流到一半）就不能再插一段 JSON 了，直接断开
+    if (res.headersSent) return void res.destroy(err);
+    res.writeHead(502, { "content-type": "application/json" });
     res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: `claude-app 网关转发模型请求失败：${err.message}` } }));
   });
   // 远端断开（打断、进程退出）时上游请求一起断，不再计费
