@@ -449,6 +449,10 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       finishCompact(view, "failed");
       // 中断的一轮也是 error_during_execution（errors 里是 [ede_diagnostic] …），前面已经有「已中断」，不算出错
       const interrupted = view.items.at(-1)?.kind === "interrupted";
+      // 运行中按 Enter 插话（priority now）时，Claude Code 掐掉正在进行的模型请求或工具调用，把新消息和这一轮一起交给模型，
+      // 这一轮以 aborted_streaming / aborted_tools 结束，同样是 error_during_execution 加 [ede_diagnostic]，但没有「已中断」那条消息。
+      // 用户点停止的也是这两种，前面有「已中断」。都不是出错
+      const aborted = message.terminal_reason === "aborted_streaming" || message.terminal_reason === "aborted_tools";
       // 还没交给模型的消息开始的轮不算：这个 result 是它之前那段处理的（见 unstartedUuids）
       const start = view.items.findLast((it) => isTurnStart(it) && !view.unstartedUuids.includes(it.uuid));
       pushItem(view, null, {
@@ -457,7 +461,7 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
         at: Date.now(),
         userMessageUuid: message.user_message_uuid,
         startUuid: start?.uuid,
-        isError: message.is_error && !interrupted,
+        isError: message.is_error && !interrupted && !aborted,
         text: message.subtype === "success" ? "" : message.errors.join("\n") || message.subtype,
         durationMs: message.duration_ms,
         costUsd: message.total_cost_usd,
