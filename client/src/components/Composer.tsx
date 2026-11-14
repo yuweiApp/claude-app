@@ -361,7 +361,7 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
     <div className="composer-wrap">
     {top && <div className="new-chat-bar" ref={barRef}>{top}</div>}
     <div
-      className={["composer", dragging && "dragging", working && "running"].filter(Boolean).join(" ")}
+      className={dragging ? "composer dragging" : "composer"}
       onDragOver={(e) => {
         if (acceptsDrop(e)) {
           e.preventDefault();
