@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { MessagePriority, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
+export type { MessagePriority, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -183,7 +183,7 @@ export const api = {
   createSession: (
     text: string,
     attachments: string[],
-    opts: { permissionMode?: PermissionMode; cwd?: string; model?: string; effort?: EffortLevel },
+    opts: { permissionMode?: PermissionMode; cwd?: string; model?: string; effort?: EffortLevel; goal?: string },
   ) => request<{ sessionId: string }>("POST", "/sessions", { text, attachments, ...opts }).then((r) => r.sessionId),
   /** 切换会话的模型或推理强度，只传要改的 */
   setModel: (id: string, change: { model?: string; effort?: EffortLevel }) => request("POST", `/sessions/${id}/model`, change),
@@ -203,10 +203,14 @@ export const api = {
     return request<{ attachments: Attachment[] }>("POST", "/uploads", form).then((r) => r.attachments);
   },
   interrupt: (id: string) => request("POST", `/sessions/${id}/interrupt`),
-  /** 上下文用量和设置（输入框的上下文弹层） */
+  /** 输入框要的会话状态：上下文用量、进行中的目标 */
   context: (id: string) => request<SessionContextInfo>("GET", `/sessions/${id}/context`),
-  /** 改上下文窗口和自动压缩阈值，null 是不设；asModelDefault 时设成这个模型的默认。子进程空闲时网关会重启它 */
+  /** 压缩上下文（同 Claude Code 的 /compact） */
   compact: (id: string) => request("POST", `/sessions/${id}/compact`),
+  /** 设定目标（换掉已有的）；这一轮还在进行时网关先结束这一轮 */
+  setGoal: (id: string, condition: string) => request("POST", `/sessions/${id}/goal`, { condition }),
+  /** 取消目标 */
+  clearGoal: (id: string) => request("DELETE", `/sessions/${id}/goal`),
   /** 工作目录下可用的技能、插件、MCP 服务器和子代理，不传是默认工作目录；refresh 不用网关的缓存 */
   capabilities: (cwd?: string, refresh = false) => {
     const params = new URLSearchParams({ ...(cwd ? { cwd } : {}), ...(refresh ? { refresh: "1" } : {}) });

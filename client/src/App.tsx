@@ -3,10 +3,11 @@ import { refreshSshConnections, sshName } from "./state/sshConnections";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { GearGlyph, HomeGlyph, IosIcon } from "./components/IosIcon";
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import { api, BROWSERS_CHANGED, subscribe, type Capabilities, type ExternalBrowserInfo, type GatewayConfig, type MessagePriority, type SessionListItem } from "./api";
+import { api, BROWSERS_CHANGED, subscribe, type Capabilities, type ExternalBrowserInfo, type GatewayConfig, type MessagePriority, type SessionContextInfo, type SessionListItem } from "./api";
 import { CapabilityPicker } from "./components/CapabilityPicker";
 import { MentionNamesContext } from "./components/MentionText";
 import { ContextMeter } from "./components/ContextMeter";
+import { GoalBar, GoalEditor } from "./components/Goal";
 import { Composer, type ComposerHandle } from "./components/Composer";
 import { Messages } from "./components/Messages";
 import { PermissionCard } from "./components/PermissionCard";
@@ -457,6 +458,8 @@ function Chat({
   folderPicker,
 }: ChatProps) {
   const [view, dispatch] = useReducer(reduce, undefined, emptyView);
+  // 打开会话时向网关取的上下文用量和目标（GET /sessions/:id/context）
+  const [contextInfo, setContextInfo] = useState<SessionContextInfo | null>(null);
   /** 远程会话（工作目录是 ssh://…）：输入框上面只留「浏览器」 */
   const remoteChat = isRemote(cwd);
   const remoteHost = parseRemote(cwd)?.host ?? null;
@@ -531,8 +534,28 @@ function Chat({
       },
     );
     api.tasks(sessionId).then((tasks) => dispatch({ type: "tasks", tasks }), () => undefined);
+    api.context(sessionId).then(setContextInfo, () => undefined);
     return unsubscribe;
   }, [sessionId]);
+
+  // 目标：事件流里收到过 goal 事件的以它为准，否则用打开会话时取的
+  const goal = sessionId ? (view.goal !== undefined ? view.goal : (contextInfo?.goal ?? null)) : null;
+  const [goalEditing, setGoalEditing] = useState(false);
+  const submitGoal = async (condition: string) => {
+    try {
+      if (sessionId) await api.setGoal(sessionId, condition);
+      else onCreated(await api.createSession("", [], { permissionMode: newMode, cwd: cwd ?? undefined, model: newModel, effort: newEffort, goal: condition }));
+      setGoalEditing(false);
+      scrollToBottom("auto");
+    } catch (e) {
+      onError(`设定目标失败：${(e as Error).message}`);
+      throw e;
+    }
+  };
+  const clearGoal = async () => {
+    if (!sessionId) return;
+    await api.clearGoal(sessionId).catch((e: Error) => onError(`取消目标失败：${e.message}`));
+  };
 
 
   useEffect(() => {
@@ -749,6 +772,15 @@ function Chat({
         cwd={cwd}
         notes={sessionId && <NotesChip sessionId={sessionId} annotations={annotations} />}
         hasNotes={annotations.length > 0}
+        onGoal={() => setGoalEditing(true)}
+        goalActive={!!goal}
+        goal={
+          goalEditing ? (
+            <GoalEditor initial={goal?.condition ?? ""} running={view.state === "running"} onSubmit={submitGoal} onClose={() => setGoalEditing(false)} />
+          ) : (
+            goal && <GoalBar goal={goal} onEdit={() => setGoalEditing(true)} onClear={clearGoal} />
+          )
+        }
         top={
           <>
             {folderPicker}
@@ -792,6 +824,7 @@ function Chat({
             <ContextMeter
               sessionId={sessionId ?? undefined}
               usage={view.context}
+              info={contextInfo}
               running={view.state === "running"}
               compacting={view.items.some((it) => it.kind === "compact" && it.status === "running")}
               onError={onError}

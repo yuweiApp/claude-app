@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api";
-import type { AgentItem, ApiRetry, Item, SessionView, TaskItem } from "../state/session";
+import { isGoalStart, type AgentItem, type ApiRetry, type GoalItem, type Item, type SessionView, type TaskItem } from "../state/session";
 import { Attachments } from "./Attachments";
+import { GoalIcon } from "./Goal";
 import { ImageThumb } from "./ImageThumb";
 import { CopyAction, ForkAction, MessageActions } from "./MessageActions";
 import { desktopCommandLine, StepGroup, stepImages, ToolIcon, ToolStep, type ToolUse } from "./Steps";
@@ -30,6 +31,8 @@ interface Turn {
   agent: AgentItem | null;
   /** 这一段从压缩上下文开始 */
   compact: CompactItem | null;
+  /** 设定或取消目标开始的一轮 */
+  goal: GoalItem | null;
   body: Item[];
   result: ResultItem | null;
   /** 接着上一段（这条用户消息是进行中插入的） */
@@ -52,7 +55,7 @@ function splitTurns(items: Item[], turnStartUuids: string[]): Turn[] {
     if (item.kind === "result") {
       results.push(item);
       midTool = false;
-    } else if (item.kind === "user" || item.kind === "task" || item.kind === "agent" || item.kind === "compact" || !turns.length) {
+    } else if (item.kind === "user" || item.kind === "task" || item.kind === "agent" || item.kind === "compact" || isGoalStart(item) || !turns.length) {
       // 一轮中间的自动压缩接着上一段；空闲时手动压缩的自成一轮
       const continued = ((item.kind === "user" || item.kind === "agent") && midTool && !turnStarts.has(item.uuid)) || (item.kind === "compact" && !item.manual && turns.length > 0);
       if (continued) turns.at(-1)!.nextAt = item.at;
@@ -62,7 +65,8 @@ function splitTurns(items: Item[], turnStartUuids: string[]): Turn[] {
         task: item.kind === "task" ? item : null,
         agent: item.kind === "agent" ? item : null,
         compact: item.kind === "compact" ? item : null,
-        body: item.kind === "user" || item.kind === "task" || item.kind === "agent" || item.kind === "compact" ? [] : [item],
+        goal: isGoalStart(item) ? item : null,
+        body: item.kind === "user" || item.kind === "task" || item.kind === "agent" || item.kind === "compact" || isGoalStart(item) ? [] : [item],
         result: null,
         continued,
       });
@@ -82,7 +86,7 @@ function splitTurns(items: Item[], turnStartUuids: string[]): Turn[] {
   // 历史消息（getSessionMessages）里没有 result，事件流回放的 result 排在最后：按 SDK 的 user_message_uuid 挂回所属的那一轮。
   // 后台任务开始的轮没有 user_message_uuid，按 result 到达时最近的那条用户消息或任务通知（startUuid）找。
   // 都找不到（事件缓冲从某一轮中间开始）：从后往前，挂到前面最近一个还没有 result 的轮，不超过 result 之后开始的那一轮（beforeUuid）
-  const startOf = (uuid: string | undefined) => (uuid ? turns.findIndex((t) => (t.user ?? t.task ?? t.agent ?? (t.compact?.manual ? t.compact : null))?.uuid === uuid) : -1);
+  const startOf = (uuid: string | undefined) => (uuid ? turns.findIndex((t) => (t.user ?? t.task ?? t.agent ?? (t.compact?.manual ? t.compact : null) ?? t.goal)?.uuid === uuid) : -1);
   let limit = turns.length;
   for (const r of results.toReversed()) {
     let i = startOf(r.userMessageUuid);
@@ -109,7 +113,7 @@ function turnDuration(turn: Turn): number | null {
     // 插入过消息的一轮，result 的用时是整轮的，最后一段只算它自己那部分
     if (!turn.continued) return turn.result.durationMs;
   }
-  const start = (turn.user ?? turn.task ?? turn.agent ?? turn.compact)?.at;
+  const start = (turn.user ?? turn.task ?? turn.agent ?? turn.compact ?? turn.goal)?.at;
   const end = turn.nextAt ?? turn.result?.at ?? turn.body.findLast((item) => item.kind === "assistant")?.at;
   return start && end && end > start ? end - start : null;
 }
@@ -412,9 +416,10 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
   const lastIdx = units.findLastIndex((u) => u.kind !== "item");
   const finalIdx = !live && units[lastIdx]?.kind === "text" ? lastIdx : -1;
   const final = finalIdx >= 0 ? units[finalIdx]! : null;
-  // 网关报的错不折叠
-  const errors = units.filter((u) => u.kind === "item");
-  const process = units.filter((u, i) => i !== finalIdx && u.kind !== "item");
+  // 网关报的错、目标达成这些不折叠；目标检查没通过的那几行算过程
+  const inProcess = (u: Unit) => u.kind !== "item" || (u.item.kind === "goal" && u.item.event === "check");
+  const errors = units.filter((u) => !inProcess(u));
+  const process = units.filter((u, i) => i !== finalIdx && inProcess(u));
   const streaming = live && view.streaming.text;
   const hasProcess = process.length > 0;
   const duration = live ? null : turnDuration(turn);
@@ -423,8 +428,8 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
   const toolRunning = units.some((u) => u.kind === "steps" && u.tools.some((t) => !view.toolResults[t.id]));
   // 正在压缩、压缩后还没有新的步骤：只显示压缩的动画，不显示「已处理」和「思考中…」
   const compacting = turn.compact?.status === "running" && !hasProcess;
-  // 空闲时手动压缩的一轮只有分界线：不显示「用时」
-  const bareCompact = Boolean(turn.compact?.manual) && turn.body.length === 0;
+  // 空闲时手动压缩的一轮只有分界线、取消目标的一轮只有那一行：不显示「用时」
+  const bareCompact = (Boolean(turn.compact?.manual) || turn.goal?.event === "cleared") && turn.body.length === 0;
 
   return (
     <section className="turn">
@@ -440,6 +445,7 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
         </div>
       )}
       {turn.compact && <CompactLine item={turn.compact} />}
+      {turn.goal && <GoalLine item={turn.goal} />}
       {turn.user && <UserGroup item={turn.user} />}
       {(hasProcess || live || duration !== null) && !compacting && !bareCompact && (
         <div className="process-wrap">
@@ -451,7 +457,7 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
             >
               {live ? (
                 <>
-                  已处理 <Elapsed since={(turn.user ?? turn.task ?? turn.agent ?? turn.compact)?.at} />
+                  已处理 <Elapsed since={(turn.user ?? turn.task ?? turn.agent ?? turn.compact ?? turn.goal)?.at} />
                 </>
               ) : duration !== null ? (
                 `用时 ${formatShortDuration(duration)}`
@@ -639,7 +645,56 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
       return <AgentMessage item={item} />;
     case "compact":
       return <CompactLine item={item} />;
+    case "goal":
+      return <GoalLine item={item} />;
   }
+}
+
+/**
+ * 目标的一行（见 Item 的 goal）：设定是一轮的开头，条件太长时折起来、点开看全文；取消同换模型的提示居中一行；
+ * 检查没通过是过程里的灰字；达成、做不到在这一轮最后，带检查给的理由
+ */
+function GoalLine({ item }: { item: GoalItem }) {
+  const [open, setOpen] = useState(false);
+  if (item.event === "cleared") {
+    return (
+      <div className="model-line">
+        <GoalIcon />
+        <span>{item.condition ? `已取消目标：${shortLine(item.condition)}` : "已取消目标"}</span>
+      </div>
+    );
+  }
+  if (item.event === "check") return <div className="goal-check">目标检查未通过：{item.reason}</div>;
+  if (item.event === "set") {
+    const long = item.condition.length > 160 || item.condition.includes("\n");
+    return (
+      <div className="goal-line goal-set">
+        <GoalIcon />
+        <div className="goal-line-body">
+          <div className="goal-line-head">设定目标</div>
+          <div className={long && !open ? "goal-line-text clamped" : "goal-line-text"}>{item.condition}</div>
+          {long && (
+            <button className="goal-line-more" onClick={() => setOpen((o) => !o)}>
+              {open ? "收起" : "展开"}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+  const met = item.event === "met";
+  return (
+    <div className={met ? "goal-line goal-met" : "goal-line goal-failed"}>
+      <GoalIcon />
+      <div className="goal-line-body">
+        <div className="goal-line-head">
+          {met ? "目标已达成" : "目标无法达成，已停止"}
+          {met && item.iterations ? <span className="goal-line-meta">共检查 {item.iterations} 次</span> : null}
+        </div>
+        {item.reason && <div className="goal-line-reason">{item.reason}</div>}
+      </div>
+    </div>
+  );
 }
 
 /**

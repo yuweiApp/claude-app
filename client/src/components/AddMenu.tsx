@@ -1,8 +1,12 @@
 import { useRef, useState } from "react";
 import { useDismiss } from "./ComposerPickers";
+import { GoalIcon } from "./Goal";
 
-/** 输入框左下角的「＋」：点开是添加菜单，目前只有上传文件 */
-export function AddMenu({ onUpload }: { onUpload: () => void }) {
+/**
+ * 输入框左下角的「＋」：点开是添加菜单，上传文件、设定目标（Claude Code 的 /goal）。
+ * onGoal 不传不显示目标；goalActive：已有进行中的目标，点开是修改
+ */
+export function AddMenu({ onUpload, onGoal, goalActive = false }: { onUpload: () => void; onGoal?: () => void; goalActive?: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
@@ -27,6 +31,20 @@ export function AddMenu({ onUpload }: { onUpload: () => void }) {
             <span className="add-menu-name">文件</span>
             <span className="add-menu-desc">上传图片或文件</span>
           </button>
+          {onGoal && (
+            <button
+              className="add-menu-item"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onGoal();
+              }}
+            >
+              <GoalIcon size={16} />
+              <span className="add-menu-name">目标</span>
+              <span className="add-menu-desc">{goalActive ? "修改进行中的目标" : "设定完成条件，达成前一直做下去"}</span>
+            </button>
+          )}
         </div>
       )}
     </div>

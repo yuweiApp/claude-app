@@ -146,14 +146,14 @@ export async function recordedForkParent(file: string): Promise<string | undefin
   return parent;
 }
 
-/** 从末尾往前一块块读，逐行找最后一条 pick 给出结果的记录；跨块的行拼起来再看 */
-async function scanBackwards<T>(file: string, size: number, pick: (line: string) => T | undefined): Promise<T | undefined> {
+/** 从末尾往前一块块读，逐行找最后一条 pick 给出结果的记录；跨块的行拼起来再看。最多往前读 maxScan 字节 */
+export async function scanBackwards<T>(file: string, size: number, pick: (line: string) => T | undefined, maxScan = MAX_SCAN): Promise<T | undefined> {
   const handle = await open(file, "r");
   try {
     let end = size;
     // 上一块开头那段不完整的行，接在这一块后面
     let carry = Buffer.alloc(0);
-    while (end > 0 && size - end < MAX_SCAN) {
+    while (end > 0 && size - end < maxScan) {
       const start = Math.max(0, end - CHUNK);
       const buf = Buffer.alloc(end - start);
       await handle.read(buf, 0, buf.length, start);

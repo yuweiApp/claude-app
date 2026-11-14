@@ -126,6 +126,8 @@ Claude Code 默认读写 `~/.claude`。gateway 通过 `env.CLAUDE_CONFIG_DIR` �
 | `task_result` | `{ taskId, text, isError }` | 转到后台的网关工具调用（`browser_run_code` 等）的结果原文，跟在那个任务的 `task_notification` 后面发。SDK 的通知里只有 `summary`（工具名）和 `tool_use_id`，结果 Claude Code 直接交给了模型；网关的工具按 Claude Code 调用时放在 `_meta["claudecode/toolUseId"]` 里的 id 记下自己返回的结果（`takeToolResult`），对上后补发。网页在失败时把原因（第一行）显示在「后台任务失败」下面，悬停看全文；历史里的 `<task-notification>` 带 `<result>`（以 `Task failed: ` 开头），也从那里取 |
 | `desktop_target` | `{ target: { app, windowId?, title?, pid?, minimized? } \| null }` | 桌面工具（`mcp__desktop__…`）这个会话最近操作的窗口，变了才发（`gateway/src/desktop/guard.ts` 的 `noteTarget`）；`null` 是 `close-app` 关掉了它。网页在对话区右上角浮着显示，点开后桌面版按窗口标题找到采集源显示实时画面，见 [agent-desktop.md](agent-desktop.md) 第 10 节 |
 | `context` | `{ usage: { used, window, threshold, at, compacted? } }` | 上下文用量：子进程启动后、每轮结束、压缩完成后各取一次（`Query.getContextUsage({ detail: "summary" })`，不调模型，按上一次回复报的用量加之后的估算）。`threshold` 是自动压缩的用量，关掉自动压缩时 `null`。`compacted`：刚压缩过、模型还没回复过，这时的估算按压缩请求本身算，比压缩前还大，网页不显示数字，等下一次回复。网关同时记进 `claude-home/gateway-context.json`，子进程回收、网关重启后打开会话也有（见第 6 节「上下文窗口」） |
+| `goal` | `{ goal: { condition, checks, lastReason?, setAt? } \| null }` | 会话的目标变了：设定、取消、一次检查没通过（`checks` 加一、`lastReason` 是检查给的理由）、达成或判定做不到后清掉。网关自己跟踪，见第 6 节「目标」 |
+| `goal_status` | `{ uuid, at, status: { met, failed?, condition, reason?, iterations? } }` | 目标达成或判定做不到了：Claude Code 只写进会话记录（`goal_status` 附件），一轮结束时网关从记录里读出来补发，`uuid` 是记录里那一行的，和历史里的一样 |
 | `reset` | — | 续传点已不在缓冲里 |
 
 SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类型比较全，转一遍只会丢字段；客户端可以直接 `import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'`。
@@ -244,6 +246,11 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 - 上下文窗口（输入框底部的圆环，`client/src/components/ContextMeter.tsx`、`gateway/src/agent/context-usage.ts`）：圆环按用量占窗口的比例画（和弹层里的百分比一致），颜色按离自动压缩多远变：用到阈值一半以前是主题色，之后越来越红，到阈值全红。点开显示用量、距自动压缩还剩多少、「压缩会话」。窗口大小、自动压缩阈值不在网页里改，按上一条的环境变量。
   - 每个会话最后一次取到的用量记在 `claude-home/gateway-context.json`，删会话时一起删。
   - 「压缩会话」交给 Claude Code 一条 `/compact`（同在它的终端里输入），不当成用户消息显示；压缩的进度和结果照常是 `status: compacting`、`compact_boundary`。空闲时手动压缩的自成一轮，不算上一轮的一段（不然上一轮的用时会算到压缩开始）：实时按开始压缩时上一轮已经结束判断，历史里按摘要后面紧跟着的 `<command-name>/compact</command-name>`。成功后的「Compacted」灰字不显示（已经有「上下文已压缩」）；没有可压缩的消息时 Claude Code 回一句「Not enough messages to compact.」，显示成「压缩上下文未完成」。
+- 目标（输入框「＋」菜单里的「目标」，`gateway/src/agent/goal.ts`、`client/src/components/Goal.tsx`）：就是 Claude Code 的 `/goal`（2.1.322 内置，非交互模式也能用）。设定一个完成条件后，Claude Code 加一个会话级的 Stop hook（prompt 类型）：模型每次要停下时由小模型档位（网关设成默认模型，见上面的档位）按条件看对话判断，没达成就把理由交给模型让它接着做，达成后自动清掉；`/goal clear`（`stop`、`off`、`reset`、`none`、`cancel` 一样）提前取消，`/goal` 不带参数是查看。条件最多 4000 字。网页不让用户打命令：「＋」→「目标」在输入框上面展开一栏填条件；有目标时输入框上面一栏显示它和没通过的检查次数，点开看全文和最近一次检查的理由，可以修改、取消。新会话页设定目标直接新建会话（`POST /sessions` 带 `goal`，不发消息）。
+  - 网关交给 Claude Code 一条 `/goal <条件>` / `/goal clear`（同 `/compact`，不当成用户消息显示）；条件里的换行合成空格（命令参数是一行）。这一轮还在进行时用 `now`：Claude Code 先结束这一轮（`result` 是 `success`、`command_lifecycle` 是 `cancelled`）再执行（实测）；用 `next` 要等这一轮自己结束，有目标时这一轮要到目标达成才结束。设定后 Claude Code 马上开始一轮朝目标做（给模型的开工提示是 `isMeta`，消息流里没有）。
+  - SDK 里没有目标状态：类型定义里有 `active_goal` 消息，但 Claude Code 只在它自己的云端环境（`CLAUDE_CODE_REMOTE`）往外发，Stop hook 是 prompt 类型，开了 `includeHookEvents` 也没有 hook 事件（实测）。网关按这些自己跟踪（`AgentSession.trackGoal`）：`/goal` 的输出是 model 为 `<synthetic>` 的 assistant 消息（「Goal set: 条件」「Goal cleared: 条件」「No goal set…」「Goal active: …」）；检查没通过时交给模型的是 `isSynthetic` 的 user 消息「Stop hook feedback:\n[条件]: 理由」；连续 9 次没通过 Claude Code 不再拦着、结束这一轮（`system/informational`「A hook blocked the turn from ending 9 consecutive times…」），目标还在。达成、判定做不到只写进会话记录：每次检查一行 `goal_status` 附件（`met`、`failed`、`reason`，达成时带 `iterations`），设定、手动取消各一行 `sentinel`。一轮正常结束、最后一次停下没被拦时，网关去记录里读（远程会话先同步记录；记录可能比 `result` 晚写，最多读 4 次、隔 0.7 秒），读到达成或失败就清掉目标、补发 `goal_status`。
+  - resume 时 Claude Code 按记录里最后一行 `goal_status` 恢复目标（不是达成、失败、取消就还在，检查次数从 0 算），中断的一轮不清目标；网关同样从记录里读（`readRecordedGoal`，从末尾往前读到设定那一行，没有目标的会话要读完整个文件，按文件大小、修改时间缓存）。`GET /sessions/:id/context` 返回的 `goal`：子进程在跑的用网关跟踪的，否则从记录里读，不拉起子进程。
+  - 对话里：设定、取消是一轮的开头（同空闲时手动压缩，取消那一轮只有一行），实时的归到输出前面那个 `command_lifecycle` 的 `started`（命令的 uuid），历史里是命令本身的记录（`<command-name>/goal</command-name>`，取消的记录里没有条件，用前面设定的那条）；检查没通过是过程里的一行灰字，实时的来自反馈消息，历史的来自 `goal_status`，uuid 对不上，按理由去重；达成、做不到在这一轮最后。`getSessionMessages` 不返回附件，历史接口把没有 `sentinel` 的 `goal_status` 转成 `type: "system"`、`message: { type: "goal_status", … }` 的消息按时间插进去（`history.ts` 的 `withGoalStatus`）。
 - `WebSearch` 是 Anthropic 服务端工具，第三方模型用不了，默认放进 `disallowedTools`。
 - `WebFetch` 每次抓网页前会先请求 `api.anthropic.com/api/web/domain_info?domain=<域名>` 查域名黑名单，Anthropic 不支持的地区（如中国）这个接口一律返回 403，所有网址都报 "Unable to verify if domain … is safe to fetch"，网页本身其实能连上。网关在 SDK 的 `settings` 选项里设 `skipWebFetchPreflight: true` 跳过这一步。
 - Windows 上命令输出的编码：Claude Code 的 Bash 工具跑的是 Git Bash，模型在里面调 `powershell.exe`、`ipconfig` 等原生程序时，它们按控制台代码页输出（中文系统是 936，GBK），Claude Code 按 UTF-8 读，中文全是乱码。`agentEnv()` 在 Windows 上给子进程设 `CLAUDE_ENV_FILE`，指向网关写在 `$CLAUDE_CONFIG_DIR/claude-app-env.sh` 的脚本，Claude Code 每条 Bash 命令前在同一个 shell 里先执行它（`chcp.com 65001`）；环境里原来有 `CLAUDE_ENV_FILE` 的放进 `CLAUDE_APP_USER_ENV_FILE`，脚本最后接着 source 它。以前用的是 `BASH_ENV`，Claude Code 起 bash 时把它当不安全的变量去掉了，不生效（SSH 远程会话里在中文 Windows 上实测，见第 14 节）。Claude Code 自己的 PowerShell 工具（`CLAUDE_CODE_USE_POWERSHELL_TOOL=1`，预览）也是先 `chcp 65001` 再起 PowerShell。
@@ -258,7 +265,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | GET | `/config` | 工作目录、默认模型、默认权限模式、默认推理强度（`DEFAULT_EFFORT`，默认 high）、上传大小上限 |
 | GET | `/models` | 可选的模型（SDK 的 `ModelInfo` 格式）：接 newapi 时是它 `/v1/models` 里的对话模型，直连 Anthropic 时是 `Query.supportedModels()`；缓存 5 分钟 |
 | GET | `/sessions` | 所有文件夹的会话，SDK 的 `SDKSessionInfo` 加活跃会话的 `state`、最后一次 AI 回复的时间 `lastResponseAt`，按 `lastResponseAt` 倒序 |
-| POST | `/sessions` | 新建会话并发送第一条消息 `{ text, attachments?, cwd?, model?, effort?, permissionMode? }` → `{ sessionId }`；`cwd` 是会话的文件夹，`model` 是模型列表里的 value |
+| POST | `/sessions` | 新建会话并发送第一条消息 `{ text, attachments?, cwd?, model?, effort?, permissionMode?, goal? }` → `{ sessionId }`；`cwd` 是会话的文件夹，`model` 是模型列表里的 value；带 `goal` 时不发消息，一开始就设定这个目标（`text` 不用） |
 | GET | `/sessions/:id/messages` | 历史消息 |
 | GET | `/sessions/:id/images/:uuid/:key` | 历史消息里换成地址的图片：`key` 是内容块序号，`tool_result` 里的是「块序号.结果里的序号」；同一条消息里的图片不会变，`cache-control` 是 immutable |
 | POST | `/sessions/:id/messages` | 发送消息 `{ text, attachments?, elements?, priority?, draft? }`（文字和附件至少有一样）；`priority` 是 `now` / `next`，这一轮还在进行时怎么送到模型（见「客户端归并规则」的排队消息），不给时网关自己定；`draft` 是网页输入框的草稿（网关不解读），以 `next` 排队时存着，撤回时原样还回去；会话不活跃时自动 resume |
@@ -290,7 +297,9 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | POST | `/sessions/:id/interrupt` | 打断当前一轮 |
 | POST | `/sessions/:id/permission-mode` | `{ mode }` |
 | POST | `/sessions/:id/model` | `{ model?, effort? }` 切换模型（`Query.setModel`）和推理强度（`Query.applyFlagSettings({ effortLevel })`）；子进程回收了的会话先 resume |
-| GET | `/sessions/:id/context` | 输入框上下文圆环：最后一次取到的用量（`SessionContextInfo`）；不拉起子进程 |
+| GET | `/sessions/:id/context` | 输入框要的会话状态（`SessionContextInfo`）：最后一次取到的上下文用量、进行中的目标；不拉起子进程 |
+| POST | `/sessions/:id/goal` | 设定目标 `{ condition }`（`/goal <条件>`），已有的换掉；子进程回收了的先 resume，这一轮还在进行时先结束这一轮；条件为空、超过 4000 字、正好是取消用的词时 400 |
+| DELETE | `/sessions/:id/goal` | 取消目标（`/goal clear`）；没有目标时 409 |
 | POST | `/sessions/:id/compact` | 压缩上下文（`/compact`）；子进程回收了的先 resume，这一轮还在进行时 409 |
 | POST | `/sessions/:id/permissions/:requestId` | `{ behavior: 'allow' \| 'deny', message?, always? }` |
 | GET | `/sessions/:id/events` | SSE |

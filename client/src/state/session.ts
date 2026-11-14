@@ -1,5 +1,5 @@
 import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
-import { withToken, type BackgroundTask, type ContextUsage, type DesktopTarget, type GatewayEvent, type HistoryMessage } from "../api";
+import { withToken, type BackgroundTask, type ContextUsage, type DesktopTarget, type GatewayEvent, type GoalState, type GoalStatusRecord, type HistoryMessage } from "../api";
 import { parseSelectedElement, splitResponseAnnotations, type SentResponseAnnotation } from "./responseAnnotations";
 
 /** 消息里显示的附件（历史消息里只有路径，没有大小） */
@@ -79,8 +79,16 @@ export type Item =
    * 一轮进行中并进来的（会话记录里是 queued_command 附件）只有 <agent-message> 那段。
    * 空闲时到的会开始新的一轮，和用户消息一样是一轮的开头。from 是发送方的 agentId（队友是名字）
    */
-  | { kind: "agent"; uuid: string; at?: number; from: string; text: string };
+  | { kind: "agent"; uuid: string; at?: number; from: string; text: string }
+  /**
+   * 目标（Claude Code 的 /goal）。set、cleared 是一轮的开头（Claude Code 设好目标马上开始一轮；取消自成一轮），uuid 是 /goal 命令的：
+   * 历史里是命令本身的记录，实时的是 /goal 的输出（model 为 <synthetic> 的 assistant 消息）前面那个 command_lifecycle started。
+   * check 是一次检查没通过（reason 是理由），排在这一轮的过程里：实时的是交给模型的反馈，历史的是网关从记录里补的 goal_status，
+   * 两边 uuid 对不上，按理由去重（goal-check:理由）。met、failed 只在记录里有：实时的是一轮结束时网关补发的 goal_status 事件
+   */
+  | { kind: "goal"; uuid: string; at?: number; event: "set" | "cleared" | "check" | "met" | "failed"; condition: string; reason?: string; iterations?: number };
 
+export type GoalItem = Extract<Item, { kind: "goal" }>;
 export type TaskItem = Extract<Item, { kind: "task" }>;
 export type AgentItem = Extract<Item, { kind: "agent" }>;
 export type UserItem = Extract<Item, { kind: "user" }>;
@@ -177,6 +185,10 @@ export interface SessionView {
   desktopTarget: DesktopTarget | null;
   /** 上下文用量（网关的 context 事件），还没收到时 null */
   context: ContextUsage | null;
+  /** 进行中的目标（网关的 goal 事件）：没有目标是 null，还没收到过 goal 事件时 undefined（用接口拉到的） */
+  goal: GoalState | null | undefined;
+  /** 最近一条交给 Claude Code 处理的输入（command_lifecycle started 的 command_uuid）：/goal 的输出归到它名下 */
+  lastCommand?: string;
   /**
    * 模型请求出错、Claude Code 正在重试（system/api_retry）：「思考中…」换成重试的状态，不然重试期间（每次可能等好几分钟）
    * 网页上看不出接口在报错。下一次响应开始（message_start）、收到 assistant 消息、这一轮结束或不再运行时清掉。
@@ -219,6 +231,7 @@ export function emptyView(): SessionView {
     unstartedUuids: [],
     desktopTarget: null,
     context: null,
+    goal: undefined,
     retry: null,
   };
 }
@@ -237,6 +250,10 @@ export function reduce(view: SessionView, action: Action): SessionView {
     for (const m of action.messages) {
       const at = m.timestamp ? Date.parse(m.timestamp) : undefined;
       if (m.isCompactSummary && !m.parent_tool_use_id) ingestCompactSummary(next, m.uuid, at);
+      else if (m.type === "system") {
+        // 网关从会话记录里补的目标检查结果（见 gateway/src/agent/history.ts 的 withGoalStatus）
+        if ((m.message as { type?: unknown } | null)?.type === "goal_status") ingestGoalStatus(next, m.uuid, m.message, at);
+      }
       else ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id, at);
     }
     for (const item of view.items) {
@@ -263,6 +280,8 @@ export function reduce(view: SessionView, action: Action): SessionView {
     next.backgroundTasksLive = view.backgroundTasksLive;
     next.desktopTarget = view.desktopTarget;
     next.context = view.context;
+    next.goal = view.goal;
+    next.lastCommand = view.lastCommand;
     next.retry = view.retry;
     // 历史里已经有的（Claude Code 已经交给模型、写进了会话文件），不再排队
     next.queued = view.queued.filter((q) => !next.seen.has(q.uuid));
@@ -350,6 +369,12 @@ export function reduce(view: SessionView, action: Action): SessionView {
     case "context":
       next.context = event.usage;
       break;
+    case "goal":
+      next.goal = event.goal;
+      break;
+    case "goal_status":
+      ingestGoalStatus(next, event.uuid, event.status, event.at);
+      break;
     case "reset":
       next.needsReload = true;
       break;
@@ -364,7 +389,10 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
   // 用户消息的进度（SDK 的类型定义里没有）：started 是这条消息交给模型了，排队的消息这时放进消息列表
   const lifecycle = message as unknown as { type: string; command_uuid?: string; state?: string };
   if (lifecycle.type === "command_lifecycle") {
-    if (lifecycle.state === "started" && lifecycle.command_uuid) flushQueued(view, lifecycle.command_uuid);
+    if (lifecycle.state === "started" && lifecycle.command_uuid) {
+      flushQueued(view, lifecycle.command_uuid);
+      view.lastCommand = lifecycle.command_uuid;
+    }
     if (lifecycle.state !== "queued" && lifecycle.command_uuid) view.unstartedUuids = view.unstartedUuids.filter((u) => u !== lifecycle.command_uuid);
     return;
   }
@@ -382,14 +410,20 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
     case "assistant":
       if (!message.parent_tool_use_id) view.streaming = { text: "" };
       view.retry = null;
+      if (!message.parent_tool_use_id && message.message.model === "<synthetic>" && ingestGoalOutput(view, message.uuid, message.message.content)) return;
       ingestMessage(view, "assistant", message.uuid, message.message, message.parent_tool_use_id, Date.now());
       return;
     case "user": {
       if (!message.uuid) return;
       // isSynthetic 是 Claude Code 自己加的 user 消息（不止摘要），紧跟在 compact_boundary 后面的才是摘要
       const last = view.items.at(-1);
+      const feedback = message.isSynthetic && !message.parent_tool_use_id && view.goal ? goalFeedback(message.message.content, view.goal.condition) : undefined;
       if (message.isSynthetic && !message.parent_tool_use_id && last?.kind === "compact" && last.awaitingSummary) {
         ingestCompactSummary(view, message.uuid, Date.now());
+      } else if (feedback !== undefined && view.goal) {
+        // 目标检查没通过、交给模型的反馈：显示成过程里的一行
+        view.seen = new Set(view.seen).add(message.uuid);
+        pushItem(view, null, { kind: "goal", uuid: goalCheckUuid(feedback), at: Date.now(), event: "check", condition: view.goal.condition, reason: feedback });
       } else if (message.isSynthetic && syntheticPrompt(message.message.content)) {
         // Claude Code 自己发给模型的提示（如「[Your previous response had no visible output…]」），不是用户写的，不显示
         view.seen = new Set(view.seen).add(message.uuid);
@@ -572,6 +606,16 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       view.seen = new Set(view.seen).add(uuid);
       pushItem(view, parent, { kind: "agent", uuid: agentUuid(agent.from, agent.text), at, ...agent });
       if (!parent) view.turnEnded = false;
+      return;
+    }
+    // 历史里的 /goal 命令：设定、取消显示成目标的一行，查看状态的不显示
+    const goal = typeof content === "string" && !parent ? goalCommand(content) : null;
+    if (goal) {
+      // 取消的记录里没有条件：用前面设定的那条
+      const condition = goal.event === "cleared" ? (view.items.findLast((it): it is GoalItem => it.kind === "goal" && it.event === "set")?.condition ?? "") : goal.condition;
+      if (goal.event === "status") view.seen = new Set(view.seen).add(uuid);
+      else pushItem(view, null, { kind: "goal", uuid, at, event: goal.event, condition });
+      if (goal.event !== "status") view.turnEnded = false;
       return;
     }
     // 用技能时 Claude Code 把消息存成命令标签，后面跟着技能内容（isMeta，不是用户写的）
@@ -774,6 +818,66 @@ function taskNotification(text: string): TaskItem | null {
 
 const unescapeXml = (text: string) => text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
 
+/** /goal 后面跟这些词是取消（不分大小写），和 Claude Code 认的一样 */
+const GOAL_CLEAR_WORDS = new Set(["clear", "stop", "off", "reset", "none", "cancel"]);
+
+/** 历史里 /goal 命令本身的记录（<command-name>/goal</command-name>…<command-args>参数</command-args>） */
+function goalCommand(text: string): { event: "set" | "cleared" | "status"; condition: string } | null {
+  const trimmed = text.trim();
+  if (!/^<command-name>\/goal<\/command-name>/.test(trimmed)) return null;
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(trimmed)?.[1]?.trim() ?? "";
+  if (!args) return { event: "status", condition: "" };
+  return GOAL_CLEAR_WORDS.has(args.toLowerCase()) ? { event: "cleared", condition: "" } : { event: "set", condition: args };
+}
+
+/**
+ * 实时的 /goal 输出（model 为 <synthetic> 的 assistant 消息，只有一段文字）：设定、取消换成目标的一行，归到这条命令名下；
+ * 查看状态、本来就没有目标的不显示。不是 /goal 的输出返回 false
+ */
+function ingestGoalOutput(view: SessionView, uuid: string, content: unknown): boolean {
+  const blocks = Array.isArray(content) ? (content as Array<{ type?: unknown; text?: unknown }>) : [];
+  const text = blocks.length === 1 && blocks[0]!.type === "text" && typeof blocks[0]!.text === "string" ? blocks[0]!.text : null;
+  if (text === null) return false;
+  const set = /^Goal set: ([\s\S]+)$/.exec(text);
+  const cleared = /^Goal cleared: ([\s\S]+)$/.exec(text);
+  if (!set && !cleared && !/^(No goal set|Goal active: )/.test(text)) return false;
+  view.seen = new Set(view.seen).add(uuid);
+  if (set || cleared) {
+    const item: GoalItem = { kind: "goal", uuid: view.lastCommand ?? uuid, at: Date.now(), event: set ? "set" : "cleared", condition: (set ?? cleared)![1]!.trim() };
+    pushItem(view, null, item);
+    view.turnEnded = false;
+  }
+  return true;
+}
+
+/** 检查没通过时交给模型的反馈「Stop hook feedback:\n[条件]: 理由」里的理由；不是这个目标的返回 undefined */
+function goalFeedback(content: unknown, condition: string): string | undefined {
+  const blocks = typeof content === "string" ? [{ type: "text", text: content }] : Array.isArray(content) ? (content as Array<{ type?: unknown; text?: unknown }>) : [];
+  const text = blocks.length === 1 && blocks[0]!.type === "text" && typeof blocks[0]!.text === "string" ? blocks[0]!.text : "";
+  const prefix = `Stop hook feedback:\n[${condition}]: `;
+  return text.startsWith(prefix) ? text.slice(prefix.length).trim() : undefined;
+}
+
+const goalCheckUuid = (reason: string) => `goal-check:${reason}`;
+
+/** 会话记录里的 goal_status（历史里网关转成的 system 消息，或实时的 goal_status 事件）：检查没通过、达成、做不到；设定、取消的标记不用 */
+function ingestGoalStatus(view: SessionView, uuid: string, raw: unknown, at: number | undefined): void {
+  const status = raw as (Partial<GoalStatusRecord> & { type?: unknown }) | null;
+  if (!status || typeof status.condition !== "string" || status.sentinel) return;
+  if (status.failed) pushItem(view, null, { kind: "goal", uuid, at, event: "failed", condition: status.condition, ...(status.reason ? { reason: status.reason } : {}) });
+  else if (status.met) {
+    pushItem(view, null, {
+      kind: "goal",
+      uuid,
+      at,
+      event: "met",
+      condition: status.condition,
+      ...(status.reason ? { reason: status.reason } : {}),
+      ...(status.iterations ? { iterations: status.iterations } : {}),
+    });
+  } else if (status.reason) pushItem(view, null, { kind: "goal", uuid: goalCheckUuid(status.reason), at, event: "check", condition: status.condition, reason: status.reason });
+}
+
 /** 只有文字的 isSynthetic 消息（不是工具结果、中断、子代理的消息）：Claude Code 自己插给模型的提示 */
 function syntheticPrompt(content: unknown): boolean {
   const blocks = typeof content === "string" ? [{ type: "text", text: content }] : Array.isArray(content) ? (content as Array<{ type?: unknown }>) : [];
@@ -863,9 +967,14 @@ function insertBeforeTurn(view: SessionView, item: Item): void {
   view.items = start < 0 ? [...view.items, item] : [...view.items.slice(0, start), item, ...view.items.slice(start)];
 }
 
-/** 主线程一轮的开头：用户消息、后台任务通知、其他 agent 发来的消息、空闲时手动压缩 */
-function isTurnStart(item: Item): boolean {
-  return item.kind === "user" || item.kind === "task" || item.kind === "agent" || (item.kind === "compact" && Boolean(item.manual));
+/** 主线程一轮的开头：用户消息、后台任务通知、其他 agent 发来的消息、空闲时手动压缩、设定或取消目标 */
+export function isTurnStart(item: Item): boolean {
+  return item.kind === "user" || item.kind === "task" || item.kind === "agent" || (item.kind === "compact" && Boolean(item.manual)) || isGoalStart(item);
+}
+
+/** 设定、取消目标：自成一轮的开头（见 Item 的 goal） */
+export function isGoalStart(item: Item): item is GoalItem {
+  return item.kind === "goal" && (item.event === "set" || item.event === "cleared");
 }
 
 function pushItem(view: SessionView, parent: string | null, item: Item): void {

@@ -60,10 +60,15 @@ interface Props {
   notes?: ReactNode;
   /** 有待发送的注释：没写文字也能发送 */
   hasNotes?: boolean;
+  /** 输入框最上面：进行中的目标、设定目标的编辑栏 */
+  goal?: ReactNode;
+  /** 「＋」菜单里的「目标」；goalActive：已有进行中的目标 */
+  onGoal?: () => void;
+  goalActive?: boolean;
 }
 
 /** 输入框，样式同 codex-app-server：一个圆角框，上面输入，下面一行「+」、权限、模型、发送 */
-export function Composer({ running, working = running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, draftKey, onContinue, notes, hasNotes = false, queued = [], onQueued }: Props) {
+export function Composer({ running, working = running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, draftKey, onContinue, notes, hasNotes = false, queued = [], onQueued, goal, onGoal, goalActive }: Props) {
   const [text, setText] = useDraftField(draftKey, "text");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
@@ -392,6 +397,7 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
 
   return (
     <div className="composer-wrap">
+    {goal}
     {queued.length > 0 && (
       <div className="composer-queue" aria-label="排队的消息" aria-live="polite">
         {queued.map((q, i) => {
@@ -548,7 +554,7 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
             e.target.value = "";
           }}
         />
-        <AddMenu onUpload={() => inputRef.current?.click()} />
+        <AddMenu onUpload={() => inputRef.current?.click()} onGoal={onGoal} goalActive={goalActive} />
         {left}
         <div className="spacer" />
         {right}

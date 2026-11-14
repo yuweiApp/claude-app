@@ -41,6 +41,7 @@ import { appendRemote, deleteRemoteSession, registerRemoteSession, remoteSession
 import { listConnections } from "../ssh/connections.js";
 import type { SessionContextInfo } from "../shared/types.js";
 import { compactedSinceReply, forgetSession, savedUsage, saveUsage } from "./context-usage.js";
+import { goalCondition, recordedGoal } from "./goal.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
 export class SessionManager {
@@ -81,11 +82,14 @@ export class SessionManager {
   }
 
   /** 新建会话并发送第一条消息 */
+  /** opts.goal：不发消息，新会话一开始就设定这个目标（见 AgentSession.setGoal），text 不用 */
   async create(
     text: string,
-    opts: { cwd?: string; model?: string; effort?: EffortLevel; permissionMode?: PermissionMode; attachments?: string[] },
+    opts: { cwd?: string; model?: string; effort?: EffortLevel; permissionMode?: PermissionMode; attachments?: string[]; goal?: string },
   ): Promise<AgentSession> {
-    rejectDisabledSkill(text);
+    // 条件不对先报错，不留一个空会话
+    const goal = opts.goal === undefined ? undefined : goalCondition(opts.goal);
+    if (goal === undefined) rejectDisabledSkill(text);
     const remote = parseRemote(opts.cwd);
     const sessionId = randomUUID();
     let cwd: string;
@@ -100,6 +104,11 @@ export class SessionManager {
     }
     const attachments = [...(await loadAttachments(opts.attachments ?? [])), ...(await this.referencedSessions(text))];
     const session = await this.launch(sessionId, false, { ...opts, cwd });
+    if (goal !== undefined) {
+      session.setGoal(goal);
+      void this.nameSession(session.id, goal);
+      return session;
+    }
     await session.send(text, attachments);
     void this.nameSession(session.id, text || (attachments[0]?.name ?? ""));
     return session;
@@ -308,14 +317,28 @@ export class SessionManager {
     return name(n);
   }
 
-  /** 输入框上下文圆环要的：最后一次取到的用量。不拉起子进程 */
-  contextInfo(sessionId: string): SessionContextInfo {
-    return { usage: savedUsage(sessionId) };
+  /** 输入框要的：最后一次取到的上下文用量，进行中的目标（子进程在跑的用它跟踪的，否则从记录里读）。不拉起子进程 */
+  async contextInfo(sessionId: string): Promise<SessionContextInfo> {
+    const active = this.active.get(sessionId);
+    const goal = active?.goalLoaded ? active.goal : (await recordedGoal(sessionId).catch(() => ({ goal: null }))).goal;
+    return { usage: savedUsage(sessionId), goal };
   }
 
   /** 压缩上下文：子进程回收了的先 resume */
   async compact(sessionId: string): Promise<void> {
     (await this.activate(sessionId)).compact();
+  }
+
+  /** 设定目标（换掉已有的）：子进程回收了的先 resume */
+  async setGoal(sessionId: string, condition: string): Promise<void> {
+    (await this.activate(sessionId)).setGoal(condition);
+  }
+
+  /** 取消目标：子进程回收了的先 resume（Claude Code resume 时从记录里恢复了目标，要它自己清掉） */
+  async clearGoal(sessionId: string): Promise<void> {
+    const active = this.active.get(sessionId);
+    if (!active && !(await recordedGoal(sessionId).catch(() => ({ goal: null }))).goal) throw Object.assign(new Error("没有进行中的目标"), { statusCode: 409 });
+    (await this.activate(sessionId)).clearGoal();
   }
 
   async closeSession(sessionId: string): Promise<void> {

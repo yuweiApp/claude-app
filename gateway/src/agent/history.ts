@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { getSessionMessages, type SessionMessage, type SessionStoreEntry } from "@anthropic-ai/claude-agent-sdk";
 import type { HistoryImageSource } from "../shared/types.js";
+import { goalStatusEntry, type GoalStatusEntry } from "./goal.js";
 import { sessionRecordDir } from "./scratch.js";
 
 /** 最近读过的几个会话的结果，按会话文件的修改时间和大小判断还能不能用（会话在跑、远程会话同步过来，文件都会变） */
@@ -32,11 +33,14 @@ export async function sessionHistory(sessionId: string): Promise<SessionMessage[
   const text = await readFile(file, "utf8");
   const entries: SessionStoreEntry[] = [];
   const boundaries: number[] = [];
+  const goals: GoalStatusEntry[] = [];
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     try {
       const entry = JSON.parse(line) as SessionStoreEntry;
       if (entry.type === "system" && entry.subtype === "compact_boundary") boundaries.push(entries.length);
+      const goal = entry.type === "attachment" ? goalStatusEntry(entry) : undefined;
+      if (goal && !goal.status.sentinel) goals.push(goal);
       entries.push(entry);
     } catch {
       // 写到一半的行（会话正在运行）跳过
@@ -49,10 +53,38 @@ export async function sessionHistory(sessionId: string): Promise<SessionMessage[
   segments.push(await read(entries));
 
   const seen = new Set<string>();
-  const messages = segments.flat().filter((m) => !seen.has(m.uuid) && seen.add(m.uuid));
+  const messages = withGoalStatus(sessionId, segments.flat().filter((m) => !seen.has(m.uuid) && seen.add(m.uuid)), goals);
   cache.set(sessionId, { mtimeMs: info.mtimeMs, size: info.size, messages });
   if (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value!);
   return messages;
+}
+
+/**
+ * 目标的检查结果（没通过、达成、判定做不到）是会话记录里的 goal_status 附件，getSessionMessages 不返回：
+ * 转成 type 为 system 的消息（message 是 { type: "goal_status", ...GoalStatusRecord }），按时间插进去。
+ * 设定、取消不用：消息里有 /goal 命令本身的记录
+ */
+function withGoalStatus(sessionId: string, messages: SessionMessage[], goals: GoalStatusEntry[]): SessionMessage[] {
+  if (!goals.length) return messages;
+  const out: SessionMessage[] = [];
+  const toMessage = (g: GoalStatusEntry) =>
+    ({
+      type: "system",
+      uuid: g.uuid,
+      session_id: sessionId,
+      message: { type: "goal_status", ...g.status },
+      parent_tool_use_id: null,
+      parent_agent_id: null,
+      timestamp: new Date(g.at).toISOString(),
+    }) as SessionMessage;
+  let next = 0;
+  for (const m of messages) {
+    const at = Date.parse((m as { timestamp?: string }).timestamp ?? "");
+    while (next < goals.length && goals[next]!.at < at) out.push(toMessage(goals[next++]!));
+    out.push(m);
+  }
+  while (next < goals.length) out.push(toMessage(goals[next++]!));
+  return out;
 }
 
 /** 网页显示用的历史，按 sessionHistory 返回的数组缓存（缓存命中时是同一个数组） */

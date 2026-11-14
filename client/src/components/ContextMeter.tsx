@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import { api, type ContextUsage, type SessionContextInfo } from "../api";
 import { useDismiss } from "./ComposerPickers";
 
@@ -14,6 +14,8 @@ interface Props {
   sessionId: string | undefined;
   /** 事件流里最新的用量（context 事件），还没收到时 null，用网关记着的 */
   usage: ContextUsage | null;
+  /** 打开会话时向网关取的（GET /sessions/:id/context），还没取到时 null */
+  info: SessionContextInfo | null;
   /** 这一轮还在进行：不能压缩 */
   running: boolean;
   /** 正在压缩（自动的或手动的） */
@@ -22,22 +24,11 @@ interface Props {
 }
 
 /** 输入框底部的上下文用量圆环，点开显示用量、距自动压缩还剩多少、「压缩会话」。还没有用量时是空圆环 */
-export function ContextMeter({ sessionId, usage: live, running, compacting, onError }: Props) {
-  const [info, setInfo] = useState<SessionContextInfo | null>(null);
+export function ContextMeter({ sessionId, usage: live, info, running, compacting, onError }: Props) {
   const [open, setOpen] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
-
-  useEffect(() => {
-    setInfo(null);
-    if (!sessionId) return;
-    let stale = false;
-    api.context(sessionId).then((next) => !stale && setInfo(next), () => undefined);
-    return () => {
-      stale = true;
-    };
-  }, [sessionId]);
 
   // 事件流的和网关记着的取新的那个；新对话不用（切到新对话时事件流的可能还是上一个会话的）
   const usage = !sessionId ? null : live && (!info?.usage || live.at >= info.usage.at) ? live : (info?.usage ?? null);

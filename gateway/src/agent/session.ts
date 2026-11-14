@@ -14,12 +14,14 @@ import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
-import type { Attachment, ContextUsage, GatewayEvent, MessagePriority, SessionState } from "../shared/types.js";
+import type { Attachment, ContextUsage, GatewayEvent, GoalState, MessagePriority, SessionState } from "../shared/types.js";
 import { buildUserContent, imageType, type SelectedElementContent } from "./attachments.js";
+import { goalCondition, goalFeedback, goalOutput, recordedGoal } from "./goal.js";
 import { parseRemote } from "../ssh/location.js";
 import { getConnection } from "../ssh/connections.js";
 import { existingHost, sshHost } from "../ssh/hosts.js";
 import { uploadAttachments } from "../ssh/remote-attachments.js";
+import { syncSession } from "../ssh/transcripts.js";
 import { InputQueue } from "./input-queue.js";
 import { listModels } from "./models.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -53,6 +55,11 @@ export interface PermissionReply {
 const NOTICE_WAIT_MS = 30_000;
 /** 最多记这么多个子代理的工具调用 id（见 subagentTools） */
 const MAX_SUBAGENT_TOOLS = 2_000;
+/** 一轮结束后从会话记录里读目标结果：Claude Code 写记录可能比 result 晚一点，没读到就隔这么久再读，最多读这么多次 */
+const GOAL_READ_DELAY_MS = 700;
+const GOAL_READ_TRIES = 4;
+/** 检查连续不通过这么多次后 Claude Code 不再拦着、结束这一轮（目标还在）时发的提示 */
+const STOP_HOOK_CAP = /^A hook blocked the turn from ending \d+ consecutive times/;
 
 type UserContent = SDKUserMessage["message"]["content"];
 
@@ -116,6 +123,16 @@ export class AgentSession {
   private readonly onContext?: (usage: ContextUsage) => void;
   /** 压缩过、之后模型还没回复过（见 ContextUsage.compacted） */
   private compactedSinceReply = false;
+  /** 进行中的目标（见 goal.ts）；resume 的会话先从记录里读，读完之前 goalLoaded 是 false */
+  goal: GoalState | null = null;
+  goalLoaded = false;
+  /** 目标状态每变一次加一：从记录里读的结果回来时已经变过（消息流里设定、取消了），就不用读到的 */
+  private goalVersion = 0;
+  /**
+   * 这一轮最后一次检查没通过，或者检查一直没通过、Claude Code 不再拦着结束了：这一轮结束时目标还在，不用去记录里找达成。
+   * 模型又回复了就清掉（下一次停下又会检查）
+   */
+  private goalBlocked = false;
 
   constructor(
     readonly id: string,
@@ -167,6 +184,9 @@ export class AgentSession {
     this.done = this.consume();
     // 不用等第一条消息（init 要等有输入才发）：resume 的会话一启动就能取到用量
     void this.refreshContext();
+    // resume 时 Claude Code 从记录里恢复目标，这边同样从记录里读
+    if (opts.resume) void this.loadGoal();
+    else this.goalLoaded = true;
   }
 
   /**
@@ -240,6 +260,98 @@ export class AgentSession {
     if (this.state === "running" || this.state === "closed") throw Object.assign(new Error("这一轮结束后才能压缩"), { statusCode: 409 });
     this.input.push({ type: "user", uuid: randomUUID(), message: { role: "user", content: "/compact" }, parent_tool_use_id: null, origin: { kind: "human" } });
     this.setState("running");
+  }
+
+  /**
+   * 设定目标：交给 Claude Code 一条 /goal <条件>，不当成用户消息显示。已有目标的换成新的。
+   * Claude Code 设好后马上开始一轮朝目标做（空闲时）。这一轮还在进行时用 now：Claude Code 先结束这一轮再设定、开始新的一轮
+   * （实测；用 next 的话要等这一轮自己结束，有目标时这一轮要到目标达成才结束）
+   */
+  setGoal(text: string): void {
+    this.goalCommand(`/goal ${goalCondition(text)}`);
+  }
+
+  /** 取消目标（/goal clear）：这一轮还在进行时同样先结束这一轮 */
+  clearGoal(): void {
+    if (!this.goal && this.goalLoaded) throw Object.assign(new Error("没有进行中的目标"), { statusCode: 409 });
+    this.goalCommand("/goal clear");
+  }
+
+  private goalCommand(content: string): void {
+    if (this.state === "closed") throw Object.assign(new Error("会话已结束"), { statusCode: 409 });
+    // 有待确认的权限时同 push：now 会让这个工具调用被拒，排到下一个工具结果之后
+    const priority: MessagePriority | undefined = this.state === "running" ? (this.pending.size ? "next" : "now") : undefined;
+    this.input.push({ type: "user", uuid: randomUUID(), message: { role: "user", content }, parent_tool_use_id: null, origin: { kind: "human" }, ...(priority ? { priority } : {}) });
+    this.setState("running");
+  }
+
+  /** resume 的会话：从记录里读目标（远程会话先同步一下记录） */
+  private async loadGoal(): Promise<void> {
+    const version = this.goalVersion;
+    await this.syncRecord();
+    const { goal } = await recordedGoal(this.id).catch(() => ({ goal: null }));
+    this.goalLoaded = true;
+    if (version === this.goalVersion) this.updateGoal(goal);
+  }
+
+  /**
+   * 一轮结束、目标还在、最后一次停下没被拦：检查通过了（达成）或判定做不到了，Claude Code 只写在记录里。
+   * 从记录里读，读到了就清掉目标，把那一行补发给网页（goal_status）；检查出错、超时时目标还在，读不到就不动
+   */
+  private async settleGoal(): Promise<void> {
+    const version = this.goalVersion;
+    const condition = this.goal?.condition;
+    for (let i = 0; i < GOAL_READ_TRIES; i++) {
+      if (i) await new Promise((r) => setTimeout(r, GOAL_READ_DELAY_MS));
+      await this.syncRecord();
+      const { last } = await recordedGoal(this.id).catch(() => ({ last: undefined }));
+      if (version !== this.goalVersion) return;
+      if (!last || last.status.sentinel || last.status.condition !== condition) continue;
+      if (!last.status.met && !last.status.failed) continue;
+      this.publish({ type: "goal_status", uuid: last.uuid, at: last.at, status: last.status });
+      this.updateGoal(null);
+      return;
+    }
+  }
+
+  /** 远程会话的记录在远端：读之前同步到本机（连着时） */
+  private async syncRecord(): Promise<void> {
+    const remote = parseRemote(this.cwd);
+    const host = remote ? existingHost(remote.host) : undefined;
+    if (host?.isReady) await syncSession(host, this.id).catch(() => undefined);
+  }
+
+  private updateGoal(goal: GoalState | null): void {
+    this.goalVersion++;
+    this.goal = goal;
+    this.goalLoaded = true;
+    this.publish({ type: "goal", goal });
+  }
+
+  /** 按消息流跟踪目标：/goal 的输出（设定、取消）、检查没通过时交给模型的反馈、检查一直不通过时 Claude Code 结束这一轮的提示 */
+  private trackGoal(message: SDKMessage): void {
+    if (message.type === "assistant" && message.parent_tool_use_id === null) {
+      if (message.message.model !== "<synthetic>") {
+        this.goalBlocked = false;
+        return;
+      }
+      const blocks = message.message.content;
+      const text = blocks.length === 1 && blocks[0]!.type === "text" ? blocks[0]!.text : "";
+      const output = goalOutput(text);
+      if (output?.kind === "set") this.updateGoal({ condition: output.condition, checks: 0, setAt: Date.now() });
+      else if ((output?.kind === "cleared" || output?.kind === "none") && this.goal) this.updateGoal(null);
+      return;
+    }
+    if (message.type === "user" && message.parent_tool_use_id === null && message.isSynthetic && this.goal) {
+      const content = message.message.content;
+      const text = typeof content === "string" ? content : content.length === 1 && content[0]!.type === "text" ? content[0]!.text : "";
+      const reason = goalFeedback(text, this.goal.condition);
+      if (reason === undefined) return;
+      this.goalBlocked = true;
+      this.updateGoal({ ...this.goal, checks: this.goal.checks + 1, lastReason: reason });
+      return;
+    }
+    if (message.type === "system" && message.subtype === "informational" && STOP_HOOK_CAP.test(message.content)) this.goalBlocked = true;
   }
 
   /** 取一次上下文用量发给网页（不调模型：按上一次回复报的用量加上之后的估算） */
@@ -468,6 +580,7 @@ export class AgentSession {
           this.afterResult = false;
         }
         this.trackTools(message);
+        this.trackGoal(message);
         logTaskMessage(this.log, this.id, message);
         let tasksChanged = this.tasks.ingest(message);
         this.publish({ type: "sdk", message });
@@ -488,6 +601,9 @@ export class AgentSession {
           this.toolResultSinceRequest = false;
           this.waitNotices();
           void this.refreshContext();
+          // 正常结束（不是中断、出错）、最后一次停下没被拦：目标可能达成了。只有 /goal 输出的一轮（turns 为 0）不用看
+          if (this.goal && !this.goalBlocked && message.subtype === "success" && message.num_turns > 0) void this.settleGoal();
+          this.goalBlocked = false;
           // 一轮结束：内置浏览器关掉 AI 开的、没留下的临时标签页。还有转到后台的代码在跑（inappBusy），
           // 或者这一轮里有后台浏览器任务结束了（browserTaskEnded），先不关
           const deferred = inappBusy(this.id) || this.browserTaskEnded;

@@ -217,7 +217,7 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
   });
 
   app.post<{
-    Body: { text: string; cwd?: string; model?: string; effort?: EffortLevel; permissionMode?: PermissionMode; attachments?: string[] };
+    Body: { text: string; cwd?: string; model?: string; effort?: EffortLevel; permissionMode?: PermissionMode; attachments?: string[]; goal?: string };
   }>(
     "/sessions",
     {
@@ -232,12 +232,14 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
             effort: { type: "string", enum: effortLevels },
             permissionMode: { type: "string", enum: permissionModes },
             attachments: attachmentsSchema,
+            // 不发消息，一开始就设定这个目标（text 不用）
+            goal: { type: "string" },
           },
         },
       },
     },
     async (req) => {
-      requireContent(req.body);
+      if (req.body.goal === undefined) requireContent(req.body);
       const session = await sessions.create(req.body.text.trim(), req.body);
       return { sessionId: session.id };
     },
@@ -361,6 +363,22 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
 
   /** 输入框上下文圆环：最后一次取到的用量 */
   app.get<{ Params: IdParams }>("/sessions/:id/context", async (req) => sessions.contextInfo(req.params.id));
+
+  /** 设定目标（同 Claude Code 的 /goal <条件>），已有目标的换掉；这一轮还在进行时先结束这一轮 */
+  app.post<{ Params: IdParams; Body: { condition: string } }>(
+    "/sessions/:id/goal",
+    { schema: { body: { type: "object", required: ["condition"], properties: { condition: { type: "string" } } } } },
+    async (req) => {
+      await sessions.setGoal(req.params.id, req.body.condition);
+      return { ok: true };
+    },
+  );
+
+  /** 取消目标（/goal clear）；这一轮还在进行时先结束这一轮 */
+  app.delete<{ Params: IdParams }>("/sessions/:id/goal", async (req) => {
+    await sessions.clearGoal(req.params.id);
+    return { ok: true };
+  });
 
   /** 压缩上下文（同 Claude Code 的 /compact） */
   app.post<{ Params: IdParams }>("/sessions/:id/compact", async (req) => {

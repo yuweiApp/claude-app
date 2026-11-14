@@ -60,7 +60,44 @@ export type GatewayEvent =
   | { type: "desktop_target"; target: DesktopTarget | null }
   /** 上下文用量：子进程启动后、每轮结束、压缩完成后各取一次（Query.getContextUsage） */
   | { type: "context"; usage: ContextUsage }
+  /** 会话的目标变了（设定、取消、一次检查没通过、达成或失败后清掉），见 GoalState */
+  | { type: "goal"; goal: GoalState | null }
+  /**
+   * 目标达成或判定做不到了：Claude Code 写进会话记录的 goal_status（实时的消息流里没有），一轮结束时网关从记录里读出来补发。
+   * uuid 是记录里那一行的，和历史消息里的（见 GoalStatusRecord）一样
+   */
+  | { type: "goal_status"; uuid: string; at: number; status: GoalStatusRecord }
   | { type: "reset" };
+
+/**
+ * 会话的目标（Claude Code 的 /goal）：设定一个完成条件，之后模型每次要停下时由另一个模型按条件检查会话，
+ * 没达成就把理由交给模型让它接着做，达成后自动清掉
+ */
+export interface GoalState {
+  condition: string;
+  /** 设定以来没通过的检查次数（会话子进程重启过的，从会话记录里数） */
+  checks: number;
+  /** 最近一次没通过时检查给的理由 */
+  lastReason?: string;
+  /** 设定的时间（毫秒） */
+  setAt?: number;
+}
+
+/**
+ * Claude Code 写进会话记录的 goal_status 附件（attachment 行）：
+ * sentinel 是设定（met: false）和手动取消（met: true）时写的标记；其余是一次检查的结果：没通过（met: false，带 reason）、
+ * 达成（met: true）、判定做不到（failed）。
+ * 历史消息里网关把没有 sentinel 的这几种转成 type 为 system 的消息，message 是 { type: "goal_status", ...GoalStatusRecord }
+ */
+export interface GoalStatusRecord {
+  met: boolean;
+  failed?: boolean;
+  sentinel?: boolean;
+  condition: string;
+  reason?: string;
+  /** 达成时：一共检查了几次 */
+  iterations?: number;
+}
 
 /** 上下文用量，token 数 */
 export interface ContextUsage {
@@ -79,10 +116,12 @@ export interface ContextUsage {
   compacted?: boolean;
 }
 
-/** 输入框上下文圆环要的：最后一次取到的用量 */
+/** 输入框要的会话状态：上下文圆环的用量，目标栏的目标 */
 export interface SessionContextInfo {
   /** 还没取到过时 null */
   usage: ContextUsage | null;
+  /** 进行中的目标，没有时 null */
+  goal: GoalState | null;
 }
 
 /** 桌面工具操作的窗口：网页右上角的浮窗显示它，桌面版按标题找到这个窗口显示实时画面 */

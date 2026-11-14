@@ -871,6 +871,64 @@ main {
 .composer-queue-actions button:disabled { opacity: 0.4; cursor: default; }
 .composer-queue-actions button svg { width: 14px; height: 14px; }
 
+/* 目标（Claude Code 的 /goal）：输入框上面的目标栏和设定目标的编辑栏，宽度同排队的消息 */
+.goal-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; max-width: var(--content-width); margin: 0 auto 6px; padding: 4px 6px 4px 10px;
+  border-radius: 10px; background: color-mix(in srgb, var(--accent) 7%, var(--panel)); font-size: 12px;
+}
+.goal-bar-main {
+  display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; min-height: 30px; padding: 0; border: none; border-radius: 0;
+  background: none; text-align: left;
+}
+.goal-bar-main:hover { background: none; }
+.goal-bar-label { display: inline-flex; flex-shrink: 0; align-items: center; gap: 5px; color: var(--accent); font-weight: 600; }
+.goal-bar-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-bar.open .goal-bar-text { visibility: hidden; }
+.goal-bar-checks { flex-shrink: 0; color: var(--muted); }
+.goal-bar-actions { display: flex; flex-shrink: 0; gap: 2px; }
+.goal-bar-actions button {
+  display: grid; place-items: center; width: 26px; height: 26px; padding: 4px; border: none; border-radius: 6px;
+  background: transparent; color: var(--muted); font-size: 16px; line-height: 1;
+}
+.goal-bar-actions button:hover:not(:disabled) { background: var(--frame-hover); color: var(--text); }
+.goal-bar-detail { flex-basis: 100%; max-height: 200px; overflow-y: auto; padding: 0 4px 6px 0; }
+.goal-bar-full { white-space: pre-wrap; word-break: break-word; }
+.goal-bar-reason { margin-top: 6px; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+.goal-bar-reason span { color: var(--text); }
+.goal-editor {
+  max-width: var(--content-width); margin: 0 auto 8px; padding: 10px 12px; border-radius: 12px; background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--text) 8%, var(--border)); font-size: 13px;
+}
+.goal-editor-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: var(--accent); font-weight: 600; }
+.goal-editor textarea {
+  display: block; width: 100%; min-height: 64px; max-height: 240px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); resize: vertical; outline: none;
+}
+.goal-editor textarea:focus { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.goal-editor-hint { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.goal-editor-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.goal-editor-foot button { padding: 4px 12px; font-size: 13px; }
+.goal-editor-count { margin-right: auto; color: var(--muted); font-size: 12px; }
+.goal-editor-count.over { color: var(--err); }
+
+/* 对话里目标的几行：设定是一轮的开头，达成、做不到在这一轮最后，检查没通过是过程里的灰字 */
+.goal-line {
+  display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; padding: 8px 12px; border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel)); font-size: 13px;
+}
+.goal-line > svg { flex-shrink: 0; margin-top: 2px; color: var(--accent); }
+.goal-line-body { flex: 1; min-width: 0; }
+.goal-line-head { display: flex; align-items: baseline; gap: 8px; font-weight: 600; }
+.goal-line-meta { color: var(--muted); font-size: 12px; font-weight: normal; }
+.goal-line-text { margin-top: 2px; white-space: pre-wrap; word-break: break-word; }
+.goal-line-text.clamped { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.goal-line-more { margin-top: 2px; padding: 0; border: none; background: none; color: var(--muted); font-size: 12px; }
+.goal-line-more:hover { background: none; color: var(--text); }
+.goal-line-reason { margin-top: 2px; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+.goal-met > svg { color: var(--ok); }
+.goal-failed > svg { color: var(--muted); }
+.goal-check { color: var(--muted); font-size: 12px; margin: 4px 0; white-space: pre-wrap; word-break: break-word; }
+
 /* 图片：对话里的缩略图（点开看大图）、输入框里的图片附件 */
 .user-images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .image-thumb {
