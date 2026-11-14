@@ -140,7 +140,7 @@ async function execute(
   const denied =
     deniedReason(argv) ??
     (command && !(AGENT_DESKTOP_COMMANDS as readonly string[]).includes(command) ? `agent-desktop 没有 ${command} 这条命令` : null) ??
-    (screenshot && screenshotPaths(argv).length ? "screenshot 不接受 [PATH]：图片随结果返回，参数里不要给路径" : null) ??
+    (screenshot && screenshotPaths(argv).length ? "screenshot 不接受 [PATH]：图片随结果返回" : null) ??
     (await checkTarget(sessionId, argv));
   if (denied) return { text: denied, isError: true };
   const readOnly = isReadOnly(argv);
