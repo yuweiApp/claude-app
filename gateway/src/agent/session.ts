@@ -49,6 +49,8 @@ export interface PermissionReply {
 
 /** 空闲时收到后台任务通知后，这么久之内发出的模型请求算通知开始的新一轮（实际紧跟着通知） */
 const WAKE_WINDOW_MS = 5_000;
+/** 最多记这么多个子代理的工具调用 id（见 subagentTools） */
+const MAX_SUBAGENT_TOOLS = 2_000;
 
 /** 一个活跃会话：持有一个 claude 子进程，见 docs/README.md「活跃会话」 */
 export class AgentSession {
@@ -76,9 +78,15 @@ export class AgentSession {
   /**
    * 空闲时收到了后台任务通知：Claude Code 会拿它开始新的一轮，紧接着发出模型请求（status: requesting）时就算进行中，
    * 不等模型开始返回（中间要几秒，网页这段时间既没有通知行也没有转圈）。只认通知之后的请求：
-   * 停止任务的通知不一定开新的一轮，后台子代理自己的请求也不能当成主线程开始了，所以只认通知后几秒内的。记的是通知到的时间
+   * 停止任务的通知不一定开新的一轮，后台子代理自己的请求也不能当成主线程开始了，所以只认通知后几秒内的。记的是通知到的时间。
+   * 一轮进行中到的通知，到这一轮结束都没有再发过模型请求（模型那次请求在通知之前就发出了），Claude Code 也会拿它开始新的一轮，
+   * 这时按一轮结束的时间记（见 noticeInTurn）
    */
   private wakeAt = 0;
+  /** 一轮进行中收到了后台任务通知，之后这一轮还没再发过模型请求（再发的话通知就并进了这一轮） */
+  private noticeInTurn = false;
+  /** 子代理里的工具调用（tool_use 的 id）：它们转到后台再结束也发通知，但不会开始主线程的新一轮 */
+  private readonly subagentTools = new Set<string>();
   private readonly done: Promise<void>;
   private closing = false;
   private readonly onContext?: (usage: ContextUsage) => void;
@@ -325,6 +333,18 @@ export class AgentSession {
     }
   }
 
+  /** 记下子代理发出的工具调用；只留最近的一批，早的丢掉（它们的通知早就到过了） */
+  private trackSubagentTools(content: unknown): void {
+    if (!Array.isArray(content)) return;
+    for (const block of content as Array<{ type?: unknown; id?: unknown }>) {
+      if (block.type === "tool_use" && typeof block.id === "string") this.subagentTools.add(block.id);
+    }
+    for (const id of this.subagentTools) {
+      if (this.subagentTools.size <= MAX_SUBAGENT_TOOLS) break;
+      this.subagentTools.delete(id);
+    }
+  }
+
   private async consume(): Promise<void> {
     try {
       for await (const message of this.query) {
@@ -349,9 +369,14 @@ export class AgentSession {
           this.setState("running");
         }
         // 后台任务通知唤起的新一轮：发出模型请求时就算开始（见 wakeAt）
-        if (message.type === "system" && this.state === "idle") {
-          if (message.subtype === "task_notification" && !message.skip_transcript) this.wakeAt = Date.now();
-          if (message.subtype === "status" && message.status === "requesting" && Date.now() - this.wakeAt < WAKE_WINDOW_MS) this.setState("running");
+        if (message.type === "assistant" && message.parent_tool_use_id !== null) this.trackSubagentTools(message.message.content);
+        if (message.type === "system" && message.subtype === "task_notification" && !message.skip_transcript && !this.subagentTools.delete(message.tool_use_id ?? "")) {
+          if (this.state === "idle") this.wakeAt = Date.now();
+          else if (this.state === "running") this.noticeInTurn = true;
+        }
+        if (message.type === "system" && message.subtype === "status" && message.status === "requesting") {
+          if (this.state === "idle" && Date.now() - this.wakeAt < WAKE_WINDOW_MS) this.setState("running");
+          else if (this.state === "running") this.noticeInTurn = false;
         }
         this.trackTools(message);
         logTaskMessage(this.log, this.id, message);
@@ -370,6 +395,8 @@ export class AgentSession {
         if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });
         if (message.type === "result") {
           this.setState("idle");
+          if (this.noticeInTurn) this.wakeAt = Date.now();
+          this.noticeInTurn = false;
           void this.refreshContext();
           // 一轮结束：内置浏览器关掉 AI 开的、没留下的临时标签页。还有转到后台的代码在跑（inappBusy），
           // 或者这一轮里有后台浏览器任务结束了（browserTaskEnded），先不关
