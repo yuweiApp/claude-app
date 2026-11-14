@@ -855,24 +855,33 @@ main {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent), 0 8px 28px -12px rgba(0, 0, 0, 0.22);
 }
 .composer.dragging { border-color: var(--accent); border-style: dashed; }
-/* 运行中：一道强调色的光沿边框绕圈。画在 ::after 上，盖住 1px 边框（::before 被毛玻璃皮肤占用了） */
-@property --composer-flow { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
-.composer.running::after {
-  content: ""; position: absolute; inset: -1px; padding: 1px; border-radius: inherit; pointer-events: none;
-  background: conic-gradient(
-    from var(--composer-flow),
-    transparent 0 50%,
-    color-mix(in srgb, var(--accent) 35%, transparent) 70%,
-    var(--accent) 88%,
-    color-mix(in srgb, var(--accent) 40%, #fff) 96%,
-    transparent
-  );
+/* 运行中：两道彩色流光沿描边匀速转圈，外面带一圈柔光。
+   流光是沿外框路径（offset-path: border-box，带圆角）跑的渐变条，外层 ring 用遮罩只留一圈描边宽度；
+   柔光是同样一圈再整体模糊（模糊要在遮罩之后，所以套一层 glow 加 filter）。
+   放在输入框第一个子元素，后面定位的弹层（@ 菜单等）会盖在它上面 */
+.composer-flow, .composer-flow-ring, .composer-flow-glow {
+  position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+}
+.composer-flow { inset: -1px; animation: composer-flow-in 0.4s ease-out; }
+/* 流光条转到拐角时会伸出外框：遮罩只管显示，伸出去的部分照样算进可滚动范围，页面会跟着出现、消失滚动条。
+   clip 只裁掉伸出去的部分，也不会变成滚动容器 */
+.composer-flow-ring {
+  padding: 1.5px; overflow: clip;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
-  animation: composer-flow 3.2s linear infinite;
 }
-@keyframes composer-flow { to { --composer-flow: 1turn; } }
-@media (prefers-reduced-motion: reduce) { .composer.running::after { animation: none; } }
+.composer-flow-glow { filter: blur(6px); opacity: 0.9; }
+.composer-flow-glow > .composer-flow-ring { padding: 3px; }
+.composer-flow i {
+  position: absolute; top: 0; left: 0; width: min(30%, 260px); height: 10px;
+  background: linear-gradient(90deg, transparent, #35baca 35%, #568df0 60%, #ac71ed 82%, #ef82ac);
+  offset-path: border-box; offset-anchor: 100% 50%; offset-rotate: auto;
+  animation: composer-flow-run 4.8s linear infinite;
+}
+.composer-flow i + i { animation-delay: -2.4s; }
+@keyframes composer-flow-run { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+@keyframes composer-flow-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .composer-flow i { animation: none; } }
 .composer textarea {
   display: block; width: 100%; border: none; resize: none; padding: 4px 6px; background: transparent; outline: none;
   /* 高度随内容增长，最高 40% 窗口高度，再多才出滚动条 */

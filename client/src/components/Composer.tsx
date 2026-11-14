@@ -372,7 +372,13 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
       onDragLeave={() => setDragging(false)}
       onDrop={onDrop}
     >
-      {menuOpen && <MentionMenu options={options} active={activeOption} onHover={setActiveOption} onPick={pickOption} />}
+      {working && (
+        <div className="composer-flow" aria-hidden>
+          <span className="composer-flow-ring"><i /><i /></span>
+          <span className="composer-flow-glow"><span className="composer-flow-ring"><i /><i /></span></span>
+        </div>
+      )}
+      {menuOpen &&<MentionMenu options={options} active={activeOption} onHover={setActiveOption} onPick={pickOption} />}
       {notes}
       {files.length > 0 && (
         <div className="chips">
