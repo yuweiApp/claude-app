@@ -14,7 +14,15 @@ export type GatewayEvent =
    * 或者这一轮结束后作为下一轮的开头（next 等这一轮自己结束；now 有时让这一轮马上结束）。在那之前这一轮剩下的回复会排在它前面
    */
   | { type: "user_message"; uuid: string; content: SDKUserMessage["message"]["content"]; queued?: boolean }
-  | { type: "state"; state: SessionState; model?: string; effort?: EffortLevel; permissionMode?: string }
+  | {
+      type: "state";
+      state: SessionState;
+      model?: string;
+      effort?: EffortLevel;
+      permissionMode?: string;
+      /** 有后台任务结束的通知还没交给模型：Claude Code 会拿它开始新的一轮，空闲时也算在忙 */
+      noticePending?: boolean;
+    }
   | {
       type: "permission_request";
       requestId: string;
@@ -392,7 +400,10 @@ export type SessionListItem = SDKSessionInfo & {
   /** Fork 源会话；侧栏据此把分支显示在源会话下 */
   forkedFromSessionId?: string;
   state?: SessionState;
-  /** 有后台任务（后台命令、后台子代理、转到后台的工具调用）在跑；一轮结束后 state 是 idle，任务结束的通知会再唤起新的一轮 */
+  /**
+   * 有后台任务（后台命令、后台子代理、转到后台的工具调用）在跑，或者任务结束的通知还没交给模型；
+   * 一轮结束后 state 是 idle，任务结束的通知会再唤起新的一轮
+   */
   tasksRunning?: boolean;
   /** 最后一次 AI 回复的时间（毫秒），列表按它倒序；还没回复过的是创建时间。不用 lastModified：打开会话也会改到记录文件 */
   lastResponseAt: number;

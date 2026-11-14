@@ -209,7 +209,7 @@ export class SessionManager {
           ...(forkedFromSessionId ? { forkedFromSessionId } : {}),
           chat: isChatCwd(cwd),
           state: this.active.get(info.sessionId)?.state,
-          tasksRunning: this.active.get(info.sessionId)?.tasksRunning || undefined,
+          tasksRunning: this.active.get(info.sessionId)?.backgroundBusy || undefined,
           lastResponseAt: responded ?? info.createdAt ?? info.lastModified,
         };
       }),
@@ -218,7 +218,7 @@ export class SessionManager {
     for (const session of this.active.values()) {
       if (!stored.some((s) => s.sessionId === session.id)) {
         const customTitle = this.titles.get(session.id);
-        stored.push({ sessionId: session.id, summary: customTitle ?? "", ...(customTitle ? { customTitle } : {}), lastModified: session.lastActiveAt, lastResponseAt: session.lastActiveAt, cwd: session.cwd, chat: isChatCwd(session.cwd), state: session.state, tasksRunning: session.tasksRunning || undefined });
+        stored.push({ sessionId: session.id, summary: customTitle ?? "", ...(customTitle ? { customTitle } : {}), lastModified: session.lastActiveAt, lastResponseAt: session.lastActiveAt, cwd: session.cwd, chat: isChatCwd(session.cwd), state: session.state, tasksRunning: session.backgroundBusy || undefined });
       }
     }
     return stored.sort((a, b) => b.lastResponseAt - a.lastResponseAt);
@@ -440,11 +440,11 @@ export class SessionManager {
     return session;
   }
 
-  /** 活跃会话到上限时，关掉最久没用的空闲会话（有后台子代理在跑的不算空闲） */
+  /** 活跃会话到上限时，关掉最久没用的空闲会话（有后台子代理在跑、有通知没交给模型的不算空闲） */
   private async makeRoom(): Promise<void> {
     if (this.active.size < config.maxActiveSessions) return;
     const idle = [...this.active.values()]
-      .filter((s) => s.state === "idle" && !s.agentsRunning)
+      .filter((s) => s.state === "idle" && !s.agentsRunning && !s.noticePending)
       .sort((a, b) => a.lastActiveAt - b.lastActiveAt)[0];
     if (!idle) throw new BusyError(`同时运行的会话已达上限（${config.maxActiveSessions}），请等其中一个结束`);
     await idle.close();
@@ -453,7 +453,7 @@ export class SessionManager {
   private async sweepIdle(): Promise<void> {
     const now = Date.now();
     for (const session of this.active.values()) {
-      if (session.state === "idle" && !session.agentsRunning && now - session.lastActiveAt > config.sessionIdleMs) {
+      if (session.state === "idle" && !session.agentsRunning && !session.noticePending && now - session.lastActiveAt > config.sessionIdleMs) {
         this.log.info({ sessionId: session.id }, "会话空闲，关闭 claude 子进程");
         await session.close();
       }

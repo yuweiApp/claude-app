@@ -624,8 +624,8 @@ function Chat({
   // 最后一轮是中断的（后面只有 result、换模型之类的提示）：输入框空着时可以一键「继续」
   const lastItem = view.items.findLast((item) => item.kind !== "result" && item.kind !== "model" && item.kind !== "notice");
   const interrupted = !!sessionId && view.state !== "running" && lastItem?.kind === "interrupted";
-  // 运行中的动效：一轮在跑，或者一轮结束了、后台任务还在跑（任务结束的通知会再唤起新的一轮）
-  const working = view.state === "running" || (view.state === "idle" && view.backgroundTasks.some((t) => t.status === "running"));
+  // 运行中的动效：一轮在跑，或者一轮结束了、后台任务还在跑或通知还没交给模型（任务结束的通知会再唤起新的一轮）
+  const working = view.state === "running" || (view.state === "idle" && (view.noticePending || view.backgroundTasks.some((t) => t.status === "running")));
 
   const permissionMode = sessionId ? (view.permissionMode ?? config.permissionMode) : newMode;
   const changeMode = (mode: string) => {

@@ -138,7 +138,8 @@ export interface SessionView {
   turnEnded: boolean;
   /**
    * 实时收到、还没开始那一轮的后台任务通知：等下一轮自己开始（state 变成 running）时再放进消息列表，作为那一轮的开头。
-   * 这一轮里之后又发出了模型请求（status: requesting），说明 Claude Code 把通知并进了这一轮，就丢掉。
+   * 这一轮里主线程有工具结果回来之后又发出了模型请求（status: requesting），说明 Claude Code 把通知并进了这一轮，就丢掉；
+   * 没有工具结果的请求、后台子代理的请求不带它（status 消息分不出是谁的请求，只看主线程的工具结果）。
    * 看的是请求发出、不是响应开始：通知到时已经在路上的请求不带它，响应回来后通知还会开新的一轮。
    * 子代理发给主线程的消息（Item 的 agent）也在这里：实时事件里没有那条 user 消息，子代理的 SendMessage 成功时
    * （结果是「queued for the main conversation's next turn」）生成，同样等下一轮开始时放进去；
@@ -148,6 +149,8 @@ export interface SessionView {
   pendingTasks: Array<TaskItem | AgentItem>;
   /** 上次发出模型请求（status: requesting）之后，主线程有工具结果回来 */
   toolResultSinceRequest: boolean;
+  /** 有后台任务结束的通知还没交给模型（网关的 state 事件）：Claude Code 会拿它开始新的一轮，空闲时也算在忙 */
+  noticePending: boolean;
   /** 会话的后台任务（网关的 tasks 事件，整个列表）；backgroundTasksLive：已经从事件流收到过，不再用接口拉到的覆盖 */
   backgroundTasks: BackgroundTask[];
   backgroundTasksLive: boolean;
@@ -181,6 +184,7 @@ export function emptyView(): SessionView {
     turnEnded: false,
     pendingTasks: [],
     toolResultSinceRequest: false,
+    noticePending: false,
     backgroundTasks: [],
     backgroundTasksLive: false,
     queued: [],
@@ -199,7 +203,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
   if (action.type === "tasks") return view.backgroundTasksLive ? view : { ...view, backgroundTasks: action.tasks };
   if (action.type === "history") {
     // 历史放在前面，已经从事件流收到的（按 uuid）不重复
-    const next = { ...emptyView(), state: view.state, model: view.model, effort: view.effort, permissionMode: view.permissionMode, historyLoaded: true };
+    const next = { ...emptyView(), state: view.state, model: view.model, effort: view.effort, permissionMode: view.permissionMode, noticePending: view.noticePending, historyLoaded: true };
     for (const m of action.messages) {
       const at = m.timestamp ? Date.parse(m.timestamp) : undefined;
       if (m.isCompactSummary && !m.parent_tool_use_id) ingestCompactSummary(next, m.uuid, at);
@@ -251,6 +255,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
       next.model = event.model;
       next.effort = event.effort;
       next.permissionMode = event.permissionMode;
+      next.noticePending = !!event.noticePending;
       if (event.state !== "running") next.streaming = { text: "" };
       // 兜底：没收到 started 就停了（子进程退出等），排队的消息不再一直挂在最后
       if (event.state === "idle" || event.state === "closed") {
@@ -357,11 +362,12 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
         view.pendingTasks = [...view.pendingTasks, liveTaskItem(view, message)];
       }
       if (message.subtype === "status" && message.status === "requesting") {
-        if (!view.turnEnded && view.pendingTasks.length) {
-          const merged = view.toolResultSinceRequest ? view.pendingTasks.filter((pending) => pending.kind === "agent") : [];
+        // 主线程有工具结果回来后的这次请求才带上队列（没有工具结果的请求、后台子代理的请求都不带）：
+        // 子代理的消息放进这一轮，后台任务通知并进这一轮、对话里不显示，都不再挂着
+        if (!view.turnEnded && view.toolResultSinceRequest && view.pendingTasks.length) {
           // 时间用 SendMessage 成功（进队列）的时刻：会话记录里并进这一轮的消息记的也是它
-          merged.forEach((pending) => pushItem(view, null, pending));
-          view.pendingTasks = view.pendingTasks.filter((pending) => pending.kind === "agent" && !merged.includes(pending));
+          view.pendingTasks.forEach((pending) => pending.kind === "agent" && pushItem(view, null, pending));
+          view.pendingTasks = [];
         }
         view.toolResultSinceRequest = false;
       }

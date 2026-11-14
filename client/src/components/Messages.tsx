@@ -309,18 +309,27 @@ export function Messages({ view, onFork }: { view: SessionView; onFork?: (messag
       )}
       {/* 换了模型还没发消息：先临时显示，新模型回复后由那条消息补出正式的一行 */}
       {!busy && view.model && view.shownModel && view.model !== view.shownModel && <ModelLine from={view.shownModel} to={view.model} />}
-      {view.state === "idle" && <BackgroundWorking tasks={view.backgroundTasks} />}
+      {view.state === "idle" && <BackgroundWorking tasks={view.backgroundTasks} noticePending={view.noticePending} />}
     </div>
   );
 }
 
 /**
  * 这一轮已经结束、还有后台任务（子代理、后台命令等）在跑：任务结束时的通知会唤起新的一轮，
- * 中间这段对话里没有别的动静，在最后显示一行运行中的任务，图标和「思考中…」一样呼吸
+ * 中间这段对话里没有别的动静，在最后显示一行运行中的任务，图标和「思考中…」一样呼吸。
+ * 任务都结束了、通知还没交给模型（noticePending）时也显示一行，Claude Code 马上会拿通知开始新的一轮
  */
-function BackgroundWorking({ tasks }: { tasks: SessionView["backgroundTasks"] }) {
+function BackgroundWorking({ tasks, noticePending }: { tasks: SessionView["backgroundTasks"]; noticePending: boolean }) {
   const running = tasks.filter((t) => t.status === "running");
-  if (!running.length) return null;
+  if (!running.length) {
+    if (!noticePending) return null;
+    return (
+      <div className="working background-working">
+        <ToolIcon icon="✳" running />
+        <span className="working-label">后台任务已结束，结果正在交给模型</span>
+      </div>
+    );
+  }
   const first = running[0]!;
   const label =
     running.length > 1

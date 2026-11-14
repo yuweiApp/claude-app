@@ -47,8 +47,8 @@ export interface PermissionReply {
   answers?: Record<string, string>;
 }
 
-/** 空闲时收到后台任务通知后，这么久之内发出的模型请求算通知开始的新一轮（实际紧跟着通知） */
-const WAKE_WINDOW_MS = 5_000;
+/** 空闲时还有没交给模型的后台任务通知，这么久都没发出模型请求就不再等（见 pendingNotices；实际一轮结束后几秒内就发） */
+const NOTICE_WAIT_MS = 30_000;
 /** 最多记这么多个子代理的工具调用 id（见 subagentTools） */
 const MAX_SUBAGENT_TOOLS = 2_000;
 
@@ -76,15 +76,20 @@ export class AgentSession {
    */
   private browserTaskEnded = false;
   /**
-   * 空闲时收到了后台任务通知：Claude Code 会拿它开始新的一轮，紧接着发出模型请求（status: requesting）时就算进行中，
-   * 不等模型开始返回（中间要几秒，网页这段时间既没有通知行也没有转圈）。只认通知之后的请求：
-   * 停止任务的通知不一定开新的一轮，后台子代理自己的请求也不能当成主线程开始了，所以只认通知后几秒内的。记的是通知到的时间。
-   * 一轮进行中到的通知，到这一轮结束都没有再发过模型请求（模型那次请求在通知之前就发出了），Claude Code 也会拿它开始新的一轮，
-   * 这时按一轮结束的时间记（见 noticeInTurn）
+   * 后台任务结束的通知还没交给模型（task_id）。Claude Code 把通知放进队列：一轮进行中，主线程有工具结果回来后的下一次模型请求
+   * 把它并进这一轮（见 toolResultSinceRequest；没有工具结果的请求不带它）；一轮结束时（或空闲时到的）还在队列里，就拿它开始新的一轮。
+   * 所以还有没交出去的通知时，会话算在忙（见 noticePending），空闲时接着发出的模型请求（status: requesting）就是新的一轮开始了，
+   * 不等模型开始返回。
+   * 停止任务的通知不一定开新的一轮，不算；子代理内部工具的通知不开主线程的新一轮，也不算（见 subagentTools）。
+   * 空闲时等了 NOTICE_WAIT_MS 还没有请求就清掉，免得一直显示在忙
    */
-  private wakeAt = 0;
-  /** 一轮进行中收到了后台任务通知，之后这一轮还没再发过模型请求（再发的话通知就并进了这一轮） */
-  private noticeInTurn = false;
+  private readonly pendingNotices = new Set<string>();
+  private noticeTimer?: NodeJS.Timeout;
+  /**
+   * 上次模型请求之后主线程有工具结果回来：接下来的请求是主线程接着这一轮发的，会带上队列里的通知。
+   * status 消息不带来源，后台子代理的请求分不出来，只有主线程的工具结果分得出来
+   */
+  private toolResultSinceRequest = false;
   /** 子代理里的工具调用（tool_use 的 id）：它们转到后台再结束也发通知，但不会开始主线程的新一轮 */
   private readonly subagentTools = new Set<string>();
   private readonly done: Promise<void>;
@@ -208,6 +213,16 @@ export class AgentSession {
 
   async interrupt(): Promise<void> {
     await this.query.interrupt();
+  }
+
+  /** 有后台任务结束的通知还没交给模型，Claude Code 会拿它开始新的一轮（见 pendingNotices） */
+  get noticePending(): boolean {
+    return this.pendingNotices.size > 0;
+  }
+
+  /** 一轮结束后还在忙：有后台任务在跑，或者有通知还没交给模型（侧栏的转圈看它） */
+  get backgroundBusy(): boolean {
+    return this.tasksRunning || this.noticePending;
   }
 
   /** 有后台任务在跑 */
@@ -368,15 +383,26 @@ export class AgentSession {
         if ((message.type === "assistant" || message.type === "stream_event") && message.parent_tool_use_id === null && this.state === "idle") {
           this.setState("running");
         }
-        // 后台任务通知唤起的新一轮：发出模型请求时就算开始（见 wakeAt）
+        // 后台任务结束的通知：交给模型之前会话算在忙，空闲时接着发出的模型请求就是通知开始的新一轮（见 pendingNotices）
         if (message.type === "assistant" && message.parent_tool_use_id !== null) this.trackSubagentTools(message.message.content);
-        if (message.type === "system" && message.subtype === "task_notification" && !message.skip_transcript && !this.subagentTools.delete(message.tool_use_id ?? "")) {
-          if (this.state === "idle") this.wakeAt = Date.now();
-          else if (this.state === "running") this.noticeInTurn = true;
+        if (message.type === "system" && message.subtype === "task_notification" && !this.subagentTools.delete(message.tool_use_id ?? "")) {
+          if (!message.skip_transcript && message.status !== "stopped" && (this.state === "idle" || this.state === "running")) {
+            this.pendingNotices.add(message.task_id);
+            if (this.state === "idle") {
+              this.publishState();
+              this.waitNotices();
+            }
+          }
+        }
+        if (message.type === "user" && message.parent_tool_use_id === null && Array.isArray(message.message.content) && message.message.content.some((b) => b.type === "tool_result")) {
+          this.toolResultSinceRequest = true;
         }
         if (message.type === "system" && message.subtype === "status" && message.status === "requesting") {
-          if (this.state === "idle" && Date.now() - this.wakeAt < WAKE_WINDOW_MS) this.setState("running");
-          else if (this.state === "running") this.noticeInTurn = false;
+          if (this.pendingNotices.size && this.state === "idle") {
+            this.setState("running");
+            this.clearNotices();
+          } else if (this.toolResultSinceRequest && this.state === "running") this.clearNotices();
+          this.toolResultSinceRequest = false;
         }
         this.trackTools(message);
         logTaskMessage(this.log, this.id, message);
@@ -395,8 +421,8 @@ export class AgentSession {
         if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });
         if (message.type === "result") {
           this.setState("idle");
-          if (this.noticeInTurn) this.wakeAt = Date.now();
-          this.noticeInTurn = false;
+          this.toolResultSinceRequest = false;
+          this.waitNotices();
           void this.refreshContext();
           // 一轮结束：内置浏览器关掉 AI 开的、没留下的临时标签页。还有转到后台的代码在跑（inappBusy），
           // 或者这一轮里有后台浏览器任务结束了（browserTaskEnded），先不关
@@ -416,21 +442,51 @@ export class AgentSession {
         this.resolvePermission(requestId, { behavior: "deny", message: "会话已结束" });
       }
       if (this.tasks.processExited()) this.publish({ type: "tasks", tasks: this.tasks.list() });
+      // 队列跟着子进程没了
+      clearTimeout(this.noticeTimer);
+      this.pendingNotices.clear();
       this.setState("closed");
       this.onClosed(this);
     }
   }
 
+
   private setState(state: SessionState): void {
     if (this.state === state) return;
     this.state = state;
-    if (state !== "idle") this.wakeAt = 0;
+    if (state !== "idle") clearTimeout(this.noticeTimer);
     this.lastActiveAt = Date.now();
     this.publishState();
   }
 
   private publishState(): void {
-    this.publish({ type: "state", state: this.state, model: this.model, effort: this.effort, permissionMode: this.permissionMode });
+    this.publish({
+      type: "state",
+      state: this.state,
+      model: this.model,
+      effort: this.effort,
+      permissionMode: this.permissionMode,
+      ...(this.noticePending ? { noticePending: true } : {}),
+    });
+  }
+
+  /** 通知交给模型了（或不再等）：清掉没交出去的通知 */
+  private clearNotices(): void {
+    clearTimeout(this.noticeTimer);
+    if (!this.pendingNotices.size) return;
+    this.pendingNotices.clear();
+    if (this.state === "idle") this.publishState();
+  }
+
+  /** 空闲时还有没交出去的通知：等着 Claude Code 拿它开始新的一轮，等太久就不再等（见 NOTICE_WAIT_MS） */
+  private waitNotices(): void {
+    clearTimeout(this.noticeTimer);
+    if (this.state !== "idle" || !this.pendingNotices.size) return;
+    this.noticeTimer = setTimeout(() => {
+      this.log.warn({ sessionId: this.id, tasks: [...this.pendingNotices] }, "后台任务的通知一直没开始新的一轮，不再等");
+      this.clearNotices();
+    }, NOTICE_WAIT_MS);
+    this.noticeTimer.unref();
   }
 
   private publish(event: GatewayEvent): void {
