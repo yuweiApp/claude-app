@@ -1273,15 +1273,17 @@ main {
 .side-panel-resizer:active::after { opacity: 0.7; transition-delay: 0s; }
 .panel-head { display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 /*
- * 标签栏同浏览器：标签默认 180px，放不下时一起变窄（最窄只剩图标），再放不下才横向滚动；
- * 「＋」紧跟在最后一个标签后面，不跟着滚出去
+ * 标签栏同浏览器：标签按标题宽度、最宽 180px，放不下时一起变窄（最窄只剩图标），再放不下才横向滚动；
+ * 「＋」紧跟在最后一个标签后面，不跟着滚出去。
+ * 标签是 container（要按自身宽度藏关闭按钮、标题），宽度不能靠内容撑开，标题宽度由 SidePanel 量好放在 --label-w；
+ * 58px = 左内边距 8 + 图标 16 + 间距 6 + 间距 6 + 关闭按钮 18 + 右内边距 4
  */
 .panel-tabs { position: relative; flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
 .panel-tabs::-webkit-scrollbar { display: none; }
 .panel-head-spacer { flex: 1; min-width: 0; }
 .panel-tab {
   container-type: inline-size;
-  display: flex; align-items: center; gap: 6px; flex: 0 1 auto; width: 180px; min-width: 36px; height: 28px; padding: 0 4px 0 8px;
+  display: flex; align-items: center; gap: 6px; flex: 0 1 auto; width: min(180px, calc(var(--label-w, 180px) + 58px)); min-width: 36px; height: 28px; padding: 0 4px 0 8px;
   border-radius: 8px; color: var(--muted); font-size: 13px; cursor: pointer; user-select: none;
 }
 .panel-tab.active { min-width: 58px; }

@@ -656,6 +656,34 @@ function tabIcon(tab: PanelTab): ReactNode {
   }
 }
 
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+
+/**
+ * 标签标题的文字宽度，标签按它定宽（最宽 180px，见 styles.css .panel-tab）。
+ * 标签用了 container query，宽度不能靠内容撑开，所以用 canvas 量；标题被藏起来（标签太窄）时也量得准
+ */
+function useTextWidth(text: string, italic: boolean): number | null {
+  const [width, setWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    let cancelled = false;
+    const measure = () => {
+      if (cancelled) return;
+      measureCtx ??= document.createElement("canvas").getContext("2d");
+      if (!measureCtx) return;
+      const s = getComputedStyle(document.body);
+      measureCtx.font = `${italic ? "italic " : ""}13px ${s.fontFamily}`;
+      setWidth(Math.ceil(measureCtx.measureText(text).width) + 1);
+    };
+    measure();
+    // 网页字体晚加载完时重量一次
+    void document.fonts?.ready.then(measure);
+    return () => {
+      cancelled = true;
+    };
+  }, [text, italic]);
+  return width;
+}
+
 /** 标签：预览打开的文件是斜体（双击固定），有没保存的修改时关闭按钮的位置显示圆点（鼠标移上去变回 ×） */
 function TabButton({
   cwd,
@@ -680,9 +708,12 @@ function TabButton({
   // 工作目录外的显示完整路径
   const filePath = tab.kind === "files" && tab.path !== null ? (tab.root ? `${tab.root.replace(/[\\/]+$/, "")}/${tab.path}` : tab.path) : null;
   const transient = tab.kind === "files" && tab.transient;
+  const label = (tab.kind === "browser" && (browserInfo?.pendingUrl || browserInfo?.title || browserInfo?.url)) || tabLabel(tab);
+  const labelWidth = useTextWidth(label, transient);
   return (
     <div
       className={`panel-tab${active ? " active" : ""}${transient ? " temporary" : ""}`}
+      style={labelWidth === null ? undefined : ({ "--label-w": `${labelWidth}px` } as CSSProperties)}
       title={
         filePath
           ? transient
@@ -700,7 +731,7 @@ function TabButton({
       onContextMenu={onMenu}
     >
       <span className="panel-tab-icon">{tab.kind === "browser" ? <SiteIcon src={browserInfo?.favicon} /> : tabIcon(tab)}</span>
-      <span className="panel-tab-label">{(tab.kind === "browser" && (browserInfo?.pendingUrl || browserInfo?.title || browserInfo?.url)) || tabLabel(tab)}</span>
+      <span className="panel-tab-label">{label}</span>
       <button
         className={`panel-tab-close${unsaved ? " unsaved" : ""}`}
         title={unsaved ? "有未保存的修改（Ctrl+S 保存），关闭时会问" : "关闭"}
