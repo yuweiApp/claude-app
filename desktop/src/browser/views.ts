@@ -758,7 +758,8 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
   /** 网页的右键菜单（系统菜单）：按点到的东西（链接、图片、选中的文字、输入框）给不同的项，最后是「检查」 */
   private contextMenu(tab: Tab, p: Electron.ContextMenuParams): void {
     const wc = tab.view.webContents;
-    const openInNewTab = (url: string) => void this.create(tab.sessionId, url, "user");
+    // 同网页里点开的新页面，切到前台
+    const openInNewTab = (url: string) => void this.create(tab.sessionId, url, "user").then((t) => this.emit("activate", t));
     const items: MenuItemConstructorOptions[] = [];
     const group = (list: MenuItemConstructorOptions[]) => {
       if (!list.length) return;
