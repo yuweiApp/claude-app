@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type SshConfigHost, type SshConnectionInfo, type SshConnectionInput } from "../api";
 import { refreshSshConnections, setSshConnections, useSshConnections } from "../state/sshConnections";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { HostIcon } from "./HostIcon";
 
 /**
  * 设置里的「SSH 连接」：在远程主机上开会话（gateway/src/ssh/）。连接存在网关（gateway-ssh-connections.json），
@@ -21,32 +22,60 @@ export function SshPage() {
     return () => clearInterval(timer);
   }, []);
 
+  const groups = [
+    { key: "manual", title: "手动添加", hint: null, list: connections.filter((c) => !c.fromConfig) },
+    { key: "config", title: "来自 ~/.ssh/config", hint: "本机 ~/.ssh/config 里的主机自动列在这里；要改改那个文件", list: connections.filter((c) => c.fromConfig) },
+  ].filter((g) => g.list.length);
+  const row = (c: SshConnectionInfo) => <ConnectionRow key={c.id} conn={c} onEdit={() => setEditing(c)} onRemove={() => setRemoving(c)} onError={setError} />;
+
   return (
     <div className="appearance ssh-page">
       <header className="settings-head">
         <div className="settings-title">
           <h1>SSH 连接</h1>
-          <p>
-            在远程主机上开会话：AI 在那台主机上读写文件、执行命令，右侧面板的文件和终端也是那台主机的。模型请求经 SSH 转回这台电脑发出，接口密钥不离开这台电脑。
-            第一次连接时在远端的 ~/.claude-app 下装 Claude Code。远端支持 macOS、Linux、Windows。本机 ~/.ssh/config 里的主机自动列在这里，不用添加。
-          </p>
+          <p>在远程主机上开会话：AI 在那台主机上读写文件、执行命令，右侧面板的文件和终端也是那台主机的。</p>
         </div>
         <button className="primary" onClick={() => setEditing("new")}>
           添加连接
         </button>
       </header>
+      <ul className="ssh-facts">
+        <li>
+          <KeyIcon />
+          <span>
+            <b>接口密钥不出本机</b>模型请求经 SSH 转回这台电脑发出
+          </span>
+        </li>
+        <li>
+          <BoxIcon />
+          <span>
+            <b>自动部署</b>第一次连接时在远端 ~/.claude-app 下装 Claude Code
+          </span>
+        </li>
+        <li>
+          <DevicesIcon />
+          <span>
+            <b>跨平台</b>远端支持 macOS、Linux、Windows
+          </span>
+        </li>
+      </ul>
       {error && <div className="settings-error">{error}</div>}
-      <section className="appearance-section">
-        {connections.length ? (
-          <div className="settings-list">
-            {connections.map((c) => (
-              <ConnectionRow key={c.id} conn={c} onEdit={() => setEditing(c)} onRemove={() => setRemoving(c)} onError={setError} />
-            ))}
-          </div>
-        ) : (
-          <div className="settings-empty">还没有 SSH 连接</div>
-        )}
-      </section>
+      {groups.length ? (
+        groups.map((g) => (
+          <section key={g.key} className="appearance-section ssh-group">
+            {groups.length > 1 || g.key === "config" ? (
+              <h2>
+                {g.title}
+                <span className="ssh-group-count">{g.list.length}</span>
+                {g.hint && <span className="ssh-group-hint">{g.hint}</span>}
+              </h2>
+            ) : null}
+            <div className="ssh-list">{g.list.map(row)}</div>
+          </section>
+        ))
+      ) : (
+        <div className="settings-empty">还没有 SSH 连接，本机 ~/.ssh/config 里的主机也会自动列在这里</div>
+      )}
       {editing && (
         <ConnectionDialog
           conn={editing === "new" ? null : editing}
@@ -99,121 +128,180 @@ function target(c: SshConnectionInput & { address?: string }) {
   return c.address ?? `${c.host}${c.port ? `:${c.port}` : ""}`;
 }
 
-function ConnectionRow({ conn: c, onEdit, onRemove, onError }: { conn: SshConnectionInfo; onEdit: () => void; onRemove: () => void; onError: (msg: string | null) => void }) {
-  const [password, setPassword] = useState("");
-  const status = (() => {
+/** 连上过的远端系统：darwin-arm64 → macOS · arm64 */
+function platformLabel(platform: string | undefined) {
+  if (!platform) return null;
+  const [os, arch] = platform.split("-");
+  const name = os === "darwin" ? "macOS" : os === "win32" ? "Windows" : os === "linux" ? "Linux" : os;
+  return arch ? `${name} · ${arch}` : name;
+}
+
+/** 行右侧的状态：圆点 + 一两个字，详细原因在行下方 */
+function StatusPill({ conn: c }: { conn: SshConnectionInfo }) {
+  const [tone, text] = ((): [string, string] => {
     switch (c.status) {
       case "ready":
-        return <span className="mcp-status connected">已连接{c.platform ? `（${c.platform}）` : ""}</span>;
+        return ["ok", "已连接"];
       case "connecting":
-        return <span>连接中…</span>;
+        return ["busy", "连接中"];
       case "deploying":
-        return <span>正在准备远端{c.progress !== undefined && c.progress > 0 ? `（安装 Claude Code ${Math.round(c.progress * 100)}%）` : "…"}</span>;
+        return ["busy", c.progress !== undefined && c.progress > 0 ? `安装中 ${Math.round(c.progress * 100)}%` : "准备远端"];
       case "error":
-        return c.hostKey ? (
-          <span className="mcp-status needs-auth">{c.hostKey.changed ? "主机密钥变了" : "第一次连接，要确认主机密钥"}</span>
-        ) : c.needsPassword ? (
-          <span className="mcp-status needs-auth">需要密码</span>
-        ) : (
-          <span className="mcp-status failed" title={c.error}>
-            连接失败：{c.error}
-          </span>
-        );
+        if (c.hostKey) return [c.hostKey.changed ? "err" : "warn", c.hostKey.changed ? "主机密钥变了" : "待确认密钥"];
+        if (c.needsPassword) return ["warn", "需要密码"];
+        return ["err", "连接失败"];
       default:
-        return <span>未连接</span>;
+        return ["idle", "未连接"];
     }
   })();
+  return (
+    <span className={`ssh-pill ${tone}`}>
+      <span className="ssh-pill-dot" aria-hidden="true" />
+      {text}
+    </span>
+  );
+}
+
+function ConnectionRow({ conn: c, onEdit, onRemove, onError }: { conn: SshConnectionInfo; onEdit: () => void; onRemove: () => void; onError: (msg: string | null) => void }) {
+  const [password, setPassword] = useState("");
   const working = c.status === "connecting" || c.status === "deploying";
+  const platform = platformLabel(c.platform);
+  const forwards = c.status === "ready" && c.forwards && c.forwards.length > 0 ? c.forwards : null;
+  const failed = c.status === "error" && !c.hostKey && !c.needsPassword;
 
   return (
-    <div className="settings-row ssh-row">
-      <div className="settings-row-main">
-        <div className="settings-row-name">
-          {c.name}
-          {c.fromConfig && (
-            <span className="settings-tag" title="本机 ~/.ssh/config 里的主机，自动列出；要改改那个文件">
-              ~/.ssh/config
-            </span>
-          )}
+    <div className={`ssh-row${c.status === "ready" ? " ready" : ""}`}>
+      <div className="ssh-row-head">
+        <span className="ssh-row-icon">
+          <HostIcon hostId={c.id} size={20} />
+        </span>
+        <div className="ssh-row-text">
+          <div className="ssh-row-name">{c.name}</div>
+          <div className="ssh-row-meta" title={[target(c), c.identityFile].filter(Boolean).join(" · ")}>
+            <span className="mono">{target(c)}</span>
+            {platform && <span>{platform}</span>}
+            {c.identityFile && <span className="mono">{c.identityFile}</span>}
+          </div>
         </div>
-        <div className="settings-row-target" title={target(c)}>
-          {target(c)}
-          {c.identityFile ? ` · ${c.identityFile}` : ""}
-        </div>
-        <div className="settings-row-status">
-          {status}
+        <StatusPill conn={c} />
+        <div className="ssh-row-tools">
           {!c.fromConfig && (
-            <>
-              {" · "}
-              <button className="settings-link" onClick={onEdit}>
-                编辑
-              </button>
-            </>
+            <button className="icon-btn" title="编辑" aria-label={`编辑 ${c.name}`} onClick={onEdit}>
+              <EditIcon />
+            </button>
           )}
-          {" · "}
-          <button className="settings-link" onClick={onRemove}>
-            删除
+          <button className="icon-btn danger" title={c.fromConfig ? "不再列出（~/.ssh/config 不改）" : "删除"} aria-label={`删除 ${c.name}`} onClick={onRemove}>
+            <TrashIcon />
           </button>
         </div>
-        {c.status === "ready" && c.forwards && c.forwards.length > 0 && (
-          <ul className="ssh-forwards">
-            {c.forwards.map((f) => (
-              <li key={`${f.remote}-${f.local}`} className={f.error ? "failed" : undefined} title={f.error}>
-                <span className="mono">远端 {f.remote}</span> → <span className="mono">本机 {f.local}</span>
-                {f.error ? `：${f.error}` : ""}
-              </li>
-            ))}
-          </ul>
-        )}
-        {c.status === "error" && c.hostKey && (
-          <div className="ssh-hostkey">
-            <p>
-              {c.hostKey.changed
-                ? "这台主机提供的密钥和上次信任的不一样。可能是重装了系统，也可能有人在冒充它。确认是同一台主机再信任："
-                : "第一次连接这台主机。在主机上运行 ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub 可以核对指纹："}
-            </p>
-            <code>
-              {c.hostKey.type} {c.hostKey.fingerprint}
-            </code>
-            <button
-              className="primary"
-              onClick={() =>
-                api.trustSshHostKey(c.id, c.hostKey!.fingerprint).then(
-                  () => connect(c.id, undefined, onError),
-                  (e: Error) => onError(e.message),
-                )
-              }
-            >
-              信任并连接
-            </button>
-          </div>
-        )}
-        {c.status === "error" && !c.hostKey && c.needsPassword && (
-          <form
-            className="browsers-field"
-            onSubmit={(e: FormEvent) => {
-              e.preventDefault();
-              void connect(c.id, password, onError).then(() => setPassword(""));
-            }}
-          >
-            <span className="browsers-field-label">密码</span>
-            <input type="password" autoComplete="off" value={password} placeholder="只在网关内存里，不保存" onChange={(e) => setPassword(e.target.value)} />
-            <button type="submit" disabled={!password}>
-              连接
-            </button>
-          </form>
-        )}
-      </div>
-      <div className="settings-row-actions">
         {c.status === "ready" ? (
-          <button onClick={() => api.disconnectSsh(c.id).then(() => refreshSshConnections(), (e: Error) => onError(e.message))}>断开</button>
+          <button className="ssh-connect disconnect" onClick={() => api.disconnectSsh(c.id).then(() => refreshSshConnections(), (e: Error) => onError(e.message))}>
+            断开
+          </button>
         ) : (
-          <button disabled={working} onClick={() => void connect(c.id, undefined, onError)}>
+          <button className="ssh-connect" disabled={working} onClick={() => void connect(c.id, undefined, onError)}>
             {working ? "连接中…" : "连接"}
           </button>
         )}
       </div>
+      {(forwards || failed || (c.status === "error" && (c.hostKey || c.needsPassword))) && (
+        <div className="ssh-row-body">
+          {forwards && (
+            <ul className="ssh-forwards">
+              {forwards.map((f) => (
+                <li key={`${f.remote}-${f.local}`} className={f.error ? "failed" : undefined} title={f.error}>
+                  <span className="mono">远端 {f.remote}</span> → <span className="mono">本机 {f.local}</span>
+                  {f.error ? `：${f.error}` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+          {failed && <div className="ssh-notice err">{c.error ?? "连接失败"}</div>}
+          {c.status === "error" && c.hostKey && (
+            <div className={`ssh-notice ssh-hostkey ${c.hostKey.changed ? "err" : "warn"}`}>
+              <p>
+                {c.hostKey.changed
+                  ? "这台主机提供的密钥和上次信任的不一样。可能是重装了系统，也可能有人在冒充它。确认是同一台主机再信任："
+                  : "第一次连接这台主机。在主机上运行 ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub 可以核对指纹："}
+              </p>
+              <code>
+                {c.hostKey.type} {c.hostKey.fingerprint}
+              </code>
+              <button
+                className="primary"
+                onClick={() =>
+                  api.trustSshHostKey(c.id, c.hostKey!.fingerprint).then(
+                    () => connect(c.id, undefined, onError),
+                    (e: Error) => onError(e.message),
+                  )
+                }
+              >
+                信任并连接
+              </button>
+            </div>
+          )}
+          {c.status === "error" && !c.hostKey && c.needsPassword && (
+            <form
+              className="ssh-password"
+              onSubmit={(e: FormEvent) => {
+                e.preventDefault();
+                void connect(c.id, password, onError).then(() => setPassword(""));
+              }}
+            >
+              <input type="password" autoComplete="off" value={password} aria-label="密码" placeholder="密码（只在网关内存里，不保存）" onChange={(e) => setPassword(e.target.value)} />
+              <button type="submit" className="primary" disabled={!password}>
+                连接
+              </button>
+            </form>
+          )}
+        </div>
+      )}
     </div>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10.8 2.7a1.6 1.6 0 0 1 2.3 2.3L5.6 12.5 2.5 13.5l1-3.1Z" />
+      <path d="m9.6 3.9 2.3 2.3" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.7 7v3.8M9.3 7v3.8" />
+    </svg>
+  );
+}
+
+function KeyIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="5.5" cy="10.5" r="3" />
+      <path d="m7.6 8.4 5.9-5.9M11.5 4.5l1.5 1.5M10 6l1.2 1.2" />
+    </svg>
+  );
+}
+
+function BoxIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 1.8 13.5 4.6v6.8L8 14.2 2.5 11.4V4.6Z" />
+      <path d="M2.5 4.6 8 7.4l5.5-2.8M8 7.4v6.8" />
+    </svg>
+  );
+}
+
+function DevicesIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="1.8" y="2.8" width="12.4" height="8.4" rx="1.4" />
+      <path d="M5.5 13.6h5M8 11.2v2.4" />
+      <path d="m4.8 5.6 1.6 1.4-1.6 1.4M8 8.4h2.6" />
+    </svg>
   );
 }
 
