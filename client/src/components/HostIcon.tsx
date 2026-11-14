@@ -93,20 +93,22 @@ export function hostStatusText(c: SshConnectionInfo | undefined): string {
 }
 
 /**
- * 远程主机的连接状态：黄色连接中（闪），红色失败，灰色未连接；已连接不显示（系统图标是彩色的就是连着）。
+ * 远程主机的连接状态：黄色连接中（闪），红色失败。已连接、未连接都不显示，在线与否看系统图标是彩色还是灰色。
  * running：这台主机上（项目里）有会话在跑，已连接时显示呼吸灯
  */
 export function HostStatusDot({ hostId, running = false }: { hostId: string; running?: boolean }) {
   const conn = useSshConnections().find((c) => c.id === hostId);
-  if (conn?.status === "ready" && !running) return null;
   const cls =
     conn?.status === "ready"
-      ? " on running"
+      ? running
+        ? " on running"
+        : null
       : conn?.status === "connecting" || conn?.status === "deploying"
         ? " busy"
         : conn?.status === "error"
           ? " err"
-          : "";
+          : null;
+  if (cls === null) return null;
   const text = `${conn?.name ?? hostId}：${hostStatusText(conn)}${running && conn?.status === "ready" ? "，有会话在运行" : ""}`;
   return <span className={`env-dot${cls}`} title={text} role="img" aria-label={text} />;
 }

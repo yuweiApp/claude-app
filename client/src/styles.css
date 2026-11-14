@@ -1117,7 +1117,7 @@ main {
 .menu-item.env-item { flex-direction: row; align-items: center; gap: 10px; }
 .env-item > svg { flex: none; color: var(--muted); }
 .env-item-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.env-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--muted) 45%, transparent); }
+.env-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
 .env-dot.err { background: var(--err); }
 .env-dot.busy { background: var(--warn); animation: env-dot-pulse 1.2s ease-in-out infinite; }
 @keyframes env-dot-pulse { 50% { opacity: .35; } }
