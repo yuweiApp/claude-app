@@ -62,7 +62,11 @@ export function SshPage() {
       {removing && (
         <ConfirmDialog
           title={`删除连接「${removing.name}」？`}
-          message="这台主机上的会话会从列表里去掉（远端的会话记录和文件不删）。"
+          message={
+            removing.fromConfig
+              ? "这台主机上的会话会从列表里去掉（远端的会话记录和文件不删）。~/.ssh/config 不改，只是这里不再列出；要加回来，在「添加连接」里选这个别名。"
+              : "这台主机上的会话会从列表里去掉（远端的会话记录和文件不删）。"
+          }
           confirmLabel="删除"
           onCancel={() => setRemoving(null)}
           onConfirm={() => {
@@ -127,7 +131,7 @@ function ConnectionRow({ conn: c, onEdit, onRemove, onError }: { conn: SshConnec
         <div className="settings-row-name">
           {c.name}
           {c.fromConfig && (
-            <span className="settings-tag" title="本机 ~/.ssh/config 里的主机，自动列出；要改、要删改那个文件">
+            <span className="settings-tag" title="本机 ~/.ssh/config 里的主机，自动列出；要改改那个文件">
               ~/.ssh/config
             </span>
           )}
@@ -144,12 +148,12 @@ function ConnectionRow({ conn: c, onEdit, onRemove, onError }: { conn: SshConnec
               <button className="settings-link" onClick={onEdit}>
                 编辑
               </button>
-              {" · "}
-              <button className="settings-link" onClick={onRemove}>
-                删除
-              </button>
             </>
           )}
+          {" · "}
+          <button className="settings-link" onClick={onRemove}>
+            删除
+          </button>
         </div>
         {c.status === "ready" && c.forwards && c.forwards.length > 0 && (
           <ul className="ssh-forwards">

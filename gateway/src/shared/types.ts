@@ -526,7 +526,7 @@ export type SshStatus = "disconnected" | "connecting" | "deploying" | "ready" | 
 /** GET /ssh/connections 的一项：配置加上现在的连接状态 */
 export interface SshConnectionInfo extends SshConnectionInput {
   id: string;
-  /** 来自本机 ~/.ssh/config（自动列出，不用添加）：设置页里只能连接、断开，要改、要删改那个文件 */
+  /** 来自本机 ~/.ssh/config（自动列出，不用添加）：设置页里只能连接、断开、删除（只是不再列出），要改改那个文件 */
   fromConfig?: boolean;
   /** ~/.ssh/config 里写的地址（user@hostname:port，写了哪些显示哪些），设置页显示用 */
   address?: string;

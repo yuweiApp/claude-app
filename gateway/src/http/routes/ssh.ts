@@ -33,7 +33,7 @@ export function sshRoutes(app: FastifyInstance): void {
     return { connection: sshHost(conn.id).info() };
   });
 
-  /** 删连接：断开，本机的会话记录副本删掉（远端的记录不动）；~/.ssh/config 里的主机删不了（removeConnection 报错） */
+  /** 删连接：断开，本机的会话记录副本删掉（远端的记录不动）；~/.ssh/config 里的主机只是不再列出，配置文件不动 */
   app.delete<{ Params: IdParams }>("/ssh/connections/:id", async (req) => {
     removeConnection(req.params.id);
     dropHost(req.params.id);

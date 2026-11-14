@@ -22,7 +22,7 @@ interface Learned {
 /** 一个 SSH 连接：设置页添加的（存在 gateway-ssh-connections.json），或者本机 ~/.ssh/config 里的主机（fromConfig） */
 export interface SshConnection extends SshConnectionInput, Learned {
   id: string;
-  /** 来自 ~/.ssh/config：不存配置，设置页里只能连接、断开，要改就改那个文件 */
+  /** 来自 ~/.ssh/config：不存配置，设置页里只能连接、断开、删除（删除只是不再列出），要改就改那个文件 */
   fromConfig?: boolean;
   /** ~/.ssh/config 里写的 user@hostname:port */
   address?: string;
@@ -32,6 +32,8 @@ interface FileShape {
   connections: SshConnection[];
   /** ~/.ssh/config 里的主机（按别名）连接后记下的信息 */
   configHosts?: Record<string, Learned>;
+  /** 设置页里删掉的 ~/.ssh/config 主机（别名）：不再列出，配置文件不动 */
+  hiddenConfigHosts?: string[];
 }
 
 const FILE = path.join(config.claudeConfigDir, "gateway-ssh-connections.json");
@@ -47,7 +49,11 @@ function load(): FileShape {
   if (!cache) {
     try {
       const parsed = existsSync(FILE) ? (JSON.parse(readFileSync(FILE, "utf8")) as Partial<FileShape>) : {};
-      cache = { connections: Array.isArray(parsed.connections) ? parsed.connections : [], configHosts: parsed.configHosts ?? {} };
+      cache = {
+        connections: Array.isArray(parsed.connections) ? parsed.connections : [],
+        configHosts: parsed.configHosts ?? {},
+        hiddenConfigHosts: Array.isArray(parsed.hiddenConfigHosts) ? parsed.hiddenConfigHosts : [],
+      };
     } catch {
       cache = { connections: [], configHosts: {} };
     }
@@ -73,11 +79,11 @@ const configId = (alias: string) => `c${createHash("sha1").update(alias).digest(
 
 /**
  * 所有连接：设置页添加的在前，然后是 ~/.ssh/config 里的主机（同 Codex 桌面版、Claude 桌面版，不用再添加一遍）。
- * 设置页已经添加了同一个别名的，配置文件里的不重复列
+ * 设置页已经添加了同一个别名的、在设置页删掉的，配置文件里的不列
  */
 export function listConnections(): SshConnection[] {
-  const { connections: saved, configHosts: learned = {} } = load();
-  const used = new Set(saved.map((c) => c.host));
+  const { connections: saved, configHosts: learned = {}, hiddenConfigHosts: hidden = [] } = load();
+  const used = new Set([...saved.map((c) => c.host), ...hidden]);
   const fromConfig = sshConfigHosts()
     .filter((h) => !used.has(h.alias))
     .map((h): SshConnection => ({
@@ -129,7 +135,7 @@ export function addConnection(input: Partial<SshConnectionInput>): SshConnection
 function savedOnly(id: string): SshConnection {
   const conn = getConnection(id);
   if (!conn) throw new SshConfigError("SSH 连接不存在");
-  if (conn.fromConfig) throw new SshConfigError(`「${conn.name}」来自本机的 ~/.ssh/config，要改、要删请改那个文件`);
+  if (conn.fromConfig) throw new SshConfigError(`「${conn.name}」来自本机的 ~/.ssh/config，要改请改那个文件`);
   return conn;
 }
 
@@ -144,10 +150,20 @@ export function updateConnection(id: string, input: Partial<SshConnectionInput>)
   return conn;
 }
 
+/**
+ * 删连接。~/.ssh/config 里的主机不改配置文件（命令行的 ssh 也在用），只是记下别名、不再列出，
+ * 记下的指纹和远端信息一起删掉；之后在「添加连接」里选这个别名可以再加回来
+ */
 export function removeConnection(id: string): void {
-  savedOnly(id);
+  const conn = getConnection(id);
+  if (!conn) throw new SshConfigError("SSH 连接不存在");
   const file = load();
-  save({ ...file, connections: file.connections.filter((c) => c.id !== id) });
+  if (conn.fromConfig) {
+    const { [conn.host]: _forgotten, ...learned } = file.configHosts ?? {};
+    save({ ...file, configHosts: learned, hiddenConfigHosts: [...new Set([...(file.hiddenConfigHosts ?? []), conn.host])] });
+  } else {
+    save({ ...file, connections: file.connections.filter((c) => c.id !== id) });
+  }
 }
 
 /** 记下连接后才知道的信息：设置页添加的写进它自己那一项，~/.ssh/config 里的按别名另外记 */
