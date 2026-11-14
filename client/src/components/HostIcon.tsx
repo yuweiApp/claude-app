@@ -92,28 +92,11 @@ export function hostStatusText(c: SshConnectionInfo | undefined): string {
   }
 }
 
-/**
- * 远程主机的连接状态：黄色连接中（闪），红色失败。已连接、未连接都不显示，在线与否看系统图标是彩色还是灰色。
- * running：这台主机上（项目里）有会话在跑，已连接时显示呼吸灯
- */
-export function HostStatusDot({ hostId, running = false }: { hostId: string; running?: boolean }) {
+/** 远程主机的连接状态：黄色连接中（闪），红色失败。已连接、未连接都不显示，在线与否看系统图标是彩色还是灰色 */
+export function HostStatusDot({ hostId }: { hostId: string }) {
   const conn = useSshConnections().find((c) => c.id === hostId);
-  const cls =
-    conn?.status === "ready"
-      ? running
-        ? " running"
-        : null
-      : conn?.status === "connecting" || conn?.status === "deploying"
-        ? " busy"
-        : conn?.status === "error"
-          ? " err"
-          : null;
+  const cls = conn?.status === "connecting" || conn?.status === "deploying" ? " busy" : conn?.status === "error" ? " err" : null;
   if (cls === null) return null;
-  const text = `${conn?.name ?? hostId}：${hostStatusText(conn)}${running && conn?.status === "ready" ? "，有会话在运行" : ""}`;
+  const text = `${conn?.name ?? hostId}：${hostStatusText(conn)}`;
   return <span className={`env-dot${cls}`} title={text} role="img" aria-label={text} />;
-}
-
-/** 本机项目有会话在跑时的呼吸灯（同远程主机已连接、有会话在跑时的 HostStatusDot） */
-export function RunningDot() {
-  return <span className="env-dot running" title="有会话在运行" role="img" aria-label="有会话在运行" />;
 }

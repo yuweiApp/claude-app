@@ -187,11 +187,16 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 .sidebar .group-toggle, .sidebar .group-toggle:hover, .sidebar .section-toggle, .sidebar .section-toggle:hover { background: none; }
 .group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /*
- * 项目行的状态点（呼吸灯、连接中、失败）靠右，圆心和会话行右边的转圈（.session-spinner）对齐；
- * 悬停时右边是按钮，状态点同转圈一样先藏起来
+ * 项目行行尾（靠右）：远程主机连接中、失败的状态点，折叠时有会话在跑的转圈（同会话行的 .session-spinner，圆心对齐）；
+ * 悬停时右边是按钮，行尾同会话行的转圈一样先藏起来
  */
-.group-toggle .env-dot { margin-left: auto; margin-right: 3px; }
-.sidebar .group-head:hover .group-toggle .env-dot, .sidebar .group-head.menu-open .group-toggle .env-dot { opacity: 0; }
+.group-end { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.group-end:empty { display: none; }
+.group-end > .env-dot:last-child { margin-right: 4px; }
+.group-running { display: flex; align-items: center; gap: 5px; }
+.group-running .session-spinner { position: relative; top: 0; right: 0; margin-top: 0; flex: none; }
+.group-running-count { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.sidebar .group-head:hover .group-end, .sidebar .group-head.menu-open .group-end { opacity: 0; }
 .group-host { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
 .ssh-hostkey { margin-top: 8px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .ssh-hostkey p { margin: 0; color: var(--muted); }
@@ -1127,40 +1132,7 @@ main {
 .env-dot.err { background: var(--err); }
 .env-dot.busy { background: var(--warn); animation: env-dot-pulse 1.2s ease-in-out infinite; }
 @keyframes env-dot-pulse { 50% { opacity: .35; } }
-/*
- * 已连接、有会话在跑：流光呼吸灯。
- * 球体（::after）是青、靛、粉、琥珀的环形渐变，一直慢慢转，中心一点白色高光；
- * 背后（::before）是同一组颜色的模糊光晕，跟着呼吸涨落，整颗球也随呼吸轻轻放大缩小。
- * 两层都放在伪元素里，光晕不会盖住球体
- */
-.env-dot.running {
-  --orb: conic-gradient(from 0deg, #22d3ee, #818cf8, #f472b6, #fbbf24, #22d3ee);
-  position: relative; width: 9px; height: 9px;
-  animation: env-orb-breathe 2.4s ease-in-out infinite;
-}
-.env-dot.running::before, .env-dot.running::after {
-  content: ""; position: absolute; border-radius: 50%; pointer-events: none;
-  animation: env-orb-spin 3s linear infinite;
-}
-.env-dot.running::before {
-  inset: -3px; background: var(--orb); filter: blur(3.5px);
-  animation: env-orb-spin 3s linear infinite, env-orb-halo 2.4s ease-in-out infinite;
-}
-.env-dot.running::after {
-  inset: 0;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.9) 0 9%, rgba(255, 255, 255, 0.25) 26%, transparent 44%), var(--orb);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.35);
-}
-@keyframes env-orb-spin { to { rotate: 360deg; } }
-@keyframes env-orb-breathe { 0%, 100% { scale: 0.88; } 50% { scale: 1.08; } }
-@keyframes env-orb-halo {
-  0%, 100% { opacity: 0.3; scale: 0.9; }
-  50% { opacity: 0.85; scale: 1.45; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .env-dot.busy, .env-dot.running, .env-dot.running::before, .env-dot.running::after { animation: none; }
-  .env-dot.running::before { opacity: 0.5; }
-}
+@media (prefers-reduced-motion: reduce) { .env-dot.busy { animation: none; } }
 
 /* 选择文件夹对话框 */
 .dialog-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.35); padding: 16px; -webkit-app-region: no-drag; }

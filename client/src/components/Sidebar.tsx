@@ -1,4 +1,4 @@
-import { HostIcon, HostStatusDot, RunningDot } from "./HostIcon";
+import { HostIcon, HostStatusDot } from "./HostIcon";
 import { machinePath, parseRemote } from "../remote";
 import { desktop, fileManagerName } from "../desktop";
 import { sshName, useSshConnections } from "../state/sshConnections";
@@ -489,7 +489,7 @@ function ProjectGroup({
   // 远程主机上的项目：名字后面带主机名，悬停显示远端路径
   useSshConnections();
   const remote = parseRemote(g.cwd);
-  const running = g.sessions.some(isWorking);
+  const running = g.sessions.filter(isWorking).length;
   return (
     <div className="group">
       <div className={`group-head${active ? " active" : ""}${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
@@ -499,8 +499,19 @@ function ProjectGroup({
           {remote ? <HostIcon hostId={remote.host} /> : <FolderIcon />}
           <span className="group-name">{folderName(g.cwd)}</span>
           {remote && <span className="group-host">{sshName(remote.host)}</span>}
-          {/* 有会话在跑：远程项目在连接状态点上显示呼吸灯，本机项目单独一个呼吸灯 */}
-          {remote ? <HostStatusDot hostId={remote.host} running={running} /> : running && <RunningDot />}
+          {/*
+           * 行尾：远程主机连接中、失败的状态点；折叠时有会话在跑显示和会话行一样的转圈，多个时前面带个数
+           * （展开时下面的会话行自己有转圈，这里不重复）
+           */}
+          <span className="group-end">
+            {remote && <HostStatusDot hostId={remote.host} />}
+            {!open && running > 0 && (
+              <span className="group-running" title={`${running} 个会话在运行`} role="img" aria-label={`${running} 个会话在运行`}>
+                {running > 1 && <span className="group-running-count">{running}</span>}
+                <span className="session-spinner" />
+              </span>
+            )}
+          </span>
         </button>
         <div className="group-actions">
           <button className="icon-btn" title="在此项目中新建会话" aria-label={`在 ${folderName(g.cwd)} 中新建会话`} onClick={() => onNew(g.cwd)}>
