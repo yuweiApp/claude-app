@@ -13,7 +13,7 @@ import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
-import type { Attachment, ContextUsage, GatewayEvent, SessionState } from "../shared/types.js";
+import type { Attachment, ContextUsage, GatewayEvent, MessagePriority, SessionState } from "../shared/types.js";
 import { buildUserContent, imageType, type SelectedElementContent } from "./attachments.js";
 import { parseRemote } from "../ssh/location.js";
 import { getConnection } from "../ssh/connections.js";
@@ -95,7 +95,7 @@ export class AgentSession {
   private readonly subagentTools = new Set<string>();
   private readonly done: Promise<void>;
   private closing = false;
-  /** 子进程启动的时间：之后 SSH 断开过才算这个进程是因为断开结束的（见 exitText） */
+  /** 子进程启动的时间：之后 SSH 断开过才算这个进程是因为断开结束的（见 exitError） */
   private readonly startedAt = Date.now();
   private readonly onContext?: (usage: ContextUsage) => void;
   /** 压缩过、之后模型还没回复过（见 ContextUsage.compacted） */
@@ -153,13 +153,17 @@ export class AgentSession {
     void this.refreshContext();
   }
 
-  async send(text: string, attachments: Attachment[] = [], elements: SelectedElementContent[] = []): Promise<string> {
+  /**
+   * priority：这一轮还在进行时怎么送到模型，网页按键决定（Enter 是 now，Ctrl+Enter 是 next）；不给时有工具调用在跑用 now，否则 next。
+   * 有待确认的权限时一律 next。空闲时不用，消息立刻开始新的一轮
+   */
+  async send(text: string, attachments: Attachment[] = [], elements: SelectedElementContent[] = [], priority?: MessagePriority): Promise<string> {
     const uuid = randomUUID();
     // 远程会话：图片照旧放进消息，其他文件先传到远端
     const remote = parseRemote(this.cwd);
     const remotePaths = remote ? await uploadAttachments(sshHost(remote.host), attachments.filter((a) => !imageType(a))) : undefined;
     const content = await buildUserContent(text, attachments, elements, remotePaths);
-    const now = this.state === "running" && this.toolsInFlight.size > 0 && this.pending.size === 0;
+    const now = this.state === "running" && this.pending.size === 0 && (priority ? priority === "now" : this.toolsInFlight.size > 0);
     // 这一轮还在进行时发的，不管 now 还是 next，都要等 Claude Code 交给模型（command_lifecycle started）才知道落在哪里：
     // next 在下一次工具结果之后并进这一轮，或这一轮结束后开始下一轮；now 有时并进这一轮，有时先结束这一轮
     // （result 的 stop_reason 是 tool_use）再用它开始新的一轮（实测两种都有）
@@ -171,9 +175,9 @@ export class AgentSession {
       parent_tool_use_id: null,
       // 用户在网页里输入的：不标时 Claude Code 当作来源不明，严格的 isHuman() 检查会拒绝
       origin: { kind: "human" },
-      // 有工具调用正在跑时插话用 now：调用（如等网页结果的 browser_run_code）提前转到后台、不打断，消息马上送到模型，
-      // 调用跑完后结果以通知送回来。模型正在生成文字时 now 会打断它（实测写到一半的回答直接丢了），等权限确认时也不用，
-      // 这两种情况用 next：不打断（实测写到一半的 952 字回答照常写完），下一次工具结果之后送到，没有工具调用了就等这一轮结束。
+      // now：有工具调用正在跑时，调用（如等网页结果的 browser_run_code）提前转到后台、不打断，消息马上送到模型，
+      // 调用跑完后结果以通知送回来；模型正在生成文字时 now 会打断它（实测写到一半的回答直接丢了）。
+      // next：不打断（实测写到一半的 952 字回答照常写完），下一次工具结果之后送到，没有工具调用了就等这一轮结束。
       // 以前用 later，要等整轮结束才送到。空闲时消息本来就立刻开始新的一轮
       ...(now ? { priority: "now" as const } : this.state === "running" ? { priority: "next" as const } : {}),
     });
@@ -436,9 +440,9 @@ export class AgentSession {
       }
     } catch (err) {
       if (!this.closing && !this.abortController.signal.aborted) {
-        const text = this.exitText(err);
+        const { text, host } = this.exitError(err);
         this.log.error({ sessionId: this.id, err, text }, "claude 会话异常结束");
-        this.publish({ type: "error", message: text, at: Date.now() });
+        this.publish({ type: "error", message: text, at: Date.now(), ...(host ? { host } : {}) });
       }
     } finally {
       for (const requestId of [...this.pending.keys()]) {
@@ -455,16 +459,16 @@ export class AgentSession {
 
   /**
    * 子进程异常结束的报错。远程会话的 SSH 连接断了时，SDK 报的是「terminated by signal SIGHUP」（spawn.ts 按 SIGHUP 结束进程），
-   * 换成连接断开和断开的原因
+   * 换成连接断开和断开的原因，带上连接 id（网页在这台主机重新连上后不再显示它）
    */
-  private exitText(err: unknown): string {
+  private exitError(err: unknown): { text: string; host?: string } {
     const text = err instanceof Error ? err.message : String(err);
     const remote = parseRemote(this.cwd);
     const host = remote ? existingHost(remote.host) : undefined;
     const close = host?.lastClose;
-    if (!remote || !close || close.at < this.startedAt || !text.includes("signal SIGHUP")) return text;
+    if (!remote || !close || close.at < this.startedAt || !text.includes("signal SIGHUP")) return { text };
     const name = getConnection(remote.host)?.name ?? remote.host;
-    return `与「${name}」的 SSH 连接断开了（${close.reason}），claude 进程随之结束。再发消息时会重新连接`;
+    return { text: `与「${name}」的 SSH 连接断开了（${close.reason}），claude 进程随之结束。再发消息时会重新连接`, host: remote.host };
   }
 
   private setState(state: SessionState): void {

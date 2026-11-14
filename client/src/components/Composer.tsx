@@ -1,5 +1,5 @@
 import { useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref } from "react";
-import { api } from "../api";
+import { api, type MessagePriority } from "../api";
 import { clearComposerDraft, useDraftField, type PendingFile } from "../state/composerDrafts";
 import { AddMenu } from "./AddMenu";
 import { formatSize } from "./Attachments";
@@ -32,7 +32,8 @@ interface Props {
   /** 边框的流光动效：running，或者一轮结束了、后台任务还在跑。只管动效，按钮仍看 running */
   working?: boolean;
   maxUploadMb: number;
-  onSend: (text: string, attachmentIds: string[]) => Promise<void>;
+  /** priority：这一轮还在进行时怎么送到模型，Enter 和发送按钮是 now（马上插话），Ctrl+Enter（macOS 上 ⌘+Enter 也行）是 next（等正在跑的工具执行完） */
+  onSend: (text: string, attachmentIds: string[], priority: MessagePriority) => Promise<void>;
   onInterrupt: () => void;
   /** 工具栏左边「+」后面：权限、新会话的选文件夹 */
   left?: ReactNode;
@@ -207,14 +208,14 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
     }
   };
 
-  const submit = async () => {
+  const submit = async (priority: MessagePriority = "now") => {
     if (!canSend) return;
     setSending(true);
     try {
       // 拖进来的图片写在最后一段：@绝对路径，空格隔开（消息里据此显示成缩略图，见 splitImageRefs）
       const body = expandSessions(expandPaths(expandTabs(text.trim(), pickedTabs), pickedPaths), pickedSessions);
       const refs = ready.flatMap((f) => (f.path ? [fileMention(f.path)] : [])).join(" ");
-      await onSend([body, refs].filter(Boolean).join("\n\n"), ready.flatMap((f) => (f.attachment ? [f.attachment.id] : [])));
+      await onSend([body, refs].filter(Boolean).join("\n\n"), ready.flatMap((f) => (f.attachment ? [f.attachment.id] : [])), priority);
       // 发送期间可能切到了别的会话，按键清，不靠这个组件的 state
       files.forEach(revokePreview);
       clearComposerDraft(draftKey);
@@ -245,7 +246,7 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      void submit();
+      void submit(e.ctrlKey || e.metaKey ? "next" : "now");
       return;
     }
     // 技能名、插件和文件引用是一个整体：退格、删除一次删掉整个（连同后面的一个空格），左右键直接跳过
@@ -439,7 +440,11 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
           ref={textareaRef}
           className={highlighted ? "has-mention" : undefined}
           value={text}
-          placeholder="随心输入，可以拖入或粘贴文件；Enter 发送，Shift+Enter 换行"
+          placeholder={
+            running
+              ? "Enter 立即插话，Ctrl+Enter 等工具执行完再发，Shift+Enter 换行"
+              : "随心输入，可以拖入或粘贴文件；Enter 发送，Shift+Enter 换行"
+          }
           rows={2}
           onChange={(e) => {
             setText(e.target.value);
@@ -487,7 +492,7 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
             </svg>
           </button>
         ) : (
-          <button className="send-btn" disabled={!canSend} onClick={() => void submit()} title={uploading ? "上传中…" : running ? "追加到当前任务" : "发送"} aria-label="发送">
+          <button className="send-btn" disabled={!canSend} onClick={() => void submit()} title={uploading ? "上传中…" : running ? "立即插话（Enter）；Ctrl+Enter 等工具执行完再发" : "发送"} aria-label="发送">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
             </svg>

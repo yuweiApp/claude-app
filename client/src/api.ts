@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
+export type { MessagePriority, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -154,8 +154,8 @@ export const api = {
   messages: (id: string) =>
     request<{ messages: HistoryMessage[] }>("GET", `/sessions/${id}/messages`).then((r) => r.messages),
   /** elements：网页上选中的元素，每个是一段文字和截图的附件 id，网关排在用户文字后面（见 gateway/src/agent/attachments.ts） */
-  send: (id: string, text: string, attachments: string[], elements: { text: string; screenshot?: string }[] = []) =>
-    request("POST", `/sessions/${id}/messages`, { text, attachments, ...(elements.length ? { elements } : {}) }),
+  send: (id: string, text: string, attachments: string[], elements: { text: string; screenshot?: string }[] = [], priority?: MessagePriority) =>
+    request("POST", `/sessions/${id}/messages`, { text, attachments, ...(elements.length ? { elements } : {}), ...(priority ? { priority } : {}) }),
   upload: (files: File[]) => {
     const form = new FormData();
     for (const file of files) form.append("file", file, file.name);

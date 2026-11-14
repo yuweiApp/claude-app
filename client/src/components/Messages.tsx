@@ -10,6 +10,7 @@ import { formatShortDuration } from "./TasksPopover";
 import { MentionText, splitImageRefs } from "./MentionText";
 import { AnnotatableText, SentNotesChip } from "./ResponseAnnotations";
 import { ReplyMarkdown } from "./ReplyMarkdown";
+import { useSshConnections } from "../state/sshConnections";
 
 type UserItem = Extract<Item, { kind: "user" }>;
 type ResultItem = Extract<Item, { kind: "result" }>;
@@ -301,9 +302,7 @@ export function Messages({ view, onFork }: { view: SessionView; onFork?: (messag
         (q) =>
           q.preview && (
             <section key={q.uuid} className="turn">
-              <div className="msg-group msg-group-user">
-                <ItemView item={q.preview} />
-              </div>
+              <UserGroup item={q.preview} />
             </section>
           ),
       )}
@@ -406,17 +405,7 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
         </div>
       )}
       {turn.compact && <CompactLine item={turn.compact} />}
-      {turn.user && (
-        <div className="msg-group msg-group-user">
-          {turn.user.annotations && <SentNotesChip annotations={turn.user.annotations} />}
-          {(turn.user.text || turn.user.images.length > 0 || turn.user.attachments.length > 0 || !turn.user.annotations) && <ItemView item={turn.user} />}
-          {turn.user.text && (
-            <MessageActions align="end">
-              <CopyAction text={turn.user.text} title="复制消息" />
-            </MessageActions>
-          )}
-        </div>
-      )}
+      {turn.user && <UserGroup item={turn.user} />}
       {(hasProcess || live || duration !== null) && !compacting && !bareCompact && (
         <div className="process-wrap">
           <div className="process-toggle-row">
@@ -545,6 +534,29 @@ function UnitView({ unit, view }: { unit: Unit; view: SessionView }) {
   }
 }
 
+/** 用户消息：带的标注、正文气泡（只有标注时不画空气泡）和复制按钮；一轮的开头和排队中的消息都用它 */
+function UserGroup({ item }: { item: UserItem }) {
+  return (
+    <div className="msg-group msg-group-user">
+      {item.annotations && <SentNotesChip annotations={item.annotations} />}
+      {(item.text || item.images.length > 0 || item.attachments.length > 0 || !item.annotations) && <ItemView item={item} />}
+      {item.text && (
+        <MessageActions align="end">
+          <CopyAction text={item.text} title="复制消息" />
+        </MessageActions>
+      )}
+    </div>
+  );
+}
+
+/** 子进程异常结束的报错；SSH 连接断开引起的，那台主机之后又连上了就不再显示 */
+function ErrorLine({ item }: { item: Extract<Item, { kind: "error" }> }) {
+  const connections = useSshConnections();
+  const host = item.host ? connections.find((c) => c.id === item.host) : undefined;
+  if (host?.status === "ready" && (host.connectedAt ?? 0) > item.at) return null;
+  return <div className="result error">{item.text}</div>;
+}
+
 function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
   switch (item.kind) {
     case "user": {
@@ -569,7 +581,7 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
       // 一轮的用时显示在过程的折叠条上；子代理里出现的 result 只在出错时显示
       return item.isError && item.text ? <div className="result error">出错：{item.text}</div> : null;
     case "error":
-      return <div className="result error">{item.text}</div>;
+      return <ErrorLine item={item} />;
     case "notice":
       return <div className="notice-line">{item.text}</div>;
     case "interrupted":

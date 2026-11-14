@@ -17,7 +17,7 @@ import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
-import type { BackgroundTask, SessionListItem, TaskOutput } from "../shared/types.js";
+import type { BackgroundTask, MessagePriority, SessionListItem, TaskOutput } from "../shared/types.js";
 import { loadAttachments, loadElements, type SelectedElementInput, type SessionExport } from "./attachments.js";
 import { enabledSkillNames } from "./capabilities.js";
 import { disabledSkills } from "./extensions.js";
@@ -123,11 +123,11 @@ export class SessionManager {
   }
 
   /** 发送消息；会话不活跃时先 resume */
-  async send(sessionId: string, text: string, attachmentIds: string[] = [], elementInputs: SelectedElementInput[] = []): Promise<string> {
+  async send(sessionId: string, text: string, attachmentIds: string[] = [], elementInputs: SelectedElementInput[] = [], priority?: MessagePriority): Promise<string> {
     rejectDisabledSkill(text);
     const attachments = [...(await loadAttachments(attachmentIds)), ...(await this.referencedSessions(text))];
     const elements = await loadElements(elementInputs);
-    return (await this.activate(sessionId)).send(text, attachments, elements);
+    return (await this.activate(sessionId)).send(text, attachments, elements, priority);
   }
 
   /** 活跃会话直接返回；子进程已回收的用原来的工作目录 resume。远程会话先连上主机、同步一下记录 */

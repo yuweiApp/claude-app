@@ -3,7 +3,7 @@ import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk
 import { listModels } from "../../agent/models.js";
 import { historyForDisplay, historyImage, sessionHistory } from "../../agent/history.js";
 import type { FastifyInstance } from "fastify";
-import type { ConnectorEntry, ConnectorInput, MarketPluginPage, McpAuthState, McpServerInput } from "../../shared/types.js";
+import type { ConnectorEntry, ConnectorInput, MarketPluginPage, McpAuthState, McpServerInput, MessagePriority } from "../../shared/types.js";
 import { AttachmentError, type SelectedElementInput } from "../../agent/attachments.js";
 import { BadRequestError, NotFoundError, type SessionManager } from "../../agent/session-manager.js";
 import type { EventHub } from "../../events/event-hub.js";
@@ -266,20 +266,20 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     return reply.type(image.mediaType).header("cache-control", "private, max-age=31536000, immutable").send(image.data);
   });
 
-  app.post<{ Params: IdParams; Body: { text: string; attachments?: string[]; elements?: SelectedElementInput[] } }>(
+  app.post<{ Params: IdParams; Body: { text: string; attachments?: string[]; elements?: SelectedElementInput[]; priority?: MessagePriority } }>(
     "/sessions/:id/messages",
     {
       schema: {
         body: {
           type: "object",
           required: ["text"],
-          properties: { text: { type: "string" }, attachments: attachmentsSchema, elements: elementsSchema },
+          properties: { text: { type: "string" }, attachments: attachmentsSchema, elements: elementsSchema, priority: { type: "string", enum: ["now", "next"] } },
         },
       },
     },
     async (req) => {
       requireContent(req.body);
-      return { uuid: await sessions.send(req.params.id, req.body.text.trim(), req.body.attachments, req.body.elements) };
+      return { uuid: await sessions.send(req.params.id, req.body.text.trim(), req.body.attachments, req.body.elements, req.body.priority) };
     },
   );
 

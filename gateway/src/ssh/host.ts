@@ -75,6 +75,8 @@ export class SshHost {
   env: RemoteEnv | null = null;
   /** 远端 127.0.0.1 上转发回网关模型代理的端口 */
   proxyPort: number | null = null;
+  /** 这次连上（准备好）的时间，断开后留着旧值，info() 只在 ready 时给 */
+  connectedAt: number | null = null;
   /** 上一次连上后断开的时间和原因（会话报错用，见 AgentSession） */
   lastClose: { at: number; reason: string } | null = null;
 
@@ -112,6 +114,7 @@ export class SshHost {
       ...(conn.identityFile ? { identityFile: conn.identityFile } : {}),
       ...(conn.startDirectory ? { startDirectory: conn.startDirectory } : {}),
       status: this.status,
+      ...(this.status === "ready" && this.connectedAt ? { connectedAt: this.connectedAt } : {}),
       ...(this.error ? { error: this.error } : {}),
       ...(this.pendingKey ? { hostKey: this.pendingKey } : {}),
       ...(this.needsPassword ? { needsPassword: true } : {}),
@@ -267,6 +270,7 @@ export class SshHost {
       client.forwardIn("127.0.0.1", 0, (err, port) => (err ? reject(new SshError(`远端不允许端口转发，模型请求转发不了：${err.message}`)) : resolve(port))),
     );
     await this.syncForwards(target.remoteForwards);
+    this.connectedAt = Date.now();
     this.setStatus("ready");
   }
 

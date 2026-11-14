@@ -3,7 +3,7 @@ import { refreshSshConnections, sshName } from "./state/sshConnections";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { GearGlyph, HomeGlyph, IosIcon } from "./components/IosIcon";
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import { api, BROWSERS_CHANGED, subscribe, type Capabilities, type ExternalBrowserInfo, type GatewayConfig, type SessionListItem } from "./api";
+import { api, BROWSERS_CHANGED, subscribe, type Capabilities, type ExternalBrowserInfo, type GatewayConfig, type MessagePriority, type SessionListItem } from "./api";
 import { CapabilityPicker } from "./components/CapabilityPicker";
 import { MentionNamesContext } from "./components/MentionText";
 import { ContextMeter } from "./components/ContextMeter";
@@ -623,13 +623,13 @@ function Chat({
 
   // 在 Claude 的回复里选中文字写的回复，随下一条消息发出
   const annotations = useResponseAnnotations(sessionId);
-  const send = async (text: string, attachments: string[]) => {
+  const send = async (text: string, attachments: string[], priority?: MessagePriority) => {
     // 发消息直接跳到底部：平滑滚动途中新消息、回复接连进来，和贴底部的跳转打架
     scrollToBottom("auto");
     try {
       if (sessionId) {
         const message = withResponseAnnotations(text, annotations);
-        await api.send(sessionId, message.text, attachments, message.elements);
+        await api.send(sessionId, message.text, attachments, message.elements, priority);
         if (annotations.length) clearResponseAnnotations(sessionId);
       }
       else onCreated(await api.createSession(text, attachments, { permissionMode: newMode, cwd: cwd ?? undefined, model: newModel, effort: newEffort }));

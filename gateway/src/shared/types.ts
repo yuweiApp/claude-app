@@ -35,8 +35,11 @@ export type GatewayEvent =
       canAlways: boolean;
     }
   | { type: "permission_resolved"; requestId: string; behavior: "allow" | "deny" }
-  /** 子进程异常结束。at：网关发出的时间（毫秒）；报错不写进会话记录，网页拉历史时按它放回原来的位置 */
-  | { type: "error"; message: string; at: number }
+  /**
+   * 子进程异常结束。at：网关发出的时间（毫秒）。host：远程会话因为 SSH 连接断开而结束时是连接 id，
+   * 网页在这台主机之后又连上（SshConnectionInfo.connectedAt 比 at 晚）时不再显示这条
+   */
+  | { type: "error"; message: string; at: number; host?: string }
   /** 网关给新会话生成了标题，列表要刷新 */
   | { type: "title"; title: string }
   /** 会话的后台任务有变化：整个列表 */
@@ -439,6 +442,12 @@ export interface TerminalInfo {
 }
 
 /** 终端的 WebSocket（GET /terminals/:id/socket）网关发的消息：连上时先来一条 data 是已有的输出；终端不存在时发 error 后断开 */
+/**
+ * 这一轮还在进行时发的消息怎么送到模型（POST /sessions/:id/messages 的 priority）：
+ * now 马上送到（正在跑的工具调用转到后台；模型正在写文字时会打断它），next 等下一次工具结果之后（没有工具调用了就等这一轮结束）
+ */
+export type MessagePriority = "now" | "next";
+
 export type TerminalEvent = { type: "data"; data: string } | { type: "exit"; code: number } | { type: "error"; message: string };
 
 /**
@@ -493,6 +502,8 @@ export interface SshConnectionInfo extends SshConnectionInput {
   /** ~/.ssh/config 里写的地址（user@hostname:port，写了哪些显示哪些），设置页显示用 */
   address?: string;
   status: SshStatus;
+  /** 连着时：这次连上（准备好）的时间（毫秒） */
+  connectedAt?: number;
   /** 上次连接失败的原因 */
   error?: string;
   /** 主机密钥没记录过或者变了：要用户看过指纹、点了信任才连 */
