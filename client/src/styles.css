@@ -14,7 +14,7 @@
   --err: #c0392b;
   --warn: #b7791f;
   /* 对话区（消息和输入框）的宽度，居中，两边留白 */
-  --content-width: 720px;
+  --content-width: 880px;
   /* 外框上悬停的底色；外框上浮起来的东西（新会话按钮、选中的会话、当前的功能图标）用卡片色加这层阴影 */
   --frame-hover: color-mix(in srgb, var(--text) 6%, transparent);
   /* 各区之间的分割线（标题栏、功能栏、侧边栏顶部、对话区标题行）：比 --border 明显一些，深浅色都用文字色的 13% */
