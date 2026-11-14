@@ -109,6 +109,8 @@ export class AgentSession {
    * 收到它的 command_lifecycle（started 等，不是 queued）或子进程结束时删掉
    */
   private readonly queuedNext = new Map<string, QueuedNext>();
+  /** 收到 result 之后还没有消息交给模型（command_lifecycle started）：之后交给模型的用户消息是新一轮的开头 */
+  private afterResult = false;
   /** 子进程启动的时间：之后 SSH 断开过才算这个进程是因为断开结束的（见 exitError） */
   private readonly startedAt = Date.now();
   private readonly onContext?: (usage: ContextUsage) => void;
@@ -455,6 +457,16 @@ export class AgentSession {
         }
         const lifecycle = message as unknown as { type: string; command_uuid?: string; state?: string };
         if (lifecycle.type === "command_lifecycle" && lifecycle.command_uuid && lifecycle.state !== "queued") this.queuedNext.delete(lifecycle.command_uuid);
+        // 上一轮的 result 之后才交给模型的消息开始了新的一轮：now 让这一轮提前结束（stop_reason 是 tool_use）、紧接着拿它开新的一轮，
+        // 或者 next 等这一轮结束。这时就算运行中，不等模型开始返回（慢的模型要一分钟，这段时间网页像没反应）；
+        // 告诉网页它是新一轮的开头（turn_start）：它跟在工具结果后面，光看位置会被当成插进上一轮的一段
+        if (lifecycle.type === "command_lifecycle" && lifecycle.state === "started" && lifecycle.command_uuid) {
+          if (this.afterResult) {
+            this.publish({ type: "turn_start", uuid: lifecycle.command_uuid });
+            if (this.state === "idle") this.setState("running");
+          }
+          this.afterResult = false;
+        }
         this.trackTools(message);
         logTaskMessage(this.log, this.id, message);
         let tasksChanged = this.tasks.ingest(message);
@@ -471,6 +483,7 @@ export class AgentSession {
         }
         if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });
         if (message.type === "result") {
+          this.afterResult = true;
           this.setState("idle");
           this.toolResultSinceRequest = false;
           this.waitNotices();

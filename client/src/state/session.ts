@@ -166,6 +166,8 @@ export interface SessionView {
    * 马上放进去的话，这一轮剩下的回复会排在它后面、被算进它那一轮
    */
   queued: QueuedMessage[];
+  /** 网关的 turn_start 事件：这些用户消息开始了新的一轮，不是插进上一轮的（见 Messages 的 splitTurns） */
+  turnStartUuids: string[];
   /** 桌面工具最近操作的窗口（网关的 desktop_target 事件），右上角的浮窗显示它 */
   desktopTarget: DesktopTarget | null;
   /** 上下文用量（网关的 context 事件），还没收到时 null */
@@ -191,6 +193,7 @@ export function emptyView(): SessionView {
     backgroundTasks: [],
     backgroundTasksLive: false,
     queued: [],
+    turnStartUuids: [],
     desktopTarget: null,
     context: null,
   };
@@ -238,6 +241,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
     next.context = view.context;
     // 历史里已经有的（Claude Code 已经交给模型、写进了会话文件），不再排队
     next.queued = view.queued.filter((q) => !next.seen.has(q.uuid));
+    next.turnStartUuids = view.turnStartUuids;
     return next;
   }
 
@@ -255,6 +259,9 @@ export function reduce(view: SessionView, action: Action): SessionView {
         break;
       }
       ingestUserMessage(next, event.uuid, event.content);
+      break;
+    case "turn_start":
+      if (!view.turnStartUuids.includes(event.uuid)) next.turnStartUuids = [...view.turnStartUuids, event.uuid];
       break;
     case "user_message_cancelled":
       next.queued = view.queued.filter((q) => q.uuid !== event.uuid);

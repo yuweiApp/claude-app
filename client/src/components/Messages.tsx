@@ -38,12 +38,13 @@ interface Turn {
   nextAt?: number;
 }
 
-function splitTurns(items: Item[]): Turn[] {
+function splitTurns(items: Item[], turnStartUuids: string[]): Turn[] {
   const turns: Turn[] = [];
   const results: ResultItem[] = [];
   // result 的 user_message_uuid 指向的用户消息开始了自己的一轮，不是插进上一轮的：有工具在跑时发的消息（now），
-  // Claude Code 有时先结束这一轮（result 的 stop_reason 是 tool_use）再用它开新的一轮。历史里它也紧跟在工具结果后面，光看位置分不出来
-  const turnStarts = new Set(items.flatMap((item) => (item.kind === "result" && item.userMessageUuid ? [item.userMessageUuid] : [])));
+  // Claude Code 有时先结束这一轮（result 的 stop_reason 是 tool_use）再用它开新的一轮。历史里它也紧跟在工具结果后面，光看位置分不出来。
+  // 新的一轮还没结束（没有自己的 result）时，靠网关的 turn_start（上一轮的 result 之后才交给模型的消息）
+  const turnStarts = new Set([...turnStartUuids, ...items.flatMap((item) => (item.kind === "result" && item.userMessageUuid ? [item.userMessageUuid] : []))]);
   // 这一轮是不是停在工具调用上（还没结束）：此时来的用户消息是中途插入的。
   // 历史记录里插入的消息排在它被读到的那个工具结果后面，实时发的也是在工具执行时发出，两边都是跟在以工具调用结尾的 assistant 消息后面
   let midTool = false;
@@ -271,7 +272,7 @@ function EarlierTurns({ count, onReach }: { count: number; onReach: (scroller: H
 
 /** onFork：从某条消息（会话记录里的 uuid）分叉出新会话；不传不显示分叉按钮（新会话页） */
 export function Messages({ view, onFork }: { view: SessionView; onFork?: (messageId: string) => Promise<void> }) {
-  const turns = splitTurns(view.items);
+  const turns = splitTurns(view.items, view.turnStartUuids);
   // 长会话打开时只渲染最后几轮，前面的往上滚时再补：Markdown、工具步骤都要渲染，一次全挂上要卡好一阵。
   // 记的是前面没渲染的轮数，之后新来的轮接在后面，不影响它
   const [hidden, setHidden] = useState(() => Math.max(0, turns.length - PAGE_TURNS));

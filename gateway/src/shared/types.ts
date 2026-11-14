@@ -14,6 +14,11 @@ export type GatewayEvent =
    * 或者这一轮结束后作为下一轮的开头（next 等这一轮自己结束；now 有时让这一轮马上结束）。在那之前这一轮剩下的回复会排在它前面
    */
   | { type: "user_message"; uuid: string; content: SDKUserMessage["message"]["content"]; queued?: boolean; priority?: MessagePriority }
+  /**
+   * 这条用户消息开始了新的一轮（上一轮的 result 之后才交给模型）。它在记录里跟在工具结果后面，
+   * 和并进上一轮的插话位置一样，网页据此分轮；这一轮结束时 result 的 user_message_uuid 也会指向它
+   */
+  | { type: "turn_start"; uuid: string }
   /** 以 next 排队的消息被撤回了（网页点了编辑、删除或立即发送），Claude Code 不会再处理它 */
   | { type: "user_message_cancelled"; uuid: string }
   | {
