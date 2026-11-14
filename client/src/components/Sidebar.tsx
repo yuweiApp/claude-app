@@ -498,7 +498,7 @@ function ProjectGroup({
           {remote ? <HostIcon hostId={remote.host} /> : <FolderIcon />}
           <span className="group-name">{folderName(g.cwd)}</span>
           {remote && <span className="group-host">{sshName(remote.host)}</span>}
-          {remote && <HostStatusDot hostId={remote.host} />}
+          {remote && <HostStatusDot hostId={remote.host} running={g.sessions.some(isWorking)} />}
         </button>
         <div className="group-actions">
           <button className="icon-btn" title="在此项目中新建会话" aria-label={`在 ${folderName(g.cwd)} 中新建会话`} onClick={() => onNew(g.cwd)}>

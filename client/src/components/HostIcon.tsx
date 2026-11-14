@@ -1,9 +1,11 @@
+import { useId } from "react";
 import type { SshConnectionInfo } from "../api";
 import { useSshConnections } from "../state/sshConnections";
 
 /**
  * 远程主机的系统图标（同 codex-app-server 的 ProjectIcon）：macOS、Windows、Linux 各一个，系统未知（还没连上过）时是通用的远程显示器。
- * 系统来自连接信息里的 platform（darwin-arm64、linux-x64 这样，连上过才有）。带 .host-icon 的颜色，和本机的文件夹区分开
+ * 系统来自连接信息里的 platform（darwin-arm64、linux-x64 这样，连上过才有）。带 .host-icon 的颜色，和本机的文件夹区分开；
+ * 没连上（未连接、连接中、失败）时是灰色的（.offline）
  */
 type Os = "macOS" | "Windows" | "Linux";
 
@@ -17,19 +19,40 @@ function osOf(platform: string | undefined): Os | null {
 
 export function HostIcon({ hostId, size = 16 }: { hostId: string; size?: number }) {
   const conn = useSshConnections().find((c) => c.id === hostId);
+  // 渐变的 id 每个图标一份；useId 带冒号等符号，放进 url(#…) 前去掉
+  const gradId = `host-grad-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const os = osOf(conn?.platform);
   const label = `${os ?? "远程"}主机${conn ? ` ${conn.name}` : ""}`;
-  const common = { className: "ic host-icon", width: size, height: size, role: "img", "aria-label": label } as const;
+  const common = { className: `ic host-icon${conn?.status === "ready" ? "" : " offline"}`, width: size, height: size, role: "img", "aria-label": label } as const;
+  // 苹果填 Apple Intelligence 那组橙、粉、紫、蓝的渐变；Windows 是 Windows 11 的四个方块，左上浅蓝到右下深蓝一道渐变。没连上时整体去色（.offline）
   if (os === "macOS")
     return (
-      <svg {...common} viewBox="0 0 24 24" fill="currentColor">
-        <path d="M16.8 2c.1 2.4-1.4 4.1-3.5 4.5-.3-2.2 1.6-4.4 3.5-4.5ZM16.5 7c-1.4-.1-2.6.8-3.5.8-.9 0-2-.8-3.3-.8C7 7 5 9.1 5 12.4c0 3.8 2.7 8.7 4.9 8.6 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.8 0 3.6-2.8 4.2-4.6-3.3-1.4-3.4-5.7-.1-7.4-.9-1.3-2.1-1.9-3.5-2Z" />
+      <svg {...common} viewBox="0 0 24 24">
+        <defs>
+          <linearGradient id={gradId} x1="5" y1="3" x2="20" y2="21" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#ff9f0a" />
+            <stop offset="0.35" stopColor="#ff375f" />
+            <stop offset="0.68" stopColor="#bf5af2" />
+            <stop offset="1" stopColor="#0a84ff" />
+          </linearGradient>
+        </defs>
+        <path
+          fill={`url(#${gradId})`}
+          d="M16.8 2c.1 2.4-1.4 4.1-3.5 4.5-.3-2.2 1.6-4.4 3.5-4.5ZM16.5 7c-1.4-.1-2.6.8-3.5.8-.9 0-2-.8-3.3-.8C7 7 5 9.1 5 12.4c0 3.8 2.7 8.7 4.9 8.6 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.8 0 3.6-2.8 4.2-4.6-3.3-1.4-3.4-5.7-.1-7.4-.9-1.3-2.1-1.9-3.5-2Z"
+        />
       </svg>
     );
   if (os === "Windows")
     return (
-      <svg {...common} viewBox="0 0 24 24" fill="currentColor">
-        <path d="M2 4.5 10.5 3.3v7.9H2zm10-1.4L22 1.7v9.5H12zM2 12.8h8.5v7.9L2 19.5zm10 0h10v9.5l-10-1.4z" />
+      <svg {...common} viewBox="0 0 24 24">
+        <defs>
+          <linearGradient id={gradId} x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#36c6f7" />
+            <stop offset="0.5" stopColor="#0c86e8" />
+            <stop offset="1" stopColor="#1a4fd0" />
+          </linearGradient>
+        </defs>
+        <path fill={`url(#${gradId})`} d="M3 3h8.4v8.4H3zm9.6 0H21v8.4h-8.4zM3 12.6h8.4V21H3zm9.6 0H21V21h-8.4z" />
       </svg>
     );
   if (os === "Linux")
@@ -72,10 +95,22 @@ export function hostStatusText(c: SshConnectionInfo | undefined): string {
   }
 }
 
-/** 远程主机的连接状态：绿色已连接，黄色连接中（闪），红色失败，灰色未连接 */
-export function HostStatusDot({ hostId }: { hostId: string }) {
+/**
+ * 远程主机的连接状态：绿色已连接，黄色连接中（闪），红色失败，灰色未连接。
+ * running：这台主机上（项目里）有会话在跑，已连接时绿点呼吸
+ */
+export function HostStatusDot({ hostId, running = false }: { hostId: string; running?: boolean }) {
   const conn = useSshConnections().find((c) => c.id === hostId);
-  const cls = conn?.status === "ready" ? " on" : conn?.status === "connecting" || conn?.status === "deploying" ? " busy" : conn?.status === "error" ? " err" : "";
-  const text = `${conn?.name ?? hostId}：${hostStatusText(conn)}`;
+  const cls =
+    conn?.status === "ready"
+      ? running
+        ? " on running"
+        : " on"
+      : conn?.status === "connecting" || conn?.status === "deploying"
+        ? " busy"
+        : conn?.status === "error"
+          ? " err"
+          : "";
+  const text = `${conn?.name ?? hostId}：${hostStatusText(conn)}${running && conn?.status === "ready" ? "，有会话在运行" : ""}`;
   return <span className={`env-dot${cls}`} title={text} role="img" aria-label={text} />;
 }
