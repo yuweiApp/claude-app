@@ -438,7 +438,7 @@ export class AgentSession {
       if (!this.closing && !this.abortController.signal.aborted) {
         const text = this.exitText(err);
         this.log.error({ sessionId: this.id, err, text }, "claude 会话异常结束");
-        this.publish({ type: "error", message: text });
+        this.publish({ type: "error", message: text, at: Date.now() });
       }
     } finally {
       for (const requestId of [...this.pending.keys()]) {

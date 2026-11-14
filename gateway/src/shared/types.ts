@@ -35,7 +35,8 @@ export type GatewayEvent =
       canAlways: boolean;
     }
   | { type: "permission_resolved"; requestId: string; behavior: "allow" | "deny" }
-  | { type: "error"; message: string }
+  /** 子进程异常结束。at：网关发出的时间（毫秒）；报错不写进会话记录，网页拉历史时按它放回原来的位置 */
+  | { type: "error"; message: string; at: number }
   /** 网关给新会话生成了标题，列表要刷新 */
   | { type: "title"; title: string }
   /** 会话的后台任务有变化：整个列表 */

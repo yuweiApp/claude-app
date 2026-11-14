@@ -36,7 +36,8 @@ export type Item =
       durationMs: number;
       costUsd: number;
     }
-  | { kind: "error"; uuid: string; text: string }
+  /** 子进程异常结束的报错。at：网关发出的时间，拉历史前后回放到的按它放回原来的位置（见 errorIndex） */
+  | { kind: "error"; uuid: string; at: number; text: string }
   /** 本地命令的输出（setModel 等会发一条 <local-command-stdout> 的 user 消息），显示成一行灰字，不算用户消息 */
   | { kind: "notice"; uuid: string; text: string }
   /** 用户中断了这一轮：Claude Code 写的 [Request interrupted by user] 消息，显示成一行「已中断」，不当用户消息 */
@@ -280,7 +281,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
       next.permissions = view.permissions.filter((p) => p.requestId !== event.requestId);
       break;
     case "error":
-      pushItem(next, null, { kind: "error", uuid: crypto.randomUUID(), text: event.message });
+      pushItem(next, null, { kind: "error", uuid: crypto.randomUUID(), at: event.at, text: event.message });
       break;
     case "tasks":
       next.backgroundTasks = event.tasks;
@@ -793,6 +794,18 @@ function isTurnStart(item: Item): boolean {
   return item.kind === "user" || item.kind === "task" || item.kind === "agent" || (item.kind === "compact" && Boolean(item.manual));
 }
 
+/**
+ * 报错放在哪：报错不在会话记录里，只在事件流里，打开会话时回放到的（在拉历史之前或之后）不能一律接在最后，
+ * 否则会显示在之后才开始的轮（比如断开后重发消息重连的那一轮）下面。报错是子进程结束时发的，之后只会是新的一轮，
+ * 所以放在开始时间比它晚的第一轮前面；补在那一轮用户消息前面的换模型行跟着那一轮。没有更晚的轮就接在最后
+ */
+function errorIndex(items: Item[], at: number): number {
+  let i = items.findIndex((it) => isTurnStart(it) && ((it as { at?: number }).at ?? 0) > at);
+  if (i < 0) return items.length;
+  while (i > 0 && items[i - 1]!.kind === "model") i--;
+  return i;
+}
+
 function pushItem(view: SessionView, parent: string | null, item: Item): void {
   if (view.seen.has(item.uuid)) return;
   view.seen = new Set(view.seen).add(item.uuid);
@@ -801,6 +814,13 @@ function pushItem(view: SessionView, parent: string | null, item: Item): void {
     return;
   }
   let items = view.items;
+  if (item.kind === "error") {
+    const i = errorIndex(items, item.at);
+    if (i < items.length) {
+      view.items = items.toSpliced(i, 0, item);
+      return;
+    }
+  }
   if (isTurnStart(item)) {
     // 上一个开头之后到的 result 都不属于这一轮，记下这一轮的开头（见 Item 的 result）
     for (let i = items.findLastIndex(isTurnStart) + 1; i < items.length; i++) {

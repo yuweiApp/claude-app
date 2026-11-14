@@ -38,7 +38,18 @@ export function App() {
   const [currentId, setCurrentId] = useState<string | null>(null);
   /** 新聊天页选的项目（工作目录），null 是默认工作目录 */
   const [newCwd, setNewCwd] = useState<string | null>(null);
+  /** 全局的报错（会话列表、删除、重命名、配置），每个会话里都显示 */
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 会话里出的报错（发消息、拉历史、切模型等），按会话 id 记（新会话页是 "new"），只在那个会话里显示：
+   * 远程主机连不上时发消息要等握手超时才报错，这时可能已经切到了别的会话
+   */
+  const [sessionErrors, setSessionErrors] = useState<Record<string, string>>({});
+  const setSessionError = (key: string, message: string | null) =>
+    setSessionErrors((all) => {
+      const { [key]: _, ...rest } = all;
+      return message === null ? rest : { ...rest, [key]: message };
+    });
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   /** 图标栏上开着的页面：首页（会话）或设置 */
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -172,6 +183,7 @@ export function App() {
     const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
     if (failed.length) setError(`有 ${failed.length} 个会话删除失败：${(failed[0]!.reason as Error).message}`);
     forget(ids);
+    setSessionErrors((all) => Object.fromEntries(Object.entries(all).filter(([key]) => !ids.includes(key))));
     refresh();
   };
 
@@ -282,6 +294,11 @@ export function App() {
                 {error}
               </div>
             )}
+            {sessionErrors[currentId ?? "new"] && (
+              <div className="banner" onClick={() => setSessionError(currentId ?? "new", null)}>
+                {sessionErrors[currentId ?? "new"]}
+              </div>
+            )}
             <div className="main-split">
             {config && (
               <Chat
@@ -313,7 +330,8 @@ export function App() {
                   refresh();
                 }}
                 onChanged={refresh}
-                onError={setError}
+                // Chat 按会话 id 重建，晚到的报错（切走后才失败的请求）记在发出它的那个会话上
+                onError={(message) => setSessionError(currentId ?? "new", message)}
                 headerStart={!desktop && collapsed && <SidebarToggle collapsed onToggle={toggleSidebar} />}
               title={title}
               folder={folder}

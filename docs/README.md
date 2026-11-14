@@ -119,7 +119,7 @@ Claude Code 默认读写 `~/.claude`。gateway 通过 `env.CLAUDE_CONFIG_DIR` �
 | `state` | `{ state, model?, permissionMode? }` | 会话状态变化 |
 | `permission_request` | `{ requestId, toolName, input, title?, description?, decisionReason? }` | `canUseTool` 挂起的权限请求 |
 | `permission_resolved` | `{ requestId, behavior }` | 已回复或超时、取消 |
-| `error` | `{ message }` | 子进程异常退出等 |
+| `error` | `{ message, at }` | 子进程异常退出等；`at` 是网关发出的时间（毫秒） |
 | `tasks` | `{ tasks: BackgroundTask[] }` | 会话的后台任务有变化，整个列表（见下面「后台任务」） |
 | `task_result` | `{ taskId, text, isError }` | 转到后台的网关工具调用（`browser_run_code` 等）的结果原文，跟在那个任务的 `task_notification` 后面发。SDK 的通知里只有 `summary`（工具名）和 `tool_use_id`，结果 Claude Code 直接交给了模型；网关的工具按 Claude Code 调用时放在 `_meta["claudecode/toolUseId"]` 里的 id 记下自己返回的结果（`takeToolResult`），对上后补发。网页在失败时把原因（第一行）显示在「后台任务失败」下面，悬停看全文；历史里的 `<task-notification>` 带 `<result>`（以 `Task failed: ` 开头），也从那里取 |
 | `desktop_target` | `{ target: { app, windowId?, title?, pid?, minimized? } \| null }` | 桌面工具（`mcp__desktop__…`）这个会话最近操作的窗口，变了才发（`gateway/src/desktop/guard.ts` 的 `noteTarget`）；`null` 是 `close-app` 关掉了它。网页在对话区右上角浮着显示，点开后桌面版按窗口标题找到采集源显示实时画面，见 [agent-desktop.md](agent-desktop.md) 第 10 节 |
@@ -133,6 +133,8 @@ SDK 消息原样转发，不在 gateway 里做第二套协议。原因：SDK 类
 - 打开会话：先连 SSE，再拉 `GET /sessions/:id/messages` 的历史，两边按 `uuid` 去重合并。历史回来之前不显示消息（只显示「正在加载对话…」，0.4 秒后才出现）：事件流回放的只是缓冲里最近的事件，先显示的话是后半截，历史回来后前面一下子补上，滚动条忽长忽短；历史拉失败也算拉完，只显示事件流里的。
 - 长会话只先渲染最后 20 轮，滚到离顶部不到一屏时每次往前补 20 轮（`Messages.tsx` 的 `EarlierTurns`，`IntersectionObserver` 以对话区为根），补完按补之前离底部的距离设回 `scrollTop`，看到的内容不动。对话区平时 `overflow-anchor: none`（和跟随到底部打架）；用户往上翻着（不在底部）时换成 `auto`，上面的图片加载出来、内容变高时正在看的地方不跳。没补出来的部分页面内搜索（Ctrl+F）搜不到。回复的 Markdown 按文字 memo，每来一个事件整个对话重新渲染时，文字没变的不再重新解析。
 - 排队的用户消息（`user_message` 带 `queued`）：模型在写文字、或在等权限确认时发的消息不能用 `now`（会打断写到一半的回答），用 `next`（同 Claude 桌面版：实测不打断，写到一半的 952 字回答照常写完）。Claude Code 先放进队列，下一次工具结果之后并进这一轮（同一个 result），这一轮不再调用工具的话等它结束、作为下一轮的开头；有工具在跑时用 `now`，不排队（见第 12 节「跑久了自动转后台」）。以前用 `later`，要等整轮结束才送到。交给模型时 SDK 发 `command_lifecycle`（SDK 的类型定义里没有）：`command_uuid` 是消息的 uuid，`state` 依次是 `queued`、`started`（交给模型了）、`completed`。有工具在跑时用 `now` 发的也一样等 `started`（网关这时也标 `queued`）：`now` 有时并进这一轮，有时先结束这一轮（`result` 的 `stop_reason` 是 `tool_use`）再用它开新的一轮，实测两种都有；以前当它一定并进这一轮，结果上一轮的 `result` 挂到了它这一段上（显示「用时 0s」），之后并进来的后台任务通知被当成新一轮的开头，它自己那一轮的用时也没了。分轮时 `result` 的 `user_message_uuid` 指向的用户消息算一轮的开头，不算插入的一段（历史里它也紧跟在工具结果后面，光看位置分不出来）。网页收到排队的消息时不放进消息列表，先像普通消息一样显示在对话最后，这一轮剩下的回复排在它上面；收到它的 `started` 再放进消息列表，位置就固定了（并进这一轮的，显示上在那个工具结果后面分段，同进行中插入的消息）；`result`、状态变成 `idle` / `closed` 时还没放的也放进去，兜底。以前收到就放进去，这一轮剩下的回复排在它后面、被算进它那一轮，「用时」也从发消息时算起。并进这一轮的消息在会话文件里存成 `queued_command` 附件，`getSessionMessages` 读回来是同一个 uuid 的普通用户消息，位置和实时的一样；拉历史时已经在历史里的不再排队。
+- 报错（`error`）不写进会话记录，只在事件流里，打开会话时回放到的（在拉历史之前或之后）按 `at` 放回原来的位置：放在开始时间比它晚的第一轮（用户消息、后台任务通知等一轮的开头）前面，补在那一轮用户消息前面的换模型行跟着那一轮；没有更晚的轮就接在最后。以前一律接在最后，断开后重发消息重连的那一轮还在跑时，上一次断开的报错显示在它下面，看起来像这一轮断了，而且网关不重启就每次打开都在最底下。
+- 接口报错（顶部的红条）：会话里的操作（发消息、拉历史、切模型等）出的错按会话记（新会话页单独一份），只在那个会话里显示，点掉或删会话时清掉；远程主机连不上时发消息要等握手超时（20 秒）才报错，这时可能已经切到了别的会话。会话列表、删除、重命名这类全局操作的错误在哪个会话里都显示。
 - `stream_event` 只用来拼"正在生成"的那段文字；收到对应的完整 `assistant` 消息后丢掉临时内容。模型的思考（`thinking` 块）不显示。
 - 工具调用：`assistant` 里的 `tool_use` 块和随后 `user` 消息里同 `tool_use_id` 的 `tool_result` 配对显示。
 - `parent_tool_use_id` 不为空的是子代理里的消息，折叠在对应的 Agent 工具调用下面。
