@@ -54,6 +54,10 @@ export interface ExecResult {
 }
 
 const READY_TIMEOUT_MS = 20_000;
+/** 连着时每 15 秒探一次，连续 4 次没回应（最长约 75 秒收不到远端的任何响应）就断开 */
+const KEEPALIVE_INTERVAL_MS = 15_000;
+const KEEPALIVE_COUNT_MAX = 4;
+const KEEPALIVE_DESC = `${((KEEPALIVE_COUNT_MAX + 1) * KEEPALIVE_INTERVAL_MS) / 1000} 秒内没收到远端的响应`;
 
 /**
  * 一台远程主机：一条 ssh2 连接，claude 进程、终端、SFTP、模型请求的反向转发都在这条连接上开通道。
@@ -71,6 +75,8 @@ export class SshHost {
   env: RemoteEnv | null = null;
   /** 远端 127.0.0.1 上转发回网关模型代理的端口 */
   proxyPort: number | null = null;
+  /** 上一次连上后断开的时间和原因（会话报错用，见 AgentSession） */
+  lastClose: { at: number; reason: string } | null = null;
 
   private client: Client | null = null;
   private ready: Promise<void> | null = null;
@@ -83,6 +89,8 @@ export class SshHost {
   /** 反向转发：远端端口 → 转发配置；没开成的记着原因（设置页显示） */
   private readonly forwards = new Map<number, RemoteForward>();
   private forwardErrors: { forward: RemoteForward; error: string }[] = [];
+  /** 这条连接断开的原因：连接的 error 事件或 disconnect() 记的，close 时写进 lastClose */
+  private closeReason: string | undefined;
 
   constructor(readonly id: string) {}
 
@@ -159,9 +167,11 @@ export class SshHost {
     return this.status === "ready" && this.client !== null;
   }
 
-  disconnect(): void {
+  /** reason 记进 lastClose：设置页点了断开、连接配置改了或删了、网关退出 */
+  disconnect(reason = "网关主动断开"): void {
     const client = this.client;
     if (client) {
+      this.closeReason = reason;
       client.end();
       // 现在就按断开处理（claude 进程、终端收到 onClose）：之后连接的 close 事件因为 this.client 已经换掉，closed() 不会再处理。
       // 对方不一定马上关连接，过一会儿还没关就直接断
@@ -209,8 +219,8 @@ export class SshHost {
         username: target.user,
         ...(target.proxyJump || target.proxyCommand ? { sock: proxySocket(target) } : {}),
         readyTimeout: READY_TIMEOUT_MS,
-        keepaliveInterval: 15_000,
-        keepaliveCountMax: 4,
+        keepaliveInterval: KEEPALIVE_INTERVAL_MS,
+        keepaliveCountMax: KEEPALIVE_COUNT_MAX,
         hostVerifier: (blob: Buffer, verify: (ok: boolean) => void) => {
           void this.verifyHostKey(conn, target, blob).then(
             () => verify(true),
@@ -224,8 +234,13 @@ export class SshHost {
       });
     });
     this.client = client;
+    this.closeReason = undefined;
     client.on("close", () => this.closed(client));
-    client.on("error", () => undefined);
+    // 连上之后的错误（保活超时、网络错误）之后都跟着 close，记下来当断开的原因
+    client.on("error", (err: Error & { level?: string }) => {
+      if (this.client !== client) return;
+      this.closeReason = err.message === "Keepalive timeout" ? `保活超时：${KEEPALIVE_DESC}` : `网络错误：${err.message}`;
+    });
     // 模型请求的反向转发：远端连 127.0.0.1:<端口>，经这条连接回到网关
     client.on("tcp connection", (details, accept, reject) => {
       if (details.destPort === this.proxyPort && this.proxy) return this.proxy.handle(accept());
@@ -312,6 +327,7 @@ export class SshHost {
 
   private closed(client: Client): void {
     if (this.client !== client) return;
+    this.lastClose = { at: Date.now(), reason: this.closeReason ?? "远端关闭了连接" };
     this.client = null;
     this.ready = null;
     this.sftpConn = null;

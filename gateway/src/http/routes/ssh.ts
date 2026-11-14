@@ -56,7 +56,7 @@ export function sshRoutes(app: FastifyInstance): void {
 
   app.post<{ Params: IdParams }>("/ssh/connections/:id/disconnect", async (req) => {
     const host = sshHost(req.params.id);
-    host.disconnect();
+    host.disconnect("在设置里断开了");
     return { connection: host.info() };
   });
 }

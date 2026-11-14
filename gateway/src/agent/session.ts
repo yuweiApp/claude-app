@@ -16,7 +16,8 @@ import type { ConversationLog } from "../logging/conversation-log.js";
 import type { Attachment, ContextUsage, GatewayEvent, SessionState } from "../shared/types.js";
 import { buildUserContent, imageType, type SelectedElementContent } from "./attachments.js";
 import { parseRemote } from "../ssh/location.js";
-import { sshHost } from "../ssh/hosts.js";
+import { getConnection } from "../ssh/connections.js";
+import { existingHost, sshHost } from "../ssh/hosts.js";
 import { uploadAttachments } from "../ssh/remote-attachments.js";
 import { InputQueue } from "./input-queue.js";
 import { listModels } from "./models.js";
@@ -94,6 +95,8 @@ export class AgentSession {
   private readonly subagentTools = new Set<string>();
   private readonly done: Promise<void>;
   private closing = false;
+  /** 子进程启动的时间：之后 SSH 断开过才算这个进程是因为断开结束的（见 exitText） */
+  private readonly startedAt = Date.now();
   private readonly onContext?: (usage: ContextUsage) => void;
   /** 压缩过、之后模型还没回复过（见 ContextUsage.compacted） */
   private compactedSinceReply = false;
@@ -433,8 +436,8 @@ export class AgentSession {
       }
     } catch (err) {
       if (!this.closing && !this.abortController.signal.aborted) {
-        const text = err instanceof Error ? err.message : String(err);
-        this.log.error({ sessionId: this.id, err }, "claude 会话异常结束");
+        const text = this.exitText(err);
+        this.log.error({ sessionId: this.id, err, text }, "claude 会话异常结束");
         this.publish({ type: "error", message: text });
       }
     } finally {
@@ -450,6 +453,19 @@ export class AgentSession {
     }
   }
 
+  /**
+   * 子进程异常结束的报错。远程会话的 SSH 连接断了时，SDK 报的是「terminated by signal SIGHUP」（spawn.ts 按 SIGHUP 结束进程），
+   * 换成连接断开和断开的原因
+   */
+  private exitText(err: unknown): string {
+    const text = err instanceof Error ? err.message : String(err);
+    const remote = parseRemote(this.cwd);
+    const host = remote ? existingHost(remote.host) : undefined;
+    const close = host?.lastClose;
+    if (!remote || !close || close.at < this.startedAt || !text.includes("signal SIGHUP")) return text;
+    const name = getConnection(remote.host)?.name ?? remote.host;
+    return `与「${name}」的 SSH 连接断开了（${close.reason}），claude 进程随之结束。再发消息时会重新连接`;
+  }
 
   private setState(state: SessionState): void {
     if (this.state === state) return;

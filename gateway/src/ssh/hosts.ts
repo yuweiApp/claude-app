@@ -26,10 +26,10 @@ export function connectionInfos(): SshConnectionInfo[] {
 
 /** 删连接、改了主机地址时：断开，下次用时按新配置连 */
 export function dropHost(id: string): void {
-  hosts.get(id)?.disconnect();
+  hosts.get(id)?.disconnect("连接配置改了或删了");
   hosts.delete(id);
 }
 
 export function disconnectAll(): void {
-  for (const host of hosts.values()) host.disconnect();
+  for (const host of hosts.values()) host.disconnect("网关退出");
 }
