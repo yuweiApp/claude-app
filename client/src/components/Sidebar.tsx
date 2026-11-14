@@ -1,4 +1,4 @@
-import { HostIcon, HostStatusDot } from "./HostIcon";
+import { HostIcon, HostStatusDot, RunningDot } from "./HostIcon";
 import { machinePath, parseRemote } from "../remote";
 import { desktop, fileManagerName } from "../desktop";
 import { sshName, useSshConnections } from "../state/sshConnections";
@@ -489,6 +489,7 @@ function ProjectGroup({
   // 远程主机上的项目：名字后面带主机名，悬停显示远端路径
   useSshConnections();
   const remote = parseRemote(g.cwd);
+  const running = g.sessions.some(isWorking);
   return (
     <div className="group">
       <div className={`group-head${active ? " active" : ""}${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
@@ -498,7 +499,8 @@ function ProjectGroup({
           {remote ? <HostIcon hostId={remote.host} /> : <FolderIcon />}
           <span className="group-name">{folderName(g.cwd)}</span>
           {remote && <span className="group-host">{sshName(remote.host)}</span>}
-          {remote && <HostStatusDot hostId={remote.host} running={g.sessions.some(isWorking)} />}
+          {/* 有会话在跑：远程项目在连接状态点上显示呼吸灯，本机项目单独一个呼吸灯 */}
+          {remote ? <HostStatusDot hostId={remote.host} running={running} /> : running && <RunningDot />}
         </button>
         <div className="group-actions">
           <button className="icon-btn" title="在此项目中新建会话" aria-label={`在 ${folderName(g.cwd)} 中新建会话`} onClick={() => onNew(g.cwd)}>

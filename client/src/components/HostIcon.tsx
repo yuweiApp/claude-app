@@ -101,7 +101,7 @@ export function HostStatusDot({ hostId, running = false }: { hostId: string; run
   const cls =
     conn?.status === "ready"
       ? running
-        ? " on running"
+        ? " running"
         : null
       : conn?.status === "connecting" || conn?.status === "deploying"
         ? " busy"
@@ -111,4 +111,9 @@ export function HostStatusDot({ hostId, running = false }: { hostId: string; run
   if (cls === null) return null;
   const text = `${conn?.name ?? hostId}：${hostStatusText(conn)}${running && conn?.status === "ready" ? "，有会话在运行" : ""}`;
   return <span className={`env-dot${cls}`} title={text} role="img" aria-label={text} />;
+}
+
+/** 本机项目有会话在跑时的呼吸灯（同远程主机已连接、有会话在跑时的 HostStatusDot） */
+export function RunningDot() {
+  return <span className="env-dot running" title="有会话在运行" role="img" aria-label="有会话在运行" />;
 }

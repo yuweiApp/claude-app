@@ -1133,20 +1133,20 @@ main {
  * 背后（::before）是同一组颜色的模糊光晕，跟着呼吸涨落，整颗球也随呼吸轻轻放大缩小。
  * 两层都放在伪元素里，光晕不会盖住球体
  */
-.env-dot.on.running {
+.env-dot.running {
   --orb: conic-gradient(from 0deg, #22d3ee, #818cf8, #f472b6, #fbbf24, #22d3ee);
   position: relative; width: 9px; height: 9px;
   animation: env-orb-breathe 2.4s ease-in-out infinite;
 }
-.env-dot.on.running::before, .env-dot.on.running::after {
+.env-dot.running::before, .env-dot.running::after {
   content: ""; position: absolute; border-radius: 50%; pointer-events: none;
   animation: env-orb-spin 3s linear infinite;
 }
-.env-dot.on.running::before {
+.env-dot.running::before {
   inset: -3px; background: var(--orb); filter: blur(3.5px);
   animation: env-orb-spin 3s linear infinite, env-orb-halo 2.4s ease-in-out infinite;
 }
-.env-dot.on.running::after {
+.env-dot.running::after {
   inset: 0;
   background: radial-gradient(circle, rgba(255, 255, 255, 0.9) 0 9%, rgba(255, 255, 255, 0.25) 26%, transparent 44%), var(--orb);
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.35);
@@ -1158,8 +1158,8 @@ main {
   50% { opacity: 0.85; scale: 1.45; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .env-dot.busy, .env-dot.on.running, .env-dot.on.running::before, .env-dot.on.running::after { animation: none; }
-  .env-dot.on.running::before { opacity: 0.5; }
+  .env-dot.busy, .env-dot.running, .env-dot.running::before, .env-dot.running::after { animation: none; }
+  .env-dot.running::before { opacity: 0.5; }
 }
 
 /* 选择文件夹对话框 */
