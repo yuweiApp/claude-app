@@ -168,6 +168,11 @@ export interface SessionView {
   queued: QueuedMessage[];
   /** 网关的 turn_start 事件：这些用户消息开始了新的一轮，不是插进上一轮的（见 Messages 的 splitTurns） */
   turnStartUuids: string[];
+  /**
+   * 发出了、Claude Code 还没交给模型的用户消息（还没收到 command_lifecycle 的 started 等）。这时到的 result 不属于它开始的那一轮：
+   * 空闲时发的消息也可能先排着，Claude Code 先处理完别的（比如后台任务的通知）出一个 result，才拿它开新的一轮
+   */
+  unstartedUuids: string[];
   /** 桌面工具最近操作的窗口（网关的 desktop_target 事件），右上角的浮窗显示它 */
   desktopTarget: DesktopTarget | null;
   /** 上下文用量（网关的 context 事件），还没收到时 null */
@@ -194,6 +199,7 @@ export function emptyView(): SessionView {
     backgroundTasksLive: false,
     queued: [],
     turnStartUuids: [],
+    unstartedUuids: [],
     desktopTarget: null,
     context: null,
   };
@@ -242,6 +248,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
     // 历史里已经有的（Claude Code 已经交给模型、写进了会话文件），不再排队
     next.queued = view.queued.filter((q) => !next.seen.has(q.uuid));
     next.turnStartUuids = view.turnStartUuids;
+    next.unstartedUuids = view.unstartedUuids;
     return next;
   }
 
@@ -249,6 +256,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
   const next: SessionView = { ...view, items: [...view.items], children: { ...view.children } };
   switch (event.type) {
     case "user_message":
+      if (!view.unstartedUuids.includes(event.uuid)) next.unstartedUuids = [...view.unstartedUuids, event.uuid];
       if (event.queued) {
         if (!view.seen.has(event.uuid) && !view.queued.some((q) => q.uuid === event.uuid)) {
           next.queued = [
@@ -265,6 +273,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
       break;
     case "user_message_cancelled":
       next.queued = view.queued.filter((q) => q.uuid !== event.uuid);
+      next.unstartedUuids = view.unstartedUuids.filter((u) => u !== event.uuid);
       break;
     case "state":
       next.state = event.state;
@@ -274,6 +283,8 @@ export function reduce(view: SessionView, action: Action): SessionView {
       next.noticePending = !!event.noticePending;
       if (event.state !== "running") next.streaming = { text: "" };
       // 兜底：没收到 started 就停了（子进程退出等），排队的消息不再一直挂在最后
+      // 子进程结束了，没交给模型的消息不会再开始
+      if (event.state === "closed") next.unstartedUuids = [];
       if (event.state === "idle" || event.state === "closed") {
         flushQueued(next);
         finishCompact(next, "failed");
@@ -332,6 +343,7 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
   const lifecycle = message as unknown as { type: string; command_uuid?: string; state?: string };
   if (lifecycle.type === "command_lifecycle") {
     if (lifecycle.state === "started" && lifecycle.command_uuid) flushQueued(view, lifecycle.command_uuid);
+    if (lifecycle.state !== "queued" && lifecycle.command_uuid) view.unstartedUuids = view.unstartedUuids.filter((u) => u !== lifecycle.command_uuid);
     return;
   }
   switch (message.type) {
@@ -390,12 +402,15 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       return;
     case "result": {
       view.streaming = { text: "" };
-      view.turnEnded = true;
+      // 最近的一轮开头还没交给模型：它的那一轮马上开始，不算结束
+      const latest = view.items.findLast(isTurnStart);
+      view.turnEnded = !(latest && view.unstartedUuids.includes(latest.uuid));
       // 压缩到一半这一轮就结束了（中断等）
       finishCompact(view, "failed");
       // 中断的一轮也是 error_during_execution（errors 里是 [ede_diagnostic] …），前面已经有「已中断」，不算出错
       const interrupted = view.items.at(-1)?.kind === "interrupted";
-      const start = view.items.findLast(isTurnStart);
+      // 还没交给模型的消息开始的轮不算：这个 result 是它之前那段处理的（见 unstartedUuids）
+      const start = view.items.findLast((it) => isTurnStart(it) && !view.unstartedUuids.includes(it.uuid));
       pushItem(view, null, {
         kind: "result",
         uuid: message.uuid,
