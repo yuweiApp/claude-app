@@ -19,40 +19,37 @@ function osOf(platform: string | undefined): Os | null {
 
 export function HostIcon({ hostId, size = 16 }: { hostId: string; size?: number }) {
   const conn = useSshConnections().find((c) => c.id === hostId);
-  // 渐变的 id 每个图标一份；useId 带冒号等符号，放进 url(#…) 前去掉
-  const gradId = `host-grad-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  // 苹果彩虹条纹的裁剪路径 id 每个图标一份；useId 带冒号等符号，放进 url(#…) 前去掉
+  const clipId = `host-apple-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const os = osOf(conn?.platform);
   const label = `${os ?? "远程"}主机${conn ? ` ${conn.name}` : ""}`;
   const common = { className: `ic host-icon${conn?.status === "ready" ? "" : " offline"}`, width: size, height: size, role: "img", "aria-label": label } as const;
-  // 苹果填 Apple Intelligence 那组橙、粉、紫、蓝的渐变；Windows 是 Windows 11 的四个方块，左上浅蓝到右下深蓝一道渐变。没连上时整体去色（.offline）
+  // 经典彩色图标：苹果是六色彩虹条纹（裁在苹果形状里），Windows 是红绿蓝黄四色窗格；没连上时整体去色（.offline）
   if (os === "macOS")
     return (
       <svg {...common} viewBox="0 0 24 24">
         <defs>
-          <linearGradient id={gradId} x1="5" y1="3" x2="20" y2="21" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stopColor="#ff9f0a" />
-            <stop offset="0.35" stopColor="#ff375f" />
-            <stop offset="0.68" stopColor="#bf5af2" />
-            <stop offset="1" stopColor="#0a84ff" />
-          </linearGradient>
+          <clipPath id={clipId}>
+            <path d="M16.8 2c.1 2.4-1.4 4.1-3.5 4.5-.3-2.2 1.6-4.4 3.5-4.5ZM16.5 7c-1.4-.1-2.6.8-3.5.8-.9 0-2-.8-3.3-.8C7 7 5 9.1 5 12.4c0 3.8 2.7 8.7 4.9 8.6 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.8 0 3.6-2.8 4.2-4.6-3.3-1.4-3.4-5.7-.1-7.4-.9-1.3-2.1-1.9-3.5-2Z" />
+          </clipPath>
         </defs>
-        <path
-          fill={`url(#${gradId})`}
-          d="M16.8 2c.1 2.4-1.4 4.1-3.5 4.5-.3-2.2 1.6-4.4 3.5-4.5ZM16.5 7c-1.4-.1-2.6.8-3.5.8-.9 0-2-.8-3.3-.8C7 7 5 9.1 5 12.4c0 3.8 2.7 8.7 4.9 8.6 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.8 0 3.6-2.8 4.2-4.6-3.3-1.4-3.4-5.7-.1-7.4-.9-1.3-2.1-1.9-3.5-2Z"
-        />
+        <g clipPath={`url(#${clipId})`}>
+          <rect x="0" y="0" width="24" height="9.8" fill="#61bb46" />
+          <rect x="0" y="9.8" width="24" height="2.3" fill="#fdb827" />
+          <rect x="0" y="12.1" width="24" height="2.3" fill="#f5821f" />
+          <rect x="0" y="14.4" width="24" height="2.3" fill="#e03a3e" />
+          <rect x="0" y="16.7" width="24" height="2.3" fill="#963d97" />
+          <rect x="0" y="19" width="24" height="5" fill="#009ddc" />
+        </g>
       </svg>
     );
   if (os === "Windows")
     return (
       <svg {...common} viewBox="0 0 24 24">
-        <defs>
-          <linearGradient id={gradId} x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stopColor="#36c6f7" />
-            <stop offset="0.5" stopColor="#0c86e8" />
-            <stop offset="1" stopColor="#1a4fd0" />
-          </linearGradient>
-        </defs>
-        <path fill={`url(#${gradId})`} d="M3 3h8.4v8.4H3zm9.6 0H21v8.4h-8.4zM3 12.6h8.4V21H3zm9.6 0H21V21h-8.4z" />
+        <path d="M2 4.5 10.5 3.3v7.9H2z" fill="#f25022" />
+        <path d="M12 3.1 22 1.7v9.5H12z" fill="#7fba00" />
+        <path d="M2 12.8h8.5v7.9L2 19.5z" fill="#00a4ef" />
+        <path d="M12 12.8h10v9.5l-10-1.4z" fill="#ffb900" />
       </svg>
     );
   if (os === "Linux")
@@ -96,16 +93,15 @@ export function hostStatusText(c: SshConnectionInfo | undefined): string {
 }
 
 /**
- * 远程主机的连接状态：绿色已连接，黄色连接中（闪），红色失败，灰色未连接。
- * running：这台主机上（项目里）有会话在跑，已连接时绿点呼吸
+ * 远程主机的连接状态：黄色连接中（闪），红色失败，灰色未连接；已连接不显示（系统图标是彩色的就是连着）。
+ * running：这台主机上（项目里）有会话在跑，已连接时显示呼吸灯
  */
 export function HostStatusDot({ hostId, running = false }: { hostId: string; running?: boolean }) {
   const conn = useSshConnections().find((c) => c.id === hostId);
+  if (conn?.status === "ready" && !running) return null;
   const cls =
     conn?.status === "ready"
-      ? running
-        ? " on running"
-        : " on"
+      ? " on running"
       : conn?.status === "connecting" || conn?.status === "deploying"
         ? " busy"
         : conn?.status === "error"
