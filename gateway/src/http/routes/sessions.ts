@@ -266,20 +266,21 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     return reply.type(image.mediaType).header("cache-control", "private, max-age=31536000, immutable").send(image.data);
   });
 
-  app.post<{ Params: IdParams; Body: { text: string; attachments?: string[]; elements?: SelectedElementInput[]; priority?: MessagePriority } }>(
+  app.post<{ Params: IdParams; Body: { text: string; attachments?: string[]; elements?: SelectedElementInput[]; priority?: MessagePriority; draft?: unknown } }>(
     "/sessions/:id/messages",
     {
       schema: {
         body: {
           type: "object",
           required: ["text"],
-          properties: { text: { type: "string" }, attachments: attachmentsSchema, elements: elementsSchema, priority: { type: "string", enum: ["now", "next"] } },
+          // draft：网页输入框的草稿，以 next 排队时网关原样存着，撤回（编辑）时还回去
+          properties: { text: { type: "string" }, attachments: attachmentsSchema, elements: elementsSchema, priority: { type: "string", enum: ["now", "next"] }, draft: { type: "object" } },
         },
       },
     },
     async (req) => {
       requireContent(req.body);
-      return { uuid: await sessions.send(req.params.id, req.body.text.trim(), req.body.attachments, req.body.elements, req.body.priority) };
+      return { uuid: await sessions.send(req.params.id, req.body.text.trim(), req.body.attachments, req.body.elements, req.body.priority, req.body.draft) };
     },
   );
 
@@ -308,6 +309,16 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     },
     async (req) => ({ sessionId: await sessions.fork(req.params.id, req.body.messageId) }),
   );
+
+  // 以 next 排队、还没交给模型的消息：撤回（删除，或拿回草稿编辑）、改成立即发送；已经交给模型的报 409
+  app.delete<{ Params: IdParams & { uuid: string } }>("/sessions/:id/queued/:uuid", async (req) => {
+    const { draft } = await activeOr404(sessions, req.params.id).withdraw(req.params.uuid);
+    return { draft: draft ?? null };
+  });
+
+  app.post<{ Params: IdParams & { uuid: string } }>("/sessions/:id/queued/:uuid/send", async (req) => ({
+    uuid: await activeOr404(sessions, req.params.id).sendNow(req.params.uuid),
+  }));
 
   app.post<{ Params: IdParams }>("/sessions/:id/interrupt", async (req) => {
     await activeOr404(sessions, req.params.id).interrupt();

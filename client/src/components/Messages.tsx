@@ -297,10 +297,11 @@ export function Messages({ view, onFork }: { view: SessionView; onFork?: (messag
       {turns.slice(start).map((turn, i) => (
         <TurnView key={turn.key} turn={turn} view={view} live={busy && start + i === turns.length - 1 && !turn.result} onFork={onFork} />
       ))}
-      {/* 这一轮进行中发的、还没交给模型的消息：和普通消息一样显示，保持在最后，交给模型时才固定位置（见 SessionView.queued） */}
+      {/* 这一轮进行中发的、还没交给模型的消息：和普通消息一样显示，保持在最后，交给模型时才固定位置（见 SessionView.queued）；以 next 排队的列在输入框上面 */}
       {view.queued.map(
         (q) =>
-          q.preview && (
+          q.preview &&
+          !q.next && (
             <section key={q.uuid} className="turn">
               <UserGroup item={q.preview} />
             </section>

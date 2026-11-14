@@ -128,6 +128,12 @@ export function clearResponseAnnotations(sessionId: string) {
   write(sessionId, []);
 }
 
+/** 撤回编辑的排队消息带的标注放回去（换新的 id，排在已有的前面） */
+export function restoreResponseAnnotations(sessionId: string, list: SentResponseAnnotation[]) {
+  if (!list.length) return;
+  write(sessionId, [...list.map((a) => ({ ...a, id: `${Date.now().toString(36)}-${++seq}` })), ...read(sessionId)]);
+}
+
 // ---------------------------------------------------------------------------
 // 选中的元素：数据是网页里取的（网页的脚本能改掉取的结果），逐个字段检查、限长；截图先上传成附件
 

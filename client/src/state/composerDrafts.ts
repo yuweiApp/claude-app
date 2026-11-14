@@ -56,6 +56,11 @@ function update(key: string, patch: (draft: ComposerDraft) => Partial<ComposerDr
   listeners.forEach((l) => l());
 }
 
+/** 整个换掉一个会话的草稿（撤回编辑排队的消息时，输入框是空的才能编辑） */
+export function setComposerDraft(key: string, draft: ComposerDraft): void {
+  update(key, () => draft);
+}
+
 /** 清空一个会话的草稿（发送成功后） */
 export function clearComposerDraft(key: string): void {
   if (!drafts.delete(key)) return;

@@ -786,6 +786,30 @@ main {
 
 /* 输入框：同 codex-app-server，一个圆角框，上面输入，下面一行「+」、权限、模型、发送 */
 .composer-wrap { padding: 8px 48px 20px; }
+/* 以 next 排队的消息（Ctrl+Enter）：列在输入框上面，每条一行，同 codex-app-server */
+.composer-queue {
+  display: flex; flex-direction: column; gap: 4px; max-width: var(--content-width); max-height: 180px; margin: 0 auto 6px; overflow-y: auto;
+}
+.composer-queue-row {
+  display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 40px; padding: 6px 10px; border-radius: 10px;
+  background: var(--panel); font-size: 12px;
+}
+.composer-queue-count { flex-shrink: 0; font-weight: 600; }
+.composer-queue-thumbs { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.composer-queue-thumb {
+  display: block; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; background: var(--bg);
+}
+.composer-queue-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.composer-queue-more { flex-shrink: 0; color: var(--muted); font-size: 11px; }
+.composer-queue-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.composer-queue-actions { display: flex; gap: 2px; flex-shrink: 0; }
+.composer-queue-actions button {
+  display: grid; place-items: center; width: 26px; height: 26px; padding: 4px; border: none; border-radius: 6px;
+  background: transparent; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer;
+}
+.composer-queue-actions button:hover:not(:disabled) { background: var(--frame-hover); color: var(--text); }
+.composer-queue-actions button:disabled { opacity: 0.4; cursor: default; }
+.composer-queue-actions button svg { width: 14px; height: 14px; }
 
 /* 图片：对话里的缩略图（点开看大图）、输入框里的图片附件 */
 .user-images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }

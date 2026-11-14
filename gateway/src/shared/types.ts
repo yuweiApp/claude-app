@@ -9,11 +9,13 @@ export type GatewayEvent =
   | { type: "sdk"; message: SDKMessage }
   /**
    * 用户发的消息：content 就是交给 SDK 的 user 消息内容（文字，或 image / text 块），和会话历史里的格式一样。
-   * queued：这一轮还在进行时发的（有工具在跑时按 now，否则按 next），Claude Code 先放进队列，交给模型时 SDK 发
+   * queued：这一轮还在进行时发的，priority 是实际交给 Claude Code 的 now / next，Claude Code 先放进队列，交给模型时 SDK 发
    * command_lifecycle（state: started，command_uuid 就是这里的 uuid）。落在哪里要到那时才知道：并进这一轮（某个工具结果之后），
    * 或者这一轮结束后作为下一轮的开头（next 等这一轮自己结束；now 有时让这一轮马上结束）。在那之前这一轮剩下的回复会排在它前面
    */
-  | { type: "user_message"; uuid: string; content: SDKUserMessage["message"]["content"]; queued?: boolean }
+  | { type: "user_message"; uuid: string; content: SDKUserMessage["message"]["content"]; queued?: boolean; priority?: MessagePriority }
+  /** 以 next 排队的消息被撤回了（网页点了编辑、删除或立即发送），Claude Code 不会再处理它 */
+  | { type: "user_message_cancelled"; uuid: string }
   | {
       type: "state";
       state: SessionState;

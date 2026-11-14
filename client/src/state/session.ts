@@ -90,6 +90,8 @@ export interface QueuedMessage {
   uuid: string;
   content: unknown;
   preview?: UserItem;
+  /** 以 next 排队的（Ctrl+Enter，或有待确认的权限时）：列在输入框上面，可以撤回、编辑、改成立即发送，不显示在对话最后 */
+  next?: boolean;
 }
 
 export interface ToolResult {
@@ -245,11 +247,17 @@ export function reduce(view: SessionView, action: Action): SessionView {
     case "user_message":
       if (event.queued) {
         if (!view.seen.has(event.uuid) && !view.queued.some((q) => q.uuid === event.uuid)) {
-          next.queued = [...view.queued, { uuid: event.uuid, content: event.content, preview: previewUser(event.uuid, event.content) }];
+          next.queued = [
+            ...view.queued,
+            { uuid: event.uuid, content: event.content, preview: previewUser(event.uuid, event.content), ...(event.priority === "next" ? { next: true } : {}) },
+          ];
         }
         break;
       }
       ingestUserMessage(next, event.uuid, event.content);
+      break;
+    case "user_message_cancelled":
+      next.queued = view.queued.filter((q) => q.uuid !== event.uuid);
       break;
     case "state":
       next.state = event.state;

@@ -1,6 +1,7 @@
 import { useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref } from "react";
 import { api, type MessagePriority } from "../api";
-import { clearComposerDraft, useDraftField, type PendingFile } from "../state/composerDrafts";
+import { clearComposerDraft, useDraftField, type ComposerDraft, type PendingFile } from "../state/composerDrafts";
+import type { QueuedMessage } from "../state/session";
 import { AddMenu } from "./AddMenu";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
@@ -32,8 +33,15 @@ interface Props {
   /** 边框的流光动效：running，或者一轮结束了、后台任务还在跑。只管动效，按钮仍看 running */
   working?: boolean;
   maxUploadMb: number;
-  /** priority：这一轮还在进行时怎么送到模型，Enter 和发送按钮是 now（马上插话），Ctrl+Enter（macOS 上 ⌘+Enter 也行）是 next（等正在跑的工具执行完） */
-  onSend: (text: string, attachmentIds: string[], priority: MessagePriority) => Promise<void>;
+  /**
+   * priority：这一轮还在进行时怎么送到模型，Enter 和发送按钮是 now（马上插话），Ctrl+Enter（macOS 上 ⌘+Enter 也行）是 next（等正在跑的工具执行完）。
+   * draft：发送时输入框的草稿，以 next 排队的消息撤回编辑时用它原样还原
+   */
+  onSend: (text: string, attachmentIds: string[], priority: MessagePriority, draft: ComposerDraft) => Promise<void>;
+  /** 以 next 排队、还没交给模型的消息：列在输入框上面 */
+  queued?: QueuedMessage[];
+  /** 排队消息的操作：立即发送、撤回到输入框编辑、删除 */
+  onQueued?: (uuid: string, action: "send" | "edit" | "delete") => Promise<void>;
   onInterrupt: () => void;
   /** 工具栏左边「+」后面：权限、新会话的选文件夹 */
   left?: ReactNode;
@@ -55,7 +63,7 @@ interface Props {
 }
 
 /** 输入框，样式同 codex-app-server：一个圆角框，上面输入，下面一行「+」、权限、模型、发送 */
-export function Composer({ running, working = running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, draftKey, onContinue, notes, hasNotes = false }: Props) {
+export function Composer({ running, working = running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, draftKey, onContinue, notes, hasNotes = false, queued = [], onQueued }: Props) {
   const [text, setText] = useDraftField(draftKey, "text");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
@@ -184,6 +192,8 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
   }));
   const [files, setFiles] = useDraftField(draftKey, "files");
   const [sending, setSending] = useState(false);
+  /** 正在操作的排队消息（等网关返回） */
+  const [queueBusy, setQueueBusy] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -215,7 +225,16 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
       // 拖进来的图片写在最后一段：@绝对路径，空格隔开（消息里据此显示成缩略图，见 splitImageRefs）
       const body = expandSessions(expandPaths(expandTabs(text.trim(), pickedTabs), pickedPaths), pickedSessions);
       const refs = ready.flatMap((f) => (f.path ? [fileMention(f.path)] : [])).join(" ");
-      await onSend([body, refs].filter(Boolean).join("\n\n"), ready.flatMap((f) => (f.attachment ? [f.attachment.id] : [])), priority);
+      // 草稿里的图片预览换成网关的地址：本地的 blob 地址发送后就释放了
+      const draft: ComposerDraft = {
+        text,
+        picked,
+        pickedTabs,
+        pickedPaths,
+        pickedSessions,
+        files: ready.map(({ preview, ...f }) => ({ ...f, ...(preview ? { preview: f.attachment ? api.rawFileUrl(f.attachment.path, "") : preview } : {}) })),
+      };
+      await onSend([body, refs].filter(Boolean).join("\n\n"), ready.flatMap((f) => (f.attachment ? [f.attachment.id] : [])), priority, draft);
       // 发送期间可能切到了别的会话，按键清，不靠这个组件的 state
       files.forEach(revokePreview);
       clearComposerDraft(draftKey);
@@ -358,8 +377,61 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
     insertAtCaret(token);
   };
 
+  // 输入框里有内容时不能编辑排队的消息（编辑是把它整个放回输入框），同 codex-app-server
+  const composerEmpty = !text && files.length === 0 && !hasNotes;
+  const queueAction = async (uuid: string, action: "send" | "edit" | "delete") => {
+    if (!onQueued || queueBusy) return;
+    setQueueBusy(uuid);
+    try {
+      await onQueued(uuid, action);
+      if (action === "edit") textareaRef.current?.focus();
+    } finally {
+      setQueueBusy(null);
+    }
+  };
+
   return (
     <div className="composer-wrap">
+    {queued.length > 0 && (
+      <div className="composer-queue" aria-label="排队的消息" aria-live="polite">
+        {queued.map((q, i) => {
+          const preview = q.preview;
+          const label = preview?.text || preview?.attachments.map((a) => a.name).join("、") || (preview?.annotations?.length ? `${preview.annotations.length} 条标注` : "") || (preview?.images.length ? "图片" : "");
+          return (
+            <div className="composer-queue-row" key={q.uuid}>
+              <span className="composer-queue-count">第 {i + 1} 条</span>
+              {!!preview?.images.length && (
+                <span className="composer-queue-thumbs">
+                  {preview.images.slice(0, 3).map((src, j) => (
+                    <ImageThumb key={j} src={src} className="composer-queue-thumb" />
+                  ))}
+                  {preview.images.length > 3 && <span className="composer-queue-more">+{preview.images.length - 3}</span>}
+                </span>
+              )}
+              <span className="composer-queue-text" title={preview?.text}>
+                {label}
+              </span>
+              <span className="composer-queue-actions">
+                <button disabled={!!queueBusy} title="立即发送" aria-label="立即发送排队的消息" onClick={() => void queueAction(q.uuid, "send")}>
+                  <SendNowIcon />
+                </button>
+                <button
+                  disabled={!!queueBusy || !composerEmpty}
+                  title={composerEmpty ? "撤回到输入框编辑" : "请先发送或清空当前输入"}
+                  aria-label="撤回到输入框编辑"
+                  onClick={() => void queueAction(q.uuid, "edit")}
+                >
+                  <EditIcon />
+                </button>
+                <button disabled={!!queueBusy} title="删除" aria-label="删除排队的消息" onClick={() => void queueAction(q.uuid, "delete")}>
+                  ×
+                </button>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    )}
     {top && <div className="new-chat-bar" ref={barRef}>{top}</div>}
     <div
       className={dragging ? "composer dragging" : "composer"}
@@ -528,6 +600,23 @@ function expandSessions(text: string, sessions: { token: string; full: string }[
       const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       return acc.replace(new RegExp(`(^|\\s)${escaped}`, "g"), (_m, space: string) => space + full);
     }, text);
+}
+
+/** 立即发送：回车箭头，同 codex-app-server */
+function SendNowIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+      <path d="M12 3v6H4m3-3L4 9l3 3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10.5 3.5l2 2L6 12H4v-2l6.5-6.5zM9.5 4.5l2 2" />
+    </svg>
+  );
 }
 
 function PastedTextIcon() {

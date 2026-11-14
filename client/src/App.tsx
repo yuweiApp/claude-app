@@ -29,7 +29,8 @@ import { isRemote, machinePath, parseRemote } from "./remote";
 import { DesktopPicker } from "./components/DesktopPicker";
 import { emptyView, reduce } from "./state/session";
 import { AnnotationEditor, AnnotationSelectionButton, AnnotationSessionContext, NotesChip } from "./components/ResponseAnnotations";
-import { ANNOTATION_SCOPE_ATTR, clearResponseAnnotations, useResponseAnnotations, withResponseAnnotations } from "./state/responseAnnotations";
+import { ANNOTATION_SCOPE_ATTR, clearResponseAnnotations, restoreResponseAnnotations, useResponseAnnotations, withResponseAnnotations, type ResponseAnnotation } from "./state/responseAnnotations";
+import { setComposerDraft, type ComposerDraft } from "./state/composerDrafts";
 
 export function App() {
   const [config, setConfig] = useState<GatewayConfig | null>(null);
@@ -623,19 +624,39 @@ function Chat({
 
   // 在 Claude 的回复里选中文字写的回复，随下一条消息发出
   const annotations = useResponseAnnotations(sessionId);
-  const send = async (text: string, attachments: string[], priority?: MessagePriority) => {
+  const send = async (text: string, attachments: string[], priority?: MessagePriority, draft?: ComposerDraft) => {
     // 发消息直接跳到底部：平滑滚动途中新消息、回复接连进来，和贴底部的跳转打架
     scrollToBottom("auto");
     try {
       if (sessionId) {
         const message = withResponseAnnotations(text, annotations);
-        await api.send(sessionId, message.text, attachments, message.elements, priority);
+        // 草稿连同带的标注交给网关存着（只在以 next 排队时用到），撤回编辑时原样还原
+        const queuedDraft: QueuedDraft | undefined = draft && view.state === "running" ? { composer: draft, annotations } : undefined;
+        await api.send(sessionId, message.text, attachments, message.elements, priority, queuedDraft);
         if (annotations.length) clearResponseAnnotations(sessionId);
       }
       else onCreated(await api.createSession(text, attachments, { permissionMode: newMode, cwd: cwd ?? undefined, model: newModel, effort: newEffort }));
     } catch (e) {
       onError((e as Error).message);
       throw e;
+    }
+  };
+
+  // 以 next 排队的消息：立即发送（改成 now）、撤回到输入框编辑（还原发送时的草稿和标注）、删除
+  const queuedAction = async (uuid: string, action: "send" | "edit" | "delete") => {
+    if (!sessionId) return;
+    try {
+      if (action === "send") {
+        await api.sendQueuedNow(sessionId, uuid);
+        return;
+      }
+      const draft = await api.withdrawQueued(sessionId, uuid);
+      if (action === "edit" && isQueuedDraft(draft)) {
+        setComposerDraft(sessionId, draft.composer);
+        restoreResponseAnnotations(sessionId, draft.annotations);
+      }
+    } catch (e) {
+      onError((e as Error).message);
     }
   };
 
@@ -718,6 +739,8 @@ function Chat({
         working={working}
         maxUploadMb={config.maxUploadMb}
         onSend={send}
+        queued={view.queued.filter((q) => q.next)}
+        onQueued={queuedAction}
         onInterrupt={() => sessionId && api.interrupt(sessionId).catch((e: Error) => onError(e.message))}
         onContinue={interrupted ? () => void send("继续", []).catch(() => undefined) : undefined}
         left={<PermissionPicker value={permissionMode} onChange={changeMode} />}
@@ -789,5 +812,23 @@ function ScrollToBottom({ running, onClick }: { running: boolean; onClick: () =>
         <path d="M8 3v10M3.5 8.5 8 13l4.5-4.5" />
       </svg>
     </button>
+  );
+}
+
+/** 以 next 排队时交给网关存着的草稿：输入框的内容和这条消息带的标注 */
+interface QueuedDraft {
+  composer: ComposerDraft;
+  annotations: ResponseAnnotation[];
+}
+
+/** 网关还回来的草稿：发送时这个网页交给它的，形状不对（别的版本的网页发的）就不还原 */
+function isQueuedDraft(v: unknown): v is QueuedDraft {
+  const d = v as Partial<QueuedDraft> | null;
+  const c = d?.composer as Partial<ComposerDraft> | undefined;
+  return (
+    !!c &&
+    typeof c.text === "string" &&
+    [c.picked, c.pickedTabs, c.pickedPaths, c.pickedSessions, c.files].every(Array.isArray) &&
+    Array.isArray(d!.annotations)
   );
 }

@@ -154,8 +154,13 @@ export const api = {
   messages: (id: string) =>
     request<{ messages: HistoryMessage[] }>("GET", `/sessions/${id}/messages`).then((r) => r.messages),
   /** elements：网页上选中的元素，每个是一段文字和截图的附件 id，网关排在用户文字后面（见 gateway/src/agent/attachments.ts） */
-  send: (id: string, text: string, attachments: string[], elements: { text: string; screenshot?: string }[] = [], priority?: MessagePriority) =>
-    request("POST", `/sessions/${id}/messages`, { text, attachments, ...(elements.length ? { elements } : {}), ...(priority ? { priority } : {}) }),
+  /** draft：输入框的草稿，以 next 排队时网关存着，撤回编辑时原样还回来（见 withdrawQueued） */
+  send: (id: string, text: string, attachments: string[], elements: { text: string; screenshot?: string }[] = [], priority?: MessagePriority, draft?: object) =>
+    request("POST", `/sessions/${id}/messages`, { text, attachments, ...(elements.length ? { elements } : {}), ...(priority ? { priority } : {}), ...(draft ? { draft } : {}) }),
+  /** 撤回以 next 排队、还没交给模型的消息，返回发送时带的草稿；已经交给模型的报 409 */
+  withdrawQueued: (id: string, uuid: string) => request<{ draft: unknown }>("DELETE", `/sessions/${id}/queued/${uuid}`).then((r) => r.draft),
+  /** 以 next 排队的消息改成立即发送（now） */
+  sendQueuedNow: (id: string, uuid: string) => request<{ uuid: string }>("POST", `/sessions/${id}/queued/${uuid}/send`),
   upload: (files: File[]) => {
     const form = new FormData();
     for (const file of files) form.append("file", file, file.name);

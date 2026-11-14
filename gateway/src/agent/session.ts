@@ -8,6 +8,7 @@ import {
   type PermissionUpdate,
   type Query,
   type SDKMessage,
+  type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
@@ -53,6 +54,14 @@ const NOTICE_WAIT_MS = 30_000;
 /** 最多记这么多个子代理的工具调用 id（见 subagentTools） */
 const MAX_SUBAGENT_TOOLS = 2_000;
 
+type UserContent = SDKUserMessage["message"]["content"];
+
+/** 以 next 排队的消息：交给 Claude Code 的内容，网页发送时带的输入框草稿（网关不解读，原样还回去） */
+export interface QueuedNext {
+  content: UserContent;
+  draft?: unknown;
+}
+
 /** 一个活跃会话：持有一个 claude 子进程，见 docs/README.md「活跃会话」 */
 export class AgentSession {
   state: SessionState = "starting";
@@ -95,6 +104,11 @@ export class AgentSession {
   private readonly subagentTools = new Set<string>();
   private readonly done: Promise<void>;
   private closing = false;
+  /**
+   * 以 next 排队、Claude Code 还没交给模型的用户消息（uuid → 内容和网页的草稿）：网页可以撤回、编辑、改成立即发送。
+   * 收到它的 command_lifecycle（started 等，不是 queued）或子进程结束时删掉
+   */
+  private readonly queuedNext = new Map<string, QueuedNext>();
   /** 子进程启动的时间：之后 SSH 断开过才算这个进程是因为断开结束的（见 exitError） */
   private readonly startedAt = Date.now();
   private readonly onContext?: (usage: ContextUsage) => void;
@@ -155,19 +169,46 @@ export class AgentSession {
 
   /**
    * priority：这一轮还在进行时怎么送到模型，网页按键决定（Enter 是 now，Ctrl+Enter 是 next）；不给时有工具调用在跑用 now，否则 next。
-   * 有待确认的权限时一律 next。空闲时不用，消息立刻开始新的一轮
+   * 有待确认的权限时一律 next。空闲时不用，消息立刻开始新的一轮。draft：网页输入框的草稿，以 next 排队时记下，撤回编辑时原样还回去
    */
-  async send(text: string, attachments: Attachment[] = [], elements: SelectedElementContent[] = [], priority?: MessagePriority): Promise<string> {
-    const uuid = randomUUID();
+  async send(text: string, attachments: Attachment[] = [], elements: SelectedElementContent[] = [], priority?: MessagePriority, draft?: unknown): Promise<string> {
     // 远程会话：图片照旧放进消息，其他文件先传到远端
     const remote = parseRemote(this.cwd);
     const remotePaths = remote ? await uploadAttachments(sshHost(remote.host), attachments.filter((a) => !imageType(a))) : undefined;
     const content = await buildUserContent(text, attachments, elements, remotePaths);
+    return this.push(content, priority, draft);
+  }
+
+  /** 撤回以 next 排队、还没交给模型的消息（Claude Code 的 cancel_async_message），返回它的内容和草稿 */
+  async withdraw(uuid: string): Promise<QueuedNext> {
+    const entry = this.queuedNext.get(uuid);
+    const notQueued = () => Object.assign(new Error("这条消息已经交给模型了，撤不回"), { statusCode: 409 });
+    if (!entry) throw notQueued();
+    // SDK 的类型定义里没有这个方法（0.3.322 运行时有）：已经出队交给模型的返回 false
+    const cancelled = await (this.query as unknown as { cancelAsyncMessage(uuid: string): Promise<boolean> }).cancelAsyncMessage(uuid);
+    if (!cancelled) {
+      this.queuedNext.delete(uuid);
+      throw notQueued();
+    }
+    this.queuedNext.delete(uuid);
+    this.publish({ type: "user_message_cancelled", uuid });
+    return entry;
+  }
+
+  /** 以 next 排队的消息撤回后改用 now 重发（新的 uuid） */
+  async sendNow(uuid: string): Promise<string> {
+    const { content } = await this.withdraw(uuid);
+    return this.push(content, "now");
+  }
+
+  private push(content: UserContent, priority?: MessagePriority, draft?: unknown): string {
+    const uuid = randomUUID();
     const now = this.state === "running" && this.pending.size === 0 && (priority ? priority === "now" : this.toolsInFlight.size > 0);
     // 这一轮还在进行时发的，不管 now 还是 next，都要等 Claude Code 交给模型（command_lifecycle started）才知道落在哪里：
     // next 在下一次工具结果之后并进这一轮，或这一轮结束后开始下一轮；now 有时并进这一轮，有时先结束这一轮
     // （result 的 stop_reason 是 tool_use）再用它开始新的一轮（实测两种都有）
     const queued = this.state === "running";
+    const sent: MessagePriority | undefined = now ? "now" : queued ? "next" : undefined;
     this.input.push({
       type: "user",
       uuid,
@@ -179,10 +220,11 @@ export class AgentSession {
       // 调用跑完后结果以通知送回来；模型正在生成文字时 now 会打断它（实测写到一半的回答直接丢了）。
       // next：不打断（实测写到一半的 952 字回答照常写完），下一次工具结果之后送到，没有工具调用了就等这一轮结束。
       // 以前用 later，要等整轮结束才送到。空闲时消息本来就立刻开始新的一轮
-      ...(now ? { priority: "now" as const } : this.state === "running" ? { priority: "next" as const } : {}),
+      ...(sent ? { priority: sent } : {}),
     });
-    // 放进队列的：网页先把它显示在最后，这一轮剩下的回复排在它上面，SDK 的 command_lifecycle started（交给模型了）到了再固定位置
-    this.publish({ type: "user_message", uuid, content, ...(queued ? { queued: true } : {}) });
+    if (sent === "next") this.queuedNext.set(uuid, { content, ...(draft !== undefined ? { draft } : {}) });
+    // 放进队列的：网页先把它显示在最后（next 的列在输入框上面），这一轮剩下的回复排在它上面，SDK 的 command_lifecycle started（交给模型了）到了再固定位置
+    this.publish({ type: "user_message", uuid, content, ...(queued ? { queued: true, priority: sent } : {}) });
     this.setState("running");
     return uuid;
   }
@@ -411,6 +453,8 @@ export class AgentSession {
           } else if (this.toolResultSinceRequest && this.state === "running") this.clearNotices();
           this.toolResultSinceRequest = false;
         }
+        const lifecycle = message as unknown as { type: string; command_uuid?: string; state?: string };
+        if (lifecycle.type === "command_lifecycle" && lifecycle.command_uuid && lifecycle.state !== "queued") this.queuedNext.delete(lifecycle.command_uuid);
         this.trackTools(message);
         logTaskMessage(this.log, this.id, message);
         let tasksChanged = this.tasks.ingest(message);
@@ -452,6 +496,7 @@ export class AgentSession {
       // 队列跟着子进程没了
       clearTimeout(this.noticeTimer);
       this.pendingNotices.clear();
+      this.queuedNext.clear();
       this.setState("closed");
       this.onClosed(this);
     }

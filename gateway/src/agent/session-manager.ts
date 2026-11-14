@@ -123,11 +123,18 @@ export class SessionManager {
   }
 
   /** 发送消息；会话不活跃时先 resume */
-  async send(sessionId: string, text: string, attachmentIds: string[] = [], elementInputs: SelectedElementInput[] = [], priority?: MessagePriority): Promise<string> {
+  async send(
+    sessionId: string,
+    text: string,
+    attachmentIds: string[] = [],
+    elementInputs: SelectedElementInput[] = [],
+    priority?: MessagePriority,
+    draft?: unknown,
+  ): Promise<string> {
     rejectDisabledSkill(text);
     const attachments = [...(await loadAttachments(attachmentIds)), ...(await this.referencedSessions(text))];
     const elements = await loadElements(elementInputs);
-    return (await this.activate(sessionId)).send(text, attachments, elements, priority);
+    return (await this.activate(sessionId)).send(text, attachments, elements, priority, draft);
   }
 
   /** 活跃会话直接返回；子进程已回收的用原来的工作目录 resume。远程会话先连上主机、同步一下记录 */
