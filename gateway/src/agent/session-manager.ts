@@ -263,7 +263,8 @@ export class SessionManager {
 
   /**
    * 从某条消息分叉：新会话的记录是源会话到这条消息为止（含）的部分（SDK 的 forkSession，消息换成新的 uuid），
-   * 工作目录、模型和推理强度跟源会话一样，标题是源会话的加「（分叉）」。新会话不拉起子进程，发消息时再 resume。
+   * 工作目录、模型和推理强度跟源会话一样，标题是源会话的加「（分叉）」，已经有同名的会话时编号：「（分叉 2）」「（分叉 3）」…
+   * 新会话不拉起子进程，发消息时再 resume。
    * 远程会话在本机副本上分叉，再把新记录传到远端
    */
   async fork(sessionId: string, upToMessageId: string): Promise<string> {
@@ -273,7 +274,7 @@ export class SessionManager {
     const info = await getSessionInfo(sessionId);
     if (!info) throw new NotFoundError(`会话不存在：${sessionId}`);
     const source = this.titles.get(sessionId) || info.customTitle || info.summary;
-    const title = source ? `${source}（分叉）` : "分叉的会话";
+    const title = await this.forkTitle(source);
     const forked = await forkSession(sessionId, { upToMessageId, title }).catch((err: Error) => {
       throw /not found/i.test(err.message) ? new BadRequestError("会话记录里没有这条消息") : err;
     });
@@ -292,6 +293,19 @@ export class SessionManager {
     const settings = active ? { model: active.model, effort: active.effort } : this.lastSettings.get(sessionId);
     if (settings) this.lastSettings.set(forked.sessionId, settings);
     return forked.sessionId;
+  }
+
+  /** 分叉出的会话的标题：和现有会话（列表里显示的标题）重名时从 2 开始编号 */
+  private async forkTitle(source: string | undefined): Promise<string> {
+    const infos = await listSessions().catch(() => []);
+    const taken = new Set([...infos.map((i) => this.titles.get(i.sessionId) || i.customTitle || i.summary), ...this.titles.values()]);
+    const name = (n: number) => {
+      const no = n > 1 ? ` ${n}` : "";
+      return source ? `${source}（分叉${no}）` : `分叉的会话${no}`;
+    };
+    let n = 1;
+    while (taken.has(name(n))) n++;
+    return name(n);
   }
 
   /** 输入框上下文圆环要的：最后一次取到的用量。不拉起子进程 */

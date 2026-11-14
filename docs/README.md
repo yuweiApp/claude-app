@@ -263,7 +263,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | POST | `/sessions/:id/messages` | 发送消息 `{ text, attachments?, elements?, priority?, draft? }`（文字和附件至少有一样）；`priority` 是 `now` / `next`，这一轮还在进行时怎么送到模型（见「客户端归并规则」的排队消息），不给时网关自己定；`draft` 是网页输入框的草稿（网关不解读），以 `next` 排队时存着，撤回时原样还回去；会话不活跃时自动 resume |
 | DELETE | `/sessions/:id/queued/:uuid` | 撤回以 `next` 排队、还没交给模型的消息（Claude Code 的 `cancel_async_message`），返回 `{ draft }`；已经交给模型的报 409 |
 | POST | `/sessions/:id/queued/:uuid/send` | 以 `next` 排队的消息撤回后改用 `now` 重发（新的 uuid），返回 `{ uuid }` |
-| POST | `/sessions/:id/fork` | 从某条消息分叉 `{ messageId }` → `{ sessionId }`：SDK 的 `forkSession(id, { upToMessageId })`，新会话的记录是到这条消息为止（含）的部分，工作目录、模型、推理强度跟原会话一样，标题加「（分叉）」，原会话不变；forkSession 把最后一条消息的时间改成了分叉时刻，网关按 `forkedFrom` 改回原消息的时间（网页按它算历史轮的用时）；远程会话在本机副本上分叉后把新记录传到远端同一个目录 |
+| POST | `/sessions/:id/fork` | 从某条消息分叉 `{ messageId }` → `{ sessionId }`：SDK 的 `forkSession(id, { upToMessageId })`，新会话的记录是到这条消息为止（含）的部分，工作目录、模型、推理强度跟原会话一样，标题加「（分叉）」，已经有同名的会话时编号（「（分叉 2）」「（分叉 3）」…），原会话不变；forkSession 把最后一条消息的时间改成了分叉时刻，网关按 `forkedFrom` 改回原消息的时间（网页按它算历史轮的用时）；远程会话在本机副本上分叉后把新记录传到远端同一个目录 |
 | POST | `/uploads` | 上传附件（multipart，可多个）→ `{ attachments: [{ id, name, path, size }] }` |
 | GET | `/folders?path=` | 网关机器上一个文件夹里的子文件夹 `{ path, parent, home, entries }`，不传 path 是主目录，支持 `~` |
 | GET | `/files?cwd=&q=` | 输入框 @ 引用文件的候选，见上面「引用文件」 |
