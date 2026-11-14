@@ -1271,7 +1271,8 @@ main {
 }
 .side-panel-resizer:hover::after, .side-panel-resizer:focus-visible::after { opacity: 0.45; transition-delay: 0.1s; }
 .side-panel-resizer:active::after { opacity: 0.7; transition-delay: 0s; }
-.panel-head { display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+/* 和对话区的标题行（.chat-header）一样高，下面的分割线连成一条 */
+.panel-head { display: flex; align-items: center; gap: 4px; min-height: 48px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 /*
  * 标签栏同浏览器：标签按标题宽度、最宽 180px，放不下时一起变窄（最窄只剩图标），再放不下才横向滚动；
  * 「＋」紧跟在最后一个标签后面，不跟着滚出去。
