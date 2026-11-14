@@ -463,7 +463,8 @@ main {
 .pager-btn.current:disabled { opacity: 1; }
 .pager-gap { min-width: 18px; text-align: center; letter-spacing: 1px; }
 .banner { background: var(--err); color: #fff; padding: 8px 16px; cursor: pointer; }
-.chat { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+/* container：右侧面板把对话区挤窄时按对话区自己的宽度收内边距（见下面「窄屏」） */
+.chat { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; container: chat / inline-size; }
 .chat-header {
   display: flex; gap: 10px; align-items: center; min-height: 48px; padding: 6px 16px 6px 20px; font-size: 13px;
   border-bottom: 1px solid var(--divider);
@@ -1157,6 +1158,12 @@ main {
   .chat-header { padding: 6px 12px; }
   .scroll { padding: 16px 12px; }
   .composer-wrap { padding: 6px 12px 12px; }
+}
+/* 对话区被右侧面板挤窄：消息区、输入框的左右内边距收窄，把宽度留给内容 */
+@container chat (max-width: 520px) {
+  .chat-header { padding: 6px 12px; }
+  .scroll { padding-left: 16px; padding-right: 16px; }
+  .composer-wrap { padding-left: 16px; padding-right: 16px; }
 }
 
 /* 标题后面的后台任务入口：分组的任务列表，点一行在下面展开可复制的命令、输出 */

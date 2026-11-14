@@ -97,7 +97,7 @@ export function withBrowserTab(s: PanelState, from: string, info: BrowserTabInfo
 const WIDTH_KEY = "sidePanelWidth";
 const MIN_WIDTH = 320;
 /** 打开面板时对话区至少留这么宽 */
-const CHAT_MIN_WIDTH = 420;
+const CHAT_MIN_WIDTH = 360;
 /** 拖到最小宽度后再往右这么多就收起（同左侧分割线），免得刚好拖到最小时误收 */
 const COLLAPSE_MARGIN = 30;
 
