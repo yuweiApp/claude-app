@@ -1725,6 +1725,7 @@ svg.ic-mcp { color: var(--ic-mcp); }
 .ios-icon-pink { background: linear-gradient(180deg, #ff5a7e, #f0244f); }
 .ios-icon-green { background: linear-gradient(180deg, #4cd97b, #1fae4f); }
 .ios-icon-teal { background: linear-gradient(180deg, #3cc8d8, #0d9fb4); }
+.ios-icon-indigo { background: linear-gradient(180deg, #8b8cff, #5b4ce6); }
 /* 功能栏里的设置：图标块本身就是按钮的样子，悬停、当前页时整块亮一点，不再垫底色 */
 .rail-btn:has(.ios-icon), .rail-btn.active:has(.ios-icon) { background: none; box-shadow: none; }
 .rail-btn:has(.ios-icon):hover .ios-icon { filter: brightness(1.08); }

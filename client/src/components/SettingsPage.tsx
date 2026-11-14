@@ -35,7 +35,7 @@ const SECTIONS: { key: Section; label: string; icon: ReactNode; group?: string; 
   { key: "agents", label: "子代理", icon: <IosIcon tone="teal"><AgentIcon /></IosIcon>, hidden: !SHOW_AGENTS },
   { key: "mcp", label: "连接器", icon: <IosIcon tone="pink"><McpIcon /></IosIcon> },
   { key: "browsers", label: "浏览器", icon: <IosIcon tone="green"><BrowsersIcon /></IosIcon> },
-  { key: "ssh", label: "SSH 连接", icon: <IosIcon tone="gray"><SshIcon /></IosIcon>, group: "远程" },
+  { key: "ssh", label: "SSH 连接", icon: <IosIcon tone="indigo"><SshIcon /></IosIcon>, group: "远程" },
 ];
 
 /** 设置页（同 codex-app-server 的设置页）：左边分组导航，右边是列表；navCollapsed 时收起左边的导航（跟着侧边栏的收起状态） */
