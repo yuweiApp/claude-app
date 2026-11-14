@@ -1122,32 +1122,38 @@ main {
 .env-dot.busy { background: var(--warn); animation: env-dot-pulse 1.2s ease-in-out infinite; }
 @keyframes env-dot-pulse { 50% { opacity: .35; } }
 /*
- * 已连接、有会话在跑：呼吸灯。圆点本身不闪，只是柔光一涨一落；外面两圈光晕错开半拍从圆点里慢慢漾开、淡掉，
- * 看着是连续的「呼吸」而不是一明一暗的闪。
- * 颜色同标题栏的后台任务按钮（天蓝到紫），和绿色的已连接、黄色的连接中区分开
+ * 已连接、有会话在跑：流光呼吸灯。
+ * 球体（::after）是青、靛、粉、琥珀的环形渐变，一直慢慢转，中心一点白色高光；
+ * 背后（::before）是同一组颜色的模糊光晕，跟着呼吸涨落，整颗球也随呼吸轻轻放大缩小。
+ * 两层都放在伪元素里，光晕不会盖住球体
  */
 .env-dot.on.running {
-  position: relative;
-  background: linear-gradient(135deg, var(--ic-tasks-from), var(--ic-tasks-to));
-  animation: env-dot-glow 2.4s ease-in-out infinite;
+  --orb: conic-gradient(from 0deg, #22d3ee, #818cf8, #f472b6, #fbbf24, #22d3ee);
+  position: relative; width: 9px; height: 9px;
+  animation: env-orb-breathe 2.4s ease-in-out infinite;
 }
 .env-dot.on.running::before, .env-dot.on.running::after {
-  content: ""; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
-  background: radial-gradient(circle, color-mix(in srgb, var(--ic-tasks-to) 55%, transparent) 30%, color-mix(in srgb, var(--ic-tasks-from) 35%, transparent) 100%);
-  animation: env-dot-ripple 2.4s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+  content: ""; position: absolute; border-radius: 50%; pointer-events: none;
+  animation: env-orb-spin 3s linear infinite;
 }
-.env-dot.on.running::after { animation-delay: 1.2s; }
-@keyframes env-dot-glow {
-  0%, 100% { box-shadow: 0 0 2px 0 color-mix(in srgb, var(--ic-tasks-to) 35%, transparent); transform: scale(0.92); }
-  50% { box-shadow: 0 0 7px 1px color-mix(in srgb, var(--ic-tasks-to) 70%, transparent); transform: scale(1.05); }
+.env-dot.on.running::before {
+  inset: -3px; background: var(--orb); filter: blur(3.5px);
+  animation: env-orb-spin 3s linear infinite, env-orb-halo 2.4s ease-in-out infinite;
 }
-@keyframes env-dot-ripple {
-  0% { opacity: 0.7; transform: scale(1); }
-  100% { opacity: 0; transform: scale(2.6); }
+.env-dot.on.running::after {
+  inset: 0;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.9) 0 9%, rgba(255, 255, 255, 0.25) 26%, transparent 44%), var(--orb);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.35);
+}
+@keyframes env-orb-spin { to { rotate: 360deg; } }
+@keyframes env-orb-breathe { 0%, 100% { scale: 0.88; } 50% { scale: 1.08; } }
+@keyframes env-orb-halo {
+  0%, 100% { opacity: 0.3; scale: 0.9; }
+  50% { opacity: 0.85; scale: 1.45; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .env-dot.busy, .env-dot.on.running { animation: none; }
-  .env-dot.on.running::before, .env-dot.on.running::after { display: none; }
+  .env-dot.busy, .env-dot.on.running, .env-dot.on.running::before, .env-dot.on.running::after { animation: none; }
+  .env-dot.on.running::before { opacity: 0.5; }
 }
 
 /* 选择文件夹对话框 */
