@@ -186,8 +186,12 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 /* 文件夹行、分区标题行的按钮本身不画底色（盖过全局的 button:hover），悬停底色由外面一整行（.group-head、.section-head）画 */
 .sidebar .group-toggle, .sidebar .group-toggle:hover, .sidebar .section-toggle, .sidebar .section-toggle:hover { background: none; }
 .group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 项目行里主机名后面的状态点（呼吸灯、连接中、失败）和主机名多隔开一点 */
-.group-toggle .env-dot { margin-left: 6px; }
+/*
+ * 项目行的状态点（呼吸灯、连接中、失败）靠右，圆心和会话行右边的转圈（.session-spinner）对齐；
+ * 悬停时右边是按钮，状态点同转圈一样先藏起来
+ */
+.group-toggle .env-dot { margin-left: auto; margin-right: 3px; }
+.sidebar .group-head:hover .group-toggle .env-dot, .sidebar .group-head.menu-open .group-toggle .env-dot { opacity: 0; }
 .group-host { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
 .ssh-hostkey { margin-top: 8px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .ssh-hostkey p { margin: 0; color: var(--muted); }
