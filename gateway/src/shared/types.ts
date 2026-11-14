@@ -493,7 +493,10 @@ export interface ProjectEntry {
 /** 右侧面板的终端 */
 export interface TerminalInfo {
   id: string;
+  /** 属于哪个项目（会话的工作目录），面板按它分组 */
   cwd: string;
+  /** shell 起始的目录，不是 cwd 本身时才有（模型开终端时指定了工作目录里的子目录）；本机路径，远程会话是远端的 posix 路径 */
+  dir?: string;
   /** shell 的名字（bash、zsh、powershell.exe） */
   shell: string;
   /** 标签页上的名字：模型开的终端给的标题；用户开的没有，网页按「终端 2」这样编号 */

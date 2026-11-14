@@ -48,14 +48,15 @@ export class TerminalManager {
     return [...this.terminals.values()].filter((t) => !cwd || t.cwd === cwd).map(info);
   }
 
-  /** cwd 是 ssh://… 时在远端开（远端用户的登录 shell） */
-  async create(cwd: string, cols: number, rows: number, opts: { title?: string; openedBy?: "user" | "agent" } = {}): Promise<TerminalInfo> {
+  /** cwd 是 ssh://… 时在远端开（远端用户的登录 shell）；dir 是 shell 起始的目录，不传是 cwd（写法见 TerminalInfo.dir） */
+  async create(cwd: string, cols: number, rows: number, opts: { title?: string; openedBy?: "user" | "agent"; dir?: string } = {}): Promise<TerminalInfo> {
     if (this.terminals.size >= MAX_TERMINALS) throw new TerminalError(`终端最多开 ${MAX_TERMINALS} 个，先关掉一些`);
     const size = { cols: clamp(cols, 20, 500, 80), rows: clamp(rows, 5, 200, 24) };
-    const { proc, shell } = parseRemote(cwd) ? await remotePty(cwd, size) : localPty(cwd, size);
+    const { proc, shell } = parseRemote(cwd) ? await remotePty(cwd, size, opts.dir) : localPty(opts.dir ?? cwd, size);
     const term: Terminal = {
       id: randomUUID(),
       cwd,
+      ...(opts.dir ? { dir: opts.dir } : {}),
       shell: shell.split(/[\\/]/).pop() || shell,
       ...(opts.title ? { title: opts.title } : {}),
       openedBy: opts.openedBy ?? "user",
@@ -177,6 +178,7 @@ function info(t: Terminal): TerminalInfo {
   return {
     id: t.id,
     cwd: t.cwd,
+    ...(t.dir ? { dir: t.dir } : {}),
     shell: t.shell,
     ...(t.title ? { title: t.title } : {}),
     openedBy: t.openedBy,
@@ -264,13 +266,13 @@ function localPty(cwd: string, size: { cols: number; rows: number }): { proc: Pr
 }
 
 /** 远端的终端：SSH 上开带 pty 的通道，在工作目录里起远端用户的登录 shell（Windows 是 PowerShell）。前台在跑什么拿不到 */
-async function remotePty(cwd: string, size: { cols: number; rows: number }): Promise<{ proc: Proc; shell: string }> {
+async function remotePty(cwd: string, size: { cols: number; rows: number }, start?: string): Promise<{ proc: Proc; shell: string }> {
   const remote = parseRemote(cwd)!;
   const host = sshHost(remote.host);
   let channel;
   try {
     await host.ensureReady();
-    const dir = remote.path || host.env!.home;
+    const dir = start || remote.path || host.env!.home;
     const pty = { term: "xterm-256color", ...size };
     // Windows：交互的 PowerShell（-NoExit），先进工作目录；-EncodedCommand 不经默认 shell（cmd）的转义
     channel = host.env!.windows
