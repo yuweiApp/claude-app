@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api";
-import type { AgentItem, Item, SessionView, TaskItem } from "../state/session";
+import type { AgentItem, ApiRetry, Item, SessionView, TaskItem } from "../state/session";
 import { Attachments } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { CopyAction, ForkAction, MessageActions } from "./MessageActions";
@@ -350,6 +350,39 @@ function BackgroundWorking({ tasks, noticePending }: { tasks: SessionView["backg
   );
 }
 
+const RETRY_ERRORS: Record<string, string> = {
+  server_error: "服务器错误",
+  overloaded: "服务过载",
+  rate_limit: "请求太频繁",
+  authentication_failed: "认证失败",
+  billing_error: "计费错误",
+  invalid_request: "请求无效",
+  model_not_found: "找不到模型",
+  unknown: "未知错误",
+};
+
+/**
+ * 模型请求出错、Claude Code 正在重试（SessionView.retry）：代替「思考中…」，写明第几次重试、什么错误，
+ * 计时是这次重试已经等了多久（每次重试换一个 key，Elapsed 从头算）
+ */
+function RetryLine({ retry }: { retry: ApiRetry }) {
+  const cause =
+    retry.waitedMs !== undefined
+      ? `${Math.round(retry.waitedMs / 1000)} 秒没有响应`
+      : [retry.status, RETRY_ERRORS[retry.error] ?? retry.error].filter((part) => part !== null && part !== "").join(" ");
+  return (
+    <div className="working" title={`api_retry：attempt ${retry.attempt}/${retry.maxRetries}，error_status ${retry.status ?? "无"}，error ${retry.error}`}>
+      <ToolIcon icon="✳" running />
+      <span className="working-label">
+        模型接口出错（{cause}），第 {retry.attempt} 次重试（最多 {retry.maxRetries} 次）
+      </span>
+      <span className="step-time">
+        <Elapsed since={retry.at} />
+      </span>
+    </div>
+  );
+}
+
 /**
  * 进行中的计时，每秒刷新；从这一段开头那条消息的时间算起（重新打开会话、切回来时接着算），没有时间的从开始显示时算起。
  * 历史里的时间是网关那边的钟，和本机差得多的（晚于现在）也从开始显示时算
@@ -437,12 +470,17 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
               ))}
             </div>
           )}
-          {live && !streaming && !(expanded && toolRunning) && (
-            <div className="working">
-              <ToolIcon icon="✳" running />
-              <span className="working-label">思考中…</span>
-            </div>
-          )}
+          {live &&
+            !streaming &&
+            !(expanded && toolRunning) &&
+            (view.retry ? (
+              <RetryLine key={view.retry.at} retry={view.retry} />
+            ) : (
+              <div className="working">
+                <ToolIcon icon="✳" running />
+                <span className="working-label">思考中…</span>
+              </div>
+            ))}
         </div>
       )}
       {final && (

@@ -177,6 +177,23 @@ export interface SessionView {
   desktopTarget: DesktopTarget | null;
   /** 上下文用量（网关的 context 事件），还没收到时 null */
   context: ContextUsage | null;
+  /**
+   * 模型请求出错、Claude Code 正在重试（system/api_retry）：「思考中…」换成重试的状态，不然重试期间（每次可能等好几分钟）
+   * 网页上看不出接口在报错。下一次响应开始（message_start）、收到 assistant 消息、这一轮结束或不再运行时清掉。
+   * api_retry 不带 parent_tool_use_id，分不出是主线程还是子代理的请求，都显示
+   */
+  retry: ApiRetry | null;
+}
+
+/** 一次模型请求重试（SDKAPIRetryMessage）。at：收到的时间，算这次重试等了多久 */
+export interface ApiRetry {
+  attempt: number;
+  maxRetries: number;
+  status: number | null;
+  error: string;
+  /** 上一次请求一直没收到响应头（等了 waitedMs 毫秒） */
+  waitedMs?: number;
+  at: number;
 }
 
 export function emptyView(): SessionView {
@@ -202,6 +219,7 @@ export function emptyView(): SessionView {
     unstartedUuids: [],
     desktopTarget: null,
     context: null,
+    retry: null,
   };
 }
 
@@ -245,6 +263,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
     next.backgroundTasksLive = view.backgroundTasksLive;
     next.desktopTarget = view.desktopTarget;
     next.context = view.context;
+    next.retry = view.retry;
     // 历史里已经有的（Claude Code 已经交给模型、写进了会话文件），不再排队
     next.queued = view.queued.filter((q) => !next.seen.has(q.uuid));
     next.turnStartUuids = view.turnStartUuids;
@@ -281,7 +300,10 @@ export function reduce(view: SessionView, action: Action): SessionView {
       next.effort = event.effort;
       next.permissionMode = event.permissionMode;
       next.noticePending = !!event.noticePending;
-      if (event.state !== "running") next.streaming = { text: "" };
+      if (event.state !== "running") {
+        next.streaming = { text: "" };
+        next.retry = null;
+      }
       // 兜底：没收到 started 就停了（子进程退出等），排队的消息不再一直挂在最后
       // 子进程结束了，没交给模型的消息不会再开始
       if (event.state === "closed") next.unstartedUuids = [];
@@ -350,12 +372,16 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
     case "stream_event": {
       if (message.parent_tool_use_id) return;
       const e = message.event;
-      if (e.type === "message_start") view.streaming = { text: "" };
+      if (e.type === "message_start") {
+        view.streaming = { text: "" };
+        view.retry = null;
+      }
       if (e.type === "content_block_delta" && e.delta.type === "text_delta") view.streaming = { text: view.streaming.text + e.delta.text };
       return;
     }
     case "assistant":
       if (!message.parent_tool_use_id) view.streaming = { text: "" };
+      view.retry = null;
       ingestMessage(view, "assistant", message.uuid, message.message, message.parent_tool_use_id, Date.now());
       return;
     case "user": {
@@ -374,6 +400,19 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       return;
     }
     case "system":
+      if (message.subtype === "api_retry") {
+        // 出错前已经流出来的半截文字作废，重试的响应从头再来
+        view.streaming = { text: "" };
+        view.retry = {
+          attempt: message.attempt,
+          maxRetries: message.max_retries,
+          status: message.error_status,
+          error: message.error,
+          ...(message.no_response ? { waitedMs: message.no_response.waited_ms } : {}),
+          at: Date.now(),
+        };
+        return;
+      }
       if (message.subtype === "status" && message.status === "compacting") {
         if (!runningCompact(view)) pushItem(view, null, { kind: "compact", uuid: `compact:${message.uuid}`, at: Date.now(), status: "running", manual: view.turnEnded });
       } else if (message.subtype === "status" && message.compact_result === "failed") {
@@ -402,6 +441,7 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       return;
     case "result": {
       view.streaming = { text: "" };
+      view.retry = null;
       // 最近的一轮开头还没交给模型：它的那一轮马上开始，不算结束
       const latest = view.items.findLast(isTurnStart);
       view.turnEnded = !(latest && view.unstartedUuids.includes(latest.uuid));
