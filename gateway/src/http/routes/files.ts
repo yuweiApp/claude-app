@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { once } from "node:events";
+import { pipeline } from "node:stream/promises";
 import type { FastifyInstance } from "fastify";
 import iconv from "iconv-lite";
 import { BadRequestError } from "../../agent/session-manager.js";
@@ -221,6 +223,43 @@ export function fileRoutes(app: FastifyInstance): void {
     return {};
   });
 
+  // 文件树「上传文件」（网页版、网关不在本机时，桌面版连本机网关走 /files/transfers）：multipart，可以一次传多个，
+  // 存进 dir（相对项目文件夹，空是根），不受 MAX_UPLOAD_MB 限制。同名的处理见 uploadInto；一个出错后面的不再传，前面传好了的留着
+  app.post<{ Querystring: { cwd?: string; dir?: string; overwrite?: string } }>("/files/upload", async (req) => {
+    const at = resolveInProject(req.query.cwd, req.query.dir);
+    await uploadDir(at);
+    const uploaded: string[] = [];
+    try {
+      for await (const part of req.files({ limits: { fileSize: Infinity, files: 1000 } })) {
+        await uploadInto(at, part.filename, req.query.overwrite === "1", async (tmp) => {
+          const out = await at.fs.openWriteStream(tmp, { exclusive: true });
+          await pipeline(part.file, out);
+          // 流写完时文件句柄可能还没关（Windows 上开着的文件改不了名），等它关掉
+          if (!out.closed) await once(out, "close");
+        });
+        uploaded.push(part.filename);
+      }
+    } finally {
+      cache.delete(at.key);
+    }
+    return { uploaded };
+  });
+
+  // 文件树右键「下载」：整个文件作为附件返回，浏览器存到它的下载位置（桌面版弹出保存对话框）；文件夹不行
+  app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/download", async (req, reply) => {
+    const { fs, p, abs } = resolveInProject(req.query.cwd, req.query.path);
+    const info = await fs.stat(abs).catch((err: NodeJS.ErrnoException) => {
+      throw new BadRequestError(fsError(err, "文件"));
+    });
+    if (!info.isFile) throw new BadRequestError(info.isDirectory ? "只能下载文件，不能下载文件夹" : "不是普通文件");
+    return reply
+      .type("application/octet-stream")
+      .header("content-disposition", attachmentHeader(p.basename(abs)))
+      .header("content-length", info.size)
+      .header("cache-control", "no-store")
+      .send(fs.createReadStream(abs));
+  });
+
   // Claude 回复里的行内代码像文件路径时，网页来问是不是工作目录里存在的文件（是就显示成文件链接）；paths 相对项目文件夹
   app.post<{ Body: { cwd?: string; paths?: unknown } }>("/files/exists", async (req) => {
     const paths = Array.isArray(req.body?.paths) ? req.body.paths.filter((p): p is string => typeof p === "string").slice(0, 200) : [];
@@ -295,6 +334,48 @@ export function fileRoutes(app: FastifyInstance): void {
   });
 }
 
+/** 上传的位置：要是项目里已经有的文件夹 */
+export async function uploadDir({ fs, abs }: InProject): Promise<void> {
+  const info = await fs.stat(abs).catch(() => null);
+  if (!info?.isDirectory) throw new BadRequestError(info ? "上传的位置不是文件夹" : "上传的位置不存在");
+}
+
+/**
+ * 上传一个文件到 dir（uploadDir 查过的文件夹）：已经有同名文件时报错，overwrite 才覆盖；同名的是文件夹不行。
+ * write 先写进同一个文件夹里的临时文件，写完再改成原名；中途失败、取消只删临时文件，原来的同名文件还在
+ */
+export async function uploadInto(dir: InProject, name: string, overwrite: boolean, write: (tmp: string) => Promise<void>): Promise<void> {
+  const { fs, p } = dir;
+  if (!name || name === "." || name === ".." || /[\\/\0]/.test(name) || (p.sep === "\\" && name.includes(":"))) throw new BadRequestError(`文件名不能用：${name}`);
+  const abs = p.join(dir.abs, name);
+  const conflict = async () => {
+    const old = await fs.stat(abs).catch(() => null);
+    if (old?.isDirectory) throw new BadRequestError(`已经有同名的文件夹：${name}`);
+    if (old && !overwrite) throw new BadRequestError(`已经有同名的文件：${name}`);
+    return old !== null;
+  };
+  await conflict();
+  const tmp = p.join(dir.abs, `.${name}.upload-${randomBytes(4).toString("hex")}`);
+  try {
+    await write(tmp);
+    // 传的时候别处可能新建了同名的，再查一次；SFTP 的改名不能覆盖已有的文件，覆盖时先删掉原来的
+    if (await conflict()) await fs.rm(abs);
+    await fs.rename(tmp, abs);
+  } catch (err) {
+    await fs.rm(tmp).catch(() => undefined);
+    throw err;
+  } finally {
+    cache.delete(dir.key);
+  }
+}
+
+/** Content-Disposition：filename 给只有 ASCII 的替代名，filename* 是 UTF-8 的原名（RFC 6266） */
+function attachmentHeader(name: string): string {
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  const utf8Name = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8Name}`;
+}
+
 /** 单段的 Range 头（bytes=a-b、bytes=a-、bytes=-n），end 含在内；没有或是多段的给 null（整个文件），超出文件给 invalid */
 function parseRange(header: string | undefined, size: number): { start: number; end: number } | null | "invalid" {
   const m = header?.match(/^bytes=(\d*)-(\d*)$/);
@@ -313,7 +394,7 @@ function parseRange(header: string | undefined, size: number): { start: number; 
 }
 
 /** 解析出来的项目里的一个路径：key 是网页传来的 cwd（缓存、预览 id 按它），root 是项目文件夹在那台机器上的路径 */
-interface InProject {
+export interface InProject {
   key: string;
   root: string;
   abs: string;
@@ -322,7 +403,7 @@ interface InProject {
 }
 
 /** 项目里的路径（/ 分隔的相对路径）转成绝对路径，不能跳出项目文件夹；cwd 可以是远程会话的 ssh://… */
-function resolveInProject(cwd: string | undefined, rel: string | undefined): InProject {
+export function resolveInProject(cwd: string | undefined, rel: string | undefined): InProject {
   if (!cwd) throw new BadRequestError("缺少项目文件夹");
   let at: ReturnType<typeof fsFor>;
   try {
@@ -348,7 +429,7 @@ function isInside(p: PathLib, root: string, abs: string): boolean {
 }
 
 /** 读文件、文件夹失败的原因，显示在右侧面板里；what 是「文件」或「文件夹」 */
-function fsError(err: NodeJS.ErrnoException, what: string): string {
+export function fsError(err: NodeJS.ErrnoException, what: string): string {
   switch (err.code) {
     case "ENOENT":
       return `${what}不存在`;

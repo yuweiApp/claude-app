@@ -274,6 +274,11 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | POST | `/files/delete` | 文件树删除 `{ cwd, path }`：文件夹连同里面的一起删 |
 | POST | `/files/rename` | 文件树重命名、拖动 `{ cwd, from, to }`：目标已存在不覆盖（大小写不敏感的文件系统上只改大小写可以），文件夹不能挪进自己里面 |
 | GET | `/files/raw?cwd=&path=` | 图片原文件（只允许图片类型，带禁脚本的 CSP） |
+| POST | `/files/transfers` | 文件树上传 `{ cwd, kind: "upload", dir, locals, overwrite? }`、下载 `{ cwd, kind: "download", path, local }`：`locals`、`local` 是网关这台机器上的绝对路径，网关直接复制（见下面「上传、下载」），先返回记录，在后台传 |
+| GET | `/files/transfers?cwd=` | 这个项目排队的、进行中的、结束了还没关掉的传输（已传、总共的字节数，平均速度，错误） |
+| DELETE | `/files/transfers/:id` | 取消（写了一半的文件删掉）或关掉结束了的 |
+| POST | `/files/upload?cwd=&dir=&overwrite=` | 文件树上传的 HTTP 方式（网页版、网关不在本机）：multipart，可以多个文件，不受 `MAX_UPLOAD_MB` 限制 |
+| GET | `/files/download?cwd=&path=` | 文件树下载的 HTTP 方式：整个文件作为附件（`Content-Disposition` 带 UTF-8 文件名） |
 | GET | `/terminals?cwd=` | 右侧面板的终端列表（刷新页面后把还开着的补成标签页） |
 | POST | `/terminals` | 开终端 `{ cwd, cols, rows }`：网关机器上的 pty（`@lydell/node-pty`，带各平台预编译包），shell 是 `$SHELL`，Windows 是 PowerShell |
 | GET（WebSocket） | `/terminals/:id/socket` | 终端的输出、输入、改大小走这一条：连上先给保留的输出（最多 512K 字符）还原屏幕，之后实时推 `data`、`exit`（终端不存在时推 `error` 后断开）；网页发 `{ type: "input", data }`、`{ type: "resize", cols, rows }`。不用 SSE：每个 SSE 占一个 HTTP 连接，浏览器对同一个源最多 6 个，终端开到 5 个（加上会话事件流）其他请求（上传、发消息）就全在排队。网页断线 2 秒后重连，连上后补发大小 |
@@ -457,6 +462,10 @@ client/
 - **会话记录**（`transcripts.ts`）：远端 claude 把记录写在远端的 `claude-home/projects/` 下，网关按原样同步到本机 `$CLAUDE_CONFIG_DIR/projects/` 的同名目录（单向，只取新增的部分，远端变短了整个重取），会话列表、历史、标题、最后回复时间这些读本机记录的代码不用改，远端没连上时也能列出、查看。哪些会话是哪台主机的记在 `gateway-ssh-sessions.json`。列会话时连着的主机先同步一次（3 秒内的不重复，最多等 3 秒），打开会话、发消息前同步那一个。远端已经没有的会话（别处删了）本机的副本也删掉；列 `projects/` 出错（比如同步时正好断开）就放弃这次同步，某个项目目录读不出来时它下面的会话不动，只有目录不存在才当作空的（以前读不出来也当成空的，出现过断开连接后本机副本被全删、会话从列表里消失，下次连上同步回来才恢复）。改标题追加一行 `custom-title`（格式同 Claude Code 写的）到远端的记录再同步回来；删会话删远端的记录和本机的副本，远端的 scratch 目录是空的一起删；删 SSH 连接只删本机的副本。普通会话按远端用户目录下的 `~/.claude-app/workspace/scratch-…` 认（`scratch.ts` 的 `isChatCwd`，用户目录记在连接配置里）。
 - **工具**：远程会话只挂浏览器（本机的内置浏览器和启用着的外部浏览器，`browser_run_code` 的 `saveFile` 经 SFTP 写进远端的工作目录）和右侧面板的终端（远端的）；插件、技能白名单、设置页添加的连接器、桌面操作（Computer Use）都不给，远端只有 Claude Code 自带的技能和项目 `.claude/skills/` 里的。网页上远程会话的输入框上面只有「浏览器」。内置浏览器的下载不存进远端的工作目录（桌面版按默认的下载位置存）。浏览器的说明里写明会话在哪台主机上：内置浏览器里 localhost 指那台主机、下载存在用户电脑的「下载」文件夹；外部浏览器里 localhost 指用户的电脑。会话启动时开着的反向转发写进系统提示词（追加在 `APPEND_SYSTEM_PROMPT` 后面），之后改了要新会话才看得到。
 - **右侧面板**：文件接口（`routes/files.ts`）、选择文件夹（`routes/folders.ts`）经 `ssh/host-fs.ts` 的 `HostFs` 操作：本机是 fs，远端是 SFTP（递归建目录、删除用远端的 `mkdir -p`、`rm -rf`，`@` 搜索用远端的 `git ls-files`；Windows 上是 PowerShell 的对应写法，见 `remote-ops.ts`）。远端拿不到 inode，改名时只差大小写算同一个文件。终端（`terminal-manager.ts`）在 SSH 上开带 pty 的通道，在工作目录里 `exec $SHELL -l`；前台在跑什么拿不到（同 Windows），模型不能往已有的终端里接着写命令，每次 `run_in_terminal` 开新的。
+- **上传、下载**（2026-11-14 加，`client/src/components/FileTransfers.tsx`、`routes/transfers.ts`）：文件树右键文件夹、第一行和空白处「上传文件…」，文件「下载…」，也可以从系统里把文件拖到文件夹上（拖到文件上是放进它所在的文件夹，文件夹不能传）；同名的文件先问要不要覆盖，同名的是文件夹不传。上传先写进同一个文件夹里的临时文件 `.<名字>.upload-<随机>`，传完再改成原名（覆盖时先删掉原来的，SFTP 的改名不能覆盖），中途失败、取消只删临时文件；下载先存成 `<名字>.<随机>.part` 再改名。本机和远程会话都有。
+  - 桌面版连着本机的网关（`DESKTOP_GATEWAY_URL` 是 127.0.0.1、localhost）时「直传」：界面只给出本机路径（拖进来的文件用 Electron 的 `webUtils.getPathForFile`，菜单用系统的打开、保存对话框，保存默认在「下载」文件夹），网关在本机路径和项目里的路径之间直接复制，内容不经过 HTTP。远端用 ssh2 的 `fastPut`、`fastGet`（64 个 32KB 的请求同时在路上；ssh2 的读写流一次只发一个请求，速度是 64KB/往返延迟），每次传输单独开一个 SFTP 通道（`SshHost.openSftp`），不和文件树共用，取消时关掉通道；同一个项目一次传一个，其余排队；界面每 500ms 查一次进度，传完的上传 3 秒后自动关掉，下载完的留着「在资源管理器中显示」。实测（往返 188ms 的 Windows 远端）上传约 100 KB/s、下载约 145 KB/s，和系统的 scp 一样，卡在链路带宽上；200MB 往返校验一致。
+  - 网页版、网关不在本机时走 HTTP：上传是 multipart（XHR 报发给网关的进度，网关边收边写远端），下载交给浏览器。
+  - 远端的读流（`HostFs.createReadStream`，下载、图片音视频、网页预览用）不用 ssh2 的 `createReadStream`：它在 Windows 远端读完后文件句柄没有关，预览过、下载过的文件一直删不掉、覆盖不了（报「正由另一进程使用」），要等 SSH 断开。改成自己开句柄，读完、出错、提前断开都关掉。
 - **附件**：图片照旧以 base64 放进消息；其他文件发消息时经 SFTP 传到远端的 `~/.claude-app/workspace/.attachments/<id>/`（大小一样的不重传），`<attachments>` 里写远端路径。
 - **内置浏览器访问远端的 localhost**（`desktop/src/browser/ssh-proxy.ts`、`views.ts`，`gateway/src/browser/tunnel.ts`）：模型在远端起的开发服务监听的是远端的 127.0.0.1，内置浏览器在本机。远程会话的标签页开在这台主机自己的分区里（`persist:claude-browser-ssh-<连接 id>`，弹出窗口跟着原标签页），分区的代理是桌面版在本机 127.0.0.1 上开的（每台主机一个端口）：
   - localhost、`*.localhost`、127.0.0.0/8、[::1] 的连接，每条开一个 WebSocket 到网关的 `/browser/tunnel?host=<连接 id>&dest=<主机名>&port=<端口>`（同网关的 API_TOKEN，桌面版连的是别处的网关也能用），网关经 SSH 的 `forwardOut` 连远端的同一个地址，主机名交给远端解析（`*.localhost` 换成 localhost），之后原样转发字节；网关只转 loopback 的地址。地址不用改，origin、Cookie、OAuth 回调、Vite 的 HMR（WebSocket 走 CONNECT）都和在远端本地访问时一样，本机自己占着同一个端口也不冲突，不用检测远端开了哪些端口。

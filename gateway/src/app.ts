@@ -14,6 +14,7 @@ import { EventHub } from "./events/event-hub.js";
 import { ConversationLog } from "./logging/conversation-log.js";
 import { sessionRoutes } from "./http/routes/sessions.js";
 import { fileRoutes, PAGE_PREFIX } from "./http/routes/files.js";
+import { transferRoutes } from "./http/routes/transfers.js";
 import { terminalRoutes } from "./http/routes/terminals.js";
 import { TerminalError, TerminalManager } from "./terminal/terminal-manager.js";
 import { folderRoutes } from "./http/routes/folders.js";
@@ -105,6 +106,7 @@ export function buildApp(): App {
   uploadRoutes(app);
   folderRoutes(app);
   fileRoutes(app);
+  transferRoutes(app);
   terminalRoutes(app, terminals);
   sshRoutes(app);
 

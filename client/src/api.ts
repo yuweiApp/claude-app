@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { MessagePriority, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
+export type { MessagePriority, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -111,6 +111,42 @@ export const api = {
   deleteFile: (cwd: string, path: string) => request<object>("POST", "/files/delete", { cwd, path }),
   /** 文件树：重命名、拖到别的文件夹 */
   renameFile: (cwd: string, from: string, to: string) => request<object>("POST", "/files/rename", { cwd, from, to }),
+  /** 文件树上传、下载（桌面版连着本机网关）：本机路径和项目里的路径之间由网关直接复制，在后台传，transfers 查进度 */
+  startUpload: (cwd: string, dir: string, locals: string[], overwrite: boolean) =>
+    request<{ transfers: FileTransfer[] }>("POST", "/files/transfers", { cwd, kind: "upload", dir, locals, overwrite }).then((r) => r.transfers),
+  startDownload: (cwd: string, path: string, local: string) =>
+    request<{ transfers: FileTransfer[] }>("POST", "/files/transfers", { cwd, kind: "download", path, local }).then((r) => r.transfers),
+  transfers: (cwd: string) => request<{ transfers: FileTransfer[] }>("GET", `/files/transfers?${q({ cwd })}`).then((r) => r.transfers),
+  /** 取消进行中、排队的，或者关掉结束了的 */
+  dismissTransfer: (id: string) => request<object>("DELETE", `/files/transfers/${encodeURIComponent(id)}`),
+  /** 文件树下载（网页版）：浏览器直接按这个地址下载 */
+  downloadUrl: (cwd: string, path: string) => withToken(`/files/download?${q({ cwd, path })}`),
+  /** 文件树上传（网页版）：multipart 传给网关，onProgress 报已发出的字节数；abort 取消 */
+  uploadFiles(cwd: string, dir: string, files: File[], overwrite: boolean, onProgress: (sent: number) => void): { done: Promise<void>; abort: () => void } {
+    const xhr = new XMLHttpRequest();
+    const done = new Promise<void>((resolve, reject) => {
+      xhr.open("POST", `${BASE}/files/upload?${q({ cwd, dir, ...(overwrite ? { overwrite: "1" } : {}) })}`);
+      const t = token();
+      if (t) xhr.setRequestHeader("authorization", `Bearer ${t}`);
+      xhr.upload.onprogress = (e) => onProgress(e.loaded);
+      xhr.onload = () => {
+        if (xhr.status < 400) return resolve();
+        let message = `${xhr.status} ${xhr.statusText}`;
+        try {
+          message = (JSON.parse(xhr.responseText) as { error?: string }).error || message;
+        } catch {
+          // 不是 JSON
+        }
+        reject(new RequestError(message, xhr.status));
+      };
+      xhr.onerror = () => reject(new Error("上传失败：连不上网关"));
+      xhr.onabort = () => reject(new DOMException("已取消", "AbortError"));
+      const form = new FormData();
+      for (const f of files) form.append("file", f, f.name);
+      xhr.send(form);
+    });
+    return { done, abort: () => xhr.abort() };
+  },
   /** 哪些路径（相对项目文件夹）是存在的文件 */
   filesExist: (cwd: string, paths: string[]) => request<{ exists: string[] }>("POST", "/files/exists", { cwd, paths }).then((r) => r.exists),
   /** HTML 文件显示成网页用的地址（iframe 的 src）；网页里的相对路径照常按目录取 */

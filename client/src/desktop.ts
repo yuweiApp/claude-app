@@ -18,8 +18,21 @@ export interface DesktopApi {
   findCaptureSource(title: string): Promise<CaptureSource | null>;
   /** 界面上一块区域（界面的 CSS 像素）的截图，PNG 的 base64，最长边不超过 1200px；拍不到时 null */
   captureRect(rect: { x: number; y: number; width: number; height: number }): Promise<string | null>;
+  /** 文件树的上传、下载：本机路径，见 desktop/src/main.ts 的 files:* */
+  files: DesktopFilesApi;
   /** 内置浏览器（右侧面板的「浏览器」），见 desktop/src/browser/views.ts */
   browser: DesktopBrowserApi;
+}
+
+export interface DesktopFilesApi {
+  /** 桌面版连的网关在这台机器上（这时网关能直接按本机路径读写文件） */
+  localGateway(): Promise<boolean>;
+  /** 拖进来的文件在这台机器上的路径 */
+  pathForFile(file: File): string;
+  /** 系统的打开文件对话框（可以多选），取消时 null */
+  pickFiles(): Promise<string[] | null>;
+  /** 系统的保存对话框，默认在「下载」文件夹、文件名是 name；取消时 null */
+  pickSavePath(name: string): Promise<string | null>;
 }
 
 /** 窗口的采集源，和 desktop/src/capture.ts 的 CaptureSource 一致 */

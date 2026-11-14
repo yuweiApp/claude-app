@@ -2,7 +2,7 @@
 // 沙箱里的预加载脚本只能是 CommonJS，所以是 .cts；接口类型和 client/src/desktop.ts 的 DesktopApi 一致
 import electron = require("electron");
 
-const { contextBridge, ipcRenderer } = electron;
+const { contextBridge, ipcRenderer, webUtils } = electron;
 
 contextBridge.exposeInMainWorld("desktop", {
   platform: process.platform,
@@ -22,6 +22,13 @@ contextBridge.exposeInMainWorld("desktop", {
   findCaptureSource: (title: string): Promise<unknown> => ipcRenderer.invoke("capture:find", title),
   // 界面上一块区域的截图（PNG base64），右侧面板 HTML 预览里选中的元素用
   captureRect: (rect: { x: number; y: number; width: number; height: number }): Promise<string | null> => ipcRenderer.invoke("window:capture", rect),
+  // 文件树的上传、下载：文件在这台机器上的路径，网关在这台机器上时直接按路径复制（见 main.ts 的 files:*）
+  files: {
+    localGateway: (): Promise<boolean> => ipcRenderer.invoke("files:local-gateway"),
+    pathForFile: (file: File): string => webUtils.getPathForFile(file),
+    pickFiles: (): Promise<string[] | null> => ipcRenderer.invoke("files:pick"),
+    pickSavePath: (name: string): Promise<string | null> => ipcRenderer.invoke("files:pick-save", name),
+  },
   // 内置浏览器（右侧面板的「浏览器」），见 main.ts 和 browser/views.ts
   browser: {
     list: (): Promise<unknown[]> => ipcRenderer.invoke("browser:list"),

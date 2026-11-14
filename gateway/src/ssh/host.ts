@@ -406,6 +406,13 @@ export class SshHost {
     return collect(channel, opts.stdin, opts.timeoutMs ?? 60_000);
   }
 
+  /** 单独开一个 SFTP 通道，不和 sftp() 共用（传大文件时文件树照常能用），用完调 end() 关掉 */
+  async openSftp(): Promise<SFTPWrapper> {
+    await this.ensureReady();
+    const client = this.rawClient();
+    return new Promise((resolve, reject) => client.sftp((err, sftp) => (err ? reject(new SshError(`打开 SFTP 失败：${err.message}`)) : resolve(sftp))));
+  }
+
   /** SFTP 会话，整个连接共用一个 */
   sftp(): Promise<SFTPWrapper> {
     return this.ensureReady().then(() => this.sftpNow());

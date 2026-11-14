@@ -1376,6 +1376,19 @@ main {
   flex: 1; min-width: 0; height: 22px; padding: 0 4px; border: 1px solid var(--accent); border-radius: 4px;
   background: var(--bg); color: var(--text); font: inherit; font-size: 13px; outline: none; user-select: text;
 }
+/* 文件树的上传、下载（FileTransfers.tsx） */
+.file-transfers { flex: none; display: flex; flex-direction: column; gap: 2px; margin: 0 6px 4px; padding: 4px 4px 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); max-height: 168px; overflow: auto; }
+.file-transfer { display: flex; align-items: center; gap: 6px; min-height: 30px; }
+.file-transfer-icon { flex: none; width: 14px; text-align: center; color: var(--accent); font-size: 13px; }
+.file-transfer.error .file-transfer-icon { color: var(--err); }
+.file-transfer-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.file-transfer-name, .file-transfer-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-transfer-name { font-size: 12.5px; color: var(--text); }
+.file-transfer-status { font-size: 11.5px; color: var(--muted); }
+.file-transfer.error .file-transfer-status { color: var(--err); white-space: normal; }
+.file-transfer-bar { height: 3px; border-radius: 2px; overflow: hidden; background: var(--border); }
+.file-transfer-bar > div { height: 100%; background: var(--accent); transition: width 0.3s; }
+.file-transfer .btn-small { flex: none; padding: 2px 6px; font-size: 11.5px; color: var(--text); }
 .file-tree-error { flex: none; margin: 0 6px 4px; cursor: pointer; white-space: normal; }
 /* 文件树第一行：工作目录本身 */
 .files-root .files-name { font-weight: 600; }

@@ -420,6 +420,28 @@ export type SessionListItem = SDKSessionInfo & {
   lastResponseAt: number;
 };
 
+/** 文件树的上传、下载：文件在网关这台机器上的路径和项目里的路径之间直接复制，见 /files/transfers */
+export interface FileTransfer {
+  id: string;
+  /** 项目文件夹（会话的工作目录，远程会话是 ssh://…） */
+  cwd: string;
+  kind: "upload" | "download";
+  /** 文件名 */
+  name: string;
+  /** 项目里的路径（相对项目文件夹）：上传是传到的位置，下载是下载的文件 */
+  path: string;
+  /** 网关这台机器上的路径：上传是源文件，下载是存到的位置 */
+  local: string;
+  /** queued：同一个项目一次传一个，排着队 */
+  state: "queued" | "running" | "done" | "error";
+  /** 已经传了、一共的字节数 */
+  done: number;
+  total: number;
+  /** 开始以来的平均速度，字节/秒 */
+  speed: number;
+  error?: string;
+}
+
 /** GET /files：项目里的一个文件或文件夹，path 相对项目文件夹，文件夹以 / 结尾 */
 export interface ProjectEntry {
   path: string;

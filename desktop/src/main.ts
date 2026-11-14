@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell, type MenuItemConstructorOptions, type OpenDialogOptions, type Rectangle } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell, type MenuItemConstructorOptions, type OpenDialogOptions, type Rectangle, type SaveDialogOptions } from "electron";
 import { GatewayBridge } from "./browser/bridge.js";
 import { ElementInspector, pngBase64 } from "./browser/inspect.js";
 import { BrowserViews, FAVICON_SCHEME, tabInfo } from "./browser/views.js";
@@ -254,6 +254,29 @@ ipcMain.handle("dialog:pick-folder", async (e, defaultPath: unknown) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
   return result.canceled ? null : (result.filePaths[0] ?? null);
+});
+
+// 文件树的上传、下载：网关在这台机器上时，界面把本机路径交给网关直接复制（内容不经过 HTTP），否则界面走 HTTP 上传下载
+ipcMain.handle("files:local-gateway", (e) => {
+  if (!fromUi(e.sender)) return false;
+  const host = new URL(gatewayUrl).hostname;
+  return host === "127.0.0.1" || host === "localhost" || host === "[::1]";
+});
+// 「上传文件…」：系统的打开文件对话框，可以多选，取消时返回 null
+ipcMain.handle("files:pick", async (e) => {
+  if (!fromUi(e.sender)) return null;
+  const options: OpenDialogOptions = { title: "上传文件", properties: ["openFile", "multiSelections"] };
+  const win = BrowserWindow.fromWebContents(e.sender);
+  const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+  return result.canceled || !result.filePaths.length ? null : result.filePaths;
+});
+// 「下载…」：系统的保存对话框，默认在「下载」文件夹、用原来的文件名；已经有的文件对话框会问要不要替换；取消时返回 null
+ipcMain.handle("files:pick-save", async (e, name: unknown) => {
+  if (!fromUi(e.sender)) return null;
+  const options: SaveDialogOptions = { title: "下载", defaultPath: path.join(app.getPath("downloads"), typeof name === "string" ? path.basename(name) : "") };
+  const win = BrowserWindow.fromWebContents(e.sender);
+  const result = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+  return result.canceled || !result.filePath ? null : result.filePath;
 });
 
 // 技能详情等处的「在文件夹中显示」：用系统的文件管理器打开所在的文件夹并选中它；文件不在这台机器上时返回 false

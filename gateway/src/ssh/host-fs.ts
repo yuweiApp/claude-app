@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { createReadStream } from "node:fs";
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { PassThrough, type Readable } from "node:stream";
+import { Readable, Transform, type Writable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import type { SFTPWrapper, Stats } from "ssh2";
 import type { SshHost } from "./host.js";
@@ -24,6 +25,13 @@ export interface FsStat {
   mtimeMs: number;
   /** 同一个文件（大小写不敏感的文件系统上只改大小写时）；远端拿不到，按路径比 */
   id?: string;
+}
+
+export interface CopyOptions {
+  /** 取消：传到一半停下，报 AbortError，写了一半的文件留给调用方删 */
+  signal: AbortSignal;
+  /** 已经传了多少字节 */
+  onProgress(bytes: number): void;
 }
 
 export interface FsDirent {
@@ -47,6 +55,12 @@ export interface HostFs {
   rename(from: string, to: string): Promise<void>;
   /** range：只读这一段，end 含在内 */
   createReadStream(p: string, range?: { start: number; end: number }): Readable;
+  /** 写文件的流，文件打开之后才返回（打不开在这里报错）；exclusive：已经存在就报 EEXIST，否则覆盖 */
+  openWriteStream(p: string, opts?: { exclusive?: boolean }): Promise<Writable>;
+  /** 网关这台机器上的文件 local 复制到 p（这台机器上）；远端单独开一个 SFTP 通道、同时发多个请求。p 已经存在时覆盖 */
+  putFile(local: string, p: string, opts: CopyOptions): Promise<void>;
+  /** p（这台机器上）复制到网关这台机器上的 local；同上 */
+  getFile(p: string, local: string, opts: CopyOptions): Promise<void>;
   /** git 仓库里的文件（含未跟踪、不含忽略的）；不是 git 仓库时 null */
   gitFiles(cwd: string): Promise<string[] | null>;
 }
@@ -85,6 +99,12 @@ export const localFs: HostFs = {
   rm: (p) => rm(p, { recursive: true, force: true }),
   rename: (a, b) => rename(a, b),
   createReadStream: (p, range) => createReadStream(p, range),
+  async openWriteStream(p, opts) {
+    const handle = await open(p, opts?.exclusive ? "wx" : "w");
+    return handle.createWriteStream();
+  },
+  putFile: localCopy,
+  getFile: localCopy,
   async gitFiles(cwd) {
     try {
       const { stdout } = await run("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { cwd, maxBuffer: 64 * 1024 * 1024 });
@@ -94,6 +114,48 @@ export const localFs: HostFs = {
     }
   },
 };
+
+/** 本机上复制，边复制边报进度 */
+async function localCopy(from: string, to: string, { signal, onProgress }: CopyOptions): Promise<void> {
+  let done = 0;
+  const count = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      done += chunk.length;
+      onProgress(done);
+      cb(null, chunk);
+    },
+  });
+  await pipeline(createReadStream(from), count, createWriteStream(to), { signal });
+}
+
+/**
+ * ssh2 的 fastPut、fastGet：同时有 64 个 32KB 的读写请求在路上（读写流一次只发一个，速度被往返延迟卡住）。
+ * 每次单独开一个 SFTP 通道，取消时关掉通道，进行中的请求都会失败、传输结束
+ */
+async function sftpCopy(host: SshHost, kind: "put" | "get", from: string, to: string, { signal, onProgress }: CopyOptions): Promise<void> {
+  signal.throwIfAborted();
+  const s = await host.openSftp();
+  const stop = () => s.end();
+  signal.addEventListener("abort", stop, { once: true });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const opts = { concurrency: 64, chunkSize: 32 * 1024, step: (done: number) => onProgress(done) };
+      const cb = (err: Error | null | undefined) => (err ? reject(err) : resolve());
+      if (kind === "put") s.fastPut(from, to, opts, cb);
+      else s.fastGet(from, to, opts, cb);
+    });
+  } catch (err) {
+    signal.throwIfAborted();
+    throw kind === "put" ? nodeError(err, to) : nodeError(err, from);
+  } finally {
+    signal.removeEventListener("abort", stop);
+    s.end();
+  }
+  signal.throwIfAborted();
+}
+
+/** 远端读流一次读的大小 */
+const READ_CHUNK = 64 * 1024;
 
 const fsCache = new WeakMap<SshHost, HostFs>();
 
@@ -182,14 +244,48 @@ function createRemoteFs(host: SshHost): HostFs {
       await call<void>((cb) => s.rename(a, b, cb), a);
     },
     createReadStream(p, range) {
-      // SFTP 是异步拿到的，先给一个空的可读流，接上后再转
-      const out = new PassThrough();
-      sftp().then(
-        (s) => s.createReadStream(p, range).on("error", (err: Error) => out.destroy(nodeError(err, p))).pipe(out),
-        (err: Error) => out.destroy(err),
-      );
-      return out;
+      // 不用 ssh2 的 createReadStream：Windows 远端上读完后文件句柄没有关，文件一直删不掉、覆盖不了（预览过的图片、下载过的文件），
+      // 要等 SSH 连接断开。这里自己开句柄，读完、出错、提前断开（destroy）都关掉
+      let s: SFTPWrapper | undefined;
+      let handle: Buffer | null = null;
+      let pos = range?.start ?? 0;
+      const end = range ? range.end : Infinity;
+      return new Readable({
+        highWaterMark: READ_CHUNK,
+        construct(cb) {
+          sftp()
+            .then(async (conn) => {
+              s = conn;
+              handle = await call<Buffer>((done) => conn.open(p, "r", done), p);
+            })
+            .then(() => cb(), (err: Error) => cb(err));
+        },
+        read() {
+          const len = Math.min(READ_CHUNK, end - pos + 1);
+          if (len <= 0 || !s || !handle) return void this.push(null);
+          const buf = Buffer.allocUnsafe(len);
+          s.read(handle, buf, 0, len, pos, (err, n) => {
+            if (err) return void this.destroy(nodeError(err, p));
+            if (!n) return void this.push(null);
+            pos += n;
+            this.push(n < len ? buf.subarray(0, n) : buf);
+          });
+        },
+        destroy(err, cb) {
+          const h = handle;
+          handle = null;
+          if (!s || !h) return cb(err);
+          s.close(h, () => cb(err));
+        },
+      });
     },
+    async openWriteStream(p, opts) {
+      const s = await sftp();
+      const handle = await call<Buffer>((cb) => s.open(p, opts?.exclusive ? "wx" : "w", cb), p);
+      return s.createWriteStream(p, { handle });
+    },
+    putFile: (local, p, opts) => sftpCopy(host, "put", local, p, opts),
+    getFile: (p, local, opts) => sftpCopy(host, "get", p, local, opts),
     gitFiles: (cwd) => gitFiles(host, cwd),
   };
 }

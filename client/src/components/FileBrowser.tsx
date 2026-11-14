@@ -6,6 +6,7 @@ import { useDismiss } from "./ComposerPickers";
 import { CodeEditor, type LineRange } from "./CodeEditor";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FileTypeIcon, FolderTypeIcon } from "./FileTypeIcon";
+import { TransferList, useFileTransfers, type UploadItem } from "./FileTransfers";
 import { ZoomableImage } from "./ImageThumb";
 import { MarkdownLiveEditor } from "./MarkdownLiveEditor";
 import { PATH_DRAG_TYPE } from "./MentionText";
@@ -388,6 +389,9 @@ function FileTree({
   const [opError, setOpError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ProjectEntry | null>(null);
   const fail = (e: unknown) => setOpError((e as Error).message);
+  // 上传、下载（见 FileTransfers.tsx）：上传完刷新那个文件夹
+  const transfers = useFileTransfers(cwd, (dir) => void reload([dir]));
+  const [confirmUpload, setConfirmUpload] = useState<{ dir: string; items: UploadItem[]; names: string[] } | null>(null);
 
   /** 展开到这个文件夹（新建时输入框要看得见） */
   const expandTo = (dir: string) => {
@@ -487,6 +491,42 @@ function FileTree({
     await reload([parentOf(entry.path)]);
   };
 
+  /** 上传到文件夹 dir（"" 是根）：有同名的文件先问要不要覆盖，同名的是文件夹不传 */
+  const requestUpload = async (dir: string, items: UploadItem[]) => {
+    setOpError(null);
+    if (!items.length) return;
+    let existing: ProjectEntry[];
+    try {
+      existing = await api.listDir(cwd, trimSlash(dir));
+    } catch (e) {
+      return fail(e);
+    }
+    const taken = new Map(existing.map((e) => [basename(e.path).toLowerCase(), e.dir]));
+    const folders = items.filter((i) => taken.get(i.name.toLowerCase()) === true).map((i) => i.name);
+    if (folders.length) return setOpError(`已经有同名的文件夹：${folders.join("、")}`);
+    const names = items.filter((i) => taken.has(i.name.toLowerCase())).map((i) => i.name);
+    if (names.length) return setConfirmUpload({ dir, items, names });
+    await startUpload(dir, items, false);
+  };
+  const startUpload = async (dir: string, items: UploadItem[], overwrite: boolean) => {
+    setConfirmUpload(null);
+    expandTo(dir);
+    update();
+    try {
+      await transfers.upload(dir, items, overwrite);
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const pickUpload = async (dir: string) => {
+    const items = await transfers.pick();
+    if (items) await requestUpload(dir, items);
+  };
+  const download = (entry: ProjectEntry) => {
+    setOpError(null);
+    transfers.download(entry.path).catch(fail);
+  };
+
   // 右键菜单：entry 为 null 是空白处或第一行（工作目录）
   const [menu, setMenu] = useState<{ x: number; y: number; entry: ProjectEntry | null } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -515,7 +555,9 @@ function FileTree({
       groups.push([
         { label: "新建文件", onClick: () => startNew(dir, false) },
         { label: "新建文件夹", onClick: () => startNew(dir, true) },
+        ...(transfers.ready ? [{ label: "上传文件…", onClick: () => void pickUpload(dir) }] : []),
       ]);
+    if (entry && !entry.dir && transfers.ready) groups.push([{ label: "下载…", onClick: () => download(entry) }]);
     // 复制路径：文件夹的不带末尾的 /；空白处和第一行是工作目录本身
     const rel = entry ? trimSlash(entry.path) : "";
     groups.push(
@@ -586,9 +628,12 @@ function FileTree({
     e.dataTransfer.effectAllowed = "copy";
     setDragPath(e, rel);
   };
+  /** 从系统里拖进来的文件（不是树里拖动的）：放下是上传 */
+  const isExternal = (e: DragEvent) => !dragging.current && transfers.ready && e.dataTransfer.types.includes("Files");
   const onDragOver = (e: DragEvent, dir: string) => {
+    const external = isExternal(e);
     const from = dragging.current;
-    if (!from) return;
+    if (!from && !external) return;
     e.stopPropagation();
     // 悬停在收起的文件夹上 600ms 自动展开
     if (dir && !cache.expanded.has(dir)) {
@@ -601,7 +646,13 @@ function FileTree({
         expandTimer.current = { dir, timer };
       }
     } else clearExpandTimer();
-    if (!canDrop(from, dir)) {
+    if (external) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      setDropDir(dir);
+      return;
+    }
+    if (!from || !canDrop(from, dir)) {
       setDropDir(null);
       return;
     }
@@ -610,6 +661,15 @@ function FileTree({
     setDropDir(dir);
   };
   const onDrop = (e: DragEvent, dir: string) => {
+    if (isExternal(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      endDrag();
+      const { items, folders } = transfers.fromDrop(e.dataTransfer);
+      if (folders.length) setOpError(`不能上传文件夹：${folders.join("、")}`);
+      if (items.length) void requestUpload(dir, items);
+      return;
+    }
     const from = dragging.current;
     if (!from) return;
     e.preventDefault();
@@ -787,6 +847,7 @@ function FileTree({
           {opError}
         </div>
       )}
+      <TransferList rows={transfers.rows} onDismiss={transfers.dismiss} />
       <div
         className="file-tree-list"
         ref={listRef}
@@ -841,6 +902,19 @@ function FileTree({
             </div>
           ))}
         </div>
+      )}
+      {confirmUpload && (
+        <ConfirmDialog
+          title="覆盖同名文件？"
+          message={
+            confirmUpload.names.length === 1
+              ? `「${confirmUpload.names[0]}」已经存在，上传后原来的文件会被替换。`
+              : `「${confirmUpload.names.slice(0, 3).join("」「")}」${confirmUpload.names.length > 3 ? ` 等 ${confirmUpload.names.length} 个文件` : ""}已经存在，上传后原来的文件会被替换。`
+          }
+          confirmLabel="覆盖"
+          onConfirm={() => void startUpload(confirmUpload.dir, confirmUpload.items, true)}
+          onCancel={() => setConfirmUpload(null)}
+        />
       )}
       {confirmDelete && (
         <ConfirmDialog
