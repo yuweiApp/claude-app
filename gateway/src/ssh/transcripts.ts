@@ -52,6 +52,13 @@ export function remoteSessionIds(hostId: string): string[] {
   return Object.entries(load().sessions).filter(([, v]) => v.host === hostId).map(([id]) => id);
 }
 
+/** 这台主机上还有别的会话的记录和它在同一个目录里（同一个工作目录：分叉、清空出来的会话） */
+export function remoteProjectShared(sessionId: string): boolean {
+  const own = load().sessions[sessionId];
+  if (!own?.project) return false;
+  return Object.entries(load().sessions).some(([id, v]) => id !== sessionId && v.host === own.host && v.project === own.project);
+}
+
 /** 新建远程会话时先记下来（第一轮还没落盘时列表里也要知道它在哪台主机） */
 export function registerRemoteSession(sessionId: string, hostId: string): void {
   load().sessions[sessionId] = { host: hostId };

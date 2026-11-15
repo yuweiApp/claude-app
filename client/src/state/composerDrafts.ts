@@ -61,6 +61,15 @@ export function setComposerDraft(key: string, draft: ComposerDraft): void {
   update(key, () => draft);
 }
 
+/** 一个会话的草稿挪到另一个会话名下（清空会话后会话 id 换了，输入框里没发出去的内容跟过去） */
+export function moveComposerDraft(from: string, to: string): void {
+  const draft = drafts.get(from);
+  if (!draft) return;
+  drafts.delete(from);
+  drafts.set(to, draft);
+  listeners.forEach((l) => l());
+}
+
 /** 清空一个会话的草稿（发送成功后） */
 export function clearComposerDraft(key: string): void {
   if (!drafts.delete(key)) return;

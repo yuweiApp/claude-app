@@ -251,6 +251,13 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
   - SDK 里没有目标状态：类型定义里有 `active_goal` 消息，但 Claude Code 只在它自己的云端环境（`CLAUDE_CODE_REMOTE`）往外发，Stop hook 是 prompt 类型，开了 `includeHookEvents` 也没有 hook 事件（实测）。网关按这些自己跟踪（`AgentSession.trackGoal`）：`/goal` 的输出是 model 为 `<synthetic>` 的 assistant 消息（「Goal set: 条件」「Goal cleared: 条件」「No goal set…」「Goal active: …」）；检查没通过时交给模型的是 `isSynthetic` 的 user 消息「Stop hook feedback:\n[条件]: 理由」；连续 9 次没通过 Claude Code 不再拦着、结束这一轮（`system/informational`「A hook blocked the turn from ending 9 consecutive times…」），目标还在。达成、判定做不到只写进会话记录：每次检查一行 `goal_status` 附件（`met`、`failed`、`reason`，达成时带 `iterations`），设定、手动取消各一行 `sentinel`。一轮正常结束、最后一次停下没被拦时，网关去记录里读（远程会话先同步记录；记录可能比 `result` 晚写，最多读 4 次、隔 0.7 秒），读到达成或失败就清掉目标、补发 `goal_status`。
   - resume 时 Claude Code 按记录里最后一行 `goal_status` 恢复目标（不是达成、失败、取消就还在，检查次数从 0 算），中断的一轮不清目标；网关同样从记录里读（`readRecordedGoal`，从末尾往前读到设定那一行，没有目标的会话要读完整个文件，按文件大小、修改时间缓存）。`GET /sessions/:id/context` 返回的 `goal`：子进程在跑的用网关跟踪的，否则从记录里读，不拉起子进程。
   - 对话里：设定、取消是一轮的开头（同空闲时手动压缩，取消那一轮只有一行），实时的归到输出前面那个 `command_lifecycle` 的 `started`（命令的 uuid），历史里是命令本身的记录（`<command-name>/goal</command-name>`，取消的记录里没有条件，用前面设定的那条）；检查没通过是过程里的一行灰字，实时的来自反馈消息，历史的来自 `goal_status`，uuid 对不上，按理由去重；达成、做不到在这一轮最后。`getSessionMessages` 不返回附件，历史接口把没有 `sentinel` 的 `goal_status` 转成 `type: "system"`、`message: { type: "goal_status", … }` 的消息按时间插进去（`history.ts` 的 `withGoalStatus`）。
+- 清空会话（输入框「＋」菜单里的「清空会话」，同 Claude 桌面版的清空、Claude Code 的 `/clear`）：上下文清掉，会话的工作目录、标题、模型、推理强度、权限模式不变，接着发的消息模型看不到之前的内容。
+  - SDK 没有清空的接口或控制请求，做法是把 `/clear` 当一条用户消息交给会话（同 `/compact`，不当成用户消息显示）。Claude Code 清空后**换一个新的会话 id** 接着跑，原来的记录留着不动（实测 0.3.322）：先发 `conversation_reset`（`trigger: "clear"`），之后的消息带新的 `session_id`（不是 `conversation_reset` 里的 `new_conversation_id`），这一轮以 `num_turns` 为 0 的 `result` 结束。新记录这时就写出来了，开头是 `/clear` 命令本身（`<command-name>/clear</command-name>`），`getSessionInfo`、`renameSession`、resume 都能用。
+  - 这里会话 id 就是 Claude Code 的会话 id，所以清空后网页换到新的 id：`POST /sessions/:id/clear` 返回新 id，网页切过去（右侧面板开着的接着开着，输入框里没发出去的内容跟过去）。原来的对话留在原来的 id 下，还在会话列表里，可以打开、接着聊、删除（Claude Code 的 `/clear` 之后旧会话也还能 resume）。
+  - 网关（`SessionManager.clear`）：子进程回收了的先 resume；`AgentSession.clear()` 交出 `/clear`，收到 `conversation_reset` 之后的消息不再当成原会话的发给网页，等到 `result` 拿新 id；然后关掉子进程、按新 id resume 一个新的（子进程里的浏览器、桌面工具是按会话 id 建的，不能留着接着用），带上原来的模型、推理强度、权限模式，发一次 `state`。标题写成新会话的自定义标题（不写的话列表里显示成「/clear」）；远程会话登记到同一台主机、同步一次记录。清空期间原会话不收新的输入（409）。
+  - 一轮进行中、有后台任务在跑或通知没交给模型时不能清空（409，菜单项置灰、说明换成原因）：`/clear` 会把后台任务一起结束。新会话页没有这一项。
+  - 清空出来的会话和原会话用同一个工作目录（分叉也是）：删其中一个时，这个目录里还有别的会话的记录就不删 scratch 目录（`removeScratchDirIfEmpty`，远程的看 `gateway-ssh-sessions.json` 里同一个目录的会话）。
+  - 网页：历史里 `/clear` 命令本身的记录不显示；清空出来的会话还没有消息时对话区显示「会话已清空」。
 - `WebSearch` 是 Anthropic 服务端工具，第三方模型用不了，默认放进 `disallowedTools`。
 - `WebFetch` 每次抓网页前会先请求 `api.anthropic.com/api/web/domain_info?domain=<域名>` 查域名黑名单，Anthropic 不支持的地区（如中国）这个接口一律返回 403，所有网址都报 "Unable to verify if domain … is safe to fetch"，网页本身其实能连上。网关在 SDK 的 `settings` 选项里设 `skipWebFetchPreflight: true` 跳过这一步。
 - Windows 上命令输出的编码：Claude Code 的 Bash 工具跑的是 Git Bash，模型在里面调 `powershell.exe`、`ipconfig` 等原生程序时，它们按控制台代码页输出（中文系统是 936，GBK），Claude Code 按 UTF-8 读，中文全是乱码。`agentEnv()` 在 Windows 上给子进程设 `CLAUDE_ENV_FILE`，指向网关写在 `$CLAUDE_CONFIG_DIR/claude-app-env.sh` 的脚本，Claude Code 每条 Bash 命令前在同一个 shell 里先执行它（`chcp.com 65001`）；环境里原来有 `CLAUDE_ENV_FILE` 的放进 `CLAUDE_APP_USER_ENV_FILE`，脚本最后接着 source 它。以前用的是 `BASH_ENV`，Claude Code 起 bash 时把它当不安全的变量去掉了，不生效（SSH 远程会话里在中文 Windows 上实测，见第 14 节）。Claude Code 自己的 PowerShell 工具（`CLAUDE_CODE_USE_POWERSHELL_TOOL=1`，预览）也是先 `chcp 65001` 再起 PowerShell。
@@ -301,6 +308,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | POST | `/sessions/:id/goal` | 设定目标 `{ condition }`（`/goal <条件>`），已有的换掉；子进程回收了的先 resume，这一轮还在进行时先结束这一轮；条件为空、超过 4000 字、正好是取消用的词时 400 |
 | DELETE | `/sessions/:id/goal` | 取消目标（`/goal clear`）；没有目标时 409 |
 | POST | `/sessions/:id/compact` | 压缩上下文（`/compact`）；子进程回收了的先 resume，这一轮还在进行时 409 |
+| POST | `/sessions/:id/clear` | 清空会话（`/clear`）→ `{ sessionId }`：清空后的会话 id（Claude Code 换了新的 id，原来的对话留在原来的 id 下）；子进程回收了的先 resume，这一轮还在进行、有后台任务在跑时 409 |
 | POST | `/sessions/:id/permissions/:requestId` | `{ behavior: 'allow' \| 'deny', message?, always? }` |
 | GET | `/sessions/:id/events` | SSE |
 | DELETE | `/sessions/:id/process` | 关闭活跃进程（不删记录） |

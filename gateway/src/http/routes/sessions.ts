@@ -386,6 +386,12 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     return { ok: true };
   });
 
+  /**
+   * 清空会话（同 Claude Code 的 /clear）：上下文清掉，返回清空后的会话 id（Claude Code 换了新的 id，原来的记录留在原来的 id 下）。
+   * 这一轮还在进行、有后台任务在跑时 409
+   */
+  app.post<{ Params: IdParams }>("/sessions/:id/clear", async (req) => ({ sessionId: await sessions.clear(req.params.id) }));
+
   app.post<{
     Params: IdParams & { requestId: string };
     Body: { behavior: "allow" | "deny"; message?: string; always?: boolean; answers?: Record<string, string> };

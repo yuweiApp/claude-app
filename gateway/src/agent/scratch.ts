@@ -59,10 +59,12 @@ export async function sessionRecordDir(sessionId: string): Promise<string | unde
 
 /**
  * 删普通会话之后：它的 scratch 目录是空的就一起删掉，里面有文件（AI 下载、写的）就留着，不替用户删文件；
- * 会话记录的文件夹（一个 scratch 目录只有这一个会话）空了也删掉。rmdir 只删空目录
+ * 会话记录的文件夹空了也删掉。rmdir 只删空目录。
+ * 这个目录里还有别的会话时（分叉、清空出来的会话和原会话用同一个 scratch 目录）不删：那些会话还要在里面跑
  */
 export async function removeScratchDirIfEmpty(cwd: string | undefined, recordDir: string | undefined): Promise<void> {
   if (!cwd || parseRemote(cwd) || path.resolve(cwd) === config.workspaceDir || !isChatCwd(cwd)) return;
+  if (recordDir && (await readdir(recordDir).catch(() => [])).some((name) => name.endsWith(".jsonl"))) return;
   await rmdir(cwd).catch(() => undefined);
   if (recordDir) await rmdir(recordDir).catch(() => undefined);
 }

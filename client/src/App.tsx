@@ -31,7 +31,7 @@ import { DesktopPicker } from "./components/DesktopPicker";
 import { emptyView, reduce } from "./state/session";
 import { AnnotationEditor, AnnotationSelectionButton, AnnotationSessionContext, NotesChip } from "./components/ResponseAnnotations";
 import { ANNOTATION_SCOPE_ATTR, clearResponseAnnotations, restoreResponseAnnotations, useResponseAnnotations, withResponseAnnotations, type ResponseAnnotation } from "./state/responseAnnotations";
-import { setComposerDraft, type ComposerDraft } from "./state/composerDrafts";
+import { moveComposerDraft, setComposerDraft, type ComposerDraft } from "./state/composerDrafts";
 
 export function App() {
   const [config, setConfig] = useState<GatewayConfig | null>(null);
@@ -331,6 +331,13 @@ export function App() {
                   select(id);
                   refresh();
                 }}
+                onCleared={(from, to) => {
+                  // 清空后会话换了 id（原来的对话留在原来的 id 下）：右侧面板开着的接着开着，输入框里没发出去的内容跟过去
+                  setPanelOpenBy((all) => (all[from] ? { ...all, [to]: true } : all));
+                  moveComposerDraft(from, to);
+                  select(to);
+                  refresh();
+                }}
                 onChanged={refresh}
                 // Chat 按会话 id 重建，晚到的报错（切走后才失败的请求）记在发出它的那个会话上
                 onError={(message) => setSessionError(currentId ?? "new", message)}
@@ -429,6 +436,8 @@ interface ChatProps {
   sessionId: string | null;
   config: GatewayConfig;
   onCreated: (id: string) => void;
+  /** 清空了会话：from 是原来的会话 id，to 是清空后的 */
+  onCleared: (from: string, to: string) => void;
   onChanged: () => void;
   onError: (message: string) => void;
   /** 标题栏最左边的内容：侧边栏收起时是「展开侧边栏」按钮 */
@@ -449,6 +458,7 @@ function Chat({
   cwd,
   config,
   onCreated,
+  onCleared,
   onChanged,
   onError,
   headerStart,
@@ -555,6 +565,19 @@ function Chat({
   const clearGoal = async () => {
     if (!sessionId) return;
     await api.clearGoal(sessionId).catch((e: Error) => onError(`取消目标失败：${e.message}`));
+  };
+  // 清空会话（「＋」菜单）：网关交给 Claude Code 一条 /clear，清空后换到新的会话 id
+  const [clearing, setClearing] = useState(false);
+  const clearSession = () => {
+    if (!sessionId || clearing) return;
+    setClearing(true);
+    api.clearSession(sessionId).then(
+      (id) => onCleared(sessionId, id),
+      (e: Error) => {
+        setClearing(false);
+        onError(`清空会话失败：${e.message}`);
+      },
+    );
   };
 
 
@@ -729,6 +752,12 @@ function Chat({
           </div>
         )}
         {sessionId && !view.historyLoaded && <div className="history-loading">正在加载对话…</div>}
+        {sessionId && view.historyLoaded && view.cleared && view.items.length === 0 && view.queued.length === 0 && view.state !== "running" && (
+          <div className="empty">
+            会话已清空
+            <div className="empty-sub">上下文是空的，之前的对话还在会话列表里</div>
+          </div>
+        )}
         <AnnotationSessionContext.Provider value={sessionId}>
           {(!sessionId || view.historyLoaded) && <Messages
             view={view}
@@ -774,6 +803,16 @@ function Chat({
         hasNotes={annotations.length > 0}
         onGoal={() => setGoalEditing(true)}
         goalActive={!!goal}
+        onClear={sessionId ? clearSession : undefined}
+        clearBlocked={
+          clearing
+            ? "正在清空…"
+            : view.state === "running"
+              ? "这一轮结束后才能清空"
+              : view.noticePending || view.backgroundTasks.some((t) => t.status === "running")
+                ? "后台任务结束后才能清空"
+                : undefined
+        }
         goal={
           goalEditing ? (
             <GoalEditor initial={goal?.condition ?? ""} running={view.state === "running"} onSubmit={submitGoal} onClose={() => setGoalEditing(false)} />

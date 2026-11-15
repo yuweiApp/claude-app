@@ -37,7 +37,7 @@ import { existingHost, sshHost } from "../ssh/hosts.js";
 import type { SshHost } from "../ssh/host.js";
 import { rmdirQuiet } from "../ssh/remote-ops.js";
 import { remoteFs } from "../ssh/host-fs.js";
-import { appendRemote, deleteRemoteSession, registerRemoteSession, remoteSessionHost, syncHost, syncSession, uploadForkedSession } from "../ssh/transcripts.js";
+import { appendRemote, deleteRemoteSession, registerRemoteSession, remoteProjectShared, remoteSessionHost, syncHost, syncSession, uploadForkedSession } from "../ssh/transcripts.js";
 import { listConnections } from "../ssh/connections.js";
 import type { SessionContextInfo } from "../shared/types.js";
 import { compactedSinceReply, forgetSession, savedUsage, saveUsage } from "./context-usage.js";
@@ -349,6 +349,37 @@ export class SessionManager {
     (await this.activate(sessionId)).clearGoal();
   }
 
+  /**
+   * 清空会话（同 Claude Code 的 /clear、Claude 桌面版的清空会话）：上下文清掉，返回新的会话 id。
+   * Claude Code 清空后换了一个新的会话 id，原来的记录留着不动（列表里还是原来那个会话，可以打开、接着聊、删除）；
+   * 新会话沿用原来的工作目录、标题、模型、推理强度和权限模式。子进程回收了的先 resume。
+   * 清完关掉子进程、按新 id 重新拉起：子进程里的浏览器、桌面工具是按会话 id 建的
+   */
+  async clear(sessionId: string): Promise<string> {
+    const session = await this.activate(sessionId);
+    const { cwd, modelOption: model, effort, permissionMode } = session;
+    const info = await getSessionInfo(sessionId).catch(() => undefined);
+    // 新记录的第一条是 /clear 命令本身，不设标题的话列表里显示成「/clear」
+    const title = this.titles.get(sessionId) || info?.customTitle || info?.summary || "新会话";
+    const newId = await session.clear();
+    await session.close();
+    const hostId = remoteSessionHost(sessionId);
+    if (hostId) {
+      registerRemoteSession(newId, hostId);
+      await syncSession(await readyHost(hostId), newId).catch(() => undefined);
+    }
+    try {
+      await this.writeTitle(newId, title);
+      this.titles.set(newId, title);
+    } catch (err) {
+      this.log.warn({ sessionId: newId, err }, "给清空后的会话设置标题失败");
+    }
+    this.lastSettings.set(newId, { model, effort });
+    this.log.info({ sessionId, newId }, "清空会话");
+    (await this.launch(newId, true, { cwd, model, effort, permissionMode })).announce();
+    return newId;
+  }
+
   async closeSession(sessionId: string): Promise<void> {
     await this.active.get(sessionId)?.close();
   }
@@ -385,13 +416,15 @@ export class SessionManager {
     const cwd = session?.cwd ?? (await this.cwd(sessionId));
     // 子进程退出时还会往记录里写几行，等一下再删
     if (session) await sleep(1500);
+    // 还有别的会话用着同一个工作目录（分叉、清空出来的）：scratch 目录留着
+    const shared = remoteProjectShared(sessionId);
     await deleteRemoteSession(host, sessionId);
     this.titles.delete(sessionId);
     this.lastSettings.delete(sessionId);
     forgetSession(sessionId);
     this.disposeSession(sessionId);
     const dir = parseRemote(cwd)?.path;
-    if (dir && host.env && isScratchIn(dir, host.env.workspace)) await rmdirQuiet(host, dir);
+    if (dir && !shared && host.env && isScratchIn(dir, host.env.workspace)) await rmdirQuiet(host, dir);
   }
 
   private disposeSession(sessionId: string): void {

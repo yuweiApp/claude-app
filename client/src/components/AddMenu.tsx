@@ -2,11 +2,20 @@ import { useRef, useState } from "react";
 import { useDismiss } from "./ComposerPickers";
 import { GoalIcon } from "./Goal";
 
+interface Props {
+  onUpload: () => void;
+  onGoal?: () => void;
+  goalActive?: boolean;
+  onClear?: () => void;
+  clearBlocked?: string;
+}
+
 /**
- * 输入框左下角的「＋」：点开是添加菜单，上传文件、设定目标（Claude Code 的 /goal）。
- * onGoal 不传不显示目标；goalActive：已有进行中的目标，点开是修改
+ * 输入框左下角的「＋」：点开是添加菜单，上传文件、设定目标（Claude Code 的 /goal）、清空会话（/clear）。
+ * onGoal 不传不显示目标；goalActive：已有进行中的目标，点开是修改。
+ * onClear 不传不显示清空会话（新会话页）；clearBlocked：现在不能清空的原因，这一项置灰、说明换成它
  */
-export function AddMenu({ onUpload, onGoal, goalActive = false }: { onUpload: () => void; onGoal?: () => void; goalActive?: boolean }) {
+export function AddMenu({ onUpload, onGoal, goalActive = false, onClear, clearBlocked }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
@@ -45,9 +54,35 @@ export function AddMenu({ onUpload, onGoal, goalActive = false }: { onUpload: ()
               <span className="add-menu-desc">{goalActive ? "修改进行中的目标" : "设定完成条件，达成前一直做下去"}</span>
             </button>
           )}
+          {onClear && (
+            <button
+              className="add-menu-item"
+              role="menuitem"
+              disabled={!!clearBlocked}
+              onClick={() => {
+                setOpen(false);
+                onClear();
+              }}
+            >
+              <ClearIcon />
+              <span className="add-menu-name">清空会话</span>
+              <span className="add-menu-desc">{clearBlocked ?? "清掉上下文，从头开始"}</span>
+            </button>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+/** 一把扫帚 */
+function ClearIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M13.5 2.5 8.6 7.4" />
+      <path d="M6.9 6.2 9.8 9.1c.5.5.5 1.2.1 1.8-1.2 1.7-3.3 2.9-7.4 2.6 1.2-1 1.7-2.2 1.9-3.6.2-1.5.5-2.6 1.3-3.4a.9.9 0 0 1 1.2-.3z" />
+      <path d="M4.6 9.3 7 11.7" />
+    </svg>
   );
 }
 

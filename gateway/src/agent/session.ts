@@ -133,6 +133,10 @@ export class AgentSession {
    * 模型又回复了就清掉（下一次停下又会检查）
    */
   private goalBlocked = false;
+  /** 正在清空（见 clear）：/clear 交出去了，等 Claude Code 换到新的会话 id */
+  private clearing?: { resolve: (sessionId: string) => void; reject: (err: Error) => void };
+  /** /clear 生效了（收到 conversation_reset）：子进程之后的消息是新会话的，不再当成这个会话的发给网页 */
+  private resetSeen = false;
 
   constructor(
     readonly id: string,
@@ -224,6 +228,7 @@ export class AgentSession {
   }
 
   private push(content: UserContent, priority?: MessagePriority, draft?: unknown): string {
+    this.rejectWhileClearing();
     const uuid = randomUUID();
     const now = this.state === "running" && this.pending.size === 0 && (priority ? priority === "now" : this.toolsInFlight.size > 0);
     // 这一轮还在进行时发的，不管 now 还是 next，都要等 Claude Code 交给模型（command_lifecycle started）才知道落在哪里：
@@ -258,8 +263,31 @@ export class AgentSession {
   compact(): void {
     // 刚 resume 的子进程在收到第一条输入前一直是 starting
     if (this.state === "running" || this.state === "closed") throw Object.assign(new Error("这一轮结束后才能压缩"), { statusCode: 409 });
+    this.rejectWhileClearing();
     this.input.push({ type: "user", uuid: randomUUID(), message: { role: "user", content: "/compact" }, parent_tool_use_id: null, origin: { kind: "human" } });
     this.setState("running");
+  }
+
+  /**
+   * 清空会话：交给 Claude Code 一条 /clear（同在它的终端里输入），不当成用户消息显示。
+   * Claude Code 丢掉上下文，换一个新的会话 id 接着跑（原来的记录留着不动，新记录开头是 /clear 命令本身）：先发 conversation_reset，
+   * 之后的消息带新的会话 id（实测 conversation_reset 的 new_conversation_id 不是它），这一轮以 turns 为 0 的 result 结束。
+   * 返回新的会话 id。这个子进程里的工具（浏览器、桌面）是按原来的会话 id 建的，调用方拿到新 id 后关掉它，按新 id 重新拉起（见 SessionManager.clear）。
+   * 一轮进行中、有后台任务在跑或通知没交给模型时不清（/clear 会把后台任务一起结束）
+   */
+  clear(): Promise<string> {
+    if (this.state === "running" || this.state === "closed") throw Object.assign(new Error("这一轮结束后才能清空"), { statusCode: 409 });
+    if (this.backgroundBusy) throw Object.assign(new Error("后台任务结束后才能清空"), { statusCode: 409 });
+    this.rejectWhileClearing();
+    const done = new Promise<string>((resolve, reject) => (this.clearing = { resolve, reject }));
+    this.input.push({ type: "user", uuid: randomUUID(), message: { role: "user", content: "/clear" }, parent_tool_use_id: null, origin: { kind: "human" } });
+    this.setState("running");
+    return done;
+  }
+
+  /** 清空期间不收新的输入：/clear 之后子进程已经是新会话，交进去的消息不算这个会话的 */
+  private rejectWhileClearing(): void {
+    if (this.clearing || this.resetSeen) throw Object.assign(new Error("会话正在清空"), { statusCode: 409 });
   }
 
   /**
@@ -279,6 +307,7 @@ export class AgentSession {
 
   private goalCommand(content: string): void {
     if (this.state === "closed") throw Object.assign(new Error("会话已结束"), { statusCode: 409 });
+    this.rejectWhileClearing();
     // 有待确认的权限时同 push：now 会让这个工具调用被拒，排到下一个工具结果之后
     const priority: MessagePriority | undefined = this.state === "running" ? (this.pending.size ? "next" : "now") : undefined;
     this.input.push({ type: "user", uuid: randomUUID(), message: { role: "user", content }, parent_tool_use_id: null, origin: { kind: "human" }, ...(priority ? { priority } : {}) });
@@ -527,6 +556,18 @@ export class AgentSession {
     try {
       for await (const message of this.query) {
         this.lastActiveAt = Date.now();
+        // 清空（见 clear）：conversation_reset 之后的消息是新会话的，不发给网页、不记进这个会话；等到 result 就知道新的会话 id
+        if (message.type === "conversation_reset" && this.clearing) {
+          this.resetSeen = true;
+          continue;
+        }
+        if (this.resetSeen) {
+          if (message.type === "result") {
+            this.clearing?.resolve(message.session_id);
+            this.clearing = undefined;
+          }
+          continue;
+        }
         if (message.type === "system" && message.subtype === "init") {
           this.model = message.model;
           this.permissionMode = message.permissionMode;
@@ -596,6 +637,9 @@ export class AgentSession {
         }
         if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });
         if (message.type === "result") {
+          // /clear 的这一轮结束了却没有 conversation_reset：Claude Code 没清
+          this.clearing?.reject(Object.assign(new Error("Claude Code 没有执行 /clear"), { statusCode: 500 }));
+          this.clearing = undefined;
           this.afterResult = true;
           this.setState("idle");
           this.toolResultSinceRequest = false;
@@ -626,6 +670,8 @@ export class AgentSession {
       clearTimeout(this.noticeTimer);
       this.pendingNotices.clear();
       this.queuedNext.clear();
+      this.clearing?.reject(Object.assign(new Error("清空没完成，claude 进程结束了"), { statusCode: 500 }));
+      this.clearing = undefined;
       this.setState("closed");
       this.onClosed(this);
     }
@@ -650,6 +696,11 @@ export class AgentSession {
     this.state = state;
     if (state !== "idle") clearTimeout(this.noticeTimer);
     this.lastActiveAt = Date.now();
+    this.publishState();
+  }
+
+  /** 把现在的状态（模型、推理强度、权限模式）发给网页：刚拉起的子进程在收到第一条输入前不发 state */
+  announce(): void {
     this.publishState();
   }
 

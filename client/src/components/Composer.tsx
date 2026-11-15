@@ -65,10 +65,13 @@ interface Props {
   /** 「＋」菜单里的「目标」；goalActive：已有进行中的目标 */
   onGoal?: () => void;
   goalActive?: boolean;
+  /** 「＋」菜单里的「清空会话」，不传不显示；clearBlocked：现在不能清空的原因（这一项置灰） */
+  onClear?: () => void;
+  clearBlocked?: string;
 }
 
 /** 输入框，样式同 codex-app-server：一个圆角框，上面输入，下面一行「+」、权限、模型、发送 */
-export function Composer({ running, working = running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, draftKey, onContinue, notes, hasNotes = false, queued = [], onQueued, goal, onGoal, goalActive }: Props) {
+export function Composer({ running, working = running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, draftKey, onContinue, notes, hasNotes = false, queued = [], onQueued, goal, onGoal, goalActive, onClear, clearBlocked }: Props) {
   const [text, setText] = useDraftField(draftKey, "text");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
@@ -554,7 +557,7 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
             e.target.value = "";
           }}
         />
-        <AddMenu onUpload={() => inputRef.current?.click()} onGoal={onGoal} goalActive={goalActive} />
+        <AddMenu onUpload={() => inputRef.current?.click()} onGoal={onGoal} goalActive={goalActive} onClear={onClear} clearBlocked={clearBlocked} />
         {left}
         <div className="spacer" />
         {right}

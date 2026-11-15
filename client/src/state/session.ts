@@ -195,6 +195,8 @@ export interface SessionView {
    * api_retry 不带 parent_tool_use_id，分不出是主线程还是子代理的请求，都显示
    */
   retry: ApiRetry | null;
+  /** 清空出来的会话：记录开头是 /clear 命令本身（网关的 SessionManager.clear），还没有消息时对话区显示「会话已清空」 */
+  cleared: boolean;
 }
 
 /** 一次模型请求重试（SDKAPIRetryMessage）。at：收到的时间，算这次重试等了多久 */
@@ -233,6 +235,7 @@ export function emptyView(): SessionView {
     context: null,
     goal: undefined,
     retry: null,
+    cleared: false,
   };
 }
 
@@ -644,6 +647,7 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       return;
     }
     if (local !== null) {
+      if (!parent && typeof content === "string" && /^<command-name>\/clear<\/command-name>/.test(content.trim())) view.cleared = true;
       // /compact 成功时的「Compacted」：前面已经有「上下文已压缩」那一行
       if (local && !/^Compacted\b/.test(local)) pushItem(view, parent, { kind: "notice", uuid, text: local });
       else view.seen = new Set(view.seen).add(uuid);

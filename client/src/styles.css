@@ -1095,7 +1095,7 @@ main {
 .add-menu { position: relative; }
 .add-menu-list { min-width: 280px; }
 .add-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: none; border-radius: 6px; background: none; text-align: left; white-space: nowrap; }
-.add-menu-item:hover { background: var(--panel); }
+.add-menu-item:hover:not(:disabled) { background: var(--panel); }
 .add-menu-item svg { flex: none; color: var(--muted); }
 .add-menu-name { font-size: 14px; font-weight: 600; }
 .add-menu-desc { color: var(--muted); font-size: 13px; }

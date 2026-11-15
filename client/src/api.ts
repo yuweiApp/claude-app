@@ -219,6 +219,8 @@ export const api = {
   context: (id: string) => request<SessionContextInfo>("GET", `/sessions/${id}/context`),
   /** 压缩上下文（同 Claude Code 的 /compact） */
   compact: (id: string) => request("POST", `/sessions/${id}/compact`),
+  /** 清空会话（同 Claude Code 的 /clear）：返回清空后的会话 id，原来的对话留在原来的 id 下 */
+  clearSession: (id: string) => request<{ sessionId: string }>("POST", `/sessions/${id}/clear`).then((r) => r.sessionId),
   /** 设定目标（换掉已有的）；这一轮还在进行时网关先结束这一轮 */
   setGoal: (id: string, condition: string) => request("POST", `/sessions/${id}/goal`, { condition }),
   /** 取消目标 */
