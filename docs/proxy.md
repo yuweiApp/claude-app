@@ -1,6 +1,6 @@
 # 网络代理
 
-> 进度：第 1 到 4 步，以及 SOCKS5、终端面板都已实现：网关（`gateway/src/net/proxy.ts`、`gateway/src/net/socks-bridge.ts`、`gateway/src/http/routes/proxy.ts`）、设置页（`client/src/components/ProxyPage.tsx`）、桌面版内置浏览器和查系统代理（`desktop/src/browser/network-proxy.ts`）。Windows、macOS 真机还没测过。
+> 进度：第 1 到 4 步，以及 SOCKS5、终端面板、订阅模式（[proxy-subscription.md](proxy-subscription.md)）都已实现：网关（`gateway/src/net/proxy.ts`、`gateway/src/net/socks-bridge.ts`、`gateway/src/http/routes/proxy.ts`）、设置页（`client/src/components/ProxyPage.tsx`）、桌面版内置浏览器和查系统代理（`desktop/src/browser/network-proxy.ts`）。Windows、macOS 真机还没测过。
 
 设置页加「网络代理」，让软件发出去的请求都走用户设的代理：模型请求、网关自己发的请求、claude 子进程里的工具（Bash、MCP、git）、内置浏览器。
 
@@ -38,6 +38,7 @@
 | 跟随系统（默认） | 桌面版：用操作系统的代理设置（见第 5 节）。网页版、没有外壳连着时：沿用网关进程继承来的 `HTTPS_PROXY` 等变量，也就是现在的行为 |
 | 不使用 | 一律直连。传给子进程的环境变量里删掉继承来的 `*_PROXY` / `*_proxy`；内置浏览器设成 `direct` |
 | 手动 | 用下面填的地址 |
+| 订阅 | 只填订阅链接，网关在本机拉起代理内核 mihomo 连订阅里的节点（VLESS、VMess、Trojan、Shadowsocks 等），所有出口都指向内核在本机开的代理端口。见 [proxy-subscription.md](proxy-subscription.md) |
 
 手动模式填：
 
@@ -59,6 +60,7 @@
 - `GET /proxy`：返回模式、地址、用户名、`hasPassword`、不走代理的列表、当前生效的代理。**不返回密码明文**。
 - `PUT /proxy`：保存。密码字段不传表示不改，传空字符串表示清掉。
 - `POST /proxy/test`：按请求体里的设置测一次，不保存。
+- 订阅模式另有 `GET /proxy/nodes`、`PUT /proxy/node`、`POST /proxy/nodes/delay`、`POST /proxy/subscription/update`，见 [proxy-subscription.md](proxy-subscription.md) 第 4.5 节。
 - 类型放 `gateway/src/shared/types.ts`（`ProxySettings`、`ProxySettingsView`、`ProxyTestResult`）。
 
 ## 3. 网关

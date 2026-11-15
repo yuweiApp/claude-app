@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { Agent, type Dispatcher, EnvHttpProxyAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { config } from "../config.js";
 import type { ProxyMode, ProxySettingsInput, ProxySettingsView, ProxyTestResult } from "../shared/types.js";
+import { proxyCore } from "./core.js";
 import { SocksBridge, socksConnect, type SocksUpstream } from "./socks-bridge.js";
 
 /**
@@ -12,7 +13,8 @@ import { SocksBridge, socksConnect, type SocksUpstream } from "./socks-bridge.js
  * - claude 子进程的环境变量（applyProxyEnv）：Claude Code 的模型请求和它拉起的 Bash、MCP、git 都按这些变量走，
  *   只在子进程启动时读，所以改了以后由会话管理器把用旧设置启动的子进程换掉（proxyEnvKey、onProxyChange）
  * 存在 Claude Code 配置目录下（同 gateway-browsers.json）；有密码，文件权限 600。
- * SOCKS5 代理：子进程和网关自己的请求都只认 HTTP 代理，指向网关在本机开的转接（socks-bridge.ts），由它经 SOCKS5 连出去
+ * SOCKS5 代理：子进程和网关自己的请求都只认 HTTP 代理，指向网关在本机开的转接（socks-bridge.ts），由它经 SOCKS5 连出去。
+ * 订阅：网关拉起代理内核 mihomo（core.ts），订阅里的节点变成本机的一个代理端口，所有出口都指向它
  */
 const file = () => path.join(config.claudeConfigDir, "gateway-proxy.json");
 
@@ -22,7 +24,15 @@ interface Stored {
   username?: string;
   password?: string;
   noProxy?: string[];
+  /** 订阅地址：当密码对待，不回给网页、不进日志、不给模型 */
+  subscriptionUrl?: string;
+  /** 自动更新订阅的间隔（小时） */
+  subscriptionInterval?: number;
 }
+
+const DEFAULT_SUBSCRIPTION_INTERVAL = 12;
+/** 订阅模式下「实际用的代理」显示成什么（内核的地址带令牌，不给人看） */
+const SUBSCRIPTION_DISPLAY = "订阅";
 
 export class ProxySettingsError extends Error {}
 
@@ -143,6 +153,11 @@ function effectiveFor(raw: string, noProxy: string[], creds: { username?: string
 function effectiveOf(stored: Stored, token?: string): Effective | null {
   const mode = stored.mode ?? "system";
   if (mode === "off") return null;
+  if (mode === "subscription") {
+    // 内核没起来时也指向它（连不上就报错），不退回直连
+    if (!stored.subscriptionUrl) return null;
+    return { url: proxyCore.proxyUrl, display: SUBSCRIPTION_DISPLAY, noProxy: [...FIXED_NO_PROXY_ENV, ...(stored.noProxy ?? [])], replaceEnv: true };
+  }
   if (mode === "manual") {
     if (!stored.url) return null;
     return effectiveFor(stored.url, [...FIXED_NO_PROXY_ENV, ...(stored.noProxy ?? [])], stored, true, token);
@@ -198,7 +213,10 @@ const settings = (): Stored => (stored ??= read());
 const listeners = new Set<() => void>();
 
 function install(): void {
-  const effective = effectiveOf(settings());
+  const s = settings();
+  // 订阅模式才跑代理内核；订阅地址、更新间隔变了内核重启（端口不变）；订阅地址清掉了的，内核的工作目录也删掉
+  proxyCore.apply(s.mode === "subscription" && s.subscriptionUrl ? { url: s.subscriptionUrl, intervalHours: s.subscriptionInterval ?? DEFAULT_SUBSCRIPTION_INTERVAL } : null, !s.subscriptionUrl);
+  const effective = effectiveOf(s);
   // SOCKS5 的上游换了，转接的地址不变，子进程不用换，之后的连接就走新的上游
   if (effective?.socks) bridge.register(effective.socks, BRIDGE_TOKEN);
   else bridge.unregister(BRIDGE_TOKEN);
@@ -211,7 +229,13 @@ function install(): void {
 /** 网关启动时调用一次，在发出任何请求之前 */
 export async function initProxy(): Promise<void> {
   await bridge.start();
+  await proxyCore.init();
   install();
+}
+
+/** 网关关闭时：关掉代理内核 */
+export function stopProxy(): Promise<void> {
+  return proxyCore.stop();
 }
 
 export function proxySettingsView(): ProxySettingsView {
@@ -228,6 +252,7 @@ export function proxySettingsView(): ProxySettingsView {
     inherited: inherited ? displayUrl(inherited) : null,
     system: osRoute === undefined ? null : { proxy: osProxy().url ?? null, unusable: osProxy().unusable ?? null },
     effective: effective ? effective.display : null,
+    subscription: { hasUrl: Boolean(current.subscriptionUrl), intervalHours: current.subscriptionInterval ?? DEFAULT_SUBSCRIPTION_INTERVAL, core: proxyCore.status() },
   };
 }
 
@@ -235,7 +260,7 @@ export function proxySettingsView(): ProxySettingsView {
 function resolveInput(input: ProxySettingsInput): Stored {
   const current = settings();
   const mode = input.mode;
-  if (mode !== "system" && mode !== "off" && mode !== "manual") throw new ProxySettingsError(`不认识的代理模式：${String(mode)}`);
+  if (mode !== "system" && mode !== "off" && mode !== "manual" && mode !== "subscription") throw new ProxySettingsError(`不认识的代理模式：${String(mode)}`);
   const username = (input.username ?? current.username ?? "").trim();
   const password = input.password ?? current.password ?? "";
   const next: Stored = { mode };
@@ -246,12 +271,40 @@ function resolveInput(input: ProxySettingsInput): Stored {
   if (username && password) next.password = password;
   const noProxy = normalizeNoProxy(input.noProxy ?? current.noProxy ?? []);
   if (noProxy.length) next.noProxy = noProxy;
+  // 订阅：不传是不改，空字符串是清掉；别的模式下也留着，切回来不用重填
+  const subscriptionUrl = input.subscriptionUrl === undefined ? current.subscriptionUrl : normalizeSubscriptionUrl(input.subscriptionUrl);
+  if (subscriptionUrl) next.subscriptionUrl = subscriptionUrl;
+  if (mode === "subscription" && !subscriptionUrl) throw new ProxySettingsError("请填写订阅地址");
+  const interval = input.subscriptionInterval ?? current.subscriptionInterval;
+  if (interval !== undefined) {
+    if (!Number.isFinite(interval) || interval < 1 || interval > 168) throw new ProxySettingsError("自动更新订阅的间隔要在 1 到 168 小时之间");
+    next.subscriptionInterval = interval;
+  }
   return next;
+}
+
+/** 订阅地址：http(s) 网址，空字符串是清掉 */
+function normalizeSubscriptionUrl(raw: string): string | undefined {
+  const text = raw.trim();
+  if (!text) return undefined;
+  let u: URL;
+  try {
+    u = new URL(text);
+  } catch {
+    throw new ProxySettingsError("订阅地址格式不对，要是 http:// 或 https:// 开头的网址");
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new ProxySettingsError("订阅地址要是 http:// 或 https:// 开头的网址");
+  return u.toString();
 }
 
 export function saveProxySettings(input: ProxySettingsInput): ProxySettingsView {
   const before = proxyEnvKey();
   const next = resolveInput(input);
+  // 没有代理内核时订阅模式保存不了：存了也连不出去（不退回直连），所有请求都会失败
+  if (next.mode === "subscription") {
+    const core = proxyCore.status();
+    if (core.state === "missing") throw new ProxySettingsError(core.error ?? "没有找到代理内核");
+  }
   write(next);
   stored = next;
   install();
@@ -287,6 +340,8 @@ export function browserProxyConfig(): BrowserProxyConfig {
   const s = settings();
   const mode = s.mode ?? "system";
   const probeUrl = config.baseUrl ?? "https://api.anthropic.com";
+  // 订阅：浏览器用代理内核的端口（带认证的 HTTP 代理），外壳那边当手动设置处理
+  if (mode === "subscription") return s.subscriptionUrl ? { mode: "manual", probeUrl, ...proxyCore.browserProxy, bypass: s.noProxy ?? [] } : { mode: "off", probeUrl, bypass: [] };
   if (mode !== "manual" || !s.url) return { mode: mode === "manual" ? "off" : mode, probeUrl, bypass: [] };
   const bypass = s.noProxy ?? [];
   // Chromium 的 SOCKS5 不支持用户名、密码：要认证的经网关在本机开的转接（HTTP 代理，令牌当密码；桌面版和网关在同一台电脑上）
@@ -339,7 +394,15 @@ export async function testProxy(input: ProxySettingsInput): Promise<ProxyTestRes
   const token = randomBytes(18).toString("base64url");
   let effective: Effective | null;
   try {
-    effective = effectiveOf(resolveInput(input), token);
+    const next = resolveInput(input);
+    // 订阅只能测正在跑的内核（换订阅要重启内核）：改了订阅地址的先保存
+    if (next.mode === "subscription") {
+      const cur = settings();
+      if (cur.mode !== "subscription" || cur.subscriptionUrl !== next.subscriptionUrl) return { ok: false, target, via: SUBSCRIPTION_DISPLAY, error: "订阅改了还没保存：先保存，再测试" };
+      const core = proxyCore.status();
+      if (core.state !== "running") return { ok: false, target, via: SUBSCRIPTION_DISPLAY, error: core.error ?? (core.state === "starting" ? "代理内核正在启动，稍后再试" : "代理内核没有运行") };
+    }
+    effective = effectiveOf(next, token);
   } catch (err) {
     return { ok: false, target, via: null, error: (err as Error).message };
   }
@@ -392,6 +455,8 @@ function describeError(err: unknown, via: string | null): string {
   const code = chain.map((e) => e.code).find((c) => typeof c === "string" && /^E[A-Z]+$/.test(c));
   if (via && status === "407") return "代理要求认证（407）：用户名或密码不对，或者没填";
   if (via && status) return `代理拒绝了连接（${status}）`;
+  // 订阅：代理内核连不上节点（或者没有节点、请求被拒）时直接断开连接
+  if (via === SUBSCRIPTION_DISPLAY && code === "ECONNRESET") return "代理内核断开了连接：现在选的节点连不上目标，或者订阅里没有能用的节点";
   if (via && code === "ECONNREFUSED") return `连不上代理 ${via}（拒绝连接）`;
   if (via && code === "ENOTFOUND") return `找不到代理的主机 ${via}`;
   return describeNetError(err);

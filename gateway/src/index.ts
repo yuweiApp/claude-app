@@ -1,6 +1,6 @@
 import { buildApp } from "./app.js";
 import { config } from "./config.js";
-import { initProxy } from "./net/proxy.js";
+import { initProxy, stopProxy } from "./net/proxy.js";
 import { disconnectAll } from "./ssh/hosts.js";
 
 // 网关自己发的请求（fetch 等）按设置页「网络代理」走，要在发出任何请求之前设好
@@ -15,6 +15,7 @@ async function shutdown(signal: string): Promise<void> {
   app.log.info({ signal }, "正在关闭：结束所有 claude 子进程");
   terminals.closeAll();
   await sessions.closeAll();
+  await stopProxy();
   disconnectAll();
   await app.close();
   process.exit(0);

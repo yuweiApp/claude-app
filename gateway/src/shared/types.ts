@@ -604,9 +604,10 @@ export interface SshConfigHost {
  * 设置页「网络代理」（见 docs/proxy.md）：
  * - system：跟随系统。桌面版报过操作系统的代理就用它，没有（网页版、系统说直连）时沿用网关进程继承来的 HTTPS_PROXY 等环境变量（.env.local 里写的也算）
  * - off：一律直连，继承来的代理变量也不传给 claude 子进程
- * - manual：用 url 这个 HTTP(S) 代理
+ * - manual：用 url 这个代理（HTTP、HTTPS、SOCKS5）
+ * - subscription：订阅，网关拉起代理内核 mihomo 连订阅里的节点（见 docs/proxy-subscription.md）
  */
-export type ProxyMode = "system" | "off" | "manual";
+export type ProxyMode = "system" | "off" | "manual" | "subscription";
 
 /** GET /proxy、PUT /proxy 返回的；不带密码明文 */
 export interface ProxySettingsView {
@@ -628,6 +629,28 @@ export interface ProxySettingsView {
   system: { proxy: string | null; unusable: string | null } | null;
   /** 现在实际用的代理，直连是 null；不含用户名、密码 */
   effective: string | null;
+  /** 订阅：填没填过地址（地址本身不回给网页）、自动更新间隔（小时）、代理内核的状态 */
+  subscription: { hasUrl: boolean; intervalHours: number; core: ProxyCoreStatus };
+}
+
+/** 订阅模式的代理内核 mihomo：missing 是没找到可执行文件；error 带原因（会自动重启） */
+export interface ProxyCoreStatus {
+  state: "missing" | "stopped" | "starting" | "running" | "error";
+  version?: string;
+  error?: string;
+}
+
+/** GET /proxy/nodes：订阅里的节点和订阅信息 */
+export interface ProxyNodes {
+  /** 选的节点，null 是「自动」（选延迟最低的） */
+  selected: string | null;
+  /** delay：最近一次测的延迟（毫秒），没测过或不通是 null */
+  nodes: { name: string; type: string; alive: boolean; delay: number | null }[];
+  /**
+   * 订阅信息：updatedAt 是上次拉到订阅的时间（ISO），没拉到过是 null；
+   * 流量（字节）和到期时间只在订阅返回了 subscription-userinfo 时有，total、expire 为 null 是不限
+   */
+  subscription: { updatedAt: string | null; upload?: number; download?: number; total?: number | null; expire?: string | null };
 }
 
 /** PUT /proxy、POST /proxy/test 的请求体；password 不传是不改（测试时用已存的），空字符串是清掉 */
@@ -637,6 +660,9 @@ export interface ProxySettingsInput {
   username?: string;
   password?: string;
   noProxy?: string[];
+  /** 订阅地址：不传是不改，空字符串是清掉 */
+  subscriptionUrl?: string;
+  subscriptionInterval?: number;
 }
 
 /** POST /proxy/test：经代理（或直连）请求模型接口，收到任何 HTTP 响应都算连上了 */

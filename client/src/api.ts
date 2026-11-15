@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, ProxyMode, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { MessagePriority, ProxyMode, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
+export type { MessagePriority, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -103,6 +103,14 @@ export const api = {
   proxySettings: () => request<ProxySettingsView>("GET", "/proxy"),
   saveProxySettings: (input: ProxySettingsInput) => request<ProxySettingsView>("PUT", "/proxy", input),
   testProxy: (input: ProxySettingsInput) => request<ProxyTestResult>("POST", "/proxy/test", input),
+  /** 订阅模式（见 docs/proxy-subscription.md）：节点和订阅信息；代理内核没在跑时 503 */
+  proxyNodes: () => request<ProxyNodes>("GET", "/proxy/nodes"),
+  /** 选节点，null 是「自动」；马上生效 */
+  selectProxyNode: (name: string | null) => request<ProxyNodes>("PUT", "/proxy/node", { name }),
+  /** 所有节点测一次延迟 */
+  testProxyNodes: () => request<ProxyNodes>("POST", "/proxy/nodes/delay"),
+  /** 马上重新拉一次订阅 */
+  updateProxySubscription: () => request<ProxyNodes>("POST", "/proxy/subscription/update"),
   /** 右侧面板：项目里一个文件夹的直接子项（path 相对项目文件夹，空是根） */
   listDir: (cwd: string, path: string) => request<{ entries: ProjectEntry[] }>("GET", `/files/list?${q({ cwd, path })}`).then((r) => r.entries),
   readFile: (cwd: string, path: string) => request<FileContent>("GET", `/files/read?${q({ cwd, path })}`),

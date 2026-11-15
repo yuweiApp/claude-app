@@ -327,6 +327,13 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | GET | `/sessions/:id/tasks/:taskId/output` | 后台 Bash 任务输出的最后 64 KB，只能读这个会话记下的输出文件 |
 | POST | `/sessions/:id/tasks/:taskId/stop` | 停止后台任务（`Query.stopTask()`） |
 | DELETE | `/sessions/:id/tasks` | 清掉已经结束的后台任务 |
+| GET | `/proxy` | 设置页「网络代理」的设置和状态（第 15 节）；不返回密码和订阅地址 |
+| PUT | `/proxy` | 保存网络代理设置：`{ mode, url?, username?, password?, noProxy?, subscriptionUrl?, subscriptionInterval? }`，密码、订阅地址不传是不改，空字符串是清掉 |
+| POST | `/proxy/test` | 按请求体里的设置（不保存）经代理请求一次模型接口 |
+| GET | `/proxy/nodes` | 订阅模式：节点、选的是哪个、订阅的流量和到期时间；代理内核没在跑时 503 |
+| PUT | `/proxy/node` | 订阅模式：选节点 `{ name }`，`null` 是自动 |
+| POST | `/proxy/nodes/delay` | 订阅模式：所有节点测一次延迟 |
+| POST | `/proxy/subscription/update` | 订阅模式：马上重新拉一次订阅 |
 
 鉴权：设置了 `API_TOKEN` 时所有接口要求 `Authorization: Bearer <token>`；SSE 因为 `EventSource` 不能带头，用 `?token=`。
 
@@ -349,6 +356,8 @@ gateway/
     http/sse.ts           SSE 输出、心跳、Last-Event-ID 续传
     http/routes/*.ts      路由
     ssh/                  SSH 远程开发：连接、远端准备、模型请求转发、远端文件和会话记录（第 14 节）
+    net/                  网络代理：设置和各个出口、SOCKS5 转接、订阅模式的代理内核（第 15 节）
+  scripts/fetch-core.mjs  下载订阅模式用的代理内核 mihomo（放到 gateway/vendor/，不提交）
 client/
   src/
     api.ts                HTTP + SSE 封装
@@ -488,3 +497,15 @@ client/
 - **反向转发**（`ssh/host.ts` 的 `syncForwards`、`ssh/ssh-config.ts`）：远端访问用户电脑上的服务（本机的数据库、代理）。来源是 `~/.ssh/config` 的 `RemoteForward` 和设置页填的（`ssh -R` 的写法，一行一条，交给 `ssh -G` 时作为 `-R` 参数，和配置文件里的一起从 `ssh -G` 的 `remoteforward` 读出来；没有 ssh 命令时自己解析设置页的）。只认 TCP 端口转到 TCP 地址的，Unix 套接字、动态转发（`RemoteForward 1080`）、远端端口 0 跳过。连上时 `forwardIn` 开，远端连进来时网关在本机连目标地址；远端开不了的端口（被占用、sshd 不允许）记下原因显示在设置页，不影响连接。设置页改了马上按新的开、关，不用重连。远端没写监听地址时同 ssh 是 localhost，sshd 按 IPv4、IPv6 都绑，只绑得上一边也算成功（比如 IPv4 那边已经有服务）。
 - **限制**：SSH 断开时远端 claude 随之结束，进行中的这一轮中断，下次发消息 resume（记录在远端，不丢）。断开后进程按 SIGHUP 结束（`spawn.ts`），SDK 报的是「Claude Code process terminated by signal SIGHUP」，网关把它换成「与「名称」的 SSH 连接断开了（原因）」：原因由 `host.ts` 记在 `lastClose` 里，有保活超时（每 15 秒探一次，连续 4 次没回应，约 75 秒收不到远端的响应；网络中途不通、包被丢都是这种，实测 WireGuard 链路上出现过）、网络错误（连接被重置等，带 ssh2 的原文）、远端关闭了连接、网关主动断开（设置页断开、连接配置改了或删了）。网关日志「claude 会话异常结束」里也带这句。这条报错带连接 id，重新连上后网页不再显示（见「客户端归并规则」）。远端支持 macOS、Linux、Windows。外部浏览器（用户的 Chrome）和用户自己的浏览器访问不到远端的 localhost（远端端口不自动转发到本机）。设置页的密码只在网关内存里，网关重启后要重新输入。
 
+## 15. 网络代理
+
+设置页「网络代理」决定软件发出去的请求走哪个代理：模型请求、网关自己的请求（模型列表、生成标题、连接器市场）、claude 子进程里的工具（Bash、MCP、git）、终端、桌面版的内置浏览器。设置存在网关的 `claude-home/gateway-proxy.json`（600），四种模式：
+
+- **跟随系统**（默认）：桌面版查操作系统的代理报给网关；没有桌面版连着时沿用网关进程继承来的 `HTTPS_PROXY` 等环境变量。
+- **不使用**：一律直连。
+- **手动**：HTTP、HTTPS、SOCKS5 代理，可以带用户名、密码。SOCKS5 经网关在本机开的 HTTP 转接（`net/socks-bridge.ts`）。
+- **订阅**：只填订阅链接，网关在本机拉起代理内核 mihomo（`net/core.ts`）连订阅里的节点，所有出口都指向内核在本机开的、要认证的代理端口；设置页里选节点、测延迟、更新订阅。内核用 `npm --prefix gateway run fetch-core` 下载。
+
+改设置后网关自己的请求马上按新的走；claude 子进程的环境变量变了的，空闲会话马上换掉子进程，正在跑的这一轮结束后再换。
+
+细节分两份文档：[proxy.md](proxy.md)（各个出口怎么接、跟随系统、SOCKS5、内置浏览器）和 [proxy-subscription.md](proxy-subscription.md)（订阅模式：内核的配置和进程管理、接口、实测）。

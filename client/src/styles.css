@@ -368,6 +368,22 @@ main {
 .proxy-result { font-size: 13px; overflow-wrap: anywhere; }
 .proxy-result.ok { color: var(--ok); }
 .proxy-result.failed { color: var(--err); }
+/* 订阅模式：代理内核状态的颜色；节点列表一行一个单选（左边圆点，右边延迟） */
+.appearance-row-desc.proxy-ok { color: var(--ok); }
+.appearance-row-desc.proxy-warn { color: var(--warn); }
+.appearance-row-desc.proxy-failed { color: var(--err); }
+.proxy-page .appearance-row-desc { overflow-wrap: anywhere; }
+.proxy-nodes { display: flex; flex-direction: column; max-height: 360px; padding: 6px 8px; border-top: 1px solid var(--border); overflow-y: auto; }
+.proxy-node { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: none; border-radius: 8px; background: none; font-size: 13.5px; text-align: left; }
+.proxy-node:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.proxy-node:disabled { opacity: 0.6; }
+.proxy-node-dot { flex: none; width: 14px; height: 14px; border: 1.5px solid var(--muted); border-radius: 50%; }
+.proxy-node.checked .proxy-node-dot { border: 4px solid var(--accent); }
+.proxy-node-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proxy-node-hint { flex: 1; min-width: 0; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.proxy-node-delay { flex: none; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.proxy-node-delay.ok { color: var(--ok); }
+.proxy-node-delay.failed { color: var(--err); }
 .appearance-card { border: 1px solid var(--border); border-radius: 12px; }
 .appearance-row { display: flex; align-items: center; gap: 16px; padding: 13px 18px; }
 .appearance-row + .appearance-row { border-top: 1px solid var(--border); }
