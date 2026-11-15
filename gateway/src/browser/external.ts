@@ -1,12 +1,12 @@
 import { fsFor, machinePathOf } from "../ssh/host-fs.js";
 import { createRequire } from "node:module";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
-import type { Browser, BrowserContext } from "playwright-core";
+import type { Browser, BrowserContext, Page } from "playwright-core";
 import { config } from "../config.js";
 import type { ExternalBrowserInfo, ExternalBrowserTabs } from "../shared/types.js";
 import { listBrowsers, tabGroupEnabled, type ResolvedBrowser } from "./browser-settings.js";
 import { INSTALL_URL } from "./catalog.js";
-import { BrowserRepl } from "./repl.js";
+import { BrowserRepl, closeAutomatically } from "./repl.js";
 import { browserMcpServer, replFor, RUN_CODE_TOOL, RUNTIME_FACTS } from "./tool.js";
 
 /**
@@ -114,6 +114,8 @@ class ExternalBridge {
         }
         this.attempt = null;
         this.browser = browser;
+        const context = browser.contexts()[0];
+        if (context) dropConnectPage(context);
         browser.once("disconnected", () => {
           if (this.browser === browser) this.browser = null;
         });
@@ -180,6 +182,27 @@ class ExternalBridge {
       Promise.race([page.title().catch(() => ""), new Promise<string>((resolve) => setTimeout(() => resolve(""), 1000))]);
     return Promise.all(pages.map(async (page) => ({ url: page.url(), title: await title(page) })));
   }
+}
+
+/** 扩展的连接页（connect.html，标题 Welcome） */
+const isConnectPage = (page: Page) => /^chrome-extension:\/\/[^/]+\/connect\.html/.test(page.url());
+
+/**
+ * 连接页自己被交出来时（设了 token 自动连接时扩展就这么做；用户在连接页上选了别的标签页的，扩展自己会关掉连接页），
+ * 它一直留在浏览器里，显示「"claude-app" connected」。有了别的标签页就把它关掉。
+ * 只剩它一个时不能关：交出来的标签页全关了，扩展会断开连接。连接页上的保活定时器只是等连接时用的，
+ * 有标签页挂着调试器时扩展不会被回收（用户选了别的标签页时扩展自己也是这样关掉连接页的）
+ */
+function dropConnectPage(context: BrowserContext): void {
+  const sweep = () => {
+    const pages = context.pages().filter((p) => !p.isClosed());
+    if (!pages.some((p) => !isConnectPage(p))) return;
+    for (const p of pages.filter(isConnectPage)) {
+      void closeAutomatically(p, "扩展的连接页自动关闭了（有了别的标签页）").catch(() => undefined);
+    }
+  };
+  context.on("page", sweep);
+  sweep();
 }
 
 /** 每个浏览器一条连接，第一次用到时建，网关运行期间一直留着（设置里停用了也不断开，已经挂了工具的会话还能用） */
@@ -282,7 +305,9 @@ function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[], cwd
     tabGroupEnabled()
       ? `能看到的标签页只有 ${b.name} 里 Playwright 标签页组里的（用户连接时选的，加上通过这里新开的），所有会话共用这一组。`
       : `能看到的标签页只有交给 Playwright 的那些（用户连接时选的那一个，加上通过这里新开的和从它们弹出的），用户的其他标签页看不到，所有会话共用这一批。`,
-    `第一次调用时，${b.name} 会打开扩展的连接页，用户选好标签页、点允许之后工具才返回；扩展没装、连接失败时工具返回错误。`,
+    `第一次调用时，${b.name} 会打开扩展的连接页，用户选好标签页、点允许之后工具才返回；扩展没装、连接失败时工具返回错误。` +
+      "用户设了 token 时不用点允许，交出来的第一个标签页就是连接页本身（chrome-extension://…/connect.html，标题 Welcome），context 里有了别的标签页之后它会自动关闭。" +
+      "交出来的标签页全部关闭时连接断开，下一次调用重新连接（重新打开连接页）。",
     RUNTIME_FACTS,
     "标签页：通过这里开的标签页不会自动关闭。标签页被新开、关闭时，下一次工具结果里会列出变化，只能分出是不是你做的（扩展不提供是用户还是网页）。",
     `下载：网页里的下载（包括脚本触发的）由 ${b.name} 自己处理，按用户在浏览器里的设置保存（默认是系统的「下载」文件夹，设了下载前询问时会弹出另存为对话框），同名时浏览器自己在文件名后加 (1)；` +

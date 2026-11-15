@@ -511,6 +511,9 @@ export class BrowserRepl implements Repl {
       // 关掉之后取不到标题，先记着
       void titleOf(page).then((title) => titles.set(page, title));
       page.once("close", () => {
+        const auto = autoClosed.get(page);
+        // 网址不带查询参数：连接页的参数里可能有 token
+        if (auto) return push({ who: auto, url: page.url().split("?")[0] ?? "", title: titles.get(page) ?? "" });
         if (agentClosed.has(page)) return;
         push({ who: "不是你关的标签页被关闭了（用户在浏览器里关的，或网页自己关的）", url: page.url(), title: titles.get(page) ?? "" });
       });
@@ -685,6 +688,16 @@ interface LocalChange {
  */
 const agentCreated = new WeakSet<Page>();
 const agentClosed = new WeakSet<Page>();
+/** 网关自己关的标签页（不是 AI，也不是用户）和给模型看的说法，见 closeAutomatically */
+const autoClosed = new WeakMap<Page, string>();
+/**
+ * 网关自己关一个标签页（外部浏览器的连接页，external.ts）：各会话下一次工具结果里按 who 说明是谁关的，
+ * 不说成「不是你关的（用户或网页关的）」
+ */
+export function closeAutomatically(page: Page, who: string): Promise<void> {
+  autoClosed.set(page, who);
+  return page.close();
+}
 /** 正在 newPage 的次数：newPage 返回之前就会发 page 事件，这时出现的标签页是 AI 开的 */
 const creating = new WeakMap<BrowserContext, number>();
 /** 标签页的标题，关掉之后取不到，先记着 */
