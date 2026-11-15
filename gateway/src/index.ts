@@ -1,6 +1,10 @@
 import { buildApp } from "./app.js";
 import { config } from "./config.js";
+import { initProxy } from "./net/proxy.js";
 import { disconnectAll } from "./ssh/hosts.js";
+
+// 网关自己发的请求（fetch 等）按设置页「网络代理」走，要在发出任何请求之前设好
+await initProxy();
 
 const { app, sessions, terminals } = buildApp();
 

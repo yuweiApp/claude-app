@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseEnv } from "node:util";
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import { applyProxyEnv } from "./net/proxy.js";
 
 // 按优先级从低到高覆盖：.env.local > .env > 系统环境变量
 for (const file of [".env", ".env.local"]) {
@@ -140,6 +141,8 @@ export function agentEnv(): Record<string, string | undefined> {
   // 外部浏览器的扩展 token（以前写在 .env.local 的 Chrome、Edge 的，现在在设置页填，见 browser/browser-settings.ts）只给网关自己连浏览器用：模型拿到它就能在 Bash 里另起 Playwright
   // 不经提示操作用户的浏览器，绕过外部浏览器工具的权限卡片
   const { PLAYWRIGHT_MCP_EXTENSION_TOKEN: _token, PLAYWRIGHT_MCP_EDGE_EXTENSION_TOKEN: _edgeToken, ...inherited } = process.env;
+  // 设置页「网络代理」：HTTPS_PROXY、NO_PROXY 等，Claude Code 和它拉起的 Bash、MCP、git 都按这些走（见 net/proxy.ts）
+  applyProxyEnv(inherited);
   return {
     ...inherited,
     ...tiers,

@@ -1,5 +1,6 @@
 import { app } from "electron";
 import { CdpProxy } from "./cdp-proxy.js";
+import type { NetworkProxy } from "./network-proxy.js";
 import type { BrowserViews } from "./views.js";
 
 /**
@@ -30,6 +31,7 @@ export class GatewayBridge {
     private readonly url: string,
     private readonly views: BrowserViews,
     private readonly log: (message: string) => void,
+    private readonly network: NetworkProxy,
   ) {
     // 标签页的变化和是谁做的（views.ts 的 TabEvent），网关记下来，模型下一次调用浏览器工具时告诉它
     views.on("tabEvent", (session, event) => this.post({ type: "tabEvent", session, event }));
@@ -66,6 +68,8 @@ export class GatewayBridge {
       // 窗口在系统无障碍接口里报的是主进程号；子进程（渲染、GPU）也带上，宁可多拦
       const pids = new Set([process.pid, ...app.getAppMetrics().map((m) => m.pid)]);
       this.post({ type: "hello", pids: [...pids] });
+      // 操作系统的代理：网关跟随系统时用（Node、Claude Code 不读系统代理设置），网关推设置过来后开始查
+      this.network.startReporting((route) => this.post({ type: "systemProxy", route }));
       // 网关重启后会话的目录可能变了（WORKSPACE_DIR 改了），有标签页的会话都重新问一遍
       for (const session of new Set(this.views.list().map((t) => t.sessionId))) this.post({ type: "sessionDir", session });
     });
@@ -73,6 +77,7 @@ export class GatewayBridge {
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
       this.socket = null;
+      this.network.stopReporting();
       this.closeAll();
       if (!this.stopped) setTimeout(() => this.start(), 2000);
     });
@@ -82,17 +87,20 @@ export class GatewayBridge {
 
   stop(): void {
     this.stopped = true;
+    this.network.stopReporting();
     this.closeAll();
     this.socket?.close();
   }
 
   private onMessage(data: string): void {
-    let msg: { type?: string; session?: string; message?: object; id?: number; dir?: string | null; remote?: string | null };
+    let msg: { type?: string; session?: string; message?: object; id?: number; dir?: string | null; remote?: string | null; config?: unknown };
     try {
       msg = JSON.parse(data);
     } catch {
       return;
     }
+    // 设置页「网络代理」：连上时和每次保存后网关推过来
+    if (msg.type === "proxy") return void this.network.update(msg.config).catch((err: Error) => this.log(`设置内置浏览器的代理失败：${err.message}`));
     const session = msg.session;
     if (!session) return;
     if (msg.type === "open") {

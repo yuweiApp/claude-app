@@ -1,8 +1,9 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
-import https from "node:https";
 import { type Duplex, pipeline } from "node:stream";
+import { type Dispatcher, request } from "undici";
 import { config } from "../config.js";
+import { describeNetError } from "../net/proxy.js";
 
 /**
  * 远端 claude 的模型请求经 SSH 反向转发回到这里，再由网关发给真正的模型接口（.env.local 的 ANTHROPIC_BASE_URL）：
@@ -58,24 +59,31 @@ async function forward(req: IncomingMessage, res: ServerResponse, token: string)
     const i = line.indexOf(":");
     if (i > 0) headers[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
   }
-  const upstream = (target.protocol === "https:" ? https : http).request(target, { method: req.method, headers }, (up) => {
-    res.writeHead(up.statusCode ?? 502, up.statusMessage, filterResponseHeaders(up.headers));
-    // 上游回到一半断开（流没完整结束）时，pipeline 会把发给远端的响应也断开，远端 claude 立刻看到连接中断、自己重试；
-    // 只用 pipe 的话远端这边的响应一直不结束，要等远端自己超时
-    pipeline(up, res, () => {});
-  });
-  upstream.on("error", (err) => {
-    // 响应已经开始往远端发（SSE 流到一半）就不能再插一段 JSON 了，直接断开
-    if (res.headersSent) return void res.destroy(err);
-    res.writeHead(502, { "content-type": "application/json" });
-    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: `claude-app 网关转发模型请求失败：${err.message}` } }));
-  });
+  // 用 undici 发：走全局 dispatcher，也就是设置页「网络代理」（net/proxy.ts）
   // 远端断开（打断、进程退出）时上游请求一起断，不再计费
-  res.on("close", () => upstream.destroy());
-  req.pipe(upstream);
+  const abort = new AbortController();
+  res.on("close", () => abort.abort());
+  let up: Awaited<ReturnType<typeof request>>;
+  try {
+    up = await request(target, {
+      method: (req.method ?? "GET") as Dispatcher.HttpMethod,
+      headers: headers as Record<string, string | string[]>,
+      body: req.method === "GET" || req.method === "HEAD" ? undefined : req,
+      signal: abort.signal,
+    });
+  } catch (err) {
+    if (abort.signal.aborted) return;
+    res.writeHead(502, { "content-type": "application/json" });
+    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: `claude-app 网关转发模型请求失败：${describeNetError(err)}` } }));
+    return;
+  }
+  res.writeHead(up.statusCode, filterResponseHeaders(up.headers));
+  // 上游回到一半断开（流没完整结束）时，pipeline 会把发给远端的响应也断开，远端 claude 立刻看到连接中断、自己重试；
+  // 只用 pipe 的话远端这边的响应一直不结束，要等远端自己超时
+  pipeline(up.body, res, () => {});
 }
 
-function filterResponseHeaders(h: http.IncomingHttpHeaders): http.OutgoingHttpHeaders {
+function filterResponseHeaders(h: Record<string, string | string[] | undefined>): http.OutgoingHttpHeaders {
   const out: http.OutgoingHttpHeaders = {};
   for (const [k, v] of Object.entries(h)) if (v !== undefined && !["connection", "keep-alive", "transfer-encoding"].includes(k)) out[k] = v;
   return out;

@@ -5,6 +5,7 @@ import { StringDecoder } from "node:string_decoder";
 import type { IPty } from "@lydell/node-pty";
 import type { TerminalEvent, TerminalInfo } from "../shared/types.js";
 import { nativePath, parseRemote } from "../ssh/location.js";
+import { applyProxyEnv } from "../net/proxy.js";
 import { psEncoded, psQuote, shQuote } from "../ssh/host.js";
 import { sshHost } from "../ssh/hosts.js";
 
@@ -225,13 +226,16 @@ export function plainText(raw: string): string {
 
 function localPty(cwd: string, size: { cols: number; rows: number }): { proc: Proc; shell: string } {
   const shell = process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/bash";
+  // 设置页「网络代理」：HTTPS_PROXY、NO_PROXY 等同 claude 子进程（net/proxy.ts），只在终端打开时读，开着的终端不跟着变
+  const env: Record<string, string | undefined> = { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" };
+  applyProxyEnv(env);
   let p: IPty;
   try {
     p = pty().spawn(shell, [], {
       name: "xterm-256color",
       ...size,
       cwd,
-      env: { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" } as Record<string, string>,
+      env: env as Record<string, string>,
     });
   } catch (err) {
     throw new TerminalError(`终端启动失败：${err instanceof Error ? err.message : String(err)}`);

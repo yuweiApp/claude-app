@@ -42,6 +42,7 @@ import { listConnections } from "../ssh/connections.js";
 import type { SessionContextInfo } from "../shared/types.js";
 import { compactedSinceReply, forgetSession, savedUsage, saveUsage } from "./context-usage.js";
 import { goalCondition, recordedGoal } from "./goal.js";
+import { onProxyChange, proxyEnvKey } from "../net/proxy.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
 export class SessionManager {
@@ -61,6 +62,8 @@ export class SessionManager {
   /** 每个会话的后台任务，子进程回收后还留着；记录写在 claude-home/gateway-tasks/<会话 id>.json，网关重启后读回来 */
   private readonly tasks = new Map<string, TaskList>();
   private readonly sweeper: NodeJS.Timeout;
+  /** 本机会话的子进程启动时的代理环境变量（net/proxy.ts 的 proxyEnvKey）；远程会话不带代理变量，不记 */
+  private readonly proxyKeys = new WeakMap<AgentSession, string>();
 
   constructor(
     private readonly hub: EventHub,
@@ -75,6 +78,7 @@ export class SessionManager {
     mkdirSync(config.claudeConfigDir, { recursive: true });
     this.sweeper = setInterval(() => void this.sweepIdle(), 60_000);
     this.sweeper.unref();
+    onProxyChange(() => void this.recycleProxyStale());
   }
 
   get(sessionId: string): AgentSession | undefined {
@@ -149,7 +153,11 @@ export class SessionManager {
   /** 活跃会话直接返回；子进程已回收的用原来的工作目录 resume。远程会话先连上主机、同步一下记录 */
   async activate(sessionId: string): Promise<AgentSession> {
     const session = this.active.get(sessionId);
-    if (session) return session;
+    // 子进程是按旧的代理设置启动的：能关就关掉再 resume，这条消息就走新的代理
+    if (session && this.proxyStale(session) && reclaimable(session)) {
+      this.log.info({ sessionId }, "网络代理设置改了，换掉 claude 子进程");
+      await session.close();
+    } else if (session) return session;
     const hostId = remoteSessionHost(sessionId);
     if (hostId) await syncSession(await readyHost(hostId), sessionId).catch(() => undefined);
     const info = await getSessionInfo(sessionId);
@@ -480,6 +488,7 @@ export class SessionManager {
       this.browser,
     );
     this.active.set(sessionId, session);
+    if (!parseRemote(opts.cwd)) this.proxyKeys.set(session, proxyEnvKey());
     this.log.info({ sessionId, resume, cwd: opts.cwd }, "启动 claude 会话");
     return session;
   }
@@ -488,7 +497,7 @@ export class SessionManager {
   private async makeRoom(): Promise<void> {
     if (this.active.size < config.maxActiveSessions) return;
     const idle = [...this.active.values()]
-      .filter((s) => s.state === "idle" && !s.agentsRunning && !s.noticePending)
+      .filter(reclaimable)
       .sort((a, b) => a.lastActiveAt - b.lastActiveAt)[0];
     if (!idle) throw new BusyError(`同时运行的会话已达上限（${config.maxActiveSessions}），请等其中一个结束`);
     await idle.close();
@@ -497,12 +506,35 @@ export class SessionManager {
   private async sweepIdle(): Promise<void> {
     const now = Date.now();
     for (const session of this.active.values()) {
-      if (session.state === "idle" && !session.agentsRunning && !session.noticePending && now - session.lastActiveAt > config.sessionIdleMs) {
+      if (reclaimable(session) && now - session.lastActiveAt > config.sessionIdleMs) {
         this.log.info({ sessionId: session.id }, "会话空闲，关闭 claude 子进程");
         await session.close();
       }
     }
+    await this.recycleProxyStale();
   }
+
+  private proxyStale(session: AgentSession): boolean {
+    const key = this.proxyKeys.get(session);
+    return key !== undefined && key !== proxyEnvKey();
+  }
+
+  /**
+   * 网络代理设置改了：按旧设置启动的子进程，空闲的关掉（下次发消息时 resume，用新的环境变量）；
+   * 正在跑的、有后台子代理或通知没交给模型的先留着，之后每分钟的清理或下一条消息时再换
+   */
+  private async recycleProxyStale(): Promise<void> {
+    for (const session of [...this.active.values()]) {
+      if (!this.proxyStale(session) || !reclaimable(session)) continue;
+      this.log.info({ sessionId: session.id }, "网络代理设置改了，关闭 claude 子进程");
+      await session.close();
+    }
+  }
+}
+
+/** 可以关掉子进程的会话：空闲，没有后台子代理在跑（子进程关了子代理也没了），没有通知没交给模型 */
+function reclaimable(session: AgentSession): boolean {
+  return session.state === "idle" && !session.agentsRunning && !session.noticePending;
 }
 
 /** SDK 的 skills 名单只拦模型调用 Skill 工具，用户在消息开头写 /技能名 还是会执行，所以这里拦 */

@@ -16,9 +16,10 @@ import { FolderPickerDialog } from "./FolderPickerDialog";
 import { IosIcon } from "./IosIcon";
 import { AppearancePage } from "./AppearancePage";
 import { BrowsersPage } from "./BrowsersPage";
+import { ProxyPage } from "./ProxyPage";
 import { SshPage } from "./SshPage";
 
-export type SettingsSection = "appearance" | "plugins" | "skills" | "agents" | "mcp" | "browsers" | "ssh";
+export type SettingsSection = "appearance" | "proxy" | "plugins" | "skills" | "agents" | "mcp" | "browsers" | "ssh";
 type Section = SettingsSection;
 /** 技能、子代理、插件页顶部的标签：个人（导入的、项目里的、导入插件带的、从市场装的）和 Claude Code 自带的；插件页还有插件市场 */
 type Origin = "mine" | "builtin" | "directory";
@@ -30,6 +31,7 @@ const SHOW_AGENTS = false;
 
 const SECTIONS: { key: Section; label: string; icon: ReactNode; group?: string; hidden?: boolean }[] = [
   { key: "appearance", label: "外观", icon: <IosIcon tone="orange"><AppearanceIcon /></IosIcon>, group: "个人" },
+  { key: "proxy", label: "网络代理", icon: <IosIcon tone="teal"><ProxyIcon /></IosIcon> },
   { key: "plugins", label: "插件", icon: <IosIcon tone="blue"><PluginIcon /></IosIcon>, group: "集成" },
   { key: "skills", label: "技能", icon: <IosIcon tone="purple"><SkillIcon /></IosIcon> },
   { key: "agents", label: "子代理", icon: <IosIcon tone="teal"><AgentIcon /></IosIcon>, hidden: !SHOW_AGENTS },
@@ -102,8 +104,10 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
           </button>,
         ])}
       </nav>
-      {section === "appearance" || section === "browsers" || section === "ssh" ? (
-        <main className="settings-main">{section === "appearance" ? <AppearancePage /> : section === "ssh" ? <SshPage /> : <BrowsersPage />}</main>
+      {section === "appearance" || section === "proxy" || section === "browsers" || section === "ssh" ? (
+        <main className="settings-main">
+          {section === "appearance" ? <AppearancePage /> : section === "proxy" ? <ProxyPage /> : section === "ssh" ? <SshPage /> : <BrowsersPage />}
+        </main>
       ) : (
         <main className="settings-main">
           <header className="settings-head">
@@ -1217,6 +1221,18 @@ function BrowsersIcon() {
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx="8" cy="8" r="6.25" />
       <path d="M1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.8 2.5 6.25S9.7 12.45 8 14.25C6.3 12.45 5.5 10.45 5.5 8S6.3 3.55 8 1.75z" />
+    </svg>
+  );
+}
+
+/** 网络代理：两个节点之间的中转点，来回两条线 */
+function ProxyIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="2.75" cy="8" r="1.5" />
+      <circle cx="13.25" cy="8" r="1.5" />
+      <rect x="6" y="5.5" width="4" height="5" rx="1" />
+      <path d="M4.25 8H6M10 8h1.75" />
     </svg>
   );
 }

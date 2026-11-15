@@ -356,6 +356,18 @@ main {
 .browsers-field button.danger { border-color: var(--err); color: var(--err); background: none; }
 .browsers-hint { margin: 0 0 0 92px; color: var(--muted); font-size: 12px; }
 .browsers-notice { margin-bottom: 12px; color: var(--warn); font-size: 13px; }
+/* 设置里的「网络代理」（ProxyPage）：手动模式的字段一行一个（用户名、密码并排），标签在上、输入框在下 */
+.proxy-field-row { align-items: flex-start; flex-wrap: wrap; }
+.proxy-field { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 6px; }
+.proxy-field input, .proxy-field textarea { width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px; outline: none; resize: vertical; }
+.proxy-field input.mono, .proxy-field textarea.mono { font-family: var(--font-mono); }
+.proxy-field input:focus, .proxy-field textarea:focus { border-color: var(--accent); }
+.proxy-field input:disabled { opacity: 0.5; }
+.proxy-password { display: flex; align-items: center; gap: 8px; }
+.proxy-password input { flex: 1; min-width: 0; }
+.proxy-result { font-size: 13px; overflow-wrap: anywhere; }
+.proxy-result.ok { color: var(--ok); }
+.proxy-result.failed { color: var(--err); }
 .appearance-card { border: 1px solid var(--border); border-radius: 12px; }
 .appearance-row { display: flex; align-items: center; gap: 16px; padding: 13px 18px; }
 .appearance-row + .appearance-row { border-top: 1px solid var(--border); }

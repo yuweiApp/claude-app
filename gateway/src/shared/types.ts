@@ -599,3 +599,47 @@ export interface SshConfigHost {
   user?: string;
   port?: number;
 }
+
+/**
+ * 设置页「网络代理」（见 docs/proxy.md）：
+ * - system：跟随系统。桌面版报过操作系统的代理就用它，没有（网页版、系统说直连）时沿用网关进程继承来的 HTTPS_PROXY 等环境变量（.env.local 里写的也算）
+ * - off：一律直连，继承来的代理变量也不传给 claude 子进程
+ * - manual：用 url 这个 HTTP(S) 代理
+ */
+export type ProxyMode = "system" | "off" | "manual";
+
+/** GET /proxy、PUT /proxy 返回的；不带密码明文 */
+export interface ProxySettingsView {
+  mode: ProxyMode;
+  /** 手动模式的代理地址，http://host:port 或 https://host:port，不含用户名、密码 */
+  url: string;
+  username: string;
+  hasPassword: boolean;
+  /** 用户填的不走代理的地址 */
+  noProxy: string[];
+  /** 总是不走代理的本机地址，不能删 */
+  fixedNoProxy: string[];
+  /** 网关进程继承来的代理（跟随系统、又没有操作系统的代理时用的），没有是 null；不含用户名、密码 */
+  inherited: string | null;
+  /**
+   * 操作系统的代理（桌面版查了报给网关的，跟随系统时优先用它）：桌面版没报过是 null；
+   * proxy 是能用的 HTTP(S) 代理，系统说直连是 null；unusable 是网关、Claude Code 用不了的（SOCKS 等）
+   */
+  system: { proxy: string | null; unusable: string | null } | null;
+  /** 现在实际用的代理，直连是 null；不含用户名、密码 */
+  effective: string | null;
+}
+
+/** PUT /proxy、POST /proxy/test 的请求体；password 不传是不改（测试时用已存的），空字符串是清掉 */
+export interface ProxySettingsInput {
+  mode: ProxyMode;
+  url?: string;
+  username?: string;
+  password?: string;
+  noProxy?: string[];
+}
+
+/** POST /proxy/test：经代理（或直连）请求模型接口，收到任何 HTTP 响应都算连上了 */
+export type ProxyTestResult =
+  | { ok: true; target: string; via: string | null; status: number; ms: number }
+  | { ok: false; target: string; via: string | null; error: string };

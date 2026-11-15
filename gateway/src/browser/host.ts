@@ -1,5 +1,6 @@
 import type { WebSocket } from "ws";
 import { setOwnPids } from "../desktop/guard.js";
+import { browserProxyConfig, onProxySaved, setSystemProxy } from "../net/proxy.js";
 
 /** playwright-core 的 ConnectOverCDPTransport：send / close 由这里实现，onmessage / onclose 由 Playwright 连接时挂上 */
 export interface CdpTransport {
@@ -72,7 +73,10 @@ export class BrowserHost {
    * @param sessionDir 桌面版问了就回答：dir 是会话的工作目录（不知道这个会话、远程会话时 null），这个会话的标签页里的下载存到那里；
    * remote 是远程会话的 SSH 连接 id，桌面版给它的标签页用这台主机的分区，localhost 经 SSH 指远端（browser/tunnel.ts）
    */
-  constructor(private readonly sessionDir: (sessionId: string) => Promise<{ dir: string | null; remote: string | null }> = async () => ({ dir: null, remote: null })) {}
+  constructor(private readonly sessionDir: (sessionId: string) => Promise<{ dir: string | null; remote: string | null }> = async () => ({ dir: null, remote: null })) {
+    // 设置页「网络代理」改了：内置浏览器跟着换（外壳连上时也发一次，见 attach）
+    onProxySaved(() => this.post({ type: "proxy", config: browserProxyConfig() }));
+  }
 
   get connected(): boolean {
     return this.socket !== null;
@@ -83,6 +87,7 @@ export class BrowserHost {
     this.socket?.close();
     this.dropAll("桌面版重新连接了");
     this.socket = socket;
+    this.post({ type: "proxy", config: browserProxyConfig() });
     socket.on("message", (data) => {
       let msg: {
         type?: string;
@@ -94,6 +99,7 @@ export class BrowserHost {
         downloads?: DownloadInfo[];
         event?: TabEvent;
         pids?: number[];
+        route?: string;
       };
       try {
         msg = JSON.parse(String(data));
@@ -103,6 +109,8 @@ export class BrowserHost {
       if (msg.type === "cdp" && msg.session && msg.message) this.transports.get(msg.session)?.onmessage?.(msg.message);
       // 桌面版的进程号：桌面工具（desktop/guard.ts）不能读取、操作这些进程的窗口
       else if (msg.type === "hello" && Array.isArray(msg.pids)) setOwnPids(msg.pids.filter((pid) => Number.isInteger(pid)));
+      // 操作系统的代理（Chromium resolveProxy 模型接口地址的结果），设置页「网络代理」跟随系统时用
+      else if (msg.type === "systemProxy" && typeof msg.route === "string") setSystemProxy(msg.route);
       else if (msg.type === "tabEvent" && msg.session && msg.event) {
         const listener = this.tabListeners.get(msg.session);
         if (listener) return listener(msg.event);

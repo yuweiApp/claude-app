@@ -4,8 +4,9 @@ import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell, type MenuItemConstructorOptions, type OpenDialogOptions, type Rectangle, type SaveDialogOptions } from "electron";
 import { GatewayBridge } from "./browser/bridge.js";
 import { ElementInspector, pngBase64 } from "./browser/inspect.js";
-import { BrowserViews, FAVICON_SCHEME, tabInfo } from "./browser/views.js";
+import { BrowserViews, FAVICON_SCHEME, PARTITION, tabInfo } from "./browser/views.js";
 import { SshProxies } from "./browser/ssh-proxy.js";
+import { NetworkProxy } from "./browser/network-proxy.js";
 import { findCaptureSource } from "./capture.js";
 
 // 桌面版：拉起网关和网页（Vite），在窗口里打开网页。已经在跑的（比如 VS Code 里先启动了「启动网页」）直接复用
@@ -174,7 +175,9 @@ ipcMain.handle("window:is-maximized", (e) => BrowserWindow.fromWebContents(e.sen
 // 标签页有变化时把整个列表推给界面（browser:tabs），AI 切标签页、用户在网页里点开新页面时让面板跟着切（browser:activate）
 let mainWindow: BrowserWindow | undefined;
 // 远程会话的内置浏览器：localhost 经网关、SSH 指远端（browser/ssh-proxy.ts）
-const browserViews = new BrowserViews(() => mainWindow, new SshProxies(gatewayUrl, gatewayToken));
+// 设置页「网络代理」在内置浏览器这边的部分：分区的代理、代理认证（browser/network-proxy.ts）
+const networkProxy = new NetworkProxy();
+const browserViews = new BrowserViews(() => mainWindow, new SshProxies(gatewayUrl, gatewayToken, networkProxy));
 // 内置浏览器标签页的图标（views.ts 的 fetchFavicon 取下来的）：界面的 <img> 用 favicon://icon/<编号> 加载。要在 ready 之前注册
 protocol.registerSchemesAsPrivileged([{ scheme: FAVICON_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const fromUi = (sender: Electron.WebContents) => !!mainWindow && !mainWindow.isDestroyed() && sender === mainWindow.webContents;
@@ -323,6 +326,8 @@ if (!app.requestSingleInstanceLock()) {
         start("网关", path.join(root, "gateway"), ["--import", "tsx", "src/index.ts"], { LOG_PRETTY: "1" }),
       );
       await ensure(clientUrl, () => start("网页", path.join(root, "client"), ["node_modules/vite/bin/vite.js"]));
+      // 先按上次的设置设好代理，再恢复上次的标签页
+      await networkProxy.attach(session.fromPartition(PARTITION));
       await browserViews.init();
       session.defaultSession.protocol.handle(FAVICON_SCHEME, (request) => browserViews.faviconResponse(request.url));
       mainWindow = createWindow();
@@ -330,7 +335,7 @@ if (!app.requestSingleInstanceLock()) {
       mainWindow.on("closed", () => app.quit());
       const ws = new URL("/browser/host", gatewayUrl.replace(/^http/, "ws"));
       if (gatewayToken) ws.searchParams.set("token", gatewayToken);
-      bridge = new GatewayBridge(ws.toString(), browserViews, (message) => console.log(message));
+      bridge = new GatewayBridge(ws.toString(), browserViews, (message) => console.log(message), networkProxy);
       bridge.start();
     } catch (err) {
       dialog.showErrorBox("Claude App 启动失败", (err as Error).message);

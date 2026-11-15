@@ -3,13 +3,15 @@ import { lookup } from "node:dns/promises";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import net, { type AddressInfo } from "node:net";
 import { Duplex } from "node:stream";
-import { app, session } from "electron";
+import tls from "node:tls";
+import { app } from "electron";
+import { type NetworkProxy, type Route, splitHostPort } from "./network-proxy.js";
 
 /**
  * 远程会话（SSH）的内置浏览器访问远端的 localhost：这样的标签页用这台主机自己的分区（views.ts 的 partitionFor），
  * 分区的代理是这里在本机 127.0.0.1 上开的（每台主机一个端口）。请求 localhost、127.0.0.1、[::1]、*.localhost 的连接，
  * 每条开一个 WebSocket 到网关的 /browser/tunnel，网关经 SSH 连远端的同一个地址（gateway/src/browser/tunnel.ts），地址不用改；
- * 其他地址照系统的代理设置（默认会话的 resolveProxy）直连，或者经 HTTP、SOCKS5 代理连出去，同本机会话的标签页。
+ * 其他地址同本机会话的标签页：按设置页「网络代理」（network-proxy.ts 的 routes）直连，或者经 HTTP(S)、SOCKS5 代理连出去。
  *
  * 分区不用 PAC：Chromium 对 loopback 的隐式直连在 PAC 下去不掉；只能固定代理加 <-loopback>，所有请求都到这里，
  * 而绕过规则又分不出「只有 loopback 走代理」（<local> 把 localhost 也算进去），所以非 loopback 的也由这里转。
@@ -24,16 +26,25 @@ export class SshProxies {
   private readonly ports = new Set<number>();
   /** 普通 http 请求用的连接池，每台主机一个：连接留着给后面的请求用（远端的每条连接都要新开一个 SSH 通道，要一个来回） */
   private readonly agents = new Map<string, http.Agent>();
+  /** 设了这里代理的分区（apply） */
+  private readonly sessions = new Set<Electron.Session>();
 
   /** gatewayUrl：http(s)://…，token：网关的 API_TOKEN（没有是空串） */
   constructor(
     private readonly gatewayUrl: string,
     private readonly gatewayToken: string,
+    private readonly network: NetworkProxy,
   ) {
     app.on("login", (event, _wc, _details, authInfo, callback) => {
       if (!authInfo.isProxy || !["127.0.0.1", "localhost"].includes(authInfo.host) || !this.ports.has(authInfo.port)) return;
       event.preventDefault();
       callback(USER, this.token);
+    });
+    // 设置页「网络代理」改了：按旧设置连出去的连接（连接池里的、浏览器开着的 CONNECT 隧道）都断掉，之后的按新设置连
+    network.onChange(() => {
+      for (const agent of this.agents.values()) agent.destroy();
+      this.agents.clear();
+      for (const ses of this.sessions) void ses.closeAllConnections();
     });
   }
 
@@ -51,6 +62,7 @@ export class SshProxies {
   /** 给分区设上这台主机的代理 */
   async apply(ses: Electron.Session, remote: string): Promise<void> {
     const port = await this.portFor(remote);
+    this.sessions.add(ses);
     await ses.setProxy({ mode: "fixed_servers", proxyRules: `127.0.0.1:${port}`, proxyBypassRules: "<-loopback>" });
   }
 
@@ -141,22 +153,19 @@ export class SshProxies {
     return agent;
   }
 
-  /** 连到 host:port：loopback 经网关到远端，其他的按系统代理设置 */
+  /** 连到 host:port：loopback 经网关到远端，其他的按设置页「网络代理」 */
   private async open(remote: string, host: string, port: number, url: string): Promise<Duplex> {
     if (isLoopback(host)) return this.tunnel(remote, host, port);
-    const route = await session.defaultSession.resolveProxy(url);
-    for (const entry of route.split(";").map((s) => s.trim()).filter(Boolean)) {
-      const [kind, addr] = entry.split(/\s+/) as [string, string | undefined];
-      const proxy = addr ? splitHostPort(addr, kind === "PROXY" ? 80 : 1080) : null;
+    let lastError: unknown;
+    for (const route of await this.network.routes(url)) {
       try {
-        if (kind === "DIRECT") return await direct(host, port);
-        if (kind === "PROXY" && proxy) return await viaHttpProxy(proxy, host, port);
-        if ((kind === "SOCKS5" || kind === "SOCKS") && proxy) return await viaSocks5(proxy, host, port);
-      } catch {
+        return await via(route, host, port);
+      } catch (err) {
         // 试下一个
+        lastError = err;
       }
     }
-    return direct(host, port);
+    throw lastError instanceof Error ? lastError : new Error(`连不上 ${host}:${port}`);
   }
 
   private tunnel(remote: string, host: string, port: number): Promise<Duplex> {
@@ -192,13 +201,6 @@ class RouteAgent extends http.Agent {
 function isLoopback(host: string): boolean {
   const h = host.replace(/^\[(.*)\]$/, "$1").toLowerCase();
   return h === "localhost" || h.endsWith(".localhost") || h === "::1" || /^127(\.\d{1,3}){3}$/.test(h);
-}
-
-function splitHostPort(s: string, defaultPort: number): { host: string; port: number } | null {
-  const m = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(s.trim());
-  if (!m) return null;
-  const port = m[2] ? Number(m[2]) : defaultPort;
-  return port > 0 && port < 65536 ? { host: m[1]!.replace(/^\[(.*)\]$/, "$1"), port } : null;
 }
 
 function pipeBoth(a: Duplex, b: Duplex): void {
@@ -259,11 +261,19 @@ async function direct(host: string, port: number): Promise<net.Socket> {
   });
 }
 
-/** 经 HTTP 代理（系统设置的）：CONNECT 过去 */
-async function viaHttpProxy(proxy: { host: string; port: number }, host: string, port: number): Promise<net.Socket> {
-  const s = await direct(proxy.host, proxy.port);
+function via(route: Route, host: string, port: number): Promise<net.Socket> {
+  if (route.kind === "direct") return direct(host, port);
+  if (route.kind === "socks5") return viaSocks5(route, host, port);
+  return viaHttpProxy(route, host, port);
+}
+
+/** 经 HTTP(S) 代理：CONNECT 过去；HTTPS 代理先和代理建 TLS；要认证的带上 Proxy-Authorization（Basic） */
+async function viaHttpProxy(proxy: Exclude<Route, { kind: "direct" }>, host: string, port: number): Promise<net.Socket> {
+  const raw = await direct(proxy.host, proxy.port);
+  const s = proxy.kind === "https" ? await startTls(raw, proxy.host) : raw;
   const target = `${host.includes(":") ? `[${host}]` : host}:${port}`;
-  s.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`);
+  const auth = proxy.auth ? `Proxy-Authorization: Basic ${Buffer.from(`${proxy.auth.username}:${proxy.auth.password}`).toString("base64")}\r\n` : "";
+  s.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n${auth}\r\n`);
   const head = await readUntil(s, (b) => b.indexOf("\r\n\r\n"));
   const end = head.indexOf("\r\n\r\n") + 4;
   if (!/^HTTP\/1\.[01] 200/.test(head.subarray(0, end).toString("latin1"))) {
@@ -272,6 +282,16 @@ async function viaHttpProxy(proxy: { host: string; port: number }, host: string,
   }
   if (head.length > end) s.unshift(head.subarray(end));
   return s;
+}
+
+function startTls(socket: net.Socket, servername: string): Promise<tls.TLSSocket> {
+  return new Promise((resolve, reject) => {
+    const t = tls.connect({ socket, servername: net.isIP(servername) ? undefined : servername }, () => {
+      t.off("error", reject);
+      resolve(t);
+    });
+    t.once("error", reject);
+  });
 }
 
 /** 经 SOCKS5 代理（不认证，地址交给代理解析） */

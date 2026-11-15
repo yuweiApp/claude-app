@@ -253,7 +253,8 @@ export interface BrowserViewsEvents {
   downloadChanged: [download: UiDownload];
 }
 
-const PARTITION = "persist:claude-browser";
+/** 本机会话的标签页所在的分区（main.ts 给它设设置页「网络代理」，network-proxy.ts） */
+export const PARTITION = "persist:claude-browser";
 /**
  * 远程会话的标签页：每台主机一个分区，分区的代理让 localhost 指那台主机（ssh-proxy.ts）。
  * 登录状态、cookie 也和本机会话的分开（两边的 localhost:3000 本来就是不同的网站）
