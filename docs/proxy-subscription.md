@@ -30,15 +30,15 @@
 
 现在桌面版还没有安装包（`npm start` 直接跑源码），所以分两步：
 
-**现在（开发、自己用）**：`gateway/scripts/fetch-core.mjs`，`npm --prefix gateway run fetch-core`：
+**当成依赖装，不用手动**：下载由 `gateway/scripts/fetch-core.mjs` 做（按当前平台和架构从 GitHub Releases 下载 mihomo，版本和每个平台文件的 sha256 写死在脚本里，校验不过不用；解压到 `gateway/vendor/mihomo/<平台>-<架构>/mihomo(.exe)`，这个目录不提交）。两处会自动跑它：
 
-- 按当前平台和架构下载 mihomo 的发布包（GitHub Releases），版本和每个平台文件的 sha256 写死在脚本里，校验不过不用。
-- 解压到 `gateway/vendor/mihomo/<平台>-<架构>/mihomo(.exe)`，这个目录不提交（加进 `.gitignore`）。
-- 下载本身要能连上 GitHub：脚本认 `HTTPS_PROXY`。连不上时也可以自己下载放到这个位置，或者用 `MIHOMO_PATH` 指到已有的 mihomo。
+- **`npm install` 时**：`gateway/package.json` 的 `postinstall` 跑 `fetch-core.mjs --optional`。已经是这个版本就跳过；下载失败只提示、退出码 0，不让 `npm install` 失败；设了 `MIHOMO_PATH` 或 `CLAUDE_APP_SKIP_CORE=1` 时不下载。
+- **网关运行时**（`core.ts` 的 `ensureCore`）：网关启动时、设置页查状态时、要拉起内核时，没找到内核就在后台跑这个脚本，状态是 `downloading`（设置页显示「正在下载」并轮询）。下载经设置页现在的代理（订阅模式时没有可用的代理，直连）。下好了，要用的话马上拉起；失败了状态回到 `missing`，带上原因，5 分钟后再试。下载中可以保存订阅模式（下好了自动启动），下载失败时保存不了。
+- 也可以手动：`npm --prefix gateway run fetch-core`（`--force` 重新下载，`--platform`、`--arch` 下别的平台的，打包用）。下载要能连上 GitHub，脚本认 `HTTPS_PROXY`；连不上时可以自己下载放到上面的位置，或者用 `MIHOMO_PATH` 指到已有的 mihomo。
 
-**以后（安装包）**：打包时把对应平台的 mihomo 放进安装包的资源目录，桌面版拉起网关时用 `MIHOMO_PATH` 告诉它位置。不在运行时下载：要用订阅的人，往往正是连不上 GitHub 的人。
+**以后（安装包）**：打包时用 `fetch-core.mjs --platform … --arch …` 把对应平台的 mihomo 放进安装包，桌面版拉起网关时用 `MIHOMO_PATH` 告诉它位置。要用订阅的人往往连不上 GitHub，安装包里带着最稳。
 
-**网关怎么找**：`MIHOMO_PATH` > `gateway/vendor/mihomo/<平台>-<架构>/` > `PATH` 里的 `mihomo`。都没有时，设置页显示「没有找到代理内核」和上面的获取方法，「订阅」模式保存不了（`PUT /proxy` 返回 400）。网关在跑的时候下载好了不用重启：设置页下一次查状态时网关发现内核有了就拉起。
+**网关怎么找**：`MIHOMO_PATH` > `gateway/vendor/mihomo/<平台>-<架构>/` > `PATH` 里的 `mihomo`。设了 `MIHOMO_PATH` 时以它为准，指的文件不存在就报错，不自动下载。
 
 ## 4. 网关
 

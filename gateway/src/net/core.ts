@@ -31,6 +31,10 @@ const STABLE_MS = 60_000;
 const NO_NODES = "订阅里没有取到节点：订阅地址连不上，或者订阅是空的（内核会按间隔重试，也可以手动更新）";
 /** 没有找到可执行文件时的提示（设置页显示；订阅模式这时保存不了） */
 const MISSING = "没有找到代理内核 mihomo：在网关目录运行 npm run fetch-core 下载，或者用 MIHOMO_PATH 指到已有的 mihomo";
+/** 下载内核的脚本（npm install 时的 postinstall 也是它），没找到内核时网关自己跑 */
+const FETCH_SCRIPT = path.resolve(import.meta.dirname, "..", "..", "scripts", "fetch-core.mjs");
+/** 下载失败后多久再试（设置页轮询、保存设置时才会触发） */
+const DOWNLOAD_RETRY_MS = 5 * 60_000;
 /** 留多少行内核的输出（启动失败时显示） */
 const TAIL_LINES = 50;
 
@@ -91,13 +95,44 @@ class ProxyCore {
   /** 控制接口直连（不经全局 dispatcher，它可能就指向这个内核） */
   private readonly direct = new Agent();
 
-  /** 网关启动时调用一次：选好两个端口 */
+  /** 网关启动时调用一次：选好两个端口；没有内核的话在后台下载（当依赖装，不用用户手动） */
   async init(): Promise<void> {
     if (this.mixedPort) return;
     this.mixedPort = await freePort();
     this.controllerPort = await freePort();
     // 网关不管怎么退出都带走内核（正常关闭走 stop；这里管崩溃、process.exit）
     process.once("exit", () => this.killNow());
+    this.ensureCore();
+  }
+
+  /** 下载内核时用的代理（设置页现在的代理，SOCKS5 是本机的转接；订阅模式是 null：内核还没有，没法经它下载），net/proxy.ts 设上 */
+  downloadProxy: () => string | null = () => null;
+
+  /** 下载内核的进度：running 是正在下载；error 是上次失败的原因；at 是上次开始的时间 */
+  private download: { running: boolean; error?: string; at: number } = { running: false, at: 0 };
+
+  /**
+   * 没找到内核时下载（跑 scripts/fetch-core.mjs，校验 sha256）：网关启动时、设置页看状态时、要拉起内核时都会调，
+   * 正在下载、刚失败不到 5 分钟时不重复下；设了 MIHOMO_PATH 时以它为准，不下载
+   */
+  ensureCore(): void {
+    if (findCore() || process.env.MIHOMO_PATH?.trim() || this.download.running) return;
+    if (this.download.at && Date.now() - this.download.at < DOWNLOAD_RETRY_MS) return;
+    this.download = { running: true, at: Date.now() };
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    const proxy = this.downloadProxy();
+    if (proxy) env.HTTPS_PROXY = env.https_proxy = proxy;
+    execFile(process.execPath, [FETCH_SCRIPT], { env, timeout: 11 * 60_000, windowsHide: true, maxBuffer: 1024 * 1024 }, (err, _stdout, stderr) => {
+      const ok = !err && findCore() !== null;
+      const reason = stderr.split(/\r?\n/).filter(Boolean).at(-1) ?? err?.message;
+      this.download = { running: false, at: Date.now(), ...(ok ? {} : { error: reason ?? "原因不明" }) };
+      // 下好了、又要用：现在就拉起
+      if (ok && this.desired && !this.running) {
+        this.state = "starting";
+        this.error = undefined;
+        void this.reconcile(this.generation);
+      }
+    });
   }
 
   /** 给子进程、undici 用的代理地址（带用户名、令牌） */
@@ -112,7 +147,17 @@ class ProxyCore {
 
   status(): ProxyCoreStatus {
     const found = findCore();
-    if (!found) return { state: "missing", error: MISSING };
+    if (!found) {
+      this.ensureCore();
+      if (this.download.running) return { state: "downloading" };
+      if (process.env.MIHOMO_PATH?.trim()) return { state: "missing", error: `MIHOMO_PATH 指的文件不存在：${process.env.MIHOMO_PATH.trim()}` };
+      return {
+        state: "missing",
+        error: this.download.error
+          ? `代理内核下载失败：${this.download.error.replace(/^下载失败：/, "")}。5 分钟后自动重试；也可以在网关目录运行 npm run fetch-core，或者用 MIHOMO_PATH 指到已有的 mihomo`
+          : MISSING,
+      };
+    }
     // 之前没找到、现在有了（刚下载好）：不用等下次保存设置，现在就拉起
     if (this.state === "missing" && this.desired) {
       this.state = "starting";
@@ -165,7 +210,9 @@ class ProxyCore {
     }
     const bin = findCore();
     if (!bin) {
+      // 下载好了会接着拉起（ensureCore 的回调）
       this.state = "missing";
+      this.ensureCore();
       return;
     }
     this.state = "starting";

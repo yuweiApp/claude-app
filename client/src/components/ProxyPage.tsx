@@ -108,15 +108,16 @@ export function ProxyPage() {
     );
   }, []);
 
-  // 存的是订阅模式时轮询内核状态和节点：启动中、出错时 2 秒一次，跑起来以后 10 秒一次（延迟、订阅信息会自己变）
+  // 存的是订阅模式时轮询内核状态和节点：启动中、出错时 2 秒一次，跑起来以后 10 秒一次（延迟、订阅信息会自己变）；
+  // 网关正在下载内核时也轮询（还没存成订阅模式也是），下好了状态跟着变
   const live = view?.mode === "subscription" && view.subscription.hasUrl;
   const coreState = view?.subscription.core.state;
   useEffect(() => {
     if (!live) {
       setNodes(null);
       setNodesError(null);
-      return;
     }
+    if (!live && coreState !== "downloading") return;
     let stopped = false;
     const poll = async () => {
       const at = epoch.current;
@@ -410,6 +411,7 @@ function effectiveText(view: ProxySettingsView, nodes: ProxyNodes | null): strin
 function coreText(view: ProxySettingsView): string {
   const core = view.subscription.core;
   if (core.state === "missing") return core.error ?? "没有找到代理内核";
+  if (core.state === "downloading") return "正在下载代理内核 mihomo（约 20 MB），下载完自动启动…";
   if (view.mode !== "subscription") return "保存后启动：网关在本机拉起代理内核 mihomo，由它连订阅里的节点";
   if (core.state === "running") return `运行中（mihomo ${core.version ?? ""}）${core.error ? `。${core.error}` : ""}`;
   if (core.state === "starting") return "启动中…";

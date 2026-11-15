@@ -635,9 +635,9 @@ export interface ProxySettingsView {
   subscription: { hasUrl: boolean; intervalHours: number; core: ProxyCoreStatus };
 }
 
-/** 订阅模式的代理内核 mihomo：missing 是没找到可执行文件；error 带原因（会自动重启） */
+/** 订阅模式的代理内核 mihomo：missing 是没找到可执行文件（下载失败时 error 带原因）；downloading 是网关正在下载；error 带原因（会自动重启） */
 export interface ProxyCoreStatus {
-  state: "missing" | "stopped" | "starting" | "running" | "error";
+  state: "missing" | "downloading" | "stopped" | "starting" | "running" | "error";
   version?: string;
   error?: string;
 }

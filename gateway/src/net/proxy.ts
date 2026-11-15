@@ -229,6 +229,11 @@ function install(): void {
 /** 网关启动时调用一次，在发出任何请求之前 */
 export async function initProxy(): Promise<void> {
   await bridge.start();
+  // 没有内核时网关自己下载：经现在设置的代理下（订阅模式不行，内核还没有）
+  proxyCore.downloadProxy = () => {
+    const s = settings();
+    return s.mode === "subscription" ? null : (effectiveOf(s)?.url ?? null);
+  };
   await proxyCore.init();
   install();
 }
@@ -300,7 +305,8 @@ function normalizeSubscriptionUrl(raw: string): string | undefined {
 export function saveProxySettings(input: ProxySettingsInput): ProxySettingsView {
   const before = proxyEnvKey();
   const next = resolveInput(input);
-  // 没有代理内核时订阅模式保存不了：存了也连不出去（不退回直连），所有请求都会失败
+  // 没有代理内核（也没在下载）时订阅模式保存不了：存了也连不出去（不退回直连），所有请求都会失败；
+  // 正在下载时可以存，下好了自动拉起
   if (next.mode === "subscription") {
     const core = proxyCore.status();
     if (core.state === "missing") throw new ProxySettingsError(core.error ?? "没有找到代理内核");

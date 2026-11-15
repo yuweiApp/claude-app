@@ -365,7 +365,7 @@ gateway/
     http/routes/*.ts      路由
     ssh/                  SSH 远程开发：连接、远端准备、模型请求转发、远端文件和会话记录（第 14 节）
     net/                  网络代理：设置和各个出口、SOCKS5 转接、订阅模式的代理内核（第 15 节）
-  scripts/fetch-core.mjs  下载订阅模式用的代理内核 mihomo（放到 gateway/vendor/，不提交）
+  scripts/fetch-core.mjs  下载订阅模式用的代理内核 mihomo（放到 gateway/vendor/，不提交；npm install 时、网关发现没有内核时自动跑）
 client/
   src/
     api.ts                HTTP + SSE 封装
