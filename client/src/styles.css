@@ -1527,7 +1527,11 @@ main {
 .files-row, .files-hit { display: flex; align-items: center; gap: 5px; width: 100%; height: 28px; padding-right: 8px; border: none; border-radius: 6px; background: none; text-align: left; font-size: 13px; white-space: nowrap; }
 .files-hit { padding-left: 8px; gap: 6px; }
 .files-row:hover, .files-hit.active { background: var(--panel); }
-.files-row.selected, .files-hit.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* 选中的文件：强调色的底加一圈细边（同皮肤里侧栏当前会话那一行），只有淡底时在深色、透出背景的皮肤上看不清 */
+.files-row.selected, .files-hit.selected {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
+}
 /* 文件树右键菜单开着的那一行、拖动时要放进去的文件夹 */
 .files-row.menu-open { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
 .files-row.drop-target { background: color-mix(in srgb, var(--accent) 20%, transparent); }
