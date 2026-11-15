@@ -135,6 +135,8 @@ export class BrowserHost {
       if (this.socket !== socket) return;
       this.socket = null;
       setOwnPids([]);
+      // 桌面版报的操作系统代理不再用：它关着时系统代理变了网关不知道
+      setSystemProxy(undefined);
       this.dropAll("桌面版断开了");
       for (const resolve of this.waiting.values()) resolve(null);
       this.waiting.clear();

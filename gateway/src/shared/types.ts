@@ -622,8 +622,8 @@ export interface ProxySettingsView {
   /** 网关进程继承来的代理（跟随系统、又没有操作系统的代理时用的），没有是 null；不含用户名、密码 */
   inherited: string | null;
   /**
-   * 操作系统的代理（桌面版查了报给网关的，跟随系统时优先用它）：桌面版没报过是 null；
-   * proxy 是能用的 HTTP(S) 代理，系统说直连是 null；unusable 是网关、Claude Code 用不了的（SOCKS 等）
+   * 操作系统的代理（桌面版查了报给网关的，跟随系统时优先用它）：桌面版没连着、还没报过是 null；
+   * proxy 是能用的代理（http://、https://、socks5://），系统说直连是 null；unusable 是网关、Claude Code 用不了的（SOCKS4 等）
    */
   system: { proxy: string | null; unusable: string | null } | null;
   /** 现在实际用的代理，直连是 null；不含用户名、密码 */

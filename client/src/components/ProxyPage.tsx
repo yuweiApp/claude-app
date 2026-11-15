@@ -221,8 +221,8 @@ function modeDesc(mode: ProxyMode, view: ProxySettingsView): string {
   const env = view.inherited ? `沿用网关启动时环境变量里的代理：${view.inherited}` : "网关启动时的环境变量（HTTPS_PROXY 等）里没有代理，现在是直连";
   const fallback = view.inherited ? `沿用网关启动时环境变量里的代理 ${view.inherited}` : "直连";
   const sys = view.system;
-  // 桌面版没报过操作系统的代理（网页版、桌面版还没连上）：网关只能按环境变量
-  if (!sys) return desktop ? `用操作系统的代理设置。桌面版还没报过来，暂时${fallback}` : `${env}。在桌面版里会用操作系统的代理设置`;
+  // 桌面版没连着网关（网页版单独用、桌面版关了）、还没报过操作系统的代理：网关只能按环境变量
+  if (!sys) return desktop ? `用操作系统的代理设置。桌面版还没报过来，暂时${fallback}` : `${env}。桌面版开着时会用操作系统的代理设置`;
   if (sys.proxy) return `用操作系统的代理：${sys.proxy}`;
   if (sys.unusable) return `操作系统的代理是 ${sys.unusable}，只有内置浏览器能用（网关和 Claude Code 支持 HTTP、HTTPS、SOCKS5），它们${fallback}`;
   return view.inherited ? `操作系统没有设代理；${env}` : "操作系统和网关启动时的环境变量里都没有代理，现在是直连";

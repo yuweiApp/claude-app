@@ -157,8 +157,8 @@ function effectiveOf(stored: Stored, token?: string): Effective | null {
 /**
  * 操作系统的代理（跟随系统时用）：Node 和 Claude Code 不读 Windows、macOS 的系统代理设置，由桌面版外壳问 Chromium
  * （resolveProxy 模型接口的地址，PAC、自动检测都算）再报过来（browser/host.ts 的 systemProxy 消息）。
- * 是 PAC 格式的结果（「PROXY a:1; DIRECT」），只看第一项。外壳断开后留着上次报的：系统代理不会因为桌面版关了就变；
- * 网关重启后、外壳报过来之前是 undefined
+ * 是 PAC 格式的结果（「PROXY a:1; DIRECT」），只看第一项。外壳连着时才有：断开后清掉（桌面版关着时系统代理变了网关不知道，
+ * 留着旧的可能一直连一个已经关掉的代理），回到继承的环境变量；网关重启后、外壳报过来之前也是 undefined
  */
 let osRoute: string | undefined;
 
@@ -174,8 +174,11 @@ function osProxy(): { url?: string; unusable?: string } {
   return { unusable: `${kind} ${addr}` };
 }
 
-/** 桌面版报来的操作系统代理（Chromium resolveProxy 的结果）；变了的话网关的请求马上换，子进程按设置改了的规矩换 */
-export function setSystemProxy(route: string): void {
+/**
+ * 桌面版报来的操作系统代理（Chromium resolveProxy 的结果），桌面版断开时是 undefined；
+ * 变了的话网关的请求马上换，子进程按设置改了的规矩换
+ */
+export function setSystemProxy(route: string | undefined): void {
   if (route === osRoute) return;
   const before = proxyEnvKey();
   osRoute = route;
