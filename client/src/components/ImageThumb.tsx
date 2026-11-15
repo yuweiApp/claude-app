@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
+import { ContextMenu } from "./ContextMenu";
 
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 10;
@@ -380,14 +381,19 @@ export function ImageViewer({ src, alt = "图片", onClose }: { src: string; alt
   );
 }
 
-/** 图片缩略图，点开看大图 */
-export function ImageThumb({ src, alt = "图片", className = "image-thumb" }: { src: string; alt?: string; className?: string }) {
+/** 图片缩略图，点开看大图；右键菜单「复制」：默认把图片复制成 PNG，传了 copy 就换成它（如复制文件本身） */
+export function ImageThumb({ src, alt = "图片", className = "image-thumb", copy }: { src: string; alt?: string; className?: string; copy?: () => void }) {
   const [open, setOpen] = useState(false);
+  const items = [{ label: "复制", run: copy ?? (() => void copyImage(src).catch(() => undefined)) }];
   return (
     <>
-      <button className={className} onClick={() => setOpen(true)} title="查看大图">
-        <img src={src} alt={alt} loading="lazy" />
-      </button>
+      <ContextMenu items={items}>
+        {(onContextMenu) => (
+          <button className={className} onClick={() => setOpen(true)} onContextMenu={onContextMenu} title="查看大图">
+            <img src={src} alt={alt} loading="lazy" />
+          </button>
+        )}
+      </ContextMenu>
       {open && <ImageViewer src={src} alt={alt} onClose={() => setOpen(false)} />}
     </>
   );

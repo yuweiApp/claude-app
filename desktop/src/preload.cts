@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld("desktop", {
     pathForFile: (file: File): string => webUtils.getPathForFile(file),
     pickFiles: (): Promise<string[] | null> => ipcRenderer.invoke("files:pick"),
     pickSavePath: (name: string): Promise<string | null> => ipcRenderer.invoke("files:pick-save", name),
+    copyFile: (target: string): Promise<boolean> => ipcRenderer.invoke("clipboard:copy-file", target),
   },
   // 内置浏览器（右侧面板的「浏览器」），见 main.ts 和 browser/views.ts
   browser: {

@@ -1,13 +1,17 @@
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { execFile, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell, type MenuItemConstructorOptions, type OpenDialogOptions, type Rectangle, type SaveDialogOptions } from "electron";
+import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, protocol, session, shell, type MenuItemConstructorOptions, type OpenDialogOptions, type Rectangle, type SaveDialogOptions } from "electron";
 import { GatewayBridge } from "./browser/bridge.js";
 import { ElementInspector, pngBase64 } from "./browser/inspect.js";
 import { BrowserViews, FAVICON_SCHEME, PARTITION, tabInfo } from "./browser/views.js";
 import { SshProxies } from "./browser/ssh-proxy.js";
 import { NetworkProxy } from "./browser/network-proxy.js";
 import { findCaptureSource } from "./capture.js";
+
+const execFileAsync = promisify(execFile);
 
 // 桌面版：拉起网关和网页（Vite），在窗口里打开网页。已经在跑的（比如 VS Code 里先启动了「启动网页」）直接复用
 const root = path.resolve(import.meta.dirname, "..", "..");
@@ -280,6 +284,33 @@ ipcMain.handle("files:pick-save", async (e, name: unknown) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   const result = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
   return result.canceled || !result.filePath ? null : result.filePath;
+});
+
+// 输入框附件右键的「复制」：把本机的一个文件放进系统剪贴板（同在文件管理器里复制），粘贴到文件管理器、聊天软件里是这个文件；
+// 文件不在这台机器上、没复制成时返回 false
+ipcMain.handle("clipboard:copy-file", async (e, target: unknown) => {
+  if (!fromUi(e.sender) || typeof target !== "string" || !path.isAbsolute(target) || !existsSync(target)) return false;
+  try {
+    if (process.platform === "win32") {
+      // 剪贴板里要的是 CF_HDROP（文件列表），Electron 的 clipboard 写不了，交给 Windows PowerShell 的 Set-Clipboard；路径经环境变量传，不用转义
+      await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Set-Clipboard -LiteralPath $env:CLAUDE_APP_CLIPBOARD_FILE"], {
+        env: { ...process.env, CLAUDE_APP_CLIPBOARD_FILE: target },
+        windowsHide: true,
+        timeout: 15_000,
+      });
+    } else if (process.platform === "darwin") {
+      // 访达复制文件时放的是文件引用（furl），AppleScript 的 POSIX file 就是这个
+      await execFileAsync("osascript", ["-e", "on run argv", "-e", "set the clipboard to (POSIX file (item 1 of argv))", "-e", "end run", target], { timeout: 15_000 });
+    } else {
+      // GNOME（Nautilus）等文件管理器认的格式
+      const format = 'electron application/osclipboard;format="x-special/gnome-copied-files"';
+      await clipboard.write([new ClipboardItem({ [format]: new Blob([`copy\n${pathToFileURL(target).href}`]) })]);
+    }
+    return true;
+  } catch (err) {
+    console.error("复制文件到剪贴板失败", err);
+    return false;
+  }
 });
 
 // 技能详情等处的「在文件夹中显示」：用系统的文件管理器打开所在的文件夹并选中它；文件不在这台机器上时返回 false

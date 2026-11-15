@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { SelectedElement } from "@gateway/shared/types";
 /** 桌面版（Electron）预加载脚本注入的窗口接口，见 desktop/src/preload.cts；普通浏览器里没有 */
 export interface DesktopApi {
@@ -33,6 +34,8 @@ export interface DesktopFilesApi {
   pickFiles(): Promise<string[] | null>;
   /** 系统的保存对话框，默认在「下载」文件夹、文件名是 name；取消时 null */
   pickSavePath(name: string): Promise<string | null>;
+  /** 把这台机器上的一个文件放进系统剪贴板（同在文件管理器里复制）；文件不在这台机器上、没复制成时返回 false */
+  copyFile(path: string): Promise<boolean>;
 }
 
 /** 窗口的采集源，和 desktop/src/capture.ts 的 CaptureSource 一致 */
@@ -144,3 +147,22 @@ export const desktop: DesktopApi | undefined = (window as Window & { desktop?: D
 
 /** 系统文件管理器的叫法 */
 export const fileManagerName = desktop?.platform === "darwin" ? "访达" : desktop?.platform === "win32" ? "资源管理器" : "文件管理器";
+
+let localGatewayCheck: Promise<boolean> | undefined;
+/**
+ * 桌面版连的网关在这台机器上（网关存的文件、上传的附件就在本机，能按路径直接读写）；网页版是 false，还不知道时 null。
+ * 只问一次外壳，各处共用结果
+ */
+export function useLocalGateway(): boolean | null {
+  const [local, setLocal] = useState<boolean | null>(desktop?.files ? null : false);
+  useEffect(() => {
+    if (!desktop?.files) return;
+    localGatewayCheck ??= desktop.files.localGateway().catch(() => false);
+    let alive = true;
+    void localGatewayCheck.then((d) => alive && setLocal(d));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return local;
+}

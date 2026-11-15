@@ -1,16 +1,15 @@
 import { machinePath, parseRemote, remoteUri } from "../remote";
-import { createContext, isValidElement, memo, useCallback, useContext, useRef, useState, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
+import { createContext, isValidElement, memo, useContext, useRef, type AnchorHTMLAttributes, type HTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkCjkFriendlyGfmStrikethrough from "remark-cjk-friendly-gfm-strikethrough";
-import { createPortal } from "react-dom";
 import { api } from "../api";
 import type { LineRange } from "./FileBrowser";
 import { useFileExists } from "../state/fileExists";
 import { MermaidBlock } from "./MermaidBlock";
 import { CopyAction } from "./MessageActions";
-import { useDismiss } from "./ComposerPickers";
+import { ContextMenu } from "./ContextMenu";
 
 /**
  * Claude 回复里的链接指向本地文件时，在右侧面板打开：cwd 是会话的工作目录，open 打开相对它的路径的文件，
@@ -175,46 +174,6 @@ export function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTML
 /** 复制给用户的绝对路径：Windows 的（盘符、//server 开头）换回反斜杠，其余照旧用 / */
 function nativePath(abs: string): string {
   return /^[a-z]:\//i.test(abs) || abs.startsWith("//") ? abs.replaceAll("/", "\\") : abs;
-}
-
-/**
- * 链接的右键菜单（同系统菜单的样子，见 .context-menu）：children 拿到 onContextMenu 挂在链接上，
- * 右键处弹出 items，贴着窗口右边、下边时往里收；点外面、按 Esc 关掉
- */
-function ContextMenu({ items, children }: { items: { label: string; run: () => void }[]; children: (onContextMenu: (e: MouseEvent<HTMLElement>) => void) => ReactNode }) {
-  const [at, setAt] = useState<{ left: number; top: number } | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const close = useCallback(() => setAt(null), []);
-  useDismiss(menuRef, at !== null, close);
-  const onContextMenu = (e: MouseEvent<HTMLElement>) => {
-    e.preventDefault();
-    // 菜单宽约 200，每项约 36 高
-    setAt({ left: Math.min(e.clientX, window.innerWidth - 210), top: Math.min(e.clientY, window.innerHeight - 12 - items.length * 36) });
-  };
-  return (
-    <>
-      {children(onContextMenu)}
-      {at &&
-        createPortal(
-          <div ref={menuRef} className="menu context-menu" role="menu" style={{ left: at.left, top: at.top }}>
-            {items.map((item) => (
-              <button
-                key={item.label}
-                role="menuitem"
-                className="menu-item"
-                onClick={() => {
-                  close();
-                  item.run();
-                }}
-              >
-                <span className="menu-item-name">{item.label}</span>
-              </button>
-            ))}
-          </div>,
-          document.body,
-        )}
-    </>
-  );
 }
 
 /**

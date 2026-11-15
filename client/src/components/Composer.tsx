@@ -2,7 +2,9 @@ import { useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, us
 import { api, type MessagePriority } from "../api";
 import { clearComposerDraft, useDraftField, type ComposerDraft, type PendingFile } from "../state/composerDrafts";
 import type { QueuedMessage } from "../state/session";
+import { desktop, useLocalGateway } from "../desktop";
 import { AddMenu } from "./AddMenu";
+import { ContextMenu } from "./ContextMenu";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
 import { MentionMenu, type MentionOption } from "./MentionMenu";
@@ -204,6 +206,14 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
   const [queueBusy, setQueueBusy] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // 附件右键的「复制」：上传好的附件存在网关那台机器上，桌面版连的是本机网关时把文件本身放进系统剪贴板（同在文件管理器里复制）；
+  // 做不到时图片照常复制成 PNG（见 ImageThumb），其他文件没有右键菜单
+  const localGateway = useLocalGateway();
+  const copyFile = (f: PendingFile) => {
+    const local = localGateway && desktop?.files && f.attachment?.path;
+    return local ? () => void desktop!.files.copyFile(local).catch(() => false) : undefined;
+  };
 
   const uploading = files.some((f) => f.status === "uploading");
   const ready = files.filter((f) => f.status === "done");
@@ -473,7 +483,7 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
             if (f.preview) {
               return (
                 <span key={f.key} className={`image-chip ${f.status}`} title={f.error ?? f.path ?? f.name}>
-                  <ImageThumb src={f.preview} alt={f.name} className="image-chip-thumb" />
+                  <ImageThumb src={f.preview} alt={f.name} className="image-chip-thumb" copy={copyFile(f)} />
                   {f.status === "uploading" && <span className="image-chip-state">上传中…</span>}
                   {/* 缩略图只有 56px，完整的错误信息在悬停提示（title）里 */}
                   {f.status === "error" && <span className="image-chip-state error">上传失败</span>}
@@ -501,16 +511,21 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
                 </span>
               );
             }
+            const copy = copyFile(f);
             return (
-              <span key={f.key} className={`chip ${f.status}`} title={f.error ?? f.attachment?.path ?? f.name}>
-                <span className="chip-name">{f.name}</span>
-                <span className="chip-meta">
-                  {f.status === "uploading" ? "上传中…" : f.status === "error" ? f.error : formatSize(f.size)}
-                </span>
-                <button className="chip-remove" onClick={remove}>
-                  ×
-                </button>
-              </span>
+              <ContextMenu key={f.key} items={copy ? [{ label: "复制", run: copy }] : []}>
+                {(onContextMenu) => (
+                  <span className={`chip ${f.status}`} title={f.error ?? f.attachment?.path ?? f.name} onContextMenu={onContextMenu}>
+                    <span className="chip-name">{f.name}</span>
+                    <span className="chip-meta">
+                      {f.status === "uploading" ? "上传中…" : f.status === "error" ? f.error : formatSize(f.size)}
+                    </span>
+                    <button className="chip-remove" onClick={remove}>
+                      ×
+                    </button>
+                  </span>
+                )}
+              </ContextMenu>
             );
           })}
         </div>

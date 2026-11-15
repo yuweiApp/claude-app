@@ -1,28 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type FileTransfer } from "../api";
-import { desktop, fileManagerName } from "../desktop";
+import { desktop, fileManagerName, useLocalGateway } from "../desktop";
 
 /**
  * 文件树的上传、下载。桌面版连着本机的网关时「直传」：界面只给出文件在这台机器上的路径（拖进来的文件、系统的打开/保存对话框），
  * 网关直接在本机路径和项目里的路径之间复制（远程会话经 SFTP，多个请求同时发），内容不经过 HTTP，界面轮询进度。
  * 网页版、网关在别的机器上时走 HTTP：上传是 multipart（XHR 报进度），下载交给浏览器
  */
-
-let directCheck: Promise<boolean> | null = null;
-/** 能不能直传；还不知道时 null */
-function useDirect(): boolean | null {
-  const [direct, setDirect] = useState<boolean | null>(desktop?.files ? null : false);
-  useEffect(() => {
-    if (!desktop?.files) return;
-    directCheck ??= desktop.files.localGateway().catch(() => false);
-    let alive = true;
-    void directCheck.then((d) => alive && setDirect(d));
-    return () => {
-      alive = false;
-    };
-  }, []);
-  return direct;
-}
 
 /** 要上传的一个文件：直传是本机路径，HTTP 是浏览器里的 File */
 export type UploadItem = { name: string; local: string } | { name: string; file: File };
@@ -38,7 +22,8 @@ const baseName = (p: string) => p.slice(Math.max(p.lastIndexOf("/"), p.lastIndex
 const parentDir = (rel: string) => (rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/") + 1) : "");
 
 export function useFileTransfers(cwd: string, onUploaded: (dir: string) => void) {
-  const direct = useDirect();
+  /** 能不能直传；还不知道时 null */
+  const direct = useLocalGateway();
   const [gateway, setGateway] = useState<FileTransfer[]>([]);
   const [http, setHttp] = useState<Row[]>([]);
   const onUploadedRef = useRef(onUploaded);
