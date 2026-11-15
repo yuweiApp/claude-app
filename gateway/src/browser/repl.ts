@@ -381,7 +381,7 @@ export class BrowserRepl implements Repl {
    *   扩展连接的浏览器上 Playwright 的 download 事件不会触发，下载的文件在哪也不知道，代码拿到数据后自己存
    */
   constructor(
-    private readonly getContext: () => Promise<BrowserContext>,
+    private readonly getContext: (signal?: AbortSignal) => Promise<BrowserContext>,
     private readonly tabEvents?: () => TabEvent[],
     downloads?: () => Promise<DownloadInfo[]>,
     saveFile?: (name: string, data: unknown) => Promise<string>,
@@ -459,16 +459,17 @@ export class BrowserRepl implements Repl {
   }
 
   /** 准备好 context 和 page（每次调用开头） */
-  private async current(): Promise<{ context: BrowserContext; page: Page | undefined }> {
-    return this.sync(true);
+  private async current(signal?: AbortSignal): Promise<{ context: BrowserContext; page: Page | undefined }> {
+    return this.sync(true, signal);
   }
 
   /**
    * 取 context，page 指向已关闭或旧连接里的标签页时换成最后一个标签页；记下现在开着的标签页（seen）。
-   * note：page 被换掉要不要告诉模型（调用开头要；调用结束时是代码自己关的，不用）
+   * note：page 被换掉要不要告诉模型（调用开头要；调用结束时是代码自己关的，不用）。
+   * signal：这次调用被取消时不再等连接（外部浏览器第一次连要等用户在连接页上点允许，不限时）
    */
-  private async sync(note: boolean): Promise<{ context: BrowserContext; page: Page | undefined }> {
-    const context = await this.getContext();
+  private async sync(note: boolean, signal?: AbortSignal): Promise<{ context: BrowserContext; page: Page | undefined }> {
+    const context = await this.getContext(signal);
     this.watch(context);
     this.sandbox.context = context;
     const page = this.currentPage as Page | undefined;
@@ -579,7 +580,7 @@ export class BrowserRepl implements Repl {
     } catch (err) {
       return { text: `语法错误：${(err as Error).message}`, images: [], isError: true, opened: false };
     }
-    const { context } = await this.current();
+    const { context } = await this.current(signal);
     // 上次调用以来被关掉的标签页：放在这次结果的最前面（在跑代码之前取，代码自己关的不算）
     const notice = await this.takeNotice();
     const before = snapshotPages(context, this.currentPage as Page | undefined);

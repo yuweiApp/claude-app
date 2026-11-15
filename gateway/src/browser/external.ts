@@ -33,14 +33,33 @@ const coreBundle = createRequire(import.meta.url)("playwright-core/lib/coreBundl
   };
 };
 
+/** 等连接时调用被取消了（用户停掉了后台任务、中断了这一轮），同 repl.ts 里代码跑着时取消的说法 */
+const CANCELLED = "已取消。";
+
+/** 一次还没连上的连接 */
+interface Attempt {
+  /** 发起时的设置（可执行文件、配置、token、建不建标签页组）：等待期间变了就放弃这一次 */
+  key: string;
+  /** 连上的浏览器；失败、被放弃时拒绝 */
+  promise: Promise<Browser>;
+  /** 还在等它的调用数 */
+  waiters: number;
+  giveUp: (err: Error) => void;
+}
+
 /**
  * 到用户的一个浏览器的连接，所有会话共用一条：Playwright 扩展同一个浏览器配置只认一个客户端，
  * 第二个连上来会把第一个顶掉（microsoft/playwright#41838）。不同的浏览器各连各的，互不影响。
  * 第一次用到时才连（拉起浏览器打开扩展的连接页，等用户允许，不限时；设了 token 时自动连，30 秒连不上报错），
- * 断了下次用到再连。程序路径、配置、token 每次连接时按设置页现在的设置取
+ * 断了下次用到再连。程序路径、配置、token 每次连接时按设置页现在的设置取。
+ *
+ * 还在等扩展连上的那一次（attempt）不一定等得到：没设 token 时不限时，用户把连接页关了、转头去设置页填 token，它就一直挂着。
+ * 所以它只在还有调用等着、设置也没变时才留着：等待期间设置变了（填了 token、换了配置），或者等它的调用都被取消了，
+ * 就放弃它，下一次调用按现在的设置重新连（重新打开连接页）。放弃的那次没法撤掉（Playwright 没给出中转的句柄），
+ * 它后来真连上了（用户在旧的连接页上点了允许）就立刻断开
  */
 class ExternalBridge {
-  private connecting: Promise<Browser> | null = null;
+  private attempt: Attempt | null = null;
   private browser: Browser | null = null;
 
   constructor(
@@ -48,56 +67,107 @@ class ExternalBridge {
     private readonly name: string,
   ) {}
 
-  async context(): Promise<BrowserContext> {
-    this.connecting ??= this.connect();
-    const browser = await this.connecting;
+  async context(signal?: AbortSignal): Promise<BrowserContext> {
+    const browser = this.browser ?? (await this.connected(signal));
     const context = browser.contexts()[0];
     if (!context) throw new Error(`${this.name} 没有可用的浏览器上下文`);
     return context;
   }
 
-  private async connect(): Promise<Browser> {
-    try {
-      const entry = listBrowsers().find((b) => b.id === this.id);
-      if (!entry) throw new Error(`${this.name} 已经从设置里移除，或者这台电脑上找不到它了`);
-      if (!entry.installed) throw new Error(`找不到 ${entry.name} 的可执行文件：${entry.executablePath}`);
-      if (entry.profiles.length && !entry.extension)
-        throw new Error(`${entry.name} 里没有装 Playwright Extension（${entry.userDataDir} 下的各个配置里都没找到），从 Chrome 应用商店安装：${INSTALL_URL}`);
-      // tabGroup: false 时连接页地址带 tabGroup=false，扩展不建标签页组（见 browser-settings.ts 的 tabGroupEnabled）
-      const pwConfig = await coreBundle.tools.resolveCLIConfigForMCP({ extension: true, tabGroup: tabGroupEnabled() }, process.env);
-      // 用户数据目录不交给 Playwright：传了它，createBrowserWithInfo 会先 await 去找配置，下面换 token 的前提就不成立了
-      pwConfig.browser.userDataDir = undefined;
-      // Playwright 只认 PLAYWRIGHT_MCP_EXTENSION_TOKEN 一个 token，在 CDPRelayServer 构造时读。
-      // 给了 executablePath（profileDirName 有没有都行），createBrowserWithInfo 一路同步执行到构造中转（中间没有 await），
-      // 所以只在这次同步调用期间换成这个浏览器的 token，调用一返回就换回去，不会串到同时在连的另一个浏览器
-      const original = process.env[PLAYWRIGHT_TOKEN_ENV];
-      if (entry.token) process.env[PLAYWRIGHT_TOKEN_ENV] = entry.token;
-      else delete process.env[PLAYWRIGHT_TOKEN_ENV];
-      let created: Promise<{ browser: Browser }>;
-      try {
-        created = coreBundle.tools.createBrowserWithInfo(
-          pwConfig,
-          { clientName: CLIENT_NAME, cwd: config.workspaceDir },
-          { executablePath: entry.executablePath, ...(entry.profileDir ? { profileDirName: entry.profileDir } : {}) },
-          { title: CLIENT_NAME, workspaceDir: config.workspaceDir },
-        );
-      } finally {
-        if (original === undefined) delete process.env[PLAYWRIGHT_TOKEN_ENV];
-        else process.env[PLAYWRIGHT_TOKEN_ENV] = original;
-      }
-      const { browser } = await created;
-      // createBrowserWithInfo 会把浏览器登记出去给 playwright-cli 接（bind），这里不需要，撤掉
-      await (browser as Browser & { unbind?: () => Promise<void> }).unbind?.().catch(() => undefined);
-      browser.once("disconnected", () => {
-        if (this.browser === browser) this.browser = null;
-        this.connecting = null;
-      });
-      this.browser = browser;
-      return browser;
-    } catch (err) {
-      this.connecting = null;
-      throw err;
+  /** 等连上：接着等正在连的那一次，没有（或者设置变了）就新连一次。signal 取消时只是这个调用不等了 */
+  private async connected(signal?: AbortSignal): Promise<Browser> {
+    if (signal?.aborted) throw new Error(CANCELLED);
+    const entry = listBrowsers().find((b) => b.id === this.id);
+    const key = JSON.stringify(entry ? [entry.executablePath, entry.profileDir, entry.token, tabGroupEnabled()] : null);
+    if (this.attempt && this.attempt.key !== key) {
+      this.abandon(this.attempt, `${this.name} 的连接设置在等待连接期间改了，这次等待已放弃；之后的调用按新的设置连接。`);
     }
+    const attempt = (this.attempt ??= this.start(key, entry));
+    attempt.waiters++;
+    let onAbort: (() => void) | undefined;
+    try {
+      return await new Promise<Browser>((resolve, reject) => {
+        attempt.promise.then(resolve, reject);
+        if (signal) {
+          onAbort = () => reject(new Error(CANCELLED));
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+      });
+    } finally {
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
+      attempt.waiters--;
+      // 连上或失败时 this.attempt 已经清掉了；还在就是等它的调用被取消了，没有别的调用在等就放弃
+      if (!attempt.waiters && this.attempt === attempt) this.abandon(attempt, CANCELLED);
+    }
+  }
+
+  private start(key: string, entry: ResolvedBrowser | undefined): Attempt {
+    let giveUp!: (err: Error) => void;
+    const givenUp = new Promise<never>((_, reject) => (giveUp = reject));
+    const attempt: Attempt = { key, waiters: 0, giveUp, promise: givenUp };
+    const settled = this.connect(entry).then(
+      (browser) => {
+        if (this.attempt !== attempt) {
+          // 放弃了的那次后来连上了：断开（经扩展连的浏览器 close 只是断开连接，中转跟着停掉），不留着占扩展的那一个客户端位置
+          void browser.close().catch(() => undefined);
+          throw new Error(`${this.name} 的这次连接已经放弃`);
+        }
+        this.attempt = null;
+        this.browser = browser;
+        browser.once("disconnected", () => {
+          if (this.browser === browser) this.browser = null;
+        });
+        return browser;
+      },
+      (err: unknown) => {
+        if (this.attempt === attempt) this.attempt = null;
+        throw err;
+      },
+    );
+    attempt.promise = Promise.race([settled, givenUp]);
+    // 没有调用在等时（放弃之后）结果没人接，不当成未处理的拒绝
+    attempt.promise.catch(() => undefined);
+    settled.catch(() => undefined);
+    return attempt;
+  }
+
+  /** 不再等这一次：还在等它的调用收到 reason，之后的调用重新连 */
+  private abandon(attempt: Attempt, reason: string): void {
+    if (this.attempt === attempt) this.attempt = null;
+    attempt.giveUp(new Error(reason));
+  }
+
+  private async connect(entry: ResolvedBrowser | undefined): Promise<Browser> {
+    if (!entry) throw new Error(`${this.name} 已经从设置里移除，或者这台电脑上找不到它了`);
+    if (!entry.installed) throw new Error(`找不到 ${entry.name} 的可执行文件：${entry.executablePath}`);
+    if (entry.profiles.length && !entry.extension)
+      throw new Error(`${entry.name} 里没有装 Playwright Extension（${entry.userDataDir} 下的各个配置里都没找到），从 Chrome 应用商店安装：${INSTALL_URL}`);
+    // tabGroup: false 时连接页地址带 tabGroup=false，扩展不建标签页组（见 browser-settings.ts 的 tabGroupEnabled）
+    const pwConfig = await coreBundle.tools.resolveCLIConfigForMCP({ extension: true, tabGroup: tabGroupEnabled() }, process.env);
+    // 用户数据目录不交给 Playwright：传了它，createBrowserWithInfo 会先 await 去找配置，下面换 token 的前提就不成立了
+    pwConfig.browser.userDataDir = undefined;
+    // Playwright 只认 PLAYWRIGHT_MCP_EXTENSION_TOKEN 一个 token，在 CDPRelayServer 构造时读。
+    // 给了 executablePath（profileDirName 有没有都行），createBrowserWithInfo 一路同步执行到构造中转（中间没有 await），
+    // 所以只在这次同步调用期间换成这个浏览器的 token，调用一返回就换回去，不会串到同时在连的另一个浏览器
+    const original = process.env[PLAYWRIGHT_TOKEN_ENV];
+    if (entry.token) process.env[PLAYWRIGHT_TOKEN_ENV] = entry.token;
+    else delete process.env[PLAYWRIGHT_TOKEN_ENV];
+    let created: Promise<{ browser: Browser }>;
+    try {
+      created = coreBundle.tools.createBrowserWithInfo(
+        pwConfig,
+        { clientName: CLIENT_NAME, cwd: config.workspaceDir },
+        { executablePath: entry.executablePath, ...(entry.profileDir ? { profileDirName: entry.profileDir } : {}) },
+        { title: CLIENT_NAME, workspaceDir: config.workspaceDir },
+      );
+    } finally {
+      if (original === undefined) delete process.env[PLAYWRIGHT_TOKEN_ENV];
+      else process.env[PLAYWRIGHT_TOKEN_ENV] = original;
+    }
+    const { browser } = await created;
+    // createBrowserWithInfo 会把浏览器登记出去给 playwright-cli 接（bind），这里不需要，撤掉
+    await (browser as Browser & { unbind?: () => Promise<void> }).unbind?.().catch(() => undefined);
+    return browser;
   }
 
   /** 输入框 @ 引用用：已连上时列出标签页；没连上返回空的，不为了列标签页去拉起连接页 */
@@ -211,7 +281,7 @@ export function externalServers(active: ExternalBrowserInfo[], sessionId: string
       browserMcpServer({
         name: b.id,
         instructions: instructions(b, active, cwd, remote),
-        repl: replFor(`${b.id}:${sessionId}`, () => new BrowserRepl(() => bridgeOf(b).context(), undefined, undefined, fileSaver(cwd)), resumed),
+        repl: replFor(`${b.id}:${sessionId}`, () => new BrowserRepl((signal) => bridgeOf(b).context(signal), undefined, undefined, fileSaver(cwd)), resumed),
       }),
     ]),
   );
