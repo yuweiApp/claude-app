@@ -103,9 +103,10 @@ export class TaskList {
             remember(this.toolStarts, block.id, Date.now());
             remember(this.toolNames, block.id, block.name);
             const code = (block.input as { code?: unknown } | null)?.code;
-            if (typeof code === "string") remember(this.codes, block.id, code);
+            // 空字符串和没传一样（browser_run_code 的 code、file 里不用的那个，有的模型会填 ""）
+            if (typeof code === "string" && code.trim()) remember(this.codes, block.id, code);
             const file = (block.input as { file?: unknown } | null)?.file;
-            if (typeof file === "string" && block.name.endsWith("__browser_run_code")) remember(this.files, block.id, file);
+            if (typeof file === "string" && file.trim() && block.name.endsWith("__browser_run_code")) remember(this.files, block.id, file);
           }
           if (block.type === "tool_use" && block.name === "Bash") {
             const command = (block.input as { command?: unknown }).command;

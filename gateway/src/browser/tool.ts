@@ -187,9 +187,11 @@ export interface ServerOptions {
  */
 export function browserMcpServer({ name, instructions, repl, readFile, temporaryTabs }: ServerOptions): McpSdkServerConfigWithInstance {
   /** 这次调用要执行的代码：code 原样；file 是工作目录里的脚本文件，读出来（去掉开头的 BOM）当 code 用 */
-  const sourceOf = async (code: string | undefined, file: string | undefined): Promise<string> => {
-    if ((code === undefined) === (file === undefined)) throw new Error("code 和 file 要传其中一个，不能都传或都不传。");
-    if (code !== undefined) return code;
+  const sourceOf = async (code: string | null | undefined, file: string | null | undefined): Promise<string> => {
+    // 有的模型会把 schema 里的字段都填上，不用的填 ""、null：这两种和没传一样
+    const given = (value: string | null | undefined): value is string => value != null && value.trim() !== "";
+    if (given(code) === given(file)) throw new Error("code 和 file 要传其中一个，不能都传或都不传（空字符串、null 算没传）。");
+    if (given(code)) return code;
     if (!readFile) throw new Error("这个会话没有工作目录，file 参数用不了。");
     try {
       return (await readFile(file!)).toString("utf8").replace(/^\uFEFF/, "");
@@ -205,14 +207,14 @@ export function browserMcpServer({ name, instructions, repl, readFile, temporary
         "code 和 file 传其中一个：file 是会话工作目录里的脚本文件，内容和写在 code 里一样执行。" +
         `timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}、最大 ${MAX_TIMEOUT_MS}；超过约 ${BACKGROUND_SECONDS} 秒转为后台任务，结束后结果作为通知送达。`,
       {
-        code: z.string().optional().describe("要执行的 JavaScript；和 file 传其中一个"),
-        file: z.string().optional().describe("要执行的脚本文件，相对会话工作目录的路径；和 code 传其中一个"),
+        code: z.string().nullish().describe("要执行的 JavaScript；和 file 传其中一个"),
+        file: z.string().nullish().describe("要执行的脚本文件，相对会话工作目录的路径；和 code 传其中一个"),
         timeout_ms: z
           .number()
           .int()
           .min(1000)
           .max(MAX_TIMEOUT_MS)
-          .optional()
+          .nullish()
           .describe(`这次调用最多跑多久（毫秒），默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}`),
       },
       async ({ code, file, timeout_ms }, extra) => {
