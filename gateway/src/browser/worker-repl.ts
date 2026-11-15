@@ -50,11 +50,12 @@ export class WorkerRepl implements Repl {
   private exitNotice: string | undefined;
   private disposed = false;
 
-  /** saveFile：REPL 的 saveFile() 在主线程写文件（external.ts 的 fileSaver，按会话的工作目录） */
+  /** saveFile、readFile：REPL 的 saveFile()、readFile() 在主线程读写文件（external.ts 的 fileSaver、fileReader，按会话的工作目录） */
   constructor(
     private readonly host: BrowserHost,
     private readonly sessionId: string,
     private readonly saveFile?: (name: string, data: unknown) => Promise<string>,
+    private readonly readFile?: (name: string) => Promise<Buffer>,
   ) {}
 
   get busy(): boolean {
@@ -179,6 +180,16 @@ export class WorkerRepl implements Repl {
         this.saveFile(msg.name, msg.data).then(
           (path) => this.send(worker, { type: "saved", req: msg.req, path }),
           (err: unknown) => this.send(worker, { type: "saved", req: msg.req, error: err instanceof Error ? err.message : String(err) }),
+        );
+        break;
+      case "read":
+        if (!this.readFile) {
+          this.send(worker, { type: "fileData", req: msg.req, error: "这个会话没有工作目录，readFile 读不了文件" });
+          break;
+        }
+        this.readFile(msg.name).then(
+          (data) => this.send(worker, { type: "fileData", req: msg.req, data }),
+          (err: unknown) => this.send(worker, { type: "fileData", req: msg.req, error: err instanceof Error ? err.message : String(err) }),
         );
         break;
       case "keep":

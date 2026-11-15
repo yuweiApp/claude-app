@@ -218,6 +218,12 @@ function TaskDetails({ id, sessionId, task, onError }: { id: string; sessionId: 
           <pre className="task-command">{task.code}</pre>
         </div>
       )}
+      {task.file !== undefined && (
+        <div className="task-block code">
+          <div className="task-block-head"><span><CodeIcon />执行脚本文件</span><TaskCopyButton text={task.file} label="复制脚本文件路径" onError={onError} /></div>
+          <pre className="task-command">{task.file}</pre>
+        </div>
+      )}
       {prompt !== undefined && (
         <div className="task-block command">
           <div className="task-block-head"><span><PromptIcon />任务说明</span><TaskCopyButton text={prompt} label="复制任务说明" onError={onError} /></div>

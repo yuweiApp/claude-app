@@ -220,7 +220,7 @@ const DATA_URL = new RegExp(String.raw`data:([\w.+-]+\/[\w.+-]+)?((?:;[\w.+-]+(?
 
 /**
  * 长的 data: 地址只留类型，数据部分换成省略的字数：网页里内嵌的图片（搜索结果的缩略图都是这样）一张就是几千到几万个字符的 base64，
- * 模型看不懂、还占上下文，以前取一页图片的 src 就是 4 万字符。要用图片有 emitImage、saveFile（外部浏览器）
+ * 模型看不懂、还占上下文，以前取一页图片的 src 就是 4 万字符。要用图片有 emitImage、saveFile
  */
 function elideDataUrls(text: string): string {
   return text.replace(DATA_URL, (_m, mime: string | undefined, params: string, data: string, more: string | undefined, moreCount: string | undefined) => {
@@ -379,6 +379,7 @@ export class BrowserRepl implements Repl {
    * @param keepTab 内置浏览器：把 AI 最近操作的标签页留给用户，代码里的全局函数 keepTab() 就是它（经主线程问桌面版）
    * @param saveFile 外部浏览器：把数据写进这个会话的工作目录，代码里的全局函数 saveFile() 就是它（external.ts）。
    *   扩展连接的浏览器上 Playwright 的 download 事件不会触发，下载的文件在哪也不知道，代码拿到数据后自己存
+   * @param readFile 读这个会话工作目录里的文件，代码里的全局函数 readFile(name, encoding?) 就是它加上解码（external.ts 的 fileReader）
    */
   constructor(
     private readonly getContext: (signal?: AbortSignal) => Promise<BrowserContext>,
@@ -386,6 +387,7 @@ export class BrowserRepl implements Repl {
     downloads?: () => Promise<DownloadInfo[]>,
     saveFile?: (name: string, data: unknown) => Promise<string>,
     keepTab?: () => Promise<{ title: string; url: string } | null>,
+    readFile?: (name: string) => Promise<Buffer>,
   ) {
     const capture =
       (prefix: string) =>
@@ -421,6 +423,18 @@ export class BrowserRepl implements Repl {
       ...(downloads ? { downloads } : {}),
       ...(saveFile ? { saveFile } : {}),
       ...(keepTab ? { keepTab } : {}),
+      ...(readFile
+        ? {
+            /** 同 Node 的 fs.readFile：不传编码返回 Buffer，传了返回字符串 */
+            readFile: async (name: string, encoding?: unknown) => {
+              if (encoding !== undefined && encoding !== null && !(typeof encoding === "string" && Buffer.isEncoding(encoding))) {
+                throw new Error('readFile 的第二个参数是编码（如 "utf8"、"base64"），不传时返回 Buffer');
+              }
+              const bytes = await readFile(name);
+              return typeof encoding === "string" ? bytes.toString(encoding as BufferEncoding) : bytes;
+            },
+          }
+        : {}),
     });
     Object.defineProperty(this.sandbox, "page", {
       enumerable: true,

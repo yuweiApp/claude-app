@@ -7,7 +7,7 @@ import { TERMINAL_READ_TOOLS, TERMINAL_SERVER, terminalServer } from "../termina
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { BROWSER_SERVER, BROWSER_TOOLS, browserServer } from "../browser/tool.js";
 import type { BrowserHost } from "../browser/host.js";
-import { activeBrowsers, externalNote, externalServers, externalTools, fileSaver, saveFileFact } from "../browser/external.js";
+import { activeBrowsers, externalNote, externalServers, externalTools, fileReader, fileSaver, filesFact } from "../browser/external.js";
 import { desktopEnabled } from "../config-file.js";
 import { DESKTOP_SERVER, DESKTOP_TOOLS, desktopServer } from "../desktop/tool.js";
 import type { DesktopTarget } from "../shared/types.js";
@@ -47,7 +47,7 @@ export function buildOptions(launch: SessionLaunch): Options {
   // 外部浏览器（用户自己的 Chrome、Edge 等）：设置页「浏览器」里启用着的，每次启动会话时重新检测；第一次调用工具时才连
   const active = activeBrowsers();
   const browser = launch.browser
-    ? browserServer(launch.browser, launch.sessionId, launch.resume, externalNote(active), { save: fileSaver(launch.cwd), fact: saveFileFact(launch.cwd) })
+    ? browserServer(launch.browser, launch.sessionId, launch.resume, externalNote(active), { save: fileSaver(launch.cwd), read: fileReader(launch.cwd), fact: filesFact(launch.cwd) })
     : null;
   const external = externalServers(active, launch.sessionId, launch.cwd, launch.resume);
   // 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 里开了才挂，默认关
@@ -109,7 +109,7 @@ function buildRemoteOptions(launch: SessionLaunch): Options {
   const active = activeBrowsers();
   const name = host.connection.name;
   const browser = launch.browser
-    ? browserServer(launch.browser, launch.sessionId, launch.resume, externalNote(active), { save: fileSaver(launch.cwd), fact: saveFileFact(launch.cwd) }, name)
+    ? browserServer(launch.browser, launch.sessionId, launch.resume, externalNote(active), { save: fileSaver(launch.cwd), read: fileReader(launch.cwd), fact: filesFact(launch.cwd) }, name)
     : null;
   const external = externalServers(active, launch.sessionId, launch.cwd, launch.resume, name);
   // 反向转发（设置页、~/.ssh/config 的 RemoteForward）：远端连这些端口时连到用户电脑上的服务；会话启动时开着的

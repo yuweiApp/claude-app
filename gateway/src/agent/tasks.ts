@@ -28,6 +28,8 @@ export class TaskList {
   private readonly commands = new Map<string, string>();
   /** browser_run_code 调用的代码（input.code）：转到后台后 task_started 只带 tool_use_id */
   private readonly codes = new Map<string, string>();
+  /** browser_run_code 调用的脚本文件（input.file，和 code 二选一） */
+  private readonly files = new Map<string, string>();
   /** Agent 工具调用的任务说明（input.prompt）：task_started 一般自己带着，没带时按 tool_use_id 补 */
   private readonly prompts = new Map<string, string>();
   /** 工具调用的工具名：MCP 任务（mcp_task）的开始消息里只有说明，按 tool_use_id 补上是哪个服务器的哪个工具 */
@@ -102,6 +104,8 @@ export class TaskList {
             remember(this.toolNames, block.id, block.name);
             const code = (block.input as { code?: unknown } | null)?.code;
             if (typeof code === "string") remember(this.codes, block.id, code);
+            const file = (block.input as { file?: unknown } | null)?.file;
+            if (typeof file === "string" && block.name.endsWith("__browser_run_code")) remember(this.files, block.id, file);
           }
           if (block.type === "tool_use" && block.name === "Bash") {
             const command = (block.input as { command?: unknown }).command;
@@ -269,6 +273,7 @@ export class TaskList {
       task.startedAt = this.toolStarts.get(toolUseId) ?? task.startedAt;
       task.command ??= this.commands.get(toolUseId);
       task.code ??= this.codes.get(toolUseId);
+      task.file ??= this.files.get(toolUseId);
       task.prompt ??= this.prompts.get(toolUseId);
     }
     return task;
@@ -436,7 +441,7 @@ function plainText(content: unknown): string {
 function toolSummary(input: unknown): string {
   if (!input || typeof input !== "object") return "";
   const i = input as Record<string, unknown>;
-  const key = ["command", "file_path", "notebook_path", "pattern", "url", "query", "description", "code", "prompt"].find((k) => typeof i[k] === "string" && i[k]);
+  const key = ["command", "file_path", "notebook_path", "pattern", "url", "query", "description", "code", "file", "prompt"].find((k) => typeof i[k] === "string" && i[k]);
   const text = key ? (i[key] as string) : Object.keys(i).length ? JSON.stringify(i) : "";
   const trimmed = text.trim();
   const line = trimmed.split("\n", 1)[0]!.trim();

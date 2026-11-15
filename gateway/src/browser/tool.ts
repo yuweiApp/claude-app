@@ -33,6 +33,8 @@ export const RUNTIME_FACTS = [
   "browser_run_code 在一个常驻的 Node REPL 中执行 JavaScript（Playwright API），支持顶层 await：",
   "- 全局变量：page 是当前标签页（Playwright Page；没有标签页时是 undefined），context 是 BrowserContext（context.pages() 是全部标签页）。",
   "- 顶层的 const / let / function 在之后的调用里保留，可以重新声明。",
+  "- 有 fetch、Buffer、URL、setTimeout 等，没有 require、import、process、fs。",
+  "- code 和 file 传其中一个：file 是会话工作目录里的脚本文件（UTF-8），文件内容和写在 code 里一样执行，在同一个 REPL 里，变量互通。",
   "- 返回最后一个表达式的值和 console.log 的输出；emitImage(buffer) 把图片加进结果。",
   `- 返回的文字里，数据部分超过 ${DATA_URL_KEEP_CHARS} 个字符的 data: 地址只保留类型（如 data:image/jpeg;base64,），数据换成「…（省略了 N 个字符）」；代码里拿到的值是完整的。`,
   "- 给 page 赋另一个标签页时，那个标签页切到前台。",
@@ -43,9 +45,9 @@ export const RUNTIME_FACTS = [
   "- page.ariaSnapshot({ mode: 'ai' }) 返回页面的无障碍树（YAML 文本），元素带 [ref=e12]；之后 page.locator('aria-ref=e12') 指向同一个元素，页面变了要重新取。",
 ].join("\n");
 
-/** files：saveFile 的说明（external.ts 的 saveFileFact），会话有工作目录时才有 */
+/** filesFact：saveFile、readFile 的说明（external.ts 的 filesFact），会话有工作目录时才有 */
 /** remote：远程会话所在主机的名称（docs/README.md「SSH 远程开发」） */
-const instructions = (saveFileFact?: string, remote?: string) => [
+const instructions = (filesFact?: string, remote?: string) => [
   "内置浏览器：用户界面右侧面板里的真实网页，用户能看到，也能自己操作。这些工具只能看到这个会话自己的标签页。",
   ...(remote
     ? [
@@ -59,8 +61,8 @@ const instructions = (saveFileFact?: string, remote?: string) => [
     "标签页被新开、关闭、跳转时，下一次 browser_run_code 的结果里会列出变化和是谁做的（你、用户、网页自己、一轮结束）。",
   (remote ? "下载：网页里的下载（包括脚本触发的）不弹「另存为」，存进用户电脑上系统的「下载」文件夹（不在远端的工作目录里），同名时文件名后加 (1)、(2)；" : "下载：网页里的下载（包括脚本触发的）不弹「另存为」，直接存进这个会话的工作目录，同名时文件名后加 (1)、(2)；") +
     "Playwright 的 download 事件照常触发，download.suggestedFilename() 是实际存下的文件名，download.path() 是 Playwright 临时目录里的一份。" +
-    "全局函数 await downloads() 返回这个会话里的下载（进行中的和最近结束的，先开始的在前），每项有 filename、path、url（data: 地址只有类型和长度）、state（progressing / completed / cancelled / interrupted）、paused、receivedBytes、totalBytes（不知道时是 0）、bytesPerSecond、startTime（毫秒时间戳），是调用那一刻的数据。" +
-      (saveFileFact ?? ""),
+    "全局函数 await downloads() 返回这个会话里的下载（进行中的和最近结束的，先开始的在前），每项有 filename、path、url（data: 地址只有类型和长度）、state（progressing / completed / cancelled / interrupted）、paused、receivedBytes、totalBytes（不知道时是 0）、bytesPerSecond、startTime（毫秒时间戳），是调用那一刻的数据。",
+  ...(filesFact ? [filesFact] : []),
   "用户消息里的 @内置浏览器 指这个浏览器，@[标题](网址) 指这里的一个标签页。",
 ].join("\n");
 
@@ -172,6 +174,8 @@ export interface ServerOptions {
   name: string;
   instructions: string;
   repl: Repl;
+  /** 读会话工作目录里的文件（external.ts 的 fileReader）：browser_run_code 的 file 参数用它取脚本；会话没有工作目录时没有 */
+  readFile?: (name: string) => Promise<Buffer>;
   /** 内置浏览器：这个会话现在还没留下的临时标签页，问不到时是 null */
   temporaryTabs?: () => Promise<TemporaryTab[] | null>;
 }
@@ -181,15 +185,28 @@ export interface ServerOptions {
  * 以前挂的是 playwright-core 自带的 Playwright MCP（二十多个工具），后来还留过读页面结构、截图、列出 / 切换标签页、留下标签页四个专用工具，
  * 现在都写在代码里（page.ariaSnapshot、page.screenshot + emitImage、context.pages()、keepTab()）
  */
-export function browserMcpServer({ name, instructions, repl, temporaryTabs }: ServerOptions): McpSdkServerConfigWithInstance {
+export function browserMcpServer({ name, instructions, repl, readFile, temporaryTabs }: ServerOptions): McpSdkServerConfigWithInstance {
+  /** 这次调用要执行的代码：code 原样；file 是工作目录里的脚本文件，读出来（去掉开头的 BOM）当 code 用 */
+  const sourceOf = async (code: string | undefined, file: string | undefined): Promise<string> => {
+    if ((code === undefined) === (file === undefined)) throw new Error("code 和 file 要传其中一个，不能都传或都不传。");
+    if (code !== undefined) return code;
+    if (!readFile) throw new Error("这个会话没有工作目录，file 参数用不了。");
+    try {
+      return (await readFile(file!)).toString("utf8").replace(/^\uFEFF/, "");
+    } catch (err) {
+      throw new Error(`没有读到脚本文件 ${file}：${errorMessage(err)}`);
+    }
+  };
   const tools = [
     tool(
       RUN_CODE_TOOL,
       "在常驻的 REPL 里执行 JavaScript（Playwright API），支持顶层 await。全局有 page（当前标签页）、context（BrowserContext），顶层变量在之后的调用里保留；" +
         "返回最后一个表达式的值和 console.log 的输出，emitImage(buffer) 把图片加进结果。" +
+        "code 和 file 传其中一个：file 是会话工作目录里的脚本文件，内容和写在 code 里一样执行。" +
         `timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}、最大 ${MAX_TIMEOUT_MS}；超过约 ${BACKGROUND_SECONDS} 秒转为后台任务，结束后结果作为通知送达。`,
       {
-        code: z.string().describe("要执行的 JavaScript"),
+        code: z.string().optional().describe("要执行的 JavaScript；和 file 传其中一个"),
+        file: z.string().optional().describe("要执行的脚本文件，相对会话工作目录的路径；和 code 传其中一个"),
         timeout_ms: z
           .number()
           .int()
@@ -198,12 +215,13 @@ export function browserMcpServer({ name, instructions, repl, temporaryTabs }: Se
           .optional()
           .describe(`这次调用最多跑多久（毫秒），默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}`),
       },
-      async ({ code, timeout_ms }, extra) => {
+      async ({ code, file, timeout_ms }, extra) => {
         let notice: string | undefined;
         try {
           const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
+          const source = await sourceOf(code, file);
           notice = takeRestartNotice(repl);
-          const result = withRestartNotice(notice, await repl.run(code, timeout_ms ?? DEFAULT_TIMEOUT_MS, signal));
+          const result = withRestartNotice(notice, await repl.run(source, timeout_ms ?? DEFAULT_TIMEOUT_MS, signal));
           rememberResult(extra, result.text, result.isError);
           const temporary = temporaryTabs && result.opened && !result.isError ? await temporaryTabs().catch(() => null) : null;
           return toResult(temporary?.length ? { ...result, text: `${result.text}\n\n${temporaryNote(temporary)}` } : result);
@@ -227,21 +245,23 @@ export function browserMcpServer({ name, instructions, repl, temporaryTabs }: Se
 
 /**
  * 给模型用的内置浏览器工具，每个会话一个 MCP 服务器；REPL 和连接按会话保留（replFor），在这个会话自己的 worker 线程里。
- * externalNote：说明里补的另外还有哪些浏览器（external.ts 的 externalNote）；files：REPL 的 saveFile()（external.ts 的 fileSaver、saveFileFact，按会话的工作目录）
+ * externalNote：说明里补的另外还有哪些浏览器（external.ts 的 externalNote）；
+ * files：REPL 的 saveFile()、readFile() 和 file 参数（external.ts 的 fileSaver、fileReader、filesFact，按会话的工作目录）
  */
 export function browserServer(
   host: BrowserHost,
   sessionId: string,
   resumed = false,
   externalNote = "",
-  files?: { save: (name: string, data: unknown) => Promise<string>; fact: string },
+  files?: { save: (name: string, data: unknown) => Promise<string>; read: (name: string) => Promise<Buffer>; fact: string },
   /** 远程会话所在主机的名称 */
   remote?: string,
 ): McpSdkServerConfigWithInstance {
   return browserMcpServer({
     name: BROWSER_SERVER,
     instructions: instructions(files?.fact, remote) + externalNote,
-    repl: replFor(`${BROWSER_SERVER}:${sessionId}`, () => new WorkerRepl(host, sessionId, files?.save), resumed),
+    readFile: files?.read,
+    repl: replFor(`${BROWSER_SERVER}:${sessionId}`, () => new WorkerRepl(host, sessionId, files?.save, files?.read), resumed),
     temporaryTabs: () => host.temporaryTabs(sessionId),
   });
 }

@@ -30,7 +30,9 @@ export type ToWorker =
   /** 回复 keep：留下的标签页（没有 AI 操作过的标签页时是 null），或者没留成的原因 */
   | { type: "kept"; req: number; tab?: { title: string; url: string } | null; error?: string }
   /** 回复 save：写入的路径，或者没写成的原因 */
-  | { type: "saved"; req: number; path?: string; error?: string };
+  | { type: "saved"; req: number; path?: string; error?: string }
+  /** 回复 read：文件内容，或者没读到的原因 */
+  | { type: "fileData"; req: number; data?: Uint8Array; error?: string };
 
 /** worker 发给主线程的 */
 export type ToMain =
@@ -47,4 +49,6 @@ export type ToMain =
   /** REPL 的 keepTab()：把这个会话里 AI 最近操作的标签页留给用户 */
   | { type: "keep"; req: number }
   /** REPL 的 saveFile(name, data)：主线程把数据写进会话的工作目录（data 已在 worker 里转成 Uint8Array 或字符串） */
-  | { type: "save"; req: number; name: string; data: Uint8Array | string };
+  | { type: "save"; req: number; name: string; data: Uint8Array | string }
+  /** REPL 的 readFile(name)：主线程读会话工作目录里的文件 */
+  | { type: "read"; req: number; name: string };

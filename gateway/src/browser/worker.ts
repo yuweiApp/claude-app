@@ -118,7 +118,20 @@ function saveFile(name: string, data: unknown): Promise<string> {
   });
 }
 
-const repl = new BrowserRepl(getContext, () => tabEvents.splice(0), listDownloads, saveFile, keepTab);
+// ───────────── 读文件（REPL 的 readFile()，主线程读会话工作目录里的文件） ─────────────
+
+const readReplies = new Map<number, (reply: { data?: Uint8Array; error?: string }) => void>();
+
+/** 主线程发回来的是 Uint8Array（Buffer 过了 postMessage 就不是 Buffer 了），包回 Buffer */
+function readFile(name: string): Promise<Buffer> {
+  const req = nextReq++;
+  return new Promise((resolve, reject) => {
+    readReplies.set(req, ({ data, error }) => (data ? resolve(Buffer.from(data.buffer, data.byteOffset, data.byteLength)) : reject(new Error(error ?? "没有读到文件"))));
+    post({ type: "read", req, name });
+  });
+}
+
+const repl = new BrowserRepl(getContext, () => tabEvents.splice(0), listDownloads, saveFile, keepTab, readFile);
 /** 还在跑的调用，取消时用 */
 const running = new Map<number, AbortController>();
 
@@ -175,6 +188,10 @@ port.on("message", (msg: ToWorker) => {
     case "saved":
       saveReplies.get(msg.req)?.(msg);
       saveReplies.delete(msg.req);
+      break;
+    case "fileData":
+      readReplies.get(msg.req)?.(msg);
+      readReplies.delete(msg.req);
       break;
   }
 });

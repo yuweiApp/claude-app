@@ -209,6 +209,8 @@ export interface BackgroundTask {
   command?: string;
   /** 转到后台的 browser_run_code 的代码 */
   code?: string;
+  /** 转到后台的 browser_run_code 执行的脚本文件（file 参数，相对会话工作目录的路径），这时没有 code */
+  file?: string;
   /** 子代理（local_agent）收到的任务说明 */
   prompt?: string;
   /** 转到后台的网关工具调用（browser_run_code 等）的结果原文，太长时只留开头 */

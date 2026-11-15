@@ -209,6 +209,20 @@ export function externalNote(active: ExternalBrowserInfo[]): string {
 }
 
 /**
+ * saveFile、readFile 的 name：相对会话工作目录的路径，不能跑到外面。返回 fsFor 那套写法的绝对路径。
+ * outside：name 跑到工作目录外面时的报错（参数是给模型看的工作目录）
+ */
+function inWorkdir(cwd: string, fn: string, outside: (dir: string) => string, name: unknown): string {
+  const { fs, root } = fsFor(cwd);
+  const p = fs.path;
+  if (typeof name !== "string" || !name.trim()) throw new Error(`${fn} 的第一个参数是文件名（相对工作目录的路径）`);
+  const target = p.resolve(root, name);
+  const rel = p.relative(root, target);
+  if (!rel || rel.startsWith("..") || p.isAbsolute(rel)) throw new Error(`${outside(machinePathOf(cwd, root))}，name 要是相对路径`);
+  return target;
+}
+
+/**
  * browser_run_code 里的全局函数 saveFile(name, data)：把数据写进会话的工作目录，返回绝对路径。
  * 经扩展连接的浏览器上 Playwright 的 download 事件不会触发（中转把 Browser.setDownloadBehavior 当空操作，浏览器不发下载事件），
  * 下载的文件存到浏览器自己的下载位置，代码拿不到；拿到数据（context.request.get、page.evaluate 里 fetch）后用它存。
@@ -217,13 +231,10 @@ export function externalNote(active: ExternalBrowserInfo[]): string {
  */
 export function fileSaver(cwd: string) {
   // 远程会话的工作目录在远端：经 SFTP 写过去（见 ssh/host-fs.ts）
-  const { fs, root } = fsFor(cwd);
+  const { fs } = fsFor(cwd);
   const p = fs.path;
   return async (name: string, data: unknown): Promise<string> => {
-    if (typeof name !== "string" || !name.trim()) throw new Error("saveFile 的第一个参数是文件名（相对工作目录的路径）");
-    const target = p.resolve(root, name);
-    const rel = p.relative(root, target);
-    if (!rel || rel.startsWith("..") || p.isAbsolute(rel)) throw new Error(`saveFile 只能写进工作目录 ${machinePathOf(cwd, root)} 下面，name 要是相对路径`);
+    const target = inWorkdir(cwd, "saveFile", (dir) => `saveFile 只能写进工作目录 ${dir} 下面`, name);
     let bytes: Buffer;
     if (typeof data === "string") bytes = Buffer.from(data, "utf8");
     else if (ArrayBuffer.isView(data)) bytes = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
@@ -245,9 +256,21 @@ export function fileSaver(cwd: string) {
   };
 }
 
-/** 说明里 saveFile 的那句，内置浏览器（tool.ts 的 browserServer）和外部浏览器共用 */
-export const saveFileFact = (cwd: string) =>
-  `全局函数 await saveFile(name, data) 把数据写进这个会话的工作目录（${machinePathOf(cwd, fsFor(cwd).root)}）：name 是相对这个目录的路径，data 是 Buffer、Uint8Array、ArrayBuffer 或字符串（按 UTF-8 写），同名时文件名后加 (1)、(2)，返回写入的绝对路径。`;
+/**
+ * 读会话工作目录里的文件（远程会话经 SFTP）：browser_run_code 里的全局函数 readFile(name, encoding?)，
+ * 和 browser_run_code 的 file 参数（执行工作目录里的脚本文件，tool.ts）都用它。name 的规则同 saveFile。
+ * REPL 里没有 require、fs：采集脚本要读的输入（网址列表、要上传的文件）、存在工作目录里反复用的脚本，都经这里
+ */
+export function fileReader(cwd: string) {
+  const { fs } = fsFor(cwd);
+  return async (name: string): Promise<Buffer> => fs.readFile(inWorkdir(cwd, "readFile", (dir) => `readFile 只能读工作目录 ${dir} 下面的文件`, name));
+}
+
+/** 说明里 saveFile、readFile 的那一行，内置浏览器（tool.ts 的 browserServer）和外部浏览器共用 */
+export const filesFact = (cwd: string) =>
+  `文件：全局函数 await saveFile(name, data) 把数据写进这个会话的工作目录（${machinePathOf(cwd, fsFor(cwd).root)}）：name 是相对这个目录的路径，data 是 Buffer、Uint8Array、ArrayBuffer 或字符串（按 UTF-8 写），同名时文件名后加 (1)、(2)，返回写入的绝对路径。` +
+  '全局函数 await readFile(name, encoding?) 读这个目录里的文件：name 同上，不传 encoding 时返回 Buffer，传了（如 "utf8"、"base64"）返回按它解码的字符串，文件不存在时抛错。' +
+  "browser_run_code 的 file 参数也是相对这个目录的路径。";
 
 function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[], cwd: string, remote?: string): string {
   const others = active.filter((o) => o.id !== b.id);
@@ -263,8 +286,8 @@ function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[], cwd
     RUNTIME_FACTS,
     "标签页：通过这里开的标签页不会自动关闭。标签页被新开、关闭时，下一次工具结果里会列出变化，只能分出是不是你做的（扩展不提供是用户还是网页）。",
     `下载：网页里的下载（包括脚本触发的）由 ${b.name} 自己处理，按用户在浏览器里的设置保存（默认是系统的「下载」文件夹，设了下载前询问时会弹出另存为对话框），同名时浏览器自己在文件名后加 (1)；` +
-      "Playwright 的 download 事件不会触发，page.waitForEvent('download') 一直等到超时，也拿不到文件存在哪。" +
-      saveFileFact(cwd),
+      "Playwright 的 download 事件不会触发，page.waitForEvent('download') 一直等到超时，也拿不到文件存在哪。",
+    filesFact(cwd),
     `用户消息里的 @${b.name} 指这个浏览器（用户自己的 ${b.name}），@${b.id}[标题](网址) 指这里的一个标签页。`,
   ].join("\n");
 }
@@ -281,7 +304,8 @@ export function externalServers(active: ExternalBrowserInfo[], sessionId: string
       browserMcpServer({
         name: b.id,
         instructions: instructions(b, active, cwd, remote),
-        repl: replFor(`${b.id}:${sessionId}`, () => new BrowserRepl((signal) => bridgeOf(b).context(signal), undefined, undefined, fileSaver(cwd)), resumed),
+        readFile: fileReader(cwd),
+        repl: replFor(`${b.id}:${sessionId}`, () => new BrowserRepl((signal) => bridgeOf(b).context(signal), undefined, undefined, fileSaver(cwd), undefined, fileReader(cwd)), resumed),
       }),
     ]),
   );
