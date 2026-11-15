@@ -595,6 +595,57 @@ function UserGroup({ item }: { item: UserItem }) {
   );
 }
 
+/** 用户消息折叠后显示的行数 */
+const USER_TEXT_LINES = 6;
+/** 超过这么多行才折叠：只多出一两行的不折，免得展开后没多出什么 */
+const USER_TEXT_FOLD_OVER = 8;
+
+/**
+ * 用户消息的文字：太长（粘贴的长链接、大段文字）时默认只显示前几行，下面有「展开」。
+ * 按实际排出来的行数判断（长链接没有换行符也会占很多行），宽度、字号变了重新量；
+ * 量之前先按字数和换行数猜一下，免得长消息先整条画出来再缩回去
+ */
+function UserText({ text }: { text: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [long, setLong] = useState(() => text.length > 600 || text.split("\n").length > USER_TEXT_FOLD_OVER);
+  const [open, setOpen] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const style = getComputedStyle(el);
+      const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.6;
+      // 折叠着时 scrollHeight 也是全文的高度
+      setLong(el.scrollHeight > lineHeight * USER_TEXT_FOLD_OVER + 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [text]);
+  const clamped = long && !open;
+  return (
+    <>
+      <div ref={ref} className={clamped ? "user-text clamped" : "user-text"} style={clamped ? { WebkitLineClamp: USER_TEXT_LINES } : undefined}>
+        <MentionText text={text} compact />
+      </div>
+      {long && (
+        <button
+          className="user-text-more"
+          aria-expanded={open}
+          onClick={() => {
+            setOpen(!open);
+            // 收起时消息开头可能已经滚出去了，收起后滚回能看到的地方
+            if (open) requestAnimationFrame(() => ref.current?.scrollIntoView({ block: "nearest" }));
+          }}
+        >
+          {open ? "收起" : "展开"}
+        </button>
+      )}
+    </>
+  );
+}
+
 /** 子进程异常结束的报错；SSH 连接断开引起的，那台主机之后又连上了就不再显示 */
 function ErrorLine({ item }: { item: Extract<Item, { kind: "error" }> }) {
   const connections = useSshConnections();
@@ -619,7 +670,7 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
             </div>
           )}
           {item.attachments.length > 0 && <Attachments items={item.attachments} />}
-          {text && <MentionText text={text} compact />}
+          {text && <UserText text={text} />}
         </div>
       );
     }

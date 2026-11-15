@@ -635,6 +635,10 @@ main {
   align-self: flex-end; background: var(--user-bubble); border-radius: 18px 18px 6px 18px; padding: 9px 16px;
   max-width: 80%; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6;
 }
+/* 用户消息太长时默认只显示前几行（行数由 Messages.tsx 的 UserText 写在 style 里），下面的按钮展开、收起 */
+.user-text.clamped { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+.user-text-more { display: block; margin-top: 4px; padding: 0; border: none; background: none; color: var(--muted); font-size: 12px; }
+.user-text-more:hover { background: none; color: var(--text); }
 .mention { color: var(--skill); }
 .mention-sigil { color: var(--muted); }
 .assistant { line-height: 1.75; }
