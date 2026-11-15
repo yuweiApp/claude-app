@@ -1429,26 +1429,28 @@ main {
  * 标签栏同浏览器：标签按标题宽度、最宽 180px，放不下时一起变窄（最窄只剩图标），再放不下才横向滚动；
  * 「＋」紧跟在最后一个标签后面，不跟着滚出去。
  * 标签是 container（要按自身宽度藏关闭按钮、标题），宽度不能靠内容撑开，标题宽度由 SidePanel 量好放在 --label-w；
- * 58px = 左内边距 8 + 图标 16 + 间距 6 + 间距 6 + 关闭按钮 18 + 右内边距 4
+ * 58px = 左内边距 8 + 图标 16 + 间距 6 + 间距 6 + 关闭按钮 18 + 右内边距 4；
+ * 至少 80px：标题很短（如「终端」）时按原宽度也不会落进下面藏标题的档位
  */
 .panel-tabs { position: relative; flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
 .panel-tabs::-webkit-scrollbar { display: none; }
 .panel-head-spacer { flex: 1; min-width: 0; }
 .panel-tab {
   container-type: inline-size;
-  display: flex; align-items: center; gap: 6px; flex: 0 1 auto; width: min(180px, calc(var(--label-w, 180px) + 58px)); min-width: 36px; height: 28px; padding: 0 4px 0 8px;
+  display: flex; align-items: center; gap: 6px; flex: 0 1 auto; width: min(180px, max(80px, calc(var(--label-w, 180px) + 58px))); min-width: 36px; height: 28px; padding: 0 4px 0 8px;
   border-radius: 8px; color: var(--muted); font-size: 13px; cursor: pointer; user-select: none;
 }
 .panel-tab.active { min-width: 58px; }
 /* 用鼠标关标签时其余标签先保持原来的宽度，鼠标离开标签栏再重新排 */
 .panel-tabs.frozen .panel-tab { width: var(--tab-frozen); flex-shrink: 0; }
-/* 窄了：不在前面的标签不显示关闭按钮（中键仍可关），当前标签不显示标题；再窄只留图标 */
-@container (max-width: 79px) {
+/* 窄了：不在前面的标签不显示关闭按钮（中键仍可关），当前标签不显示标题；再窄只留图标。
+ * container query 量的是内容区，要减掉左右内边距 12px：67px 即标签宽 79px，39px 即 51px */
+@container (max-width: 67px) {
   .panel-tab:not(.active) .panel-tab-close:not(.unsaved) { display: none; }
   .panel-tab.active .panel-tab-label { display: none; }
   .panel-tab.active .panel-tab-icon { margin-right: auto; }
 }
-@container (max-width: 51px) {
+@container (max-width: 39px) {
   .panel-tab:not(.active) .panel-tab-label { display: none; }
   .panel-tab:not(.active) .panel-tab-icon { margin: 0 auto; }
 }
@@ -1457,7 +1459,7 @@ main {
 .panel-tab-icon { flex: none; display: flex; }
 /* 网页的图标（favicon），和地球图标一样大 */
 .site-icon { width: 16px; height: 16px; object-fit: contain; border-radius: 2px; }
-.panel-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-tab-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel-tab-close { flex: none; width: 18px; height: 18px; padding: 0; border: none; border-radius: 4px; background: none; color: var(--muted); line-height: 18px; opacity: 0; }
 .panel-tab:hover .panel-tab-close, .panel-tab.active .panel-tab-close, .panel-tab-close:focus-visible { opacity: 1; }
 .panel-tab-close:hover { background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
