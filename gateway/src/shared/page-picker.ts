@@ -1,7 +1,9 @@
-import { ELEMENT_CONTEXT_FUNCTION } from "../shared/element-context.js";
+// 网关和网页都会 import 这个文件（网页经 vite 的 @gateway 别名），所以这里不能引用 Node 的模块
+import { ELEMENT_CONTEXT_FUNCTION } from "./element-context.js";
 
 /**
  * 网页预览（/files/page/）给 HTML 末尾加上的脚本：右侧面板在网页上点选元素写标注用。
+ * 右侧面板的 Office 文档预览（client/src/office/frame.ts，网页是界面自己渲染出来放进 srcdoc 的）也用这一段。
  * 网页在沙箱里（单独的源），界面碰不到里面的 DOM，只能由网页里的脚本和界面互相 postMessage：
  *
  * 界面 → 网页（source: "claude-app"）
@@ -11,11 +13,14 @@ import { ELEMENT_CONTEXT_FUNCTION } from "../shared/element-context.js";
  *
  * 网页 → 界面（source: "claude-app-page"）
  * - { type: "ready", path }：加载好了（每次加载、跳到别的页面都发），path 是网页地址的路径
- * - { type: "pick", pickId, selector, element, rect }：标注模式下点了一个元素；element 是 shared/element-context.ts 的函数取的元素信息
+ * - { type: "pick", pickId, selector, element, rect, label, kind, key }：标注模式下点了一个元素；element 是 shared/element-context.ts 的函数取的元素信息；
+ *   label、kind、key 是元素上的 data-pick-label、data-pick-kind、data-edit（或 data-cell），Office 文档预览写的：
+ *   元素在文档里的位置、种类和它的键，没有时是 null
  * - { type: "picked-rect", rect }：选中的元素滚动后的新位置
  * - { type: "edit", id, rect }：点了已有标注的编号
  * - { type: "escape" }：标注模式下按了 Esc
  *
+ * <html> 上有 data-pick-snap（一个 CSS 选择器）时只能选到匹配它的元素：鼠标下的元素换成离它最近的匹配的祖先，没有就不选，这次点击照常交给网页。
  * 位置都是网页视口里的 CSS 像素。不在 iframe 里（直接打开预览地址）时什么都不做。
  * 写成字符串（不是函数再 toString）：tsx 编译时会往函数里加辅助调用，拿到网页里会报错。
  * 只用 ASCII，按原始字节接在网页后面，不管网页是什么编码
@@ -188,11 +193,20 @@ export const PAGE_PICKER_SCRIPT = String.raw`(function () {
   function ours(e) {
     return e.target === host;
   }
+  function targetOf(e) {
+    var el = e.target;
+    if (!el || el.nodeType !== 1 || el === document.documentElement) return null;
+    var snap = document.documentElement.getAttribute("data-pick-snap");
+    if (!snap) return el;
+    try {
+      return el.closest(snap);
+    } catch (err) {
+      return null;
+    }
+  }
   function onMove(e) {
     if (!annotating || ours(e)) return;
-    var el = e.target;
-    if (!el || el.nodeType !== 1 || el === document.documentElement) return;
-    hoverEl = el;
+    hoverEl = targetOf(e);
     schedule();
   }
   function block(e) {
@@ -203,9 +217,11 @@ export const PAGE_PICKER_SCRIPT = String.raw`(function () {
   }
   function onClick(e) {
     if (!annotating || ours(e)) return;
+    var el = targetOf(e);
+    // with data-pick-snap, a click outside any pickable element goes to the page (e.g. switching sheet tabs)
+    if (!el && document.documentElement.getAttribute("data-pick-snap")) return;
     block(e);
-    var el = e.target;
-    if (!el || el.nodeType !== 1 || el === document.documentElement) return;
+    if (!el) return;
     pickId++;
     pending = el;
     pickedEl = null;
@@ -218,7 +234,16 @@ export const PAGE_PICKER_SCRIPT = String.raw`(function () {
     try {
       element = elementContext.call(el);
     } catch (err) {}
-    post({ type: "pick", pickId: pickId, selector: selectorOf(el), element: element, rect: rectOf(el) });
+    post({
+      type: "pick",
+      pickId: pickId,
+      selector: selectorOf(el),
+      element: element,
+      rect: rectOf(el),
+      label: el.getAttribute("data-pick-label"),
+      kind: el.getAttribute("data-pick-kind"),
+      key: el.getAttribute("data-edit") || el.getAttribute("data-cell")
+    });
   }
   ["pointerdown", "mousedown", "pointerup", "mouseup", "dblclick", "auxclick", "contextmenu", "submit"].forEach(function (t) {
     window.addEventListener(t, block, true);

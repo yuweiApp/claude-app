@@ -119,6 +119,28 @@ export const api = {
   /** 保存文件，按 encoding（读的时候认出来的编码）写；文件在 mtimeMs 之后被改过时报错（status 409），force 覆盖 */
   writeFile: (cwd: string, path: string, text: string, mtimeMs: number, encoding: FileEncoding | undefined, force = false) =>
     request<{ mtimeMs: number; size: number }>("POST", "/files/write", { cwd, path, text, mtimeMs, encoding, force }),
+  /** 整个文件的字节（右侧面板预览 Office 文档用） */
+  readBytes: async (cwd: string, path: string): Promise<ArrayBuffer> => {
+    const t = token();
+    const res = await fetch(`${BASE}/files/download?${q({ cwd, path })}`, { headers: t ? { authorization: `Bearer ${t}` } : {} });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new RequestError(data.error || `${res.status} ${res.statusText}`, res.status);
+    }
+    return res.arrayBuffer();
+  },
+  /** 按字节保存文件（改了 Office 文档以后）；冲突的规则同 writeFile */
+  writeBytes: async (cwd: string, path: string, bytes: Uint8Array<ArrayBuffer>, mtimeMs: number, force = false): Promise<{ mtimeMs: number; size: number }> => {
+    const t = token();
+    const res = await fetch(`${BASE}/files/write-bytes?${q({ cwd, path, mtimeMs: String(mtimeMs), ...(force ? { force: "1" } : {}) })}`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream", ...(t ? { authorization: `Bearer ${t}` } : {}) },
+      body: bytes,
+    });
+    const data = (await res.json().catch(() => ({}))) as { mtimeMs: number; size: number; error?: string };
+    if (!res.ok) throw new RequestError(data.error || `${res.status} ${res.statusText}`, res.status);
+    return data;
+  },
   /** 图片原文件；v（修改时间）变了地址就变，浏览器不会用缓存里的旧图 */
   /** 文件树：新建文件（空的）或文件夹 */
   createFile: (cwd: string, path: string, dir: boolean) => request<object>("POST", "/files/create", { cwd, path, dir }),

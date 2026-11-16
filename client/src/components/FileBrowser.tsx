@@ -1,5 +1,5 @@
 import { isRemote, machinePath } from "../remote";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { api, RequestError, type FileContent, type FileEncoding, type ProjectEntry } from "../api";
 import { getDraft, setDraft, useHasDraft } from "../state/fileDrafts";
 import { useDismiss } from "./ComposerPickers";
@@ -10,8 +10,8 @@ import { TransferList, useFileTransfers, type UploadItem } from "./FileTransfers
 import { ZoomableImage } from "./ImageThumb";
 import { MarkdownLiveEditor } from "./MarkdownLiveEditor";
 import { PATH_DRAG_TYPE } from "./MentionText";
-import { closePageAnnotation, editAnnotationAt, repositionAnnotationEditor, startPageAnnotation } from "./ResponseAnnotations";
-import { sanitizeElement, uploadElementScreenshot, useResponseAnnotations } from "../state/responseAnnotations";
+import { OfficePreview, officeKind, type OfficePreviewHandle } from "./OfficePreview";
+import { usePageAnnotations } from "./pageAnnotations";
 import { desktop, fileManagerName } from "../desktop";
 
 /** 文件里的行范围，回复里的链接带了行号时面板滚到并选中这几行 */
@@ -1002,6 +1002,8 @@ const ENCODING_LABELS: Record<FileEncoding, string> = { "utf-8": "UTF-8", gb1803
 const MARKDOWN = /\.(md|markdown|mdx)$/i;
 const HTML = /\.html?$/i;
 const PDF = /\.pdf$/i;
+/** Office 文档整个取到界面里解析，太大的不预览 */
+const OFFICE_MAX_BYTES = 100 * 1024 * 1024;
 
 function FileViewer({
   cwd,
@@ -1031,6 +1033,11 @@ function FileViewer({
   const markdown = MARKDOWN.test(path);
   const html = HTML.test(path);
   const pdf = PDF.test(path);
+  // Word、Excel、PowerPoint 文档：预览、标注、改文字都在 OfficePreview 里，这里管「未保存」和保存失败的提示
+  const office = officeKind(path);
+  const officeRef = useRef<OfficePreviewHandle>(null);
+  /** 放弃修改、重新加载时加一，文档重新读、重新渲染 */
+  const [officeReload, setOfficeReload] = useState(0);
   // Markdown 默认显示渲染效果，开关切到源代码；要定位到行时显示源代码（行号对的是源代码）
   const [rendered, setRendered] = useState(line === null);
   // Ctrl/⌘+F：每按一次加一，文本编辑器打开查找栏（Markdown 渲染模式先切到源代码，行和查找都对着源代码）
@@ -1085,6 +1092,8 @@ function FileViewer({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
+  /** 显示成 Office 文档预览的（能标注、能改文字） */
+  const annotatable = !!ok && !!office && office !== "legacy" && ok.kind !== "image" && ok.kind !== "video" && ok.kind !== "audio" && ok.size <= OFFICE_MAX_BYTES;
   const saved = ok?.text ?? "";
   const value = getDraft(cwd, path) ?? saved;
   // Windows 换行（\r\n）的文件：文本框会把 \r\n 换成 \n（行号、选区、查找的位置都按它算），
@@ -1093,6 +1102,19 @@ function FileViewer({
   const shown = crlf ? value.replaceAll("\r\n", "\n") : value;
 
   const save = async (force = false) => {
+    if (office && office !== "legacy") {
+      if (!officeRef.current || saving) return;
+      setSaving(true);
+      try {
+        await officeRef.current.save(force);
+        setSaveError(null);
+      } catch (err) {
+        setSaveError({ message: (err as Error).message, conflict: err instanceof RequestError && err.status === 409 });
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     if (!ok || !editable || saving) return;
     const text = getDraft(cwd, path);
     if (text === undefined) return;
@@ -1109,11 +1131,22 @@ function FileViewer({
       setSaving(false);
     }
   };
+  const reload = () => {
+    load();
+    setOfficeReload((n) => n + 1);
+  };
   const discard = () => {
     setDraft(cwd, path, undefined);
     setSaveError(null);
-    load();
+    reload();
   };
+  const onOfficeSaved = useCallback((file: { mtimeMs: number; size: number }) => {
+    setContent((prev) => (prev && !("error" in prev) ? { ...prev, ...file } : prev));
+  }, []);
+  // 最新的 save（它每次渲染都是新的函数），给文档里按 Ctrl+S 用
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  const saveFromOffice = useCallback(() => void saveRef.current(), []);
   const change = (edited: string) => {
     const next = crlf ? edited.replace(/\r?\n/g, "\r\n") : edited;
     setDraft(cwd, path, next === saved ? undefined : next);
@@ -1145,6 +1178,26 @@ function FileViewer({
     );
   // PDF 是二进制、也可能超过文本的上限，先认扩展名
   else if (pdf) body = <PdfPreview cwd={cwd} path={path} mtimeMs={content.mtimeMs} />;
+  else if (office === "legacy") body = <div className="panel-empty">旧版 Office 格式（.doc、.xls、.ppt）不能预览，另存成 .docx、.xlsx、.pptx 以后可以</div>;
+  else if (office && content.size > OFFICE_MAX_BYTES) body = <div className="panel-empty">文件太大，无法预览（{formatBytes(content.size)}）</div>;
+  else if (office)
+    body = (
+      <OfficePreview
+        key={officeReload}
+        ref={officeRef}
+        kind={office}
+        cwd={cwd}
+        path={path}
+        mtimeMs={content.mtimeMs}
+        sessionId={sessionId}
+        annotating={annotating}
+        onAnnotatingChange={setAnnotating}
+        onReady={setPageReady}
+        onEdited={onEdited}
+        onSave={saveFromOffice}
+        onSaved={onOfficeSaved}
+      />
+    );
   else if (content.kind === "binary") body = <div className="panel-empty">二进制文件，无法预览（{formatBytes(content.size)}）</div>;
   else if (content.kind === "too-large") body = <div className="panel-empty">文件太大，无法预览（{formatBytes(content.size)}）</div>;
   else if (html)
@@ -1222,10 +1275,22 @@ function FileViewer({
               </button>
             </label>
           )}
-          {html && ok?.kind === "text" && (
+          {((html && ok?.kind === "text") || annotatable) && (
             <button
               className={`icon-btn viewer-head-icon${annotating ? " on" : ""}`}
-              title={!sessionId ? "发出第一条消息后才能标注" : !pageReady ? "这个网页还没加载好，或者不支持标注" : annotating ? "退出标注" : "在网页上点选元素写标注，随下一条消息发给 Claude"}
+              title={
+                !sessionId
+                  ? "发出第一条消息后才能标注"
+                  : !pageReady
+                    ? annotatable
+                      ? "文档还没加载好"
+                      : "这个网页还没加载好，或者不支持标注"
+                    : annotating
+                      ? "退出标注"
+                      : annotatable
+                        ? "在文档里点选内容写标注，随下一条消息发给 Claude（直接改文字：双击）"
+                        : "在网页上点选元素写标注，随下一条消息发给 Claude"
+              }
               aria-label="标注"
               aria-pressed={annotating}
               disabled={!sessionId || !pageReady}
@@ -1234,7 +1299,7 @@ function FileViewer({
               <AnnotateIcon />
             </button>
           )}
-          <FileOptionsMenu text={ok?.kind === "text" ? value : null} onFind={findable ? openFind : undefined} onReload={dirty ? undefined : load} />
+          <FileOptionsMenu text={ok?.kind === "text" ? value : null} onFind={findable ? openFind : undefined} onReload={dirty ? undefined : reload} />
         </div>
       </div>
       <div className="viewer-split">
@@ -1272,10 +1337,7 @@ function FileViewer({
  * 显示的是保存了的文件，文件改了（修改时间变了）就重新加载。
  * sandbox 不给 allow-same-origin：网页和界面同源，脚本不能碰界面的存储和接口。
  *
- * 标注（同 Claude 桌面版的「选择元素」，和内置浏览器的一样）：网关在网页末尾接了一段脚本（gateway/src/http/page-picker.ts），
- * 和这里互相 postMessage。标注模式下在网页上点一个元素，网页里的脚本取元素信息（gateway/src/shared/element-context.ts），
- * 桌面版再截一张元素的图（网页版截不了），界面上打开编辑框写要怎么改，加进输入框里的「N 条注释」，随下一条消息发出，加完、按 Esc 不加了都退出标注模式（要再标一个重新点按钮）；
- * 已有的标注在元素上显示编号，点编号修改
+ * 标注（同 Claude 桌面版的「选择元素」）：网关在网页末尾接了一段脚本（gateway/src/shared/page-picker.ts），和界面互相 postMessage，见 pageAnnotations.ts
  */
 function HtmlPreview({
   cwd,
@@ -1297,88 +1359,8 @@ function HtmlPreview({
 }) {
   const url = usePageUrl(cwd, path);
   const src = url && "ok" in url ? `${url.ok}?v=${Math.round(mtimeMs)}` : null;
-
   const frameRef = useRef<HTMLIFrameElement>(null);
-  /** 网页当前显示的文件（点链接可能跳到别的页面）和第几次加载 */
-  const [loaded, setLoaded] = useState<{ file: string; n: number } | null>(null);
-  const fileRef = useRef(path);
-  fileRef.current = loaded?.file ?? path;
-  const pickedRect = useRef<PageRect | null>(null);
-  /** 第几次选：截图、上传期间又选了别的，前一次的就不打开编辑框了 */
-  const pickSeq = useRef(0);
-
-  const annotations = useResponseAnnotations(sessionId);
-  const file = loaded?.file;
-  const marks = useMemo(
-    () => annotations.flatMap((a, i) => (a.element?.selector && a.element.file === file ? [{ id: a.id, n: i + 1, selector: a.element.selector }] : [])),
-    [annotations, file],
-  );
-
-  const post = useCallback((msg: Record<string, unknown>) => {
-    frameRef.current?.contentWindow?.postMessage({ ...msg, source: "claude-app" }, "*");
-  }, []);
-  /** 网页视口里的位置换成界面上的 */
-  const toScreen = useCallback((r: PageRect | null) => {
-    const f = frameRef.current?.getBoundingClientRect();
-    return r && f ? new DOMRect(f.left + r.x, f.top + r.y, r.width, r.height) : null;
-  }, []);
-
-  useEffect(() => {
-    onReady(false);
-    setLoaded(null);
-  }, [src, onReady]);
-
-  // 每次加载好、标注模式和编号变了，都把状态告诉网页
-  useEffect(() => {
-    if (loaded) post({ type: "state", annotating: annotating && !!sessionId, marks });
-  }, [loaded, annotating, sessionId, marks, post]);
-
-  useEffect(() => {
-    const onMessage = (e: MessageEvent) => {
-      const frame = frameRef.current;
-      const d = e.data as Record<string, unknown> | null;
-      if (!frame || e.source !== frame.contentWindow || !d || d.source !== "claude-app-page") return;
-      if (d.type === "ready") {
-        setLoaded((prev) => ({ file: pageFile(d.path) ?? path, n: (prev?.n ?? 0) + 1 }));
-        onReady(true);
-      } else if (d.type === "pick" && sessionId) {
-        const element = sanitizeElement(d.element);
-        const selector = str(d.selector, 1000);
-        if (!element || !selector) return;
-        const file = fileRef.current;
-        pickedRect.current = pageRect(d.rect);
-        const pickId = d.pickId;
-        const seq = ++pickSeq.current;
-        void (async () => {
-          const shot = await captureElement(frame, toScreen(pickedRect.current));
-          post({ type: "show-pick", pickId });
-          const screenshot = await uploadElementScreenshot(shot);
-          if (seq !== pickSeq.current) return;
-          startPageAnnotation(
-            sessionId,
-            { file, selector, element, ...(screenshot ? { screenshot } : {}) },
-            () => toScreen(pickedRect.current),
-            () => post({ type: "clear-pick", pickId }),
-            () => onAnnotatingChange(false),
-          );
-        })();
-      } else if (d.type === "picked-rect") {
-        pickedRect.current = pageRect(d.rect);
-        repositionAnnotationEditor();
-      } else if (d.type === "edit" && sessionId && typeof d.id === "string") {
-        const rect = pageRect(d.rect);
-        editAnnotationAt(sessionId, d.id, () => toScreen(rect));
-      } else if (d.type === "escape") onAnnotatingChange(false);
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [path, sessionId, post, toScreen, onReady, onAnnotatingChange]);
-
-  // 退出标注模式、关掉文件时，没写完的标注框也关掉
-  useEffect(() => {
-    if (!annotating) closePageAnnotation();
-  }, [annotating]);
-  useEffect(() => closePageAnnotation, []);
+  usePageAnnotations({ frameRef, path, source: src, sessionId, annotating, onAnnotatingChange, onReady });
 
   if (!url) return <div className="panel-empty">正在加载网页…</div>;
   if ("error" in url) return <div className="panel-empty files-error">{url.error}</div>;
@@ -1423,48 +1405,6 @@ function PdfPreview({ cwd, path, mtimeMs }: { cwd: string; path: string; mtimeMs
   if (!url) return <div className="panel-empty">正在加载 PDF…</div>;
   if ("error" in url) return <div className="panel-empty files-error">{url.error}</div>;
   return <iframe className="viewer-frame" src={`${url.ok}?v=${Math.round(mtimeMs)}`} title={path} />;
-}
-
-interface PageRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-// 网页发来的消息是网页里的脚本发的，逐个字段检查
-const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
-function pageRect(v: unknown): PageRect | null {
-  if (!v || typeof v !== "object") return null;
-  const r = v as Record<string, unknown>;
-  return { x: num(r.x), y: num(r.y), width: num(r.width), height: num(r.height) };
-}
-/**
- * 桌面版：截一张元素的图（四周多 80px，限在网页的范围里，同内置浏览器），PNG 的 base64；网页版、元素不在画面上时 null。
- * 截的是界面窗口，网页里此时没有画选中框（等 show-pick）
- */
-async function captureElement(frame: HTMLIFrameElement, el: DOMRect | null): Promise<string | null> {
-  if (!desktop || !el) return null;
-  const f = frame.getBoundingClientRect();
-  const left = Math.max(f.left, el.left - 80);
-  const top = Math.max(f.top, el.top - 80);
-  const right = Math.min(f.right, el.right + 80);
-  const bottom = Math.min(f.bottom, el.bottom + 80);
-  if (right - left < 1 || bottom - top < 1) return null;
-  return desktop.captureRect({ x: left, y: top, width: right - left, height: bottom - top }).catch(() => null);
-}
-/** 网页地址的路径（…/files/page/<id>/<相对路径>）里的文件，文件夹是里面的 index.html */
-function pageFile(pathname: unknown): string | null {
-  if (typeof pathname !== "string") return null;
-  const m = /\/files\/page\/[^/]+\/(.*)$/.exec(pathname);
-  if (!m) return null;
-  try {
-    const rel = m[1]!.split("/").map(decodeURIComponent).join("/");
-    return !rel || rel.endsWith("/") ? `${rel}index.html` : rel;
-  } catch {
-    return null;
-  }
 }
 
 /**

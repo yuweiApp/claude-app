@@ -6,7 +6,7 @@ import iconv from "iconv-lite";
 import { BadRequestError } from "../../agent/session-manager.js";
 import type { FileContent, FileEncoding, ProjectEntry } from "../../shared/types.js";
 import { fsFor, type HostFs } from "../../ssh/host-fs.js";
-import { PAGE_PICKER_SCRIPT } from "../page-picker.js";
+import { PAGE_PICKER_SCRIPT } from "../../shared/page-picker.js";
 
 /** 本机是 path，远程会话（cwd 是 ssh://…，见 ssh/host-fs.ts）是 path.posix */
 type PathLib = HostFs["path"];
@@ -18,6 +18,8 @@ const MAX_FILES = 20000;
 const CACHE_MS = 10_000;
 /** 右侧面板直接显示的文本文件上限 */
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
+/** 右侧面板保存 Office 文档（/files/write-bytes）的上限 */
+const MAX_BINARY_WRITE_BYTES = 200 * 1024 * 1024;
 const IMAGE_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -116,6 +118,9 @@ export const PAGE_PREFIX = "/files/page/";
  * q 为空列项目文件夹第一层；q 以 / 结尾且是文件夹时列这个文件夹；否则在整个项目里搜（git 仓库按 .gitignore 过滤）
  */
 export function fileRoutes(app: FastifyInstance): void {
+  // /files/write-bytes 的请求体：原样的字节
+  app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
+
   app.get<{ Querystring: { cwd?: string; q?: string } }>("/files", async (req) => {
     const at = resolveInProject(req.query.cwd, "");
     const q = (req.query.q ?? "").trim();
@@ -181,6 +186,27 @@ export function fileRoutes(app: FastifyInstance): void {
     const encoding = req.body.encoding ?? "utf-8";
     if (!ENCODINGS.has(encoding)) throw new BadRequestError("不支持的编码");
     await fs.writeFile(abs, encodeText(req.body.text, encoding));
+    const after = await fs.stat(abs);
+    return { mtimeMs: after.mtimeMs, size: after.size };
+  });
+
+  // 右侧面板改了 Office 文档（docx、xlsx、pptx）后保存：请求体是整个文件的字节（application/octet-stream），参数在地址里，
+  // 冲突的规则同 /files/write
+  app.post<{ Querystring: { cwd?: string; path?: string; mtimeMs?: string; force?: string } }>("/files/write-bytes", { bodyLimit: MAX_BINARY_WRITE_BYTES }, async (req, reply) => {
+    const { fs, abs } = resolveInProject(req.query.cwd, req.query.path);
+    const body = req.body;
+    if (!Buffer.isBuffer(body)) throw new BadRequestError("缺少文件内容");
+    const info = await fs.stat(abs).catch(() => null);
+    if (!info?.isFile) throw new BadRequestError("文件不存在");
+    const mtimeMs = Number(req.query.mtimeMs);
+    if (req.query.force !== "1" && Number.isFinite(mtimeMs) && Math.abs(info.mtimeMs - mtimeMs) > 1) {
+      return reply.code(409).send({ error: "文件在打开之后被修改过", mtimeMs: info.mtimeMs });
+    }
+    await fs.writeFile(abs, body).catch((err: NodeJS.ErrnoException) => {
+      // Windows 上文件正被 Word、Excel、PowerPoint 打开着时写不进去
+      const locked = err.code === "EBUSY" || err.code === "EPERM" || err.code === "EACCES";
+      throw new BadRequestError(locked ? "文件写不进去：可能正被别的程序打开着，或者没有权限" : `文件写入失败：${err.code ?? err.message}`);
+    });
     const after = await fs.stat(abs);
     return { mtimeMs: after.mtimeMs, size: after.size };
   });
@@ -285,7 +311,7 @@ export function fileRoutes(app: FastifyInstance): void {
 
   // 网页预览：不走令牌鉴权（见 app.ts），靠地址里的随机 id，只能读这个项目文件夹里的文件。
   // 和界面同源，用 CSP 的 sandbox 把它放进单独的源（不带 allow-same-origin），脚本碰不到界面的存储和接口。
-  // HTML 末尾接上标注用的脚本（见 page-picker.ts）
+  // HTML 末尾接上标注用的脚本（见 shared/page-picker.ts）
   app.get<{ Params: { id: string; "*": string } }>(`${PAGE_PREFIX}:id/*`, async (req, reply) => {
     const cwd = pageCwds.get(req.params.id);
     if (!cwd) return reply.code(404).type("text/plain; charset=utf-8").send("预览地址已失效，重新打开文件");

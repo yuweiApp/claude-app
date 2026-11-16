@@ -103,11 +103,11 @@ export function addElementAnnotation(sessionId: string, comment: string, element
   write(sessionId, [...read(sessionId), { id: `${Date.now().toString(36)}-${++seq}`, text: elementLabel(element.element), annotation: cleanComment(comment), element }]);
 }
 
-/** 元素的 aria-label、alt、title、placeholder、文字，都没有时是 <标签名> */
+/** 元素的 aria-label、alt、title、placeholder、文字，再没有是它在文档里的位置（Office 文档的空单元格、图片），都没有时是 <标签名> */
 export function elementLabel(e: Pick<SelectedElement, "tagName" | "attributes" | "innerText">): string {
   const a = e.attributes;
   const t = (a["aria-label"] || a.alt || a.title || a.placeholder || e.innerText || "").replace(/\s+/g, " ").trim();
-  return t ? (t.length > 160 ? `${t.slice(0, 160)}…` : t) : `<${e.tagName}>`;
+  return t ? (t.length > 160 ? `${t.slice(0, 160)}…` : t) : a.location || `<${e.tagName}>`;
 }
 
 export function updateResponseAnnotation(sessionId: string, id: string, comment: string) {

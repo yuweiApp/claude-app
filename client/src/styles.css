@@ -1650,6 +1650,8 @@ main {
 .viewer-media video { max-width: 100%; max-height: 100%; background: #000; border-radius: 6px; outline: none; }
 .viewer-media audio { width: min(480px, 100%); }
 .viewer-frame { flex: 1; min-height: 0; width: 100%; border: none; background: #fff; }
+/* Office 文档预览：页面、表格自己是白底，四周露出面板的底色 */
+.viewer-frame.office { background: transparent; }
 /* HTML 标注模式下贴在网页底部的提示 */
 .viewer-annotate-bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: calc(100% - 24px);
   padding: 6px 6px 6px 14px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--text); font-size: 12.5px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14); }
