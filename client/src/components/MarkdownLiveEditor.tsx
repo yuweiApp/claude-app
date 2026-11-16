@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction, type Range } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, Facet, StateEffect, StateField, Transaction, type Range } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
@@ -23,7 +23,8 @@ import { MermaidBlock } from "./MermaidBlock";
  * 从 codex-app-server 的 MarkdownLiveEditor 移植（去掉了选中文字后的「添加到对话」）。
  * Markdown 的实时预览编辑（与 ChatGPT 桌面应用一致，用 CodeMirror）：编辑的始终是源码，只是把 Markdown 符号藏起来、
  * 按渲染效果显示。整个标题、链接、强调都选中时才露出它的符号；表格的每一行排成表格的样子（竖线藏起来，单元格按列对齐）。
- * ```mermaid 代码块显示成图（和回复里一样，MermaidBlock），光标进到代码块里时露出源码、图跟在下面（这部分是本项目加的）。
+ * 本项目加的：```mermaid 代码块显示成图（和回复里一样，MermaidBlock），光标进到代码块里时露出源码、图跟在下面；
+ * 图片写法指向视频、音频文件时显示播放器，HTML 写的 <img>、<video>、<audio> 也显示出来。
  * 保存的就是源码本身，不会改动没编辑过的地方
  */
 
@@ -37,34 +38,144 @@ interface PreviewOptions {
   openHref: (href: string, e: MouseEvent) => void;
 }
 
+/** 这个编辑器的选项：状态字段给出的小部件（占整行的）从这里取 */
+const previewOptions = Facet.define<PreviewOptions, PreviewOptions | null>({ combine: (values) => values[0] ?? null });
+
+// ---------------------------------------------------------------------------
+// 图片、视频、音频：Markdown 的图片写法（![说明](地址)，按地址的扩展名分），或 HTML 的 <img>、<video>、<audio>
+
+interface MediaSpec {
+  tag: "img" | "video" | "audio";
+  src: string;
+  alt: string;
+  /** HTML 标签上写的宽高：数字是像素，也可以带单位 */
+  width?: string;
+  height?: string;
+  poster?: string;
+  loop?: boolean;
+  muted?: boolean;
+  autoplay?: boolean;
+}
+
+// 同网关 files.ts 的 VIDEO_TYPES、AUDIO_TYPES（/files/raw 按这些扩展名给类型，支持拖动进度条）
+const VIDEO_EXT = /\.(mp4|m4v|mov|webm|ogv)$/i;
+const AUDIO_EXT = /\.(mp3|m4a|aac|wav|ogg|oga|opus|flac)$/i;
+
+/** 图片写法的地址指向的是什么：按扩展名认视频、音频，其余当图片 */
+function mediaTag(src: string): MediaSpec["tag"] {
+  const path = src.replace(/[?#].*$/, "");
+  return VIDEO_EXT.test(path) ? "video" : AUDIO_EXT.test(path) ? "audio" : "img";
+}
+
+const cssSize = (value: string | undefined) => {
+  const v = value?.trim() ?? "";
+  return /^\d+(\.\d+)?$/.test(v) ? `${v}px` : /^\d+(\.\d+)?(px|%|em|rem|vw|vh)$/i.test(v) ? v : null;
+};
+
+function mediaElement(spec: MediaSpec, resolve: (src: string) => string): HTMLElement {
+  const el = document.createElement(spec.tag);
+  el.className = spec.tag === "img" ? "cm-md-image" : `cm-md-${spec.tag}`;
+  el.src = resolve(spec.src);
+  el.title = spec.alt;
+  if (el instanceof HTMLImageElement) {
+    el.alt = spec.alt;
+    el.referrerPolicy = "no-referrer";
+  } else {
+    el.controls = true;
+    el.preload = "metadata";
+    el.loop = Boolean(spec.loop);
+    el.muted = Boolean(spec.muted);
+    // 静音的才自动播放（当动图用的视频）
+    el.autoplay = Boolean(spec.autoplay && spec.muted);
+    if (el instanceof HTMLVideoElement) {
+      el.playsInline = true;
+      if (spec.poster) el.poster = resolve(spec.poster);
+    }
+  }
+  if (spec.tag !== "audio") {
+    // 写了宽高的按写的来（不再限高），只写一个时另一个按比例
+    const width = cssSize(spec.width);
+    const height = cssSize(spec.height);
+    if (width) el.style.width = width;
+    else if (height) el.style.height = height;
+    if (width || height) el.style.maxHeight = "none";
+  }
+  // 读不到（没有会话时的本地文件、地址失效、浏览器放不了的编码）：和回复里一样显示替代文字
+  el.addEventListener("error", () => {
+    const span = document.createElement("span");
+    span.className = "cm-md-image-broken";
+    span.textContent = `${spec.tag === "img" ? "图片" : spec.tag === "video" ? "视频" : "音频"}无法显示：${spec.alt || spec.src}`;
+    el.replaceWith(span);
+  });
+  return el;
+}
+
+/** 只起包裹、排版作用的标签，里面接着找；<source> 跟着 <video>、<picture> 走，不单独算 */
+const MEDIA_WRAPPERS = new Set(["P", "DIV", "CENTER", "A", "SPAN", "FIGURE", "PICTURE", "BR", "SOURCE"]);
+
+/**
+ * 一段 HTML 里除了图片、视频、音频（可以包在 <p align="center">、<a> 这类标签里）没有别的内容时，取出它们；
+ * 夹着文字或别的标签的不算（照旧显示源码）
+ */
+function parseMedia(html: string): { items: MediaSpec[]; center: boolean } | null {
+  if (!/<(img|video|audio)\b/i.test(html)) return null;
+  // DOMParser 建的文档不加载资源、不执行脚本，只用来读属性
+  const body = new DOMParser().parseFromString(html, "text/html").body;
+  const items: MediaSpec[] = [];
+  let center = false;
+  const walk = (parent: Element): boolean => {
+    for (const child of parent.childNodes) {
+      if (child.nodeType === Node.COMMENT_NODE) continue;
+      if (child.nodeType === Node.TEXT_NODE) {
+        if (child.textContent?.trim()) return false;
+        continue;
+      }
+      if (!(child instanceof Element)) return false;
+      const tag = child.tagName;
+      if (tag === "IMG" || tag === "VIDEO" || tag === "AUDIO") {
+        // <video> 里面的 <source> 取第一个；里面写给旧浏览器看的文字不管
+        const src = child.getAttribute("src") ?? child.querySelector("source[src]")?.getAttribute("src");
+        if (!src) return false;
+        items.push({
+          tag: tag.toLowerCase() as MediaSpec["tag"],
+          src,
+          alt: child.getAttribute("alt") ?? child.getAttribute("title") ?? "",
+          width: child.getAttribute("width") ?? undefined,
+          height: child.getAttribute("height") ?? undefined,
+          poster: child.getAttribute("poster") ?? undefined,
+          loop: child.hasAttribute("loop"),
+          muted: child.hasAttribute("muted"),
+          autoplay: child.hasAttribute("autoplay"),
+        });
+        continue;
+      }
+      if (!MEDIA_WRAPPERS.has(tag)) return false;
+      if (tag === "CENTER" || child.getAttribute("align")?.toLowerCase() === "center") center = true;
+      if (!walk(child)) return false;
+    }
+    return true;
+  };
+  return walk(body) && items.length ? { items, center } : null;
+}
+
 // ---------------------------------------------------------------------------
 // 小部件
 
-class ImageWidget extends WidgetType {
+/** 行内的图片、视频、音频 */
+class MediaWidget extends WidgetType {
+  readonly key: string;
   constructor(
-    readonly src: string,
-    readonly alt: string,
+    readonly spec: MediaSpec,
+    readonly resolve: (src: string) => string,
   ) {
     super();
+    this.key = JSON.stringify(spec);
   }
-  eq(other: ImageWidget) {
-    return other.src === this.src && other.alt === this.alt;
+  eq(other: MediaWidget) {
+    return other.key === this.key;
   }
   toDOM() {
-    const img = document.createElement("img");
-    img.className = "cm-md-image";
-    img.src = this.src;
-    img.alt = this.alt;
-    img.title = this.alt;
-    img.referrerPolicy = "no-referrer";
-    // 读不到（没有会话时的本地图片、地址失效）：和回复里一样显示替代文字
-    img.addEventListener("error", () => {
-      const span = document.createElement("span");
-      span.className = "cm-md-image-broken";
-      span.textContent = `图片无法显示：${this.alt || this.src}`;
-      img.replaceWith(span);
-    });
-    return img;
+    return mediaElement(this.spec, this.resolve);
   }
 }
 
@@ -158,6 +269,8 @@ function inlineDecorations(view: EditorView, opts: PreviewOptions): DecorationSe
     for (let n = first; n <= last; n++) out.push(lineClass(cls(n, first, last)).range(doc.line(n).from));
   };
   const children = (n: SyntaxNodeRef, name: string) => n.node.getChildren(name);
+  // 源码整块收起来、只显示图或播放器的块（previewBlocks），不再给它们加行样式
+  const hiddenBlocks = state.field(previewBlocks, false)?.hidden;
 
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
@@ -190,7 +303,7 @@ function inlineDecorations(view: EditorView, opts: PreviewOptions): DecorationSe
           }
           case "FencedCode": {
             // 显示成图的 mermaid 代码块：源码整块收起来了
-            if (state.field(mermaidBlocks, false)?.hidden.has(doc.lineAt(n.from).from)) return false;
+            if (hiddenBlocks?.has(doc.lineAt(n.from).from)) return false;
             eachLine(n.from, n.to, (k, first, last) => `cm-md-code${k === first ? " cm-md-code-first" : ""}${k === last ? " cm-md-code-last" : ""}`);
             if (!covered(n.from, n.to)) {
               const firstLine = doc.lineAt(n.from);
@@ -242,8 +355,27 @@ function inlineDecorations(view: EditorView, opts: PreviewOptions): DecorationSe
             const url = n.node.getChild("URL");
             if (!url || marks.length < 2) return false;
             const alt = doc.sliceString(marks[0]!.to, marks[1]!.from);
-            out.push(Decoration.replace({ widget: new ImageWidget(opts.resolveSrc(doc.sliceString(url.from, url.to)), alt) }).range(n.from, n.to));
+            const src = doc.sliceString(url.from, url.to);
+            out.push(Decoration.replace({ widget: new MediaWidget({ tag: mediaTag(src), src, alt }, opts.resolveSrc) }).range(n.from, n.to));
             return false;
+          }
+          case "HTMLTag": {
+            // 段落里的 <img …>、<video …>…</video>、<audio …>…</audio>（单独成块的见 previewBlocks）
+            const open = /^<(img|video|audio)\b/i.exec(doc.sliceString(n.from, Math.min(n.to, n.from + 8)));
+            if (!open) return;
+            let to = n.to;
+            if (open[1]!.toLowerCase() !== "img") {
+              const close = new RegExp(`^</${open[1]}\\s*>$`, "i");
+              let end = n.node.nextSibling;
+              while (end && !(end.name === "HTMLTag" && close.test(doc.sliceString(end.from, end.to)))) end = end.nextSibling;
+              if (!end) return;
+              to = end.to;
+            }
+            // 插件给的装饰不能跨行
+            if (lineEnd(n.from) < to || covered(n.from, to)) return;
+            const media = parseMedia(doc.sliceString(n.from, to));
+            if (media) out.push(Decoration.replace({ widget: new MediaWidget(media.items[0]!, opts.resolveSrc) }).range(n.from, to));
+            return;
           }
           case "URL":
             // GFM 的裸网址
@@ -280,6 +412,7 @@ function inlineDecorations(view: EditorView, opts: PreviewOptions): DecorationSe
           }
           case "HTMLBlock":
           case "CommentBlock":
+            if (hiddenBlocks?.has(doc.lineAt(n.from).from)) return false;
             eachLine(n.from, n.to, () => "cm-md-html");
             return false;
         }
@@ -303,7 +436,7 @@ function livePreview(opts: PreviewOptions) {
           u.selectionSet ||
           u.focusChanged ||
           u.state.field(dragging, false) !== u.startState.field(dragging, false) ||
-          u.state.field(mermaidBlocks, false) !== u.startState.field(mermaidBlocks, false) ||
+          u.state.field(previewBlocks, false) !== u.startState.field(previewBlocks, false) ||
           syntaxTree(u.state) !== syntaxTree(u.startState)
         )
           this.decorations = inlineDecorations(u.view, opts);
@@ -407,8 +540,9 @@ const pointerTracking = [
 ];
 
 // ---------------------------------------------------------------------------
-// ```mermaid 代码块：下面跟一张图（MermaidBlock，同回复里的）。平时源码整块收起来只看图；编辑器有焦点、光标或选区
-// 碰到这个代码块时露出源码（和别的代码块一样编辑），图留在下面跟着改。列表、引用里的代码块源码一直显示。
+// 单独成块、下面跟着渲染结果的两种：```mermaid 代码块（图，MermaidBlock，同回复里的）和只有图片、视频、音频的 HTML 块
+// （<img>、<video>、<audio>，可以包在 <p align="center"> 这类标签里）。平时源码整块收起来只看结果；编辑器有焦点、
+// 光标或选区碰到这一块时露出源码（照常编辑），结果留在下面跟着改。列表、引用里的源码一直显示。
 // 占整行的小部件、整块收起只能由状态字段给出（插件给的装饰不能改变行的结构），所以不放在 livePreview 里
 
 const setFocused = StateEffect.define<boolean>();
@@ -419,38 +553,51 @@ const focused = StateField.define<boolean>({
   update: (v, tr) => tr.effects.reduce((acc, e) => (e.is(setFocused) ? e.value : acc), v),
 });
 
-interface MermaidCode {
-  /** 整个代码块（从 ``` 那行的行首到结尾 ``` 那行的行尾） */
+type PreviewBlock = {
+  /** 整块（从第一行的行首到最后一行的行尾） */
   from: number;
   to: number;
-  code: string;
-  /** 顶层的代码块（不在列表、引用里，``` 前面没有别的字）：可以整块收起 */
+  /** 顶层的块（不在列表、引用里，前面没有别的字）：可以整块收起 */
   top: boolean;
-}
+} & ({ kind: "mermaid"; code: string } | { kind: "media"; items: MediaSpec[]; center: boolean; key: string });
 
-/** 可能包着代码块的节点，其余的不用往里找 */
+/** 可能包着这些块的节点，其余的不用往里找 */
 const BLOCK_CONTAINERS = new Set(["Document", "Blockquote", "BulletList", "OrderedList", "ListItem"]);
 
-function findMermaid(state: EditorState, tree: Tree): MermaidCode[] {
+function findPreviewBlocks(state: EditorState, tree: Tree): PreviewBlock[] {
   const doc = state.doc;
-  const found: MermaidCode[] = [];
+  const found: PreviewBlock[] = [];
   tree.iterate({
     enter: (n) => {
-      if (n.name !== "FencedCode") return BLOCK_CONTAINERS.has(n.name);
+      if (n.name !== "FencedCode" && n.name !== "HTMLBlock") return BLOCK_CONTAINERS.has(n.name);
       const node = n.node;
+      const first = doc.lineAt(n.from);
+      const range = { from: first.from, to: doc.lineAt(n.to).to, top: node.parent?.name === "Document" && !first.text.slice(0, n.from - first.from).trim() };
+      if (n.name === "HTMLBlock") {
+        const media = parseMedia(doc.sliceString(n.from, n.to));
+        if (media) found.push({ ...range, kind: "media", ...media, key: JSON.stringify(media) });
+        return false;
+      }
       const info = node.getChild("CodeInfo");
       const text = node.getChildren("CodeText");
       // 没写完的（还没有结尾的 ```）当普通代码块
       if (!info || doc.sliceString(info.from, info.to).trim().toLowerCase() !== "mermaid" || node.getChildren("CodeMark").length < 2 || !text.length) return false;
       const code = doc.sliceString(text[0]!.from, text[text.length - 1]!.to);
-      if (!code.trim()) return false;
-      const first = doc.lineAt(n.from);
-      const top = node.parent?.name === "Document" && !first.text.slice(0, n.from - first.from).trim();
-      found.push({ from: first.from, to: doc.lineAt(n.to).to, code, top });
+      if (code.trim()) found.push({ ...range, kind: "mermaid", code });
       return false;
     },
   });
   return found;
+}
+
+/** 「编辑源码」：小部件放在这一块最后一行的行尾，按它找到这一块，把光标放进源码（mermaid 是代码的第一行） */
+function editBlockSource(view: EditorView, dom: HTMLElement) {
+  const pos = view.posAtDOM(dom);
+  const block = view.state.field(previewBlocks).blocks.find((b) => b.to === pos);
+  if (!block) return;
+  const anchor = block.kind === "mermaid" ? Math.min(view.state.doc.lineAt(block.from).to + 1, block.to) : block.from;
+  view.focus();
+  view.dispatch({ selection: { anchor }, scrollIntoView: true });
 }
 
 /** 小部件的 React 根：小部件换了内容（改了源码、源码露出或收起）时接着用，图不会先消失再出现，展开的大图也不会被关掉 */
@@ -470,19 +617,11 @@ class MermaidWidget extends WidgetType {
     return other.code === this.code && other.sourceAbove === this.sourceAbove && other.canEdit === this.canEdit;
   }
   private render(dom: HTMLElement, view: EditorView) {
-    const edit = () => {
-      // 小部件放在代码块最后一行的行尾；光标放到源码第一行
-      const block = view.state.field(mermaidBlocks).blocks.find((b) => b.to === view.posAtDOM(dom));
-      if (!block) return;
-      const first = view.state.doc.lineAt(block.from);
-      view.focus();
-      view.dispatch({ selection: { anchor: Math.min(first.to + 1, block.to) }, scrollIntoView: true });
-    };
     mermaidRoots.get(dom)?.render(
       <MermaidBlock
         code={this.code}
         sourceAbove={this.sourceAbove}
-        onEdit={this.canEdit ? edit : undefined}
+        onEdit={this.canEdit ? () => editBlockSource(view, dom) : undefined}
         // 大图开着时键盘不该还打进编辑器里
         onExpand={() => view.contentDOM.blur()}
       />,
@@ -513,20 +652,68 @@ class MermaidWidget extends WidgetType {
   }
 }
 
-interface MermaidBlocks {
+const EDIT_ICON =
+  '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 3 13 5.5 6 12.5l-3 .5.5-3 7-7Z"/></svg>';
+
+/** HTML 块里的图片、视频、音频；源码收起时右上角有「编辑源码」 */
+class MediaBlockWidget extends WidgetType {
+  constructor(
+    readonly key: string,
+    readonly items: MediaSpec[],
+    readonly center: boolean,
+    readonly canEdit: boolean,
+  ) {
+    super();
+  }
+  eq(other: MediaBlockWidget) {
+    return other.key === this.key && other.canEdit === this.canEdit;
+  }
+  private fill(dom: HTMLElement, view: EditorView) {
+    const resolve = view.state.facet(previewOptions)?.resolveSrc ?? ((src: string) => src);
+    const edit = document.createElement("button");
+    edit.className = "msg-action cm-md-media-edit";
+    edit.title = "编辑源码";
+    edit.setAttribute("aria-label", "编辑源码");
+    edit.innerHTML = EDIT_ICON;
+    edit.addEventListener("mousedown", (e) => e.preventDefault());
+    edit.addEventListener("click", () => editBlockSource(view, dom));
+    dom.dataset.key = this.key;
+    dom.classList.toggle("cm-md-media-center", this.center);
+    dom.replaceChildren(...this.items.map((item) => mediaElement(item, resolve)), edit);
+  }
+  toDOM(view: EditorView) {
+    const dom = document.createElement("div");
+    dom.className = "cm-md-media-block";
+    this.fill(dom, view);
+    dom.classList.toggle("cm-md-media-editable", this.canEdit);
+    return dom;
+  }
+  // 只是源码露出、收起时不重建（正在放的视频不会断）
+  updateDOM(dom: HTMLElement, view: EditorView) {
+    if (!dom.classList.contains("cm-md-media-block")) return false;
+    if (dom.dataset.key !== this.key) this.fill(dom, view);
+    dom.classList.toggle("cm-md-media-editable", this.canEdit);
+    return true;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+interface PreviewBlocks {
   tree: Tree;
-  blocks: MermaidCode[];
-  /** 露出源码的那个代码块（blocks 的下标），没有时 -1 */
+  blocks: PreviewBlock[];
+  /** 露出源码的那一块（blocks 的下标），没有时 -1 */
   active: number;
   readOnly: boolean;
-  /** 源码整块收起来的代码块的起点：livePreview 不再给它们加代码块的样式 */
+  /** 源码整块收起来的块的起点：livePreview 不再给它们加行样式 */
   hidden: Set<number>;
   decorations: DecorationSet;
 }
 
 const hideBlock = Decoration.replace({ block: true });
 
-function mermaidDecorations(blocks: MermaidCode[], active: number, readOnly: boolean): Pick<MermaidBlocks, "hidden" | "decorations"> {
+function previewDecorations(blocks: PreviewBlock[], active: number, readOnly: boolean): Pick<PreviewBlocks, "hidden" | "decorations"> {
   const hidden = new Set<number>();
   const out: Range<Decoration>[] = [];
   blocks.forEach((b, i) => {
@@ -535,38 +722,40 @@ function mermaidDecorations(blocks: MermaidCode[], active: number, readOnly: boo
       hidden.add(b.from);
       out.push(hideBlock.range(b.from, b.to));
     }
-    out.push(Decoration.widget({ widget: new MermaidWidget(b.code, !collapsed, collapsed && !readOnly), block: true, side: 1 }).range(b.to));
+    const canEdit = collapsed && !readOnly;
+    const widget = b.kind === "mermaid" ? new MermaidWidget(b.code, !collapsed, canEdit) : new MediaBlockWidget(b.key, b.items, b.center, canEdit);
+    out.push(Decoration.widget({ widget, block: true, side: 1 }).range(b.to));
   });
   return { hidden, decorations: Decoration.set(out, true) };
 }
 
-/** 光标或选区碰到的代码块；编辑器没有焦点时没有 */
-function activeMermaid(state: EditorState, blocks: MermaidCode[]): number {
+/** 光标或选区碰到的那一块；编辑器没有焦点时没有 */
+function activeBlock(state: EditorState, blocks: PreviewBlock[]): number {
   if (!state.field(focused, false)) return -1;
   const sel = state.selection.main;
   return blocks.findIndex((b) => sel.from <= b.to && sel.to >= b.from);
 }
 
-const mermaidBlocks: StateField<MermaidBlocks> = StateField.define<MermaidBlocks>({
+const previewBlocks: StateField<PreviewBlocks> = StateField.define<PreviewBlocks>({
   create(state) {
     const tree = syntaxTree(state);
-    const blocks = findMermaid(state, tree);
-    return { tree, blocks, active: -1, readOnly: state.readOnly, ...mermaidDecorations(blocks, -1, state.readOnly) };
+    const blocks = findPreviewBlocks(state, tree);
+    return { tree, blocks, active: -1, readOnly: state.readOnly, ...previewDecorations(blocks, -1, state.readOnly) };
   },
   update(value, tr) {
     const state = tr.state;
     const tree = syntaxTree(state);
     const rescan = tr.docChanged || tree !== value.tree;
-    const blocks = rescan ? findMermaid(state, tree) : value.blocks;
+    const blocks = rescan ? findPreviewBlocks(state, tree) : value.blocks;
     // 按着鼠标拖选时不切换（源码一露出来文字就跳），松开后再按选区算
-    const active = state.field(dragging, false) && !rescan ? value.active : activeMermaid(state, blocks);
+    const active = state.field(dragging, false) && !rescan ? value.active : activeBlock(state, blocks);
     if (!rescan && active === value.active && state.readOnly === value.readOnly) return value;
-    return { tree, blocks, active, readOnly: state.readOnly, ...mermaidDecorations(blocks, active, state.readOnly) };
+    return { tree, blocks, active, readOnly: state.readOnly, ...previewDecorations(blocks, active, state.readOnly) };
   },
   provide: (f) => EditorView.decorations.from(f, (v) => v.decorations),
 });
 
-const mermaidPreview = [focused, EditorView.focusChangeEffect.of((_state, focusing) => setFocused.of(focusing)), mermaidBlocks];
+const blockPreview = [focused, EditorView.focusChangeEffect.of((_state, focusing) => setFocused.of(focusing)), previewBlocks];
 
 // ---------------------------------------------------------------------------
 // 样式：Markdown 本身的符号、强调等用高亮，代码块、标题等用行样式（styles.css 的 .cm-md-*）
@@ -654,7 +843,8 @@ export function MarkdownLiveEditor({ cwd, path, value, onChange, onOpenFile, onS
           editableConf.current.of(editableExt(editableRef.current)),
           placeholder ? placeholderText(placeholder) : [],
           pointerTracking,
-          mermaidPreview,
+          previewOptions.of(opts),
+          blockPreview,
           livePreview(opts),
           EditorView.updateListener.of((u) => {
             if (u.docChanged && !u.transactions.some((t) => t.annotation(external))) latest.current.onChange(u.state.doc.toString());

@@ -1623,6 +1623,16 @@ main {
 .md-live .cm-md-mermaid pre { padding: 8px 40px 8px 12px; border-radius: 8px; background: var(--code-bg); font-family: var(--font-mono); font-size: 0.92em; line-height: 1.6; white-space: pre-wrap; }
 .md-live .cm-md-image-broken { display: inline-block; padding: 2px 8px; border: 1px dashed var(--border); border-radius: 6px; color: var(--muted); font-size: 12px; }
 .md-live .cm-md-image { max-width: 100%; max-height: 480px; border-radius: 8px; vertical-align: middle; }
+/* 图片写法指向视频、音频文件，或 HTML 的 <video>、<audio>（MarkdownLiveEditor.tsx 的 mediaElement） */
+.md-live .cm-md-video { max-width: 100%; max-height: 480px; border-radius: 8px; background: #000; vertical-align: middle; outline: none; }
+.md-live .cm-md-audio { width: min(480px, 100%); vertical-align: middle; }
+/* 只有图片、视频、音频的 HTML 块（MediaBlockWidget）：占整行的小部件上下不能有外边距，用内边距；鼠标移上去右上角出现「编辑源码」 */
+.md-live .cm-md-media-block { position: relative; display: flow-root; padding: 0.5em 0; cursor: default; }
+.md-live .cm-md-media-center { text-align: center; }
+.md-live .cm-md-media-edit { display: none; position: absolute; top: 0.5em; right: 0; opacity: 0; transition: opacity 0.12s; background: var(--bg); border-radius: 8px; }
+.md-live .cm-md-media-editable .cm-md-media-edit { display: inline-flex; }
+.md-live .cm-md-media-block:hover .cm-md-media-edit, .md-live .cm-md-media-edit:focus-visible { opacity: 1; }
+@media (hover: none) { .md-live .cm-md-media-edit { opacity: 1; } }
 /* 文本文件的编辑器（CodeEditor.tsx，CodeMirror）：占满剩下的高度，自己滚动；字体、颜色在它的 theme 里 */
 .code-editor { flex: 1; min-height: 0; min-width: 0; }
 .viewer:focus { outline: none; }
