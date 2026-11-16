@@ -128,6 +128,20 @@ export function clearResponseAnnotations(sessionId: string) {
   write(sessionId, []);
 }
 
+// 带着网页标注的消息发出去了：内置浏览器的选择元素、HTML 预览的标注模式跟着关掉（要接着标再点开）
+const sentListeners = new Set<(sessionId: string) => void>();
+
+export function onElementAnnotationsSent(listener: (sessionId: string) => void) {
+  sentListeners.add(listener);
+  return () => {
+    sentListeners.delete(listener);
+  };
+}
+
+export function notifyElementAnnotationsSent(sessionId: string) {
+  sentListeners.forEach((l) => l(sessionId));
+}
+
 /** 撤回编辑的排队消息带的标注放回去（换新的 id，排在已有的前面） */
 export function restoreResponseAnnotations(sessionId: string, list: SentResponseAnnotation[]) {
   if (!list.length) return;

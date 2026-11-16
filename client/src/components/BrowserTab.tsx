@@ -3,7 +3,7 @@ import { ELEMENT_CONTEXT_FUNCTION } from "@gateway/shared/element-context";
 import type { BrowserLogo } from "../api";
 import { fileManagerName, type BrowserDownload, type BrowserSuggestion, type BrowserTabInfo, type DesktopBrowserApi } from "../desktop";
 import { dismissDownloads, useTabDownloads } from "../state/browserDownloads";
-import { sanitizeElement, uploadElementScreenshot } from "../state/responseAnnotations";
+import { onElementAnnotationsSent, sanitizeElement, uploadElementScreenshot } from "../state/responseAnnotations";
 import { closePageAnnotation, startPageAnnotation } from "./ResponseAnnotations";
 
 interface Props {
@@ -70,6 +70,9 @@ export function BrowserTab({ api, id, info, active }: Props) {
   useEffect(() => {
     if (!picking) closePageAnnotation();
   }, [picking]);
+  // 带着标注的消息发出去了：退出选择元素
+  const tabSessionId = info?.sessionId;
+  useEffect(() => onElementAnnotationsSent((sent) => sent === tabSessionId && setPicking(false)), [tabSessionId]);
   // 选中了一个元素：网页的位置按画面区域和网页视口的比例换成界面上的（不管界面、网页各自的缩放）
   useEffect(
     () =>

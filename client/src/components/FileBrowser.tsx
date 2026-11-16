@@ -11,7 +11,7 @@ import { ZoomableImage } from "./ImageThumb";
 import { MarkdownLiveEditor } from "./MarkdownLiveEditor";
 import { PATH_DRAG_TYPE } from "./MentionText";
 import { closePageAnnotation, editAnnotationAt, repositionAnnotationEditor, startPageAnnotation } from "./ResponseAnnotations";
-import { sanitizeElement, uploadElementScreenshot, useResponseAnnotations } from "../state/responseAnnotations";
+import { onElementAnnotationsSent, sanitizeElement, uploadElementScreenshot, useResponseAnnotations } from "../state/responseAnnotations";
 import { desktop, fileManagerName } from "../desktop";
 
 /** 文件里的行范围，回复里的链接带了行号时面板滚到并选中这几行 */
@@ -1373,6 +1373,8 @@ function HtmlPreview({
     if (!annotating) closePageAnnotation();
   }, [annotating]);
   useEffect(() => closePageAnnotation, []);
+  // 带着标注的消息发出去了：退出标注模式
+  useEffect(() => onElementAnnotationsSent((sent) => sent === sessionId && onAnnotatingChange(false)), [sessionId, onAnnotatingChange]);
 
   if (!url) return <div className="panel-empty">正在加载网页…</div>;
   if ("error" in url) return <div className="panel-empty files-error">{url.error}</div>;
