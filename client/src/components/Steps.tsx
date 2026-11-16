@@ -1,5 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { Block, Item, SessionView, ToolResult } from "../state/session";
+import { GlobeIcon } from "./BrowserTab";
+import { TerminalIcon } from "./SidePanel";
 import { ImageThumb } from "./ImageThumb";
 import { StepThumbs, type StepImage } from "./StepThumbs";
 import { formatShortDuration } from "./TasksPopover";
@@ -9,11 +11,15 @@ export type ToolUse = Extract<Block, { type: "tool_use" }>;
 /** 跑命令、只读查看类的工具（相当于 codex 的 commandExecution），一组里全是这些时标题叫「运行了命令」 */
 const COMMAND_TOOLS = ["Bash", "Read", "Grep", "Glob", "LS"];
 
+const BROWSER_TOOL = /^mcp__.+__browser_/;
+
 /** 行首图标 + 动词 + 对象，参照 codex-app-server 的 ToolLine（client/src/components/ItemView.tsx） */
-function toolLabel(block: ToolUse, running: boolean): { icon: string; verb: string; target: string } {
+function toolLabel(block: ToolUse, running: boolean): { icon: ReactNode; verb: string; target: string } {
   const i = (block.input ?? {}) as Record<string, unknown>;
   const s = (key: string) => (typeof i[key] === "string" ? (i[key] as string) : "");
   const v = (doing: string, done: string) => (running ? doing : done);
+  // 右侧面板的终端（网关的 terminal MCP 服务器）用面板里终端标签页的图标，和 Bash 的 ⌘ 分开
+  const terminal = <TerminalIcon />;
   switch (block.name) {
     case "Bash":
       return { icon: "⌘", verb: v("正在运行", "已运行"), target: s("command") };
@@ -35,20 +41,22 @@ function toolLabel(block: ToolUse, running: boolean): { icon: string; verb: stri
       return { icon: "✳", verb: v("子代理运行中", "子代理"), target: s("description") };
     // 右侧面板终端的工具（网关的 terminal MCP 服务器，参照 Claude 桌面版）
     case "mcp__terminal__read_terminal":
-      return { icon: "⌘", verb: v("正在读取终端", "已读取终端"), target: "" };
+      return { icon: terminal, verb: v("正在读取终端", "已读取终端"), target: "" };
     case "mcp__terminal__list_terminal_tabs":
-      return { icon: "⌘", verb: v("正在查看终端", "已查看终端"), target: "" };
+      return { icon: terminal, verb: v("正在查看终端", "已查看终端"), target: "" };
     case "mcp__terminal__run_in_terminal":
-      return { icon: "⌘", verb: v("正在终端里运行", "已在终端里运行"), target: s("command") };
+      return { icon: terminal, verb: v("正在终端里运行", "已在终端里运行"), target: s("command") };
     case "mcp__terminal__stop_terminal_tab":
-      return { icon: "⌘", verb: i.close ? v("正在关闭终端", "已关闭终端") : v("正在停止终端", "已停止终端"), target: "" };
+      return { icon: terminal, verb: i.close ? v("正在关闭终端", "已关闭终端") : v("正在停止终端", "已停止终端"), target: "" };
     // 桌面工具（网关的 desktop MCP 服务器，agent-desktop）
     case "mcp__desktop__run":
       return { icon: "▣", verb: v("正在操作桌面", "已操作桌面"), target: desktopCommandLine(i) };
     case "mcp__desktop__run_code":
       return { icon: "▣", verb: v("正在运行桌面脚本", "已运行桌面脚本"), target: firstLine(s("code")) };
     default:
-      return { icon: "⚙", verb: v("正在调用", "已调用"), target: block.name };
+      // 浏览器工具（内置浏览器 inapp、外部浏览器 chrome / edge…，旧记录里的 web）：工具名都是 mcp__<服务器>__browser_…，
+      // 图标用面板里浏览器标签页的那个地球
+      return { icon: BROWSER_TOOL.test(block.name) ? <GlobeIcon /> : "⚙", verb: v("正在调用", "已调用"), target: block.name };
   }
 }
 
@@ -102,7 +110,8 @@ function CopyButton({ getText }: { getText: () => string }) {
   );
 }
 
-export function ToolIcon({ icon, running }: { icon: string; running: boolean }) {
+/** icon：一个字符，或者 SVG 图标（浏览器工具的地球、终端工具的终端，大小见 .step-icon-glyph svg） */
+export function ToolIcon({ icon, running }: { icon: ReactNode; running: boolean }) {
   return (
     <span className={`step-icon${running ? " step-icon-running" : ""}`}>
       <span className="step-icon-glyph">{icon}</span>

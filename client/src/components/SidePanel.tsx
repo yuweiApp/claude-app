@@ -838,7 +838,8 @@ function FilesIcon() {
   );
 }
 
-function TerminalIcon() {
+/** 面板里终端标签页的图标；对话里终端工具（read_terminal、run_in_terminal…）那一行也用它（Steps.tsx） */
+export function TerminalIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
