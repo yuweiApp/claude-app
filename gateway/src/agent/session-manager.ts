@@ -526,7 +526,7 @@ export class SessionManager {
     return session;
   }
 
-  /** 活跃会话到上限时，关掉最久没用的空闲会话（有后台子代理在跑、有通知没交给模型的不算空闲） */
+  /** 活跃会话到上限时，关掉最久没用的空闲会话（有后台任务在跑、有通知没交给模型的不算空闲） */
   private async makeRoom(): Promise<void> {
     if (this.active.size < config.maxActiveSessions) return;
     const idle = [...this.active.values()]
@@ -554,7 +554,7 @@ export class SessionManager {
 
   /**
    * 网络代理设置改了：按旧设置启动的子进程，空闲的关掉（下次发消息时 resume，用新的环境变量）；
-   * 正在跑的、有后台子代理或通知没交给模型的先留着，之后每分钟的清理或下一条消息时再换
+   * 正在跑的、有后台任务或通知没交给模型的先留着，之后每分钟的清理或下一条消息时再换
    */
   private async recycleProxyStale(): Promise<void> {
     for (const session of [...this.active.values()]) {
@@ -565,9 +565,9 @@ export class SessionManager {
   }
 }
 
-/** 可以关掉子进程的会话：空闲，没有后台子代理在跑（子进程关了子代理也没了），没有通知没交给模型 */
+/** 可以关掉子进程的会话：空闲，没有后台任务在跑（子进程关了，它拉起的后台命令、子代理也跟着没了），没有通知没交给模型 */
 function reclaimable(session: AgentSession): boolean {
-  return session.state === "idle" && !session.agentsRunning && !session.noticePending;
+  return session.state === "idle" && !session.backgroundBusy;
 }
 
 /** SDK 的 skills 名单只拦模型调用 Skill 工具，用户在消息开头写 /技能名 还是会执行，所以这里拦 */

@@ -412,7 +412,10 @@ export class AgentSession {
     return this.pendingNotices.size > 0;
   }
 
-  /** 一轮结束后还在忙：有后台任务在跑，或者有通知还没交给模型（侧栏的转圈看它） */
+  /**
+   * 一轮结束后还在忙：有后台任务在跑，或者有通知还没交给模型（侧栏的转圈看它）。
+   * 这时会话是 idle，但子进程不能关：关了后台命令、子代理也跟着没了（空闲回收、换代理设置都看它）
+   */
   get backgroundBusy(): boolean {
     return this.tasksRunning || this.noticePending;
   }
@@ -420,11 +423,6 @@ export class AgentSession {
   /** 有后台任务在跑 */
   get tasksRunning(): boolean {
     return this.tasks.list().some((t) => t.status === "running");
-  }
-
-  /** 有后台子代理在跑：一轮结束后会话是 idle，但子进程关掉的话子代理也没了 */
-  get agentsRunning(): boolean {
-    return this.tasks.list().some((t) => t.status === "running" && t.type === "local_agent");
   }
 
   /** 停止后台任务，之后 SDK 会发 status 为 stopped 的 task_notification */
