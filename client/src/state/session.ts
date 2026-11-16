@@ -257,7 +257,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
         // 网关从会话记录里补的目标检查结果（见 gateway/src/agent/history.ts 的 withGoalStatus）
         if ((m.message as { type?: unknown } | null)?.type === "goal_status") ingestGoalStatus(next, m.uuid, m.message, at);
       }
-      else ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id, at);
+      else ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id, at, m.origin?.runId);
     }
     for (const item of view.items) {
       if (item.kind === "model") {
@@ -360,8 +360,8 @@ export function reduce(view: SessionView, action: Action): SessionView {
     case "task_result": {
       // 紧跟在这个任务的 task_notification 后面到：通知生成的那一项还在 pendingTasks 里，或者已经放进了消息列表
       if (!event.isError) break;
-      const uuid = `task:${event.taskId}`;
-      const withDetail = <T extends Item>(item: T): T => (item.kind === "task" && item.uuid === uuid ? { ...item, detail: event.text } : item);
+      const uuid = taskUuid(event.taskId);
+      const withDetail = <T extends Item>(item: T): T => (item.kind === "task" && (item.uuid === uuid || item.uuid.startsWith(`${uuid}:`)) ? { ...item, detail: event.text } : item);
       next.pendingTasks = view.pendingTasks.map(withDetail);
       next.items = next.items.map((item) => (item.kind === "task" ? withDetail(item) : item));
       break;
@@ -559,7 +559,7 @@ function previewUser(uuid: string, content: unknown): UserItem | undefined {
 }
 
 /** 把一条 user / assistant 消息（SDK 实时消息和 jsonl 历史格式相同）归并进视图 */
-function ingestMessage(view: SessionView, type: string, uuid: string, raw: unknown, parent: string | null, at?: number): void {
+function ingestMessage(view: SessionView, type: string, uuid: string, raw: unknown, parent: string | null, at?: number, runId?: string): void {
   if (view.seen.has(uuid)) return;
   const content = (raw as { content?: unknown } | null)?.content;
 
@@ -594,11 +594,11 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       pushItem(view, null, { kind: "interrupted", uuid });
       return;
     }
-    const task = typeof content === "string" ? taskNotification(content) : null;
+    const task = typeof content === "string" ? taskNotification(content, runId) : null;
     if (task) {
       // 上一轮结束后到的通知让 Claude Code 开了新的一轮，显示成那一轮的开头；
       // 一轮还在进行时到的，Claude Code 把它并进当前这一轮（实时事件里也只有一个 result），对话里不单独显示，后台任务面板里有
-      // 并进去的也按任务 id 记下：几条通知一起到时实时会各开一轮（见 state 事件），重新拉历史后实时那项不能再接到最后
+      // 并进去的也按任务 id 和运行 id 记下（见 taskUuid）：几条通知一起到时实时会各开一轮（见 state 事件），重新拉历史后实时那项不能再接到最后
       if (parent || view.turnEnded) pushItem(view, parent, { ...task, at });
       view.turnEnded = false;
       view.seen = new Set(view.seen).add(uuid).add(task.uuid);
@@ -777,8 +777,8 @@ function parseAttachments(text: string): AttachmentChip[] | null {
  * 实时的任务通知。子代理的 summary 是它的最终回复，不是一句话的说明：
  * 按任务列表或 Agent 调用找到说明，整理成和历史通知一样的 Agent "说明" finished，回复放进 result
  */
-function liveTaskItem(view: SessionView, message: { task_id: string; tool_use_id?: string; status: string; summary: string }): TaskItem {
-  const item: TaskItem = { kind: "task", uuid: `task:${message.task_id}`, status: message.status, text: message.summary };
+function liveTaskItem(view: SessionView, message: { task_id: string; run_id?: string; tool_use_id?: string; status: string; summary: string }): TaskItem {
+  const item: TaskItem = { kind: "task", uuid: taskUuid(message.task_id, message.run_id), status: message.status, text: message.summary };
   const listed = view.backgroundTasks.find((t) => t.taskId === message.task_id);
   let description = listed?.type === "local_agent" ? listed.description : undefined;
   if (description === undefined && message.tool_use_id) {
@@ -805,8 +805,16 @@ function subagentCall(view: SessionView, toolUseId: string | undefined): boolean
   );
 }
 
+/**
+ * task 项的 uuid：实时（task_notification 的 run_id）和历史（通知那条 user 消息的 origin.runId）两边对得上，重新拉历史时不重复。
+ * 带上这一次运行的 id：子代理收到 SendMessage 会接着跑，同一个任务 id 每停一次通知一次，只按任务 id 的话后面几次都被当成重复的丢掉
+ * （前面的通知并进了当时那一轮、没显示，最后一次开了新的一轮也不显示，它的回复就接到上一轮后面）。
+ * 没有运行 id 的（早先版本的记录）只按任务 id
+ */
+const taskUuid = (taskId: string, runId?: string) => (runId ? `task:${taskId}:${runId}` : `task:${taskId}`);
+
 /** 历史里后台任务完成的通知：Claude Code 用它开始新一轮时存成一条 user 消息，内容是 <task-notification> 段 */
-function taskNotification(text: string): TaskItem | null {
+function taskNotification(text: string, runId?: string): TaskItem | null {
   const body = /^<task-notification>([\s\S]*)<\/task-notification>$/.exec(text.trim())?.[1];
   if (body === undefined) return null;
   // 字段里的 & < > 是转义过的
@@ -817,7 +825,7 @@ function taskNotification(text: string): TaskItem | null {
   const summary = field("summary");
   // 子代理的通知：summary 是 Agent "说明" finished，<result> 是它的最终回复
   const result = /^Agent "/.test(summary) ? field("result") : "";
-  return { kind: "task", uuid: `task:${field("task-id")}`, status, text: summary, ...(detail && !result ? { detail } : {}), ...(result ? { result } : {}) };
+  return { kind: "task", uuid: taskUuid(field("task-id"), runId), status, text: summary, ...(detail && !result ? { detail } : {}), ...(result ? { result } : {}) };
 }
 
 const unescapeXml = (text: string) => text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");

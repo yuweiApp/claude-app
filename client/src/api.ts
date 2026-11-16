@@ -61,6 +61,8 @@ export interface HistoryMessage {
   timestamp?: string;
   /** 压缩上下文后 Claude Code 写的摘要（SDK 的类型定义里没有，运行时带着） */
   isCompactSummary?: boolean;
+  /** 不是用户写的消息的来源（SDK 的类型定义里没有，运行时带着）。后台任务的通知带 runId：任务这一次运行的 id，同实时通知的 run_id */
+  origin?: { kind?: string; runId?: string };
 }
 
 /** GET /folders：网关机器上一个文件夹里的子文件夹 */
