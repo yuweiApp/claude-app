@@ -34,7 +34,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
   const [address, setAddress] = useState(url);
   const [editing, setEditing] = useState(false);
   const [covered, setCovered] = useState(false);
-  /** 被盖住时贴在原位的网页快照 */
+  /** 贴在画面区域里的网页快照：被盖住时代替视图；不在前面时也留着一张，切回来时垫在视图下面 */
   const [snapshot, setSnapshot] = useState<string | null>(null);
   /** 没加载出来：收起原生视图（它总在界面之上），画面区域显示错误提示 */
   const failed = info?.error;
@@ -113,9 +113,28 @@ export function BrowserTab({ api, id, info, active }: Props) {
     if (active && url === "") inputRef.current?.focus();
   }, [active, url]);
 
+  // 不在前面时留一张快照：切走时拍一张，之后网页换了（AI 在后台操作、重启后恢复）等加载完再拍。
+  // 切回来时视图叠回窗口要过几帧才出画面，这几帧露出来的是画面区域，没有快照垫着就是一片白
+  const loading = !info || info.loading;
+  const pageUrl = info?.url;
+  useEffect(() => {
+    if (active || failedRef.current) return;
+    let stale = false;
+    void api.snapshot(id).then((url) => {
+      if (stale || !url) return;
+      setSnapshot(url);
+      setCovered(true);
+    });
+    return () => {
+      stale = true;
+    };
+  }, [api, id, active, loading, pageUrl]);
+
   // 每一帧对一次位置（拖动面板、侧边栏、缩放窗口都会变），变了才告诉外壳。
   // 被界面的菜单、对话框盖住时：先拍一张快照贴在原位，再收起视图（视图总在界面之上，不收会挡住它们）。
-  // 没加载出来时也收起，不拍快照（失败的网页是一片白），露出下面的错误提示
+  // 没加载出来时也收起，不拍快照（失败的网页是一片白），露出下面的错误提示。
+  // 切换标签页时叠视图、收视图都晚两帧：这是立刻生效的，界面换成另一页的内容晚一两帧才画出来，
+  // 不等的话中间露出的还是上一页（切走时是这一页没有快照的白底，从另一个浏览器标签页切来时是它的）
   useEffect(() => {
     if (!active) return;
     let frame = 0;
@@ -138,7 +157,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
           if (hidden) {
             last = "hidden";
             const hide = () => {
-              api.hide();
+              api.hide(id);
               shown = false;
             };
             if (uncover !== undefined) {
@@ -185,12 +204,15 @@ export function BrowserTab({ api, id, info, active }: Props) {
       }
       frame = requestAnimationFrame(tick);
     };
-    tick();
+    frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(tick);
+    });
     return () => {
       cancelAnimationFrame(frame);
       clearTimeout(uncover);
       seq++;
-      api.hide();
+      // 只收自己：这两帧里可能已经换成另一个浏览器标签页的视图了
+      if (shown) requestAnimationFrame(() => requestAnimationFrame(() => api.hide(id)));
     };
   }, [api, id, active]);
 

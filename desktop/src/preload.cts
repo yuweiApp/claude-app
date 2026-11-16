@@ -38,7 +38,7 @@ contextBridge.exposeInMainWorld("desktop", {
     navigate: (id: string, url: string) => ipcRenderer.send("browser:navigate", id, url),
     go: (id: string, action: string) => ipcRenderer.send("browser:go", id, action),
     show: (id: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.send("browser:show", id, bounds),
-    hide: () => ipcRenderer.send("browser:hide"),
+    hide: (id: string) => ipcRenderer.send("browser:hide", id),
     snapshot: (id: string): Promise<string | null> => ipcRenderer.invoke("browser:snapshot", id),
     suggest: (query: string): Promise<unknown[]> => ipcRenderer.invoke("browser:suggest", query),
     // 选择元素：传取元素的函数打开检查模式，传 null 关掉

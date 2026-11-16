@@ -107,8 +107,9 @@ export interface DesktopBrowserApi {
   go(id: string, action: "back" | "forward" | "reload" | "stop"): void;
   /** 把标签页叠放到这个位置（界面的 CSS 像素，相对窗口左上角）；同时只显示一个 */
   show(id: string, bounds: { x: number; y: number; width: number; height: number }): void;
-  hide(): void;
-  /** 显示中的网页拍一张快照（data URL），界面盖住面板时贴在原位 */
+  /** 这个标签页正显示着就收起来；显示的已经是别的标签页时什么也不做 */
+  hide(id: string): void;
+  /** 给网页拍一张快照（data URL），不在显示的标签页也能拍；界面盖住面板、切换标签页时贴在画面区域里垫着 */
   snapshot(id: string): Promise<string | null>;
   /** 地址栏的建议：浏览历史里网址或标题包含输入的 */
   suggest(query: string): Promise<BrowserSuggestion[]>;

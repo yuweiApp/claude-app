@@ -516,12 +516,18 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     }
   }
 
-  /** 面板被界面的菜单、对话框盖住时，先给显示中的网页拍一张快照贴在原位 */
+  /**
+   * 给网页拍一张快照，界面贴在画面区域里垫着：面板被界面的菜单、对话框盖住要收起视图时，
+   * 切到别的标签页、再切回来时（视图叠回窗口要过几帧才出画面）。停放窗口里的标签页也能拍（capturePage 期间照常渲染）
+   */
   async snapshot(id: string): Promise<string | null> {
     const tab = this.tabs.get(id);
-    if (!tab || this.shown !== tab || tab.view.webContents.isDestroyed()) return null;
+    if (!tab || tab.view.webContents.isDestroyed()) return null;
     try {
-      const image = await tab.view.webContents.capturePage();
+      const wc = tab.view.webContents;
+      // 不在显示的：stayHidden，网页的 visibilityState 不跟着变（同 whileRendering）
+      const { width, height } = tab.view.getBounds();
+      const image = this.shown === tab ? await wc.capturePage() : await wc.capturePage({ x: 0, y: 0, width, height }, { stayHidden: true });
       return image.isEmpty() ? null : `data:image/jpeg;base64,${image.toJPEG(85).toString("base64")}`;
     } catch {
       return null;
@@ -564,8 +570,9 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     });
   }
 
-  hide(): void {
-    if (this.shown) this.toPark(this.shown);
+  /** 这个标签页正显示着就收回停放窗口；显示的已经换成别的标签页时不动（界面收视图比换标签页晚几帧，见 BrowserTab.tsx） */
+  hide(id: string): void {
+    if (this.shown?.id === id) this.toPark(this.shown);
   }
 
   /**

@@ -207,7 +207,7 @@ ipcMain.on("browser:go", (e, id: unknown, action: unknown) => {
   if (fromUi(e.sender) && typeof id === "string" && (action === "back" || action === "forward" || action === "reload" || action === "stop")) browserViews.go(id, action);
 });
 ipcMain.on("browser:show", (e, id: unknown, bounds: Rectangle) => fromUi(e.sender) && typeof id === "string" && browserViews.show(id, bounds));
-ipcMain.on("browser:hide", (e) => fromUi(e.sender) && browserViews.hide());
+ipcMain.on("browser:hide", (e, id: unknown) => fromUi(e.sender) && typeof id === "string" && browserViews.hide(id));
 ipcMain.handle("browser:snapshot", (e, id: unknown) => (fromUi(e.sender) && typeof id === "string" ? browserViews.snapshot(id) : null));
 // 选择元素（见 browser/inspect.ts）：界面开关检查模式，传来取元素的函数；选中的元素、按 Esc 退出推给界面
 const inspector = new ElementInspector(browserViews);
