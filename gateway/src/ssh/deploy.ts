@@ -432,8 +432,24 @@ while IFS= read -r CLAUDE_APP_LINE; do
   eval "$CLAUDE_APP_LINE"
 done
 unset CLAUDE_APP_LINE N
-# claude 是 Bun 编译的，也读 NODE_OPTIONS：用户给 Node 设的会让它起不来
-unset NODE_OPTIONS
+# claude 发现 NODE_OPTIONS 里有 --inspect、--debug 开头的参数（VS Code 调试器设的 --inspect-publish-uid 等）就直接退出、什么也不输出：
+# 只去掉这些，其余的（调内存、证书、DNS 的）留给模型跑的命令，同 config.ts 的 nodeOptionsForClaude
+if [ -n "$NODE_OPTIONS" ]; then
+  CLAUDE_APP_KEPT=
+  CLAUDE_APP_SKIP=
+  set -f
+  for CLAUDE_APP_W in $NODE_OPTIONS; do
+    if [ -n "$CLAUDE_APP_SKIP" ]; then CLAUDE_APP_SKIP=; continue; fi
+    case $CLAUDE_APP_W in
+      --inspect-port|--debug-port|--inspect-publish-uid) CLAUDE_APP_SKIP=1 ;;
+      --inspect*|--debug*) ;;
+      *) if [ -n "$CLAUDE_APP_KEPT" ]; then CLAUDE_APP_KEPT="$CLAUDE_APP_KEPT $CLAUDE_APP_W"; else CLAUDE_APP_KEPT=$CLAUDE_APP_W; fi ;;
+    esac
+  done
+  set +f
+  if [ -n "$CLAUDE_APP_KEPT" ]; then NODE_OPTIONS=$CLAUDE_APP_KEPT; else unset NODE_OPTIONS; fi
+  unset CLAUDE_APP_KEPT CLAUDE_APP_SKIP CLAUDE_APP_W
+fi
 printf '%s\\n' "$CLAUDE_APP_MARKER"
 exec "$CLAUDE_APP_BIN" "$@"
 `;
@@ -449,8 +465,18 @@ try { $cfg = Get-Content -LiteralPath $ConfigFile -Raw -Encoding UTF8 | ConvertF
 # 远端用户自己设了 CLAUDE_ENV_FILE 的：网关的 bash-env.sh 执行完再接着执行它
 if ($env:CLAUDE_ENV_FILE -and -not $env:CLAUDE_APP_USER_ENV_FILE) { $env:CLAUDE_APP_USER_ENV_FILE = $env:CLAUDE_ENV_FILE }
 foreach ($p in $cfg.env.PSObject.Properties) { [Environment]::SetEnvironmentVariable($p.Name, [string]$p.Value, 'Process') }
-# claude 是 Bun 编译的，也读 NODE_OPTIONS：用户给 Node 设的（比如 VS Code 调试器的 --require）会让它起不来，什么也不输出
-Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue
+# claude 发现 NODE_OPTIONS 里有 --inspect、--debug 开头的参数（VS Code 调试器设的 --inspect-publish-uid 等）就直接退出、什么也不输出：
+# 只去掉这些，其余的（调内存、证书、DNS 的）留给模型跑的命令，同 config.ts 的 nodeOptionsForClaude
+if ($env:NODE_OPTIONS) {
+  $skip = $false
+  $kept = foreach ($t in [regex]::Matches($env:NODE_OPTIONS, '(?:[^\\s"]|"(?:\\\\.|[^"\\\\])*")+')) {
+    if ($skip) { $skip = $false; continue }
+    if ($t.Value -cmatch '^--(inspect-port|debug-port|inspect-publish-uid)$') { $skip = $true; continue }
+    if ($t.Value -cmatch '^--(inspect|debug)') { continue }
+    $t.Value
+  }
+  if ($kept) { $env:NODE_OPTIONS = $kept -join ' ' } else { Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue }
+}
 # 模型请求发到远端的 127.0.0.1，远端自己配了代理时不能走代理
 $np = $env:NO_PROXY
 $env:NO_PROXY = if ($np) { "127.0.0.1,localhost,$np" } else { '127.0.0.1,localhost' }

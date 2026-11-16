@@ -143,6 +143,13 @@ export function agentEnv(): Record<string, string | undefined> {
   const { PLAYWRIGHT_MCP_EXTENSION_TOKEN: _token, PLAYWRIGHT_MCP_EDGE_EXTENSION_TOKEN: _edgeToken, ...inherited } = process.env;
   // 设置页「网络代理」：HTTPS_PROXY、NO_PROXY 等，Claude Code 和它拉起的 Bash、MCP、git 都按这些走（见 net/proxy.ts）
   applyProxyEnv(inherited);
+  // Windows 的环境变量名不分大小写，展开出来的是它原来的写法
+  for (const k of Object.keys(inherited)) {
+    if (k.toUpperCase() !== "NODE_OPTIONS") continue;
+    const kept = nodeOptionsForClaude(inherited[k] ?? "");
+    if (kept) inherited[k] = kept;
+    else delete inherited[k];
+  }
   return {
     ...inherited,
     ...tiers,
@@ -161,6 +168,34 @@ export function agentEnv(): Record<string, string | undefined> {
     CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS ?? String(MCP_AUTO_BACKGROUND_MS),
     ...(process.platform === "win32" ? windowsBashEnv(inherited.CLAUDE_ENV_FILE) : {}),
   };
+}
+
+/**
+ * NODE_OPTIONS 里 --inspect、--debug 开头的参数去掉，其余原样留着。
+ * Claude Code 启动时发现 NODE_OPTIONS 里有这两类参数（它自己按 /--inspect(-brk)?|--debug(-brk)?/ 查）就以退出码 1 结束、什么也不输出，
+ * 只有 --version 正常：网关从 VS Code 的终端里起时，调试器给终端设了 --require …/bootloader.js --inspect-publish-uid=http
+ * （实测 2.1.322、2.1.92：单独的 --require、--max-old-space-size、--dns-result-order、--use-openssl-ca 都不影响，只有 --inspect-publish-uid 会）。
+ * 不整个去掉：模型跑的命令、Node 写的 MCP 服务也继承它，用户设的调内存、证书、DNS 的参数还要生效。
+ * 远端的 launch.sh、launch.ps1（ssh/deploy.ts）是同一条规则
+ */
+export function nodeOptionsForClaude(value: string): string {
+  const kept: string[] = [];
+  let skipValue = false;
+  // 按空白分开，双引号里的空白不分（带空格的路径）
+  for (const [token] of value.matchAll(/(?:[^\s"]|"(?:\\.|[^"\\])*")+/g)) {
+    if (skipValue) {
+      skipValue = false;
+      continue;
+    }
+    // 这三个的值可以隔一个空格写，连值一起去掉
+    if (/^--(?:inspect-port|debug-port|inspect-publish-uid)$/.test(token)) {
+      skipValue = true;
+      continue;
+    }
+    if (/^--(?:inspect|debug)/.test(token)) continue;
+    kept.push(token);
+  }
+  return kept.join(" ");
 }
 
 /**
