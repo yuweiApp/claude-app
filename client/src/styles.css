@@ -1685,7 +1685,8 @@ main {
 .browser-btn.on, .browser-btn.on:hover:not(:disabled) { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .browser-address { flex: 1; min-width: 0; height: 32px; padding: 0 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--panel); color: var(--text); font-size: 13px; outline: none; }
 .browser-address:focus { border-color: var(--accent); background: var(--bg); }
-.browser-area { flex: 1; min-height: 0; position: relative; background: #fff; }
+/* 画面区域不设底色：视图叠回窗口到出画面的那几帧、等快照的那一会儿露出来的是它，白底在深色主题下就是闪一下白屏 */
+.browser-area { flex: 1; min-height: 0; position: relative; }
 .browser-covered { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; color: var(--muted); font-size: 13px; background: var(--bg); }
 .panel-tool:disabled { opacity: 0.5; cursor: not-allowed; }
 .panel-new-tab-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
