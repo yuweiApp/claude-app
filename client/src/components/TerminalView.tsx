@@ -68,6 +68,11 @@ export function TerminalView({ terminalId, active }: { terminalId: string; activ
   const hostRef = useRef<HTMLDivElement>(null);
   const fitRef = useRef<(() => void) | null>(null);
   const termRef = useRef<Terminal | null>(null);
+  // 告诉网关这个终端现在是不是显示着（面板开着、它是当前标签页）：一轮结束时模型开的、命令已经结束的终端会自动关，
+  // 用户正在看的不关。面板收起、切到别的会话时组件卸载，WebSocket 断开，网关那边就不算在看了
+  const viewingRef = useRef<((on: boolean) => void) | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
   useEffect(() => {
     const host = hostRef.current!;
@@ -95,6 +100,8 @@ export function TerminalView({ terminalId, active }: { terminalId: string; activ
       () => {
         first = true;
         if (last) sendSize();
+        // （重新）连上时补发：没连上时发的丢掉了
+        conn.send({ type: "viewing", on: activeRef.current });
       },
       (event) => {
         if (event.type === "data") {
@@ -125,6 +132,7 @@ export function TerminalView({ terminalId, active }: { terminalId: string; activ
       timer = setTimeout(sendSize, 80);
     };
     fitRef.current = sync;
+    viewingRef.current = (on) => conn.send({ type: "viewing", on });
     const ro = new ResizeObserver(sync);
     ro.observe(host);
     sync();
@@ -147,8 +155,11 @@ export function TerminalView({ terminalId, active }: { terminalId: string; activ
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
+      viewingRef.current = null;
     };
   }, [terminalId]);
+
+  useEffect(() => viewingRef.current?.(active), [active, terminalId]);
 
   // 切到这个标签时按现在的大小重新排一下，并把焦点给终端
   useEffect(() => {

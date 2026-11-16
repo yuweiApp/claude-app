@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -8,10 +9,15 @@ import { nativePath, parseRemote } from "../ssh/location.js";
 import { applyProxyEnv } from "../net/proxy.js";
 import { psEncoded, psQuote, shQuote } from "../ssh/host.js";
 import { sshHost } from "../ssh/hosts.js";
+import { newNonce, powershellPromptScript, PromptMarkParser } from "./prompt-marker.js";
 
 /** 每个终端保留的输出（字符数），面板重新打开、刷新页面时用来还原屏幕 */
 const SCROLLBACK_CHARS = 512 * 1024;
 const MAX_TERMINALS = 16;
+/** 新开的 PowerShell 终端等第一个提示符标记最多这么久（用户的 profile 慢）；等不到就当标记没生效 */
+const FIRST_PROMPT_MS = 10_000;
+/** 自动关闭的终端记给模型看，每个会话最多留这么多条 */
+const MAX_CLOSED_NOTES = 20;
 
 type PtyModule = typeof import("@lydell/node-pty");
 let ptyModule: PtyModule | null = null;
@@ -30,6 +36,11 @@ interface Proc {
   kill(): void;
   /** 前台进程组的程序名；拿不到时 undefined */
   foreground(): string | undefined;
+  /**
+   * shell 下面还有没有别的进程（回到了提示符，但有放到后台的任务、停住的任务）。只有本机的 Unix 查得了（pgrep），
+   * 查失败按有算；Windows 和远端查不了，按没有算
+   */
+  hasChildren(): Promise<boolean>;
 }
 
 interface Terminal extends TerminalInfo {
@@ -37,6 +48,27 @@ interface Terminal extends TerminalInfo {
   chunks: string[];
   chars: number;
   listeners: Set<(event: TerminalEvent) => void>;
+  /** PowerShell 的终端：从输出里认提示符标记（prompt-marker.ts）；标记没生效时去掉 */
+  marks?: PromptMarkParser;
+  /** 按标记：true 回到了提示符，false 敲了命令还没回来；一个标记都没见过是 undefined */
+  atPrompt?: boolean;
+  /** 按标记：上一条命令的退出码 */
+  lastExit?: number;
+  promptWaiters: Set<() => void>;
+  /** 正在面板里显示着它的网页（终端的 WebSocket），有就是用户正在看 */
+  viewers: Set<unknown>;
+}
+
+/** 模型开的终端被关掉了（不是它自己关的），记到这个会话下一次终端工具的结果里 */
+export interface ClosedTerminal {
+  id: string;
+  title: string;
+  /** turn-end：一轮结束时自动关的（里面的命令已经结束）；user：用户在面板里关的 */
+  by: "turn-end" | "user";
+  /** 知道时才有：shell 自己退出的退出码，或者上一条命令的（按标记） */
+  exitCode?: number;
+  /** 用户关的时候里面还有命令在跑（判断得出来时才有） */
+  running?: true;
 }
 
 export class TerminalError extends Error {}
@@ -44,16 +76,29 @@ export class TerminalError extends Error {}
 /** 右侧面板的终端：网关这台机器上的 pty，进程跟网页断开无关，关标签页或网关退出时才结束 */
 export class TerminalManager {
   private terminals = new Map<string, Terminal>();
+  /** 每个会话还在跑的终端工具调用数（包括转到后台的 read_terminal）：有的话一轮结束先不关终端 */
+  private toolCalls = new Map<string, number>();
+  /** 每个会话的模型开的终端里，自动关掉的、用户关掉的，还没告诉模型的 */
+  private closedNotes = new Map<string, ClosedTerminal[]>();
 
   list(cwd?: string): TerminalInfo[] {
     return [...this.terminals.values()].filter((t) => !cwd || t.cwd === cwd).map(info);
   }
 
-  /** cwd 是 ssh://… 时在远端开（远端用户的登录 shell）；dir 是 shell 起始的目录，不传是 cwd（写法见 TerminalInfo.dir） */
-  async create(cwd: string, cols: number, rows: number, opts: { title?: string; openedBy?: "user" | "agent"; dir?: string } = {}): Promise<TerminalInfo> {
+  /**
+   * cwd 是 ssh://… 时在远端开（远端用户的登录 shell）；dir 是 shell 起始的目录，不传是 cwd（写法见 TerminalInfo.dir）；
+   * sessionId：模型开的终端记下是哪个会话开的
+   */
+  async create(
+    cwd: string,
+    cols: number,
+    rows: number,
+    opts: { title?: string; openedBy?: "user" | "agent"; dir?: string; sessionId?: string } = {},
+  ): Promise<TerminalInfo> {
     if (this.terminals.size >= MAX_TERMINALS) throw new TerminalError(`终端最多开 ${MAX_TERMINALS} 个，先关掉一些`);
     const size = { cols: clamp(cols, 20, 500, 80), rows: clamp(rows, 5, 200, 24) };
-    const { proc, shell } = parseRemote(cwd) ? await remotePty(cwd, size, opts.dir) : localPty(opts.dir ?? cwd, size);
+    const nonce = newNonce();
+    const { proc, shell, marked } = parseRemote(cwd) ? await remotePty(cwd, size, opts.dir, nonce) : localPty(opts.dir ?? cwd, size, nonce);
     const term: Terminal = {
       id: randomUUID(),
       cwd,
@@ -61,6 +106,7 @@ export class TerminalManager {
       shell: shell.split(/[\\/]/).pop() || shell,
       ...(opts.title ? { title: opts.title } : {}),
       openedBy: opts.openedBy ?? "user",
+      ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       userTyped: false,
       status: "running",
       exitCode: null,
@@ -70,9 +116,18 @@ export class TerminalManager {
       chunks: [],
       chars: 0,
       listeners: new Set(),
+      ...(marked ? { marks: new PromptMarkParser(nonce) } : {}),
+      promptWaiters: new Set(),
+      viewers: new Set(),
     };
     proc.onData((data) => {
       term.activeAt = Date.now();
+      for (const mark of term.marks?.feed(data) ?? []) {
+        if (mark.kind === "D" && mark.exitCode !== undefined) term.lastExit = mark.exitCode;
+        if (mark.kind !== "B") continue;
+        term.atPrompt = true;
+        term.promptWaiters.forEach((done) => done());
+      }
       term.chunks.push(data);
       term.chars += data.length;
       while (term.chars > SCROLLBACK_CHARS && term.chunks.length > 1) term.chars -= term.chunks.shift()!.length;
@@ -81,6 +136,7 @@ export class TerminalManager {
     proc.onExit((exitCode) => {
       term.status = "exited";
       term.exitCode = exitCode;
+      term.promptWaiters.forEach((done) => done());
       term.listeners.forEach((l) => l({ type: "exit", code: exitCode }));
     });
     this.terminals.set(term.id, term);
@@ -103,6 +159,11 @@ export class TerminalManager {
   write(id: string, data: string, from: "user" | "agent" | "emulator"): void {
     const term = this.get(id);
     if (from === "user") term.userTyped = true;
+    // 敲了回车：到下一个提示符标记之前算有命令在跑（标记生效了的终端才这么记）
+    if (from !== "emulator" && term.atPrompt !== undefined && /[\r\n]/.test(data)) {
+      term.atPrompt = false;
+      delete term.lastExit;
+    }
     if (term.status === "running") term.proc.write(data);
   }
 
@@ -122,6 +183,103 @@ export class TerminalManager {
     // 可能是完整路径（/bin/bash），登录 shell 前面带 -
     const name = fg.split(/[\\/]/).pop()?.replace(/^-/, "") ?? "";
     return !name || name === term.shell ? null : name;
+  }
+
+  /**
+   * 里面的命令跑完了没有：true 回到了提示符，false 还有东西在跑，undefined 判断不出来。
+   * PowerShell 的终端看提示符标记，本机的 Unix 看前台进程组；标记没生效的、远端的 Unix 判断不出来
+   */
+  idle(id: string): boolean | undefined {
+    const term = this.get(id);
+    if (term.status !== "running") return true;
+    if (term.atPrompt !== undefined) return term.atPrompt;
+    const fg = this.foreground(id);
+    return fg === undefined ? undefined : fg === null;
+  }
+
+  /** 上一条命令的退出码：只有提示符标记生效了的终端（PowerShell）有，命令还在跑、还没跑过命令时没有 */
+  lastExitCode(id: string): number | undefined {
+    return this.get(id).lastExit;
+  }
+
+  /**
+   * 新开的终端等到能敲命令：有提示符标记的等第一个标记（之后敲命令才分得清标记是命令之前还是之后的），
+   * 等不到就当标记没生效、不再认（判断不出来，按 idle 的 undefined 处理）；没有标记的等 shell 的启动文件跑完、输出停下来
+   */
+  async waitReady(id: string): Promise<void> {
+    const term = this.get(id);
+    if (!term.marks) return this.waitForOutput(id, 3000, 300);
+    if (term.atPrompt === undefined && term.status === "running") {
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          term.promptWaiters.delete(done);
+          resolve();
+        };
+        const timer = setTimeout(done, FIRST_PROMPT_MS);
+        term.promptWaiters.add(done);
+      });
+    }
+    if (term.atPrompt === undefined) delete term.marks;
+  }
+
+  /** 网页正在显示这个终端（面板开着、它是当前标签页）：viewer 是那条 WebSocket，断开时网页那边不用再说 */
+  setViewing(id: string, viewer: unknown, on: boolean): void {
+    const term = this.terminals.get(id);
+    if (!term) return;
+    if (on) term.viewers.add(viewer);
+    else term.viewers.delete(viewer);
+  }
+
+  /** 这个会话有一次终端工具调用开始了；返回的函数在它结束时调用 */
+  toolCallStarted(sessionId: string): () => void {
+    this.toolCalls.set(sessionId, (this.toolCalls.get(sessionId) ?? 0) + 1);
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      const left = (this.toolCalls.get(sessionId) ?? 1) - 1;
+      if (left > 0) this.toolCalls.set(sessionId, left);
+      else this.toolCalls.delete(sessionId);
+    };
+  }
+
+  /** 这个会话还有终端工具调用在跑（转到后台的 read_terminal）：一轮结束先不关它的终端 */
+  busy(sessionId: string): boolean {
+    return this.toolCalls.has(sessionId);
+  }
+
+  /**
+   * 一轮结束：关掉这个会话里模型开的、命令已经结束的终端（回到了提示符、shell 下面没有后台任务，或者 shell 已经退出）。
+   * 不关的：命令还在跑的、判断不出来的、用户在里面敲过东西的、用户这时正在面板里看着的。
+   * 关掉的记下来，下一次终端工具的结果里告诉模型（takeClosed）
+   */
+  async turnEnded(sessionId: string): Promise<void> {
+    for (const term of [...this.terminals.values()]) {
+      if (term.sessionId !== sessionId || term.openedBy !== "agent" || term.userTyped || term.viewers.size) continue;
+      if (term.status === "running" && (this.idle(term.id) !== true || (await term.proc.hasChildren()))) continue;
+      // 查后台任务的这一会儿里：被关掉了、用户敲了东西或切过来看了、模型又敲了命令
+      if (this.terminals.get(term.id) !== term || term.userTyped || term.viewers.size) continue;
+      if (term.status === "running" && this.idle(term.id) !== true) continue;
+      this.noteClosed(term, "turn-end");
+      this.close(term.id);
+    }
+  }
+
+  private noteClosed(term: Terminal, by: ClosedTerminal["by"]): void {
+    if (!term.sessionId) return;
+    const exitCode = term.status === "exited" ? (term.exitCode ?? undefined) : term.lastExit;
+    const running = by === "user" && term.status === "running" && this.idle(term.id) === false;
+    const notes = this.closedNotes.get(term.sessionId) ?? [];
+    notes.push({ id: term.id, title: term.title ?? `终端（${term.shell}）`, by, ...(exitCode === undefined ? {} : { exitCode }), ...(running ? { running } : {}) });
+    this.closedNotes.set(term.sessionId, notes.slice(-MAX_CLOSED_NOTES));
+  }
+
+  /** 取走（并清掉）这个会话的模型开的终端里，自动关掉的、用户关掉的，还没告诉模型的 */
+  takeClosed(sessionId: string): ClosedTerminal[] {
+    const notes = this.closedNotes.get(sessionId) ?? [];
+    this.closedNotes.delete(sessionId);
+    return notes;
   }
 
   /** 屏幕上的文字（去掉颜色等控制序列、按回车覆盖处理），最后 lines 行 */
@@ -157,10 +315,13 @@ export class TerminalManager {
     if (term.status === "running") term.proc.resize(clamp(cols, 20, 500, 80), clamp(rows, 5, 200, 24));
   }
 
-  close(id: string): void {
+  /** by：用户在面板里关的（模型开的终端记下来，告诉开它的那个会话的模型）；不传是模型自己关的、一轮结束自动关的（另外记） */
+  close(id: string, by?: "user"): void {
     const term = this.get(id);
+    if (by === "user" && term.openedBy === "agent") this.noteClosed(term, "user");
     this.terminals.delete(id);
     term.listeners.clear();
+    term.promptWaiters.forEach((done) => done());
     if (term.status === "running") term.proc.kill();
   }
 
@@ -183,6 +344,7 @@ function info(t: Terminal): TerminalInfo {
     shell: t.shell,
     ...(t.title ? { title: t.title } : {}),
     openedBy: t.openedBy,
+    ...(t.sessionId ? { sessionId: t.sessionId } : {}),
     userTyped: t.userTyped,
     status: t.status,
     exitCode: t.exitCode,
@@ -224,14 +386,17 @@ export function plainText(raw: string): string {
     .join("\n");
 }
 
-function localPty(cwd: string, size: { cols: number; rows: number }): { proc: Proc; shell: string } {
-  const shell = process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/bash";
+/** marked：这个终端的 shell 带了提示符标记（PowerShell，nonce 见 prompt-marker.ts） */
+function localPty(cwd: string, size: { cols: number; rows: number }, nonce: string): { proc: Proc; shell: string; marked: boolean } {
+  const windows = process.platform === "win32";
+  const shell = windows ? "powershell.exe" : process.env.SHELL || "/bin/bash";
   // 设置页「网络代理」：HTTPS_PROXY、NO_PROXY 等同 claude 子进程（net/proxy.ts），只在终端打开时读，开着的终端不跟着变
   const env: Record<string, string | undefined> = { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" };
   applyProxyEnv(env);
   let p: IPty;
   try {
-    p = pty().spawn(shell, [], {
+    // Windows：启动后先执行提示符标记的脚本（在用户的 profile 之后），-EncodedCommand 不用管引号
+    p = pty().spawn(shell, windows ? ["-NoExit", "-EncodedCommand", psEncoded(powershellPromptScript(nonce))] : [], {
       name: "xterm-256color",
       ...size,
       cwd,
@@ -242,6 +407,7 @@ function localPty(cwd: string, size: { cols: number; rows: number }): { proc: Pr
   }
   return {
     shell,
+    marked: windows,
     proc: {
       onData: (cb) => p.onData(cb),
       onExit: (cb) => p.onExit(({ exitCode }) => cb(exitCode)),
@@ -265,12 +431,22 @@ function localPty(cwd: string, size: { cols: number; rows: number }): { proc: Pr
           return undefined;
         }
       },
+      hasChildren: () =>
+        windows
+          ? Promise.resolve(false)
+          : new Promise((resolve) => {
+              // pgrep -P：有子进程退出码 0，没有是 1；别的（没装 pgrep 等）按有算，不关
+              execFile("pgrep", ["-P", String(p.pid)], { timeout: 3000 }, (err) => resolve(!err || (err as { code?: unknown }).code !== 1));
+            }),
     },
   };
 }
 
-/** 远端的终端：SSH 上开带 pty 的通道，在工作目录里起远端用户的登录 shell（Windows 是 PowerShell）。前台在跑什么拿不到 */
-async function remotePty(cwd: string, size: { cols: number; rows: number }, start?: string): Promise<{ proc: Proc; shell: string }> {
+/**
+ * 远端的终端：SSH 上开带 pty 的通道，在工作目录里起远端用户的登录 shell（Windows 是 PowerShell）。
+ * 前台在跑什么拿不到：Windows 靠提示符标记知道命令结束了没有，Unix 判断不出来
+ */
+async function remotePty(cwd: string, size: { cols: number; rows: number }, start: string | undefined, nonce: string): Promise<{ proc: Proc; shell: string; marked: boolean }> {
   const remote = parseRemote(cwd)!;
   const host = sshHost(remote.host);
   let channel;
@@ -278,9 +454,12 @@ async function remotePty(cwd: string, size: { cols: number; rows: number }, star
     await host.ensureReady();
     const dir = start || remote.path || host.env!.home;
     const pty = { term: "xterm-256color", ...size };
-    // Windows：交互的 PowerShell（-NoExit），先进工作目录；-EncodedCommand 不经默认 shell（cmd）的转义
+    // Windows：交互的 PowerShell（-NoExit），先进工作目录，再加上提示符标记；-EncodedCommand 不经默认 shell（cmd）的转义
     channel = host.env!.windows
-      ? await host.openRaw(`powershell.exe -NoLogo -NoExit -EncodedCommand ${psEncoded(`Set-Location -LiteralPath ${psQuote(nativePath(true, dir))}`)}`, { pty })
+      ? await host.openRaw(
+          `powershell.exe -NoLogo -NoExit -EncodedCommand ${psEncoded(`Set-Location -LiteralPath ${psQuote(nativePath(true, dir))}\n${powershellPromptScript(nonce)}`)}`,
+          { pty },
+        )
       : await host.openExec(`cd -- ${shQuote(dir)} 2>/dev/null; COLORTERM=truecolor; export COLORTERM; exec "\${SHELL:-/bin/sh}" -l`, { pty });
   } catch (err) {
     throw new TerminalError(`远端终端启动失败：${err instanceof Error ? err.message : String(err)}`);
@@ -290,6 +469,7 @@ async function remotePty(cwd: string, size: { cols: number; rows: number }, star
   let exitCode = 0;
   return {
     shell: host.env!.shell,
+    marked: host.env!.windows,
     proc: {
       onData: (cb) => {
         ch.on("data", (d: Buffer) => cb(decoder.write(d)));
@@ -314,6 +494,7 @@ async function remotePty(cwd: string, size: { cols: number; rows: number }, star
         ch.close();
       },
       foreground: () => undefined,
+      hasChildren: () => Promise.resolve(false),
     },
   };
 }

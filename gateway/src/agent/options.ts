@@ -42,7 +42,7 @@ export interface SessionLaunch {
 export function buildOptions(launch: SessionLaunch): Options {
   if (parseRemote(launch.cwd)) return buildRemoteOptions(launch);
   // 网页上每个会话都有右侧面板的终端，按工作目录分组：项目会话按项目文件夹，普通会话各有自己的 scratch 目录
-  const terminal = launch.terminals ? terminalServer(launch.terminals, launch.cwd) : null;
+  const terminal = launch.terminals ? terminalServer(launch.terminals, launch.cwd, launch.sessionId) : null;
   // 网页版没有内置浏览器，但会话启动时不知道之后是不是在桌面版里打开，所以都挂上；桌面版没开时调用工具返回错误
   // 外部浏览器（用户自己的 Chrome、Edge 等）：设置页「浏览器」里启用着的，每次启动会话时重新检测；第一次调用工具时才连
   const active = activeBrowsers();
@@ -105,7 +105,7 @@ export function buildOptions(launch: SessionLaunch): Options {
 function buildRemoteOptions(launch: SessionLaunch): Options {
   const remote = parseRemote(launch.cwd)!;
   const host = sshHost(remote.host);
-  const terminal = launch.terminals ? terminalServer(launch.terminals, launch.cwd) : null;
+  const terminal = launch.terminals ? terminalServer(launch.terminals, launch.cwd, launch.sessionId) : null;
   const active = activeBrowsers();
   const name = host.connection.name;
   const browser = launch.browser

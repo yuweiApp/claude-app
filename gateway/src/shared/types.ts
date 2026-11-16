@@ -505,6 +505,8 @@ export interface TerminalInfo {
   title?: string;
   /** 谁开的：模型开的终端它可以接着用、停止、关闭，用户开的只能读 */
   openedBy: "user" | "agent";
+  /** 模型开的：是哪个会话开的（只有那个会话的模型能接着用、停止，一轮结束时自动关的也只是它自己开的） */
+  sessionId?: string;
   /** 用户在里面敲过东西（模型就不再往里写命令） */
   userTyped: boolean;
   status: "running" | "exited";
@@ -524,10 +526,14 @@ export type MessagePriority = "now" | "next";
 export type TerminalEvent = { type: "data"; data: string } | { type: "exit"; code: number } | { type: "error"; message: string };
 
 /**
- * 终端的 WebSocket 网页发的消息：输入、改大小。
+ * 终端的 WebSocket 网页发的消息：输入、改大小、是不是正显示着。
  * typed：用户在网页里敲的、粘贴的；false 是 xterm 自己发的（焦点上报、对查询的回复），不算用户动过这个终端
  */
-export type TerminalClientMessage = { type: "input"; data: string; typed: boolean } | { type: "resize"; cols: number; rows: number };
+export type TerminalClientMessage =
+  | { type: "input"; data: string; typed: boolean }
+  | { type: "resize"; cols: number; rows: number }
+  /** 这个终端现在是不是显示在面板里（面板开着、它是当前标签页）：一轮结束时用户正在看的终端不自动关 */
+  | { type: "viewing"; on: boolean };
 
 /** GET /files/read：右侧面板查看文件 */
 export interface FileContent {

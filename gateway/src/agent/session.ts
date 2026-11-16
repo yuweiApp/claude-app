@@ -92,6 +92,8 @@ export class AgentSession {
    * 下一轮模型接着用 page 时它已经是 undefined）
    */
   private browserTaskEnded = false;
+  /** 同上，终端的：这一轮里有转到后台的终端工具调用（read_terminal 等输出）结束了，这一轮结束时先不关模型开的终端 */
+  private terminalTaskEnded = false;
   /**
    * 后台任务结束的通知还没交给模型（task_id）。Claude Code 把通知放进队列：一轮进行中，主线程有工具结果回来后的下一次模型请求
    * 把它并进这一轮（见 toolResultSinceRequest；没有工具结果的请求不带它）；一轮结束时（或空闲时到的）还在队列里，就拿它开始新的一轮。
@@ -157,7 +159,7 @@ export class AgentSession {
     private readonly conversationLog: ConversationLog,
     private readonly tasks: TaskList,
     private readonly onClosed: (session: AgentSession) => void,
-    terminals?: TerminalManager,
+    private readonly terminals?: TerminalManager,
     private readonly browser?: BrowserHost,
   ) {
     this.model = opts.model ?? config.model;
@@ -178,7 +180,7 @@ export class AgentSession {
         permissionMode: opts.permissionMode,
         skills: opts.skills,
         canUseTool: this.canUseTool,
-        terminals,
+        terminals: this.terminals,
         browser,
         onDesktopTarget: (target) => this.publish({ type: "desktop_target", target }),
         abortController: this.abortController,
@@ -630,7 +632,8 @@ export class AgentSession {
             this.publish({ type: "task_result", taskId: message.task_id, text: result.text, isError: result.isError });
             tasksChanged = this.tasks.setResult(message.task_id, result.text, result.isError) || tasksChanged;
             const tool = this.tasks.list().find((t) => t.taskId === message.task_id)?.tool;
-            if (!tool?.startsWith(`mcp__${TERMINAL_SERVER}__`)) this.browserTaskEnded = true;
+            if (tool?.startsWith(`mcp__${TERMINAL_SERVER}__`)) this.terminalTaskEnded = true;
+            else this.browserTaskEnded = true;
           }
         }
         if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });
@@ -651,6 +654,11 @@ export class AgentSession {
           const deferred = inappBusy(this.id) || this.browserTaskEnded;
           this.browserTaskEnded = false;
           if (!deferred) this.browser?.turnEnded(this.id);
+          // 终端同理：模型开的、里面的命令已经结束的终端在一轮结束时关掉（TerminalManager.turnEnded），
+          // 还有终端工具调用在跑（转到后台的 read_terminal）、或者这一轮里有这样的调用结束了，先不关
+          const holdTerminals = this.terminals?.busy(this.id) || this.terminalTaskEnded;
+          this.terminalTaskEnded = false;
+          if (!holdTerminals) void this.terminals?.turnEnded(this.id).catch((err: unknown) => this.log.warn({ sessionId: this.id, err }, "一轮结束关终端失败"));
         }
       }
     } catch (err) {

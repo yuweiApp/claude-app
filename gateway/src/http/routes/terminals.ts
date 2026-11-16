@@ -42,19 +42,21 @@ export function terminalRoutes(app: FastifyInstance, terminals: TerminalManager)
         try {
           if (msg.type === "input" && typeof msg.data === "string") terminals.write(req.params.id, msg.data, msg.typed === true ? "user" : "emulator");
           else if (msg.type === "resize") terminals.resize(req.params.id, Number(msg.cols), Number(msg.rows));
+          else if (msg.type === "viewing") terminals.setViewing(req.params.id, socket, msg.on === true);
         } catch {
           // 终端已经关了
         }
       });
       socket.on("close", () => {
         clearInterval(heartbeat);
+        terminals.setViewing(req.params.id, socket, false);
         detach();
       });
     });
   });
 
   app.delete<{ Params: IdParams }>("/terminals/:id", async (req) => {
-    terminals.close(req.params.id);
+    terminals.close(req.params.id, "user");
     return { ok: true };
   });
 }
