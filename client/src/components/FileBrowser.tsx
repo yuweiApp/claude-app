@@ -205,7 +205,7 @@ const nameError = (name: string) => (name === "." || name === ".." || /[\\/\0]/.
  * 目录树（同 codex-app-server 的 FileTree）：顶部「筛选文件…」（在整个项目里按名字搜），没在筛选时是刷新按钮；
  * 单击文件预览打开，双击固定打开，点文件夹展开、收起；右边缘拖动调宽度。
  * 右键：空白处和第一行（工作目录）新建文件、文件夹，文件夹还能在里面新建；复制绝对路径（文件、文件夹还能复制相对路径）；
- * 文件、文件夹能重命名（F2）、删除（Delete）。
+ * 文件、文件夹能重命名（F2）、删除（Delete）；桌面版的本机会话还能用系统的文件管理器打开（文件夹打开它本身，文件是在所在的文件夹里选中它）。
  * 拖动文件、文件夹到别的文件夹（拖到文件上是放进它所在的文件夹，拖到空白处或第一行是放到根目录），悬停在收起的文件夹上一会儿自动展开
  */
 function FileTree({
@@ -568,15 +568,20 @@ function FileTree({
           ]
         : [{ label: "复制路径", onClick: () => void copyText(absolutePath(cwd, "")) }],
     );
-    // 工作目录本身可以用系统的文件管理器打开（桌面版，且网关和界面在同一台机器上）
-    if (!entry && desktop && !isRemote(cwd))
+    // 用系统的文件管理器打开（桌面版，且不是 SSH 远程会话）：工作目录、文件夹打开它本身，文件打开所在的文件夹并选中它
+    if (desktop && !isRemote(cwd)) {
+      const target = absolutePath(cwd, rel);
+      const isFile = entry !== null && !entry.dir;
       groups.push([
         {
-          label: `在${fileManagerName}中打开`,
+          label: `在${fileManagerName}中${isFile ? "显示" : "打开"}`,
           onClick: () =>
-            void desktop!.openFolder(absolutePath(cwd, "")).then((opened) => !opened && setOpError("这台电脑上没有这个文件夹（网关在别的机器上）")),
+            void (isFile ? desktop!.showItemInFolder(target) : desktop!.openFolder(target)).then(
+              (ok) => !ok && setOpError(`这台电脑上没有这个${isFile ? "文件" : "文件夹"}（已经不在了，或者网关在别的机器上）`),
+            ),
         },
       ]);
+    }
     if (entry)
       groups.push([
         { label: "重命名", onClick: () => startRename(entry) },
