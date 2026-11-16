@@ -11,7 +11,7 @@ import { ZoomableImage } from "./ImageThumb";
 import { MarkdownLiveEditor } from "./MarkdownLiveEditor";
 import { PATH_DRAG_TYPE } from "./MentionText";
 import { closePageAnnotation, editAnnotationAt, repositionAnnotationEditor, startPageAnnotation } from "./ResponseAnnotations";
-import { onElementAnnotationsSent, sanitizeElement, uploadElementScreenshot, useResponseAnnotations } from "../state/responseAnnotations";
+import { sanitizeElement, uploadElementScreenshot, useResponseAnnotations } from "../state/responseAnnotations";
 import { desktop, fileManagerName } from "../desktop";
 
 /** 文件里的行范围，回复里的链接带了行号时面板滚到并选中这几行 */
@@ -1269,7 +1269,7 @@ function FileViewer({
  *
  * 标注（同 Claude 桌面版的「选择元素」，和内置浏览器的一样）：网关在网页末尾接了一段脚本（gateway/src/http/page-picker.ts），
  * 和这里互相 postMessage。标注模式下在网页上点一个元素，网页里的脚本取元素信息（gateway/src/shared/element-context.ts），
- * 桌面版再截一张元素的图（网页版截不了），界面上打开编辑框写要怎么改，加进输入框里的「N 条注释」，随下一条消息发出；
+ * 桌面版再截一张元素的图（网页版截不了），界面上打开编辑框写要怎么改，加进输入框里的「N 条注释」，随下一条消息发出，加完退出标注模式（要再标一个重新点按钮）；
  * 已有的标注在元素上显示编号，点编号修改
  */
 function HtmlPreview({
@@ -1354,6 +1354,7 @@ function HtmlPreview({
             { file, selector, element, ...(screenshot ? { screenshot } : {}) },
             () => toScreen(pickedRect.current),
             () => post({ type: "clear-pick", pickId }),
+            () => onAnnotatingChange(false),
           );
         })();
       } else if (d.type === "picked-rect") {
@@ -1373,8 +1374,6 @@ function HtmlPreview({
     if (!annotating) closePageAnnotation();
   }, [annotating]);
   useEffect(() => closePageAnnotation, []);
-  // 带着标注的消息发出去了：退出标注模式
-  useEffect(() => onElementAnnotationsSent((sent) => sent === sessionId && onAnnotatingChange(false)), [sessionId, onAnnotatingChange]);
 
   if (!url) return <div className="panel-empty">正在加载网页…</div>;
   if ("error" in url) return <div className="panel-empty files-error">{url.error}</div>;

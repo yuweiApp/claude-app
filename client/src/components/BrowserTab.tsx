@@ -3,7 +3,7 @@ import { ELEMENT_CONTEXT_FUNCTION } from "@gateway/shared/element-context";
 import type { BrowserLogo } from "../api";
 import { fileManagerName, type BrowserDownload, type BrowserSuggestion, type BrowserTabInfo, type DesktopBrowserApi } from "../desktop";
 import { dismissDownloads, useTabDownloads } from "../state/browserDownloads";
-import { onElementAnnotationsSent, sanitizeElement, uploadElementScreenshot } from "../state/responseAnnotations";
+import { sanitizeElement, uploadElementScreenshot } from "../state/responseAnnotations";
 import { closePageAnnotation, startPageAnnotation } from "./ResponseAnnotations";
 
 interface Props {
@@ -19,7 +19,7 @@ interface Props {
  * 原生视图总在界面之上：界面的对话框、菜单盖住画面区域时先把视图收起来，不然会挡住它们。
  *
  * 选择元素（同 Claude 桌面版，和右侧面板 HTML 预览的标注一样）：工具栏的按钮打开外壳的检查模式（desktop/src/browser/inspect.ts），
- * 在网页上点一个元素，外壳取元素信息、拍截图推过来，这里上传截图，在元素旁边打开编辑框写要怎么改，加进输入框里的「N 条注释」。
+ * 在网页上点一个元素，外壳取元素信息、拍截图推过来，这里上传截图，在元素旁边打开编辑框写要怎么改，加进输入框里的「N 条注释」，加完退出检查模式（要再选一个重新点按钮）。
  * 编辑框盖住画面区域时视图换成快照，选中的元素在快照上画框
  */
 export function BrowserTab({ api, id, info, active }: Props) {
@@ -70,9 +70,6 @@ export function BrowserTab({ api, id, info, active }: Props) {
   useEffect(() => {
     if (!picking) closePageAnnotation();
   }, [picking]);
-  // 带着标注的消息发出去了：退出选择元素
-  const tabSessionId = info?.sessionId;
-  useEffect(() => onElementAnnotationsSent((sent) => sent === tabSessionId && setPicking(false)), [tabSessionId]);
   // 选中了一个元素：网页的位置按画面区域和网页视口的比例换成界面上的（不管界面、网页各自的缩放）
   useEffect(
     () =>
@@ -95,6 +92,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
               return r ? new DOMRect(r.left + box.left, r.top + box.top, box.width, box.height) : null;
             },
             () => setPicked((cur) => (cur === box ? null : cur)),
+            () => setPicking(false),
           );
         });
       }),

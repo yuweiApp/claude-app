@@ -30,7 +30,7 @@ import { isRemote, machinePath, parseRemote } from "./remote";
 import { DesktopPicker } from "./components/DesktopPicker";
 import { emptyView, reduce } from "./state/session";
 import { AnnotationEditor, AnnotationSelectionButton, AnnotationSessionContext, NotesChip } from "./components/ResponseAnnotations";
-import { ANNOTATION_SCOPE_ATTR, clearResponseAnnotations, notifyElementAnnotationsSent, restoreResponseAnnotations, useResponseAnnotations, withResponseAnnotations, type ResponseAnnotation } from "./state/responseAnnotations";
+import { ANNOTATION_SCOPE_ATTR, clearResponseAnnotations, restoreResponseAnnotations, useResponseAnnotations, withResponseAnnotations, type ResponseAnnotation } from "./state/responseAnnotations";
 import { moveComposerDraft, setComposerDraft, type ComposerDraft } from "./state/composerDrafts";
 
 export function App() {
@@ -680,7 +680,6 @@ function Chat({
         const queuedDraft: QueuedDraft | undefined = draft && view.state === "running" ? { composer: draft, annotations } : undefined;
         await api.send(sessionId, message.text, attachments, message.elements, priority, queuedDraft);
         if (annotations.length) clearResponseAnnotations(sessionId);
-        if (annotations.some((a) => a.element)) notifyElementAnnotationsSent(sessionId);
       }
       else onCreated(await api.createSession(text, attachments, { permissionMode: newMode, cwd: cwd ?? undefined, model: newModel, effort: newEffort }));
     } catch (e) {

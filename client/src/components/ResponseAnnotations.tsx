@@ -57,7 +57,7 @@ type EditorState =
   | { mode: "new"; sessionId: string; text: string; source: ResponseAnnotationSource; range: Range }
   | { mode: "edit"; sessionId: string; id: string; anchor: () => DOMRect | null }
   /** 网页上选中的元素，✓ 后加进「N 条注释」（要求可以不写）；onClose：编辑框关了（添加、取消、换成别的） */
-  | { mode: "page"; sessionId: string; seq: number; target: ElementAnnotationTarget; anchor: () => DOMRect | null; onClose?: () => void };
+  | { mode: "page"; sessionId: string; seq: number; target: ElementAnnotationTarget; anchor: () => DOMRect | null; onClose?: () => void; onAdded?: () => void };
 
 let editor: EditorState | null = null;
 let pageSeq = 0;
@@ -87,9 +87,12 @@ function startAnnotationFromSelection() {
   return true;
 }
 
-/** 网页上选中了一个元素：打开编辑框写要求（可以不写），✓ 后加进「N 条注释」；anchor 是元素在界面上的位置（跟着网页滚动变） */
-export function startPageAnnotation(sessionId: string, target: ElementAnnotationTarget, anchor: () => DOMRect | null, onClose?: () => void) {
-  setEditor({ mode: "page", sessionId, seq: ++pageSeq, target, anchor, onClose });
+/**
+ * 网页上选中了一个元素：打开编辑框写要求（可以不写），✓ 后加进「N 条注释」；anchor 是元素在界面上的位置（跟着网页滚动变）。
+ * onClose：编辑框关了（加了、没加都算）；onAdded：加进去了（选择元素、标注模式在这时退出）
+ */
+export function startPageAnnotation(sessionId: string, target: ElementAnnotationTarget, anchor: () => DOMRect | null, onClose?: () => void, onAdded?: () => void) {
+  setEditor({ mode: "page", sessionId, seq: ++pageSeq, target, anchor, onClose, onAdded });
 }
 
 /** 改已有的注释，编辑框挂在 anchor 上（网页里的编号） */
@@ -323,6 +326,7 @@ export function AnnotationEditor({ sessionId, onSaved }: { sessionId: string | n
     else if (state.mode === "new") addResponseAnnotation(sessionId, state.text, draft, state.source);
     else updateResponseAnnotation(sessionId, state.id, draft);
     setEditor(null);
+    if (state.mode === "page") state.onAdded?.();
     onSaved?.();
   };
 
