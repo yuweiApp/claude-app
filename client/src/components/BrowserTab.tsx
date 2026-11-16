@@ -19,7 +19,7 @@ interface Props {
  * 原生视图总在界面之上：界面的对话框、菜单盖住画面区域时先把视图收起来，不然会挡住它们。
  *
  * 选择元素（同 Claude 桌面版，和右侧面板 HTML 预览的标注一样）：工具栏的按钮打开外壳的检查模式（desktop/src/browser/inspect.ts），
- * 在网页上点一个元素，外壳取元素信息、拍截图推过来，这里上传截图，在元素旁边打开编辑框写要怎么改，加进输入框里的「N 条注释」，加完退出检查模式（要再选一个重新点按钮）。
+ * 在网页上点一个元素，外壳取元素信息、拍截图推过来，这里上传截图，在元素旁边打开编辑框写要怎么改，加进输入框里的「N 条注释」，加完、按 Esc 不加了都退出检查模式（要再选一个重新点按钮）。
  * 编辑框盖住画面区域时视图换成快照，选中的元素在快照上画框
  */
 export function BrowserTab({ api, id, info, active }: Props) {
@@ -57,7 +57,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
   }, [api, id, picking, active]);
   useEffect(() => api.onInspectEnded((tab) => tab === id && setPicking(false)), [api, id]);
   // 网页里按 Esc 由外壳处理（推来 onInspectEnded）；检查模式下点网页不会把焦点给网页，焦点多半还在界面上，这里也接 Esc。
-  // 正在写要求时 Esc 只关编辑框（它自己处理），别的地方已经用掉的 Esc（例如关掉输入框的补全列表）不管
+  // 正在写要求时的 Esc 由编辑框处理（关掉编辑框、退出检查模式），别的地方已经用掉的 Esc（例如关掉输入框的补全列表）不管
   useEffect(() => {
     if (!picking || !active) return;
     const onKey = (e: globalThis.KeyboardEvent) => {

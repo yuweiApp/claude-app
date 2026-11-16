@@ -211,7 +211,13 @@ ipcMain.on("browser:hide", (e) => fromUi(e.sender) && browserViews.hide());
 ipcMain.handle("browser:snapshot", (e, id: unknown) => (fromUi(e.sender) && typeof id === "string" ? browserViews.snapshot(id) : null));
 // 选择元素（见 browser/inspect.ts）：界面开关检查模式，传来取元素的函数；选中的元素、按 Esc 退出推给界面
 const inspector = new ElementInspector(browserViews);
-inspector.on("picked", (picked) => mainWindow?.webContents.send("browser:picked", picked));
+inspector.on("picked", (picked) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  // 点网页时键盘焦点可能跟到网页视图上，界面随后把视图收起（换成快照）打开编辑框，按键就哪也到不了：
+  // 先把焦点交回界面，编辑框才能打字、接 Esc
+  mainWindow.webContents.focus();
+  mainWindow.webContents.send("browser:picked", picked);
+});
 inspector.on("ended", (id) => mainWindow?.webContents.send("browser:inspect-ended", id));
 ipcMain.handle("browser:inspect", (e, id: unknown, fn: unknown) => {
   if (!fromUi(e.sender) || typeof id !== "string") return false;
