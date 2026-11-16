@@ -6,7 +6,7 @@ import { config } from "../config.js";
 import type { ExternalBrowserInfo, ExternalBrowserTabs } from "../shared/types.js";
 import { listBrowsers, tabGroupEnabled, type ResolvedBrowser } from "./browser-settings.js";
 import { INSTALL_URL } from "./catalog.js";
-import { BrowserRepl, closeAutomatically } from "./repl.js";
+import { BrowserRepl, closeAutomatically, MAX_URL_CHARS } from "./repl.js";
 import { browserMcpServer, replFor, RUN_CODE_TOOL, RUNTIME_FACTS } from "./tool.js";
 
 /**
@@ -309,7 +309,8 @@ function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[], cwd
       "用户设了 token 时不用点允许，交出来的第一个标签页就是连接页本身（chrome-extension://…/connect.html，标题 Welcome），context 里有了别的标签页之后它会自动关闭。" +
       "交出来的标签页全部关闭时连接断开，下一次调用重新连接（重新打开连接页）。",
     RUNTIME_FACTS,
-    "标签页：通过这里开的标签页不会自动关闭。标签页被新开、关闭时，下一次工具结果里会列出变化，只能分出是不是你做的（扩展不提供是用户还是网页）。",
+    "标签页：通过这里开的标签页不会自动关闭。标签页被新开、关闭时，下一次工具结果里会列出变化，只能分出是不是你做的（扩展不提供是用户还是网页）。" +
+      `这些说明里的网址超过 ${MAX_URL_CHARS} 个字符时只显示开头和总长度，完整的网址是那个标签页的 page.url()。`,
     `下载：网页里的下载（包括脚本触发的）由 ${b.name} 自己处理，按用户在浏览器里的设置保存（默认是系统的「下载」文件夹，设了下载前询问时会弹出另存为对话框），同名时浏览器自己在文件名后加 (1)；` +
       "Playwright 的 download 事件不会触发，page.waitForEvent('download') 一直等到超时，也拿不到文件存在哪。",
     filesFact(cwd),

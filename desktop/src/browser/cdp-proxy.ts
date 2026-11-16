@@ -28,6 +28,8 @@ export class CdpProxy {
   /** 子会话号 → 所在标签页 */
   private readonly children = new Map<string, string>();
   private readonly unsubscribe: () => void;
+  /** 上一次记的 AI 操作时间，见 used() */
+  private lastUse = 0;
   /** AI 上次让面板切过去的标签页：同一个标签页只切一次，用户手动切走后，AI 接着在原来的标签页上点不会把面板拉回来 */
   private lastActivated: string | null = null;
   /** Playwright 要的下载目录（Browser.setDownloadBehavior）；没要、或者要 deny 时不报下载事件 */
@@ -106,12 +108,12 @@ export class CdpProxy {
     // 切到这个标签页（Playwright 的 page.bringToFront()，网关在模型给 page 换了标签页时调用）：面板跟着切。
     // 不转给网页：Electron 的网页视图收到它会去抢窗口焦点
     if (method === "Page.bringToFront") {
-      tab.lastAgentUse = Date.now();
+      this.used(tab);
       this.activate(tab, true);
       return {};
     }
     // 记下 AI 实际在操作哪个标签页（Playwright 连上时给每个标签页发的初始化命令不算），keepTab() 留的是最近这个
-    if (AGENT_ACTIONS.test(method)) tab.lastAgentUse = Date.now();
+    if (AGENT_ACTIONS.test(method)) this.used(tab);
     // AI 的点击、按键：判断弹出窗口是谁触发的，也用来把网页收到的输入事件里 AI 的排除掉（views.ts 的 input-event）
     if (method.startsWith("Input.")) tab.lastAgentInput = Date.now();
     // AI 在这个标签页上跳转、输入：面板切过去，用户能看到它在操作哪个（模型可能用 page 以外的变量操作别的标签页）
@@ -150,6 +152,15 @@ export class CdpProxy {
       if (state === "completed") await linkOrCopy(event.path, path.join(dir, guid)).catch(() => (state = "canceled"));
       this.event("Browser.downloadProgress", { guid, totalBytes: event.totalBytes, receivedBytes: event.receivedBytes, state });
     });
+  }
+
+  /**
+   * 记下 AI 刚操作了这个标签页（keepTab() 留的是最近操作的那个）。同一毫秒里先后操作两个标签页时也要分得出先后：
+   * keepTab(标签页) 是先发 Page.bringToFront 再留下，前一条命令是在别的标签页上点击时两者可能落在同一毫秒
+   */
+  private used(tab: Tab): void {
+    this.lastUse = Math.max(Date.now(), this.lastUse + 1);
+    tab.lastAgentUse = this.lastUse;
   }
 
   /** 让面板切到 AI 在操作的标签页；force 是 AI 明确要切（bringToFront、activateTarget），否则同一个标签页只切一次 */
@@ -197,7 +208,7 @@ export class CdpProxy {
       case "Target.closeTarget":
         return { success: this.views.close(tabOf(params.targetId).id, "agent") };
       case "Target.activateTarget":
-        tabOf(params.targetId).lastAgentUse = Date.now();
+        this.used(tabOf(params.targetId));
         this.activate(tabOf(params.targetId), true);
         return {};
       case "Target.attachToTarget": {

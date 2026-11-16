@@ -3,7 +3,7 @@ import { z } from "zod";
 import { MCP_AUTO_BACKGROUND_MS } from "../config.js";
 import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
 import type { BrowserHost, TemporaryTab } from "./host.js";
-import { DATA_URL_KEEP_CHARS, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, type Repl, type ToolOutput } from "./repl.js";
+import { DATA_URL_KEEP_CHARS, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, MAX_URL_CHARS, shortUrl, type Repl, type ToolOutput } from "./repl.js";
 import { WorkerRepl } from "./worker-repl.js";
 
 /**
@@ -57,8 +57,11 @@ const instructions = (filesFact?: string, remote?: string) => [
     : []),
   RUNTIME_FACTS,
   "标签页：用 context.newPage() 开的是临时标签页，一轮结束时自动关闭（用户当时正在面板里看着的除外）；关掉后用户在面板里看不到它，下一轮它也不在 context.pages() 里，page 换成剩下的最后一个标签页，没有就是 undefined。" +
-    "全局函数 await keepTab() 把你最近操作的那个标签页留下：之后不再自动关闭，用户在面板里能看到、能操作，下一轮还在 context.pages() 里，直到用户关掉或会话被删除；返回 { title, url }，没有你操作过的标签页时返回 null。用户开的不会自动关。" +
-    "标签页被新开、关闭、跳转时，下一次 browser_run_code 的结果里会列出变化和是谁做的（你、用户、网页自己、一轮结束）。",
+    "全局函数 await keepTab() 把你最近操作的那个标签页留下，await keepTab(标签页) 留下指定的那个（参数是 page 或 context.pages() 里的一个，面板会切到它）；每次调用留下一个。留下的标签页之后不再自动关闭，用户在面板里能看到、能操作，下一轮还在 context.pages() 里，直到用户关掉或会话被删除；返回 { title, url }（url 是完整的网址；这个返回值直接作为结果显示时，url 超过 " +
+    MAX_URL_CHARS +
+    " 个字符的只显示开头和总长度），没有你操作过的标签页时返回 null。用户开的不会自动关。" +
+    "标签页被新开、关闭、跳转时，下一次 browser_run_code 的结果里会列出变化和是谁做的（你、用户、网页自己、一轮结束）。" +
+    `这些说明里的网址超过 ${MAX_URL_CHARS} 个字符时只显示开头和总长度，完整的网址是那个标签页的 page.url()。`,
   (remote ? "下载：网页里的下载（包括脚本触发的）不弹「另存为」，存进用户电脑上系统的「下载」文件夹（不在远端的工作目录里），同名时文件名后加 (1)、(2)；" : "下载：网页里的下载（包括脚本触发的）不弹「另存为」，直接存进这个会话的工作目录，同名时文件名后加 (1)、(2)；") +
     "Playwright 的 download 事件照常触发，download.suggestedFilename() 是实际存下的文件名，download.path() 是 Playwright 临时目录里的一份。" +
     "全局函数 await downloads() 返回这个会话里的下载（进行中的和最近结束的，先开始的在前），每项有 filename、path、url（data: 地址只有类型和长度）、state（progressing / completed / cancelled / interrupted）、paused、receivedBytes、totalBytes（不知道时是 0）、bytesPerSecond、startTime（毫秒时间戳），是调用那一刻的数据。",
@@ -70,12 +73,19 @@ const instructions = (filesFact?: string, remote?: string) => [
  * browser_run_code 打开了新标签页或当前页跳转了，并且这个会话现在有临时标签页时附上：哪些是临时的、会怎样（事实，不教怎么做）。
  * 是不是临时的问桌面版（host.temporaryTabs）：跳转的可能是用户开的、或者已经留下的标签页，不能只看「打开了网页」
  */
-function temporaryNote(tabs: TemporaryTab[]): string {
-  const lines = tabs.map((t) => `- ${t.title || "（无标题）"} — ${t.url || "（网址还没加载出来）"}${t.latest ? "（你最近操作的）" : ""}`);
+export function temporaryNote(tabs: TemporaryTab[], pages: string[]): string {
+  // 序号：按完整网址在 context.pages() 里找（同一个网址开了几个时依次对上）；对不上（这一会儿里跳转了）就不标，
+  // 这时网址不缩短：模型手里总有序号或完整网址中的一个，能找到这个标签页
+  const used = new Set<number>();
+  const lines = tabs.map((t) => {
+    const index = t.url ? pages.findIndex((url, i) => url === t.url && !used.has(i)) : -1;
+    if (index >= 0) used.add(index);
+    return `- ${index >= 0 ? `[${index}] ` : ""}${t.title || "（无标题）"} — ${!t.url ? "（网址还没加载出来）" : index >= 0 ? shortUrl(t.url) : t.url}${t.latest ? "（你最近操作的）" : ""}`;
+  });
   return [
-    "（这个会话现在的临时标签页（你开的，或从它们弹出的）：",
+    "（这个会话现在的临时标签页（你开的，或从它们弹出的；方括号里是它在 context.pages() 里的序号）：",
     ...lines,
-    "临时标签页在这一轮结束时自动关闭（用户那时正在面板里看着的除外），关闭后用户在面板里看不到，下一轮也不在了。keepTab() 会留下你最近操作的那个标签页，留下后用户能看到，下一轮还能接着用。）",
+    "临时标签页在这一轮结束时自动关闭（用户那时正在面板里看着的除外），关闭后用户在面板里看不到，下一轮也不在了。keepTab() 会留下你最近操作的那个标签页，keepTab(context.pages()[序号]) 留下指定的那个，留下后用户能看到，下一轮还能接着用。）",
   ].join("\n");
 }
 
@@ -226,7 +236,7 @@ export function browserMcpServer({ name, instructions, repl, readFile, temporary
           const result = withRestartNotice(notice, await repl.run(source, timeout_ms ?? DEFAULT_TIMEOUT_MS, signal));
           rememberResult(extra, result.text, result.isError);
           const temporary = temporaryTabs && result.opened && !result.isError ? await temporaryTabs().catch(() => null) : null;
-          return toResult(temporary?.length ? { ...result, text: `${result.text}\n\n${temporaryNote(temporary)}` } : result);
+          return toResult(temporary?.length ? { ...result, text: `${result.text}\n\n${temporaryNote(temporary, result.tabs)}` } : result);
         } catch (err) {
           rememberResult(extra, prefixed(notice, errorMessage(err)), true);
           return error(prefixed(notice, errorMessage(err)));

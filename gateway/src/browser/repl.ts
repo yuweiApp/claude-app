@@ -22,6 +22,8 @@ export const DEFAULT_TIMEOUT_MS = 60_000;
 export const MAX_TIMEOUT_MS = 15 * 60_000;
 /** 返回给模型的文字上限，超过只留开头 */
 const MAX_OUTPUT_CHARS = 40_000;
+/** 工具自己附的说明（标签页的变化、临时标签页的提醒）里，网址最多显示这么多个字符 */
+export const MAX_URL_CHARS = 100;
 
 /** 给 vm 上下文的全局对象（和 Playwright 自带 browser_run_code_unsafe 的 exposedGlobals 基本一致） */
 export const EXPOSED_GLOBALS = [
@@ -229,6 +231,14 @@ function elideDataUrls(text: string): string {
   });
 }
 
+/**
+ * 工具自己附的说明里的网址：太长的只留开头，说明总共多长。登录跳转这类网址能有上千个字符（redirectURL 里再套一层编码过的网址），
+ * 模型要的是「哪个标签页」，完整的它能用 page.url() 取。代码自己打印的输出不动
+ */
+export function shortUrl(url: string): string {
+  return url.length <= MAX_URL_CHARS ? url : `${url.slice(0, MAX_URL_CHARS)}…（共 ${url.length} 个字符）`;
+}
+
 export function truncate(raw: string): string {
   const text = elideDataUrls(raw);
   if (text.length <= MAX_OUTPUT_CHARS) return text;
@@ -262,6 +272,8 @@ export interface ToolOutput {
 export interface RunResult extends ToolOutput {
   /** 这次调用前后的标签页和当前页网址，判断有没有打开新网页（内置浏览器用它提醒 keepTab()） */
   opened: boolean;
+  /** 调用结束时 context.pages() 里每个标签页的完整网址，按序号；临时标签页的提醒里按它标出序号 */
+  tabs: string[];
 }
 
 /**
@@ -371,12 +383,17 @@ export class BrowserRepl implements Repl {
   private currentPage: unknown;
   /** 已经挂上关闭事件的浏览器上下文（断开重连后是新的） */
   private watched: BrowserContext | null = null;
+  /**
+   * keepTab() 返回过的对象。模型多半只写一句 `await keepTab();`，返回值就成了这次的结果，登录跳转这类网址一千多个字符全印出来；
+   * 结果就是这个对象时网址按 shortUrl 显示，代码里拿到的值不变（t.url 还是完整的）。模型自己 console.log 的不动
+   */
+  private readonly keptResults = new WeakSet<object>();
 
   /**
    * @param tabEvents 内置浏览器：取走桌面版发来的标签页变化（带着是谁做的，见 host.ts 的 TabEvent）；
    *   Chrome 没有，在这里自己记（Playwright 的事件里看不出是用户还是网页，只能分出是不是 AI）
    * @param downloads 内置浏览器：这个会话的下载和进度，代码里的全局函数 downloads() 就是它；外部浏览器没有
-   * @param keepTab 内置浏览器：把 AI 最近操作的标签页留给用户，代码里的全局函数 keepTab() 就是它（经主线程问桌面版）
+   * @param keepTab 内置浏览器：把 AI 最近操作的标签页留给用户（经主线程问桌面版）；代码里的全局函数 keepTab(标签页?) 在它外面包了一层
    * @param saveFile 外部浏览器：把数据写进这个会话的工作目录，代码里的全局函数 saveFile() 就是它（external.ts）。
    *   扩展连接的浏览器上 Playwright 的 download 事件不会触发，下载的文件在哪也不知道，代码拿到数据后自己存
    * @param readFile 读这个会话工作目录里的文件，代码里的全局函数 readFile(name, encoding?) 就是它加上解码（external.ts 的 fileReader）
@@ -422,7 +439,28 @@ export class BrowserRepl implements Repl {
       },
       ...(downloads ? { downloads } : {}),
       ...(saveFile ? { saveFile } : {}),
-      ...(keepTab ? { keepTab } : {}),
+      ...(keepTab
+        ? {
+            /**
+             * 不传参数留下 AI 最近操作的标签页；传一个标签页（page、context.pages() 里的）留下它。
+             * 指定的那个靠 bringToFront 告诉桌面版：桌面版把它算作对这个标签页的一次操作（cdp-proxy.ts 的 Page.bringToFront，
+             * 面板也切过去），它就成了「最近操作的」，接着的 keep 留下的就是它。不用另加消息，旧版本的桌面版也能用
+             */
+            keepTab: async (target?: unknown) => {
+              if (target !== undefined) {
+                const tabPage = target as Partial<Page> | null;
+                if (!tabPage || typeof tabPage !== "object" || typeof tabPage.bringToFront !== "function" || typeof tabPage.isClosed !== "function") {
+                  throw new Error("keepTab 的参数是要留下的标签页（page，或 context.pages() 里的一个）；不传参数时留下你最近操作的那个");
+                }
+                if (tabPage.isClosed()) throw new Error("keepTab：这个标签页已经关闭了");
+                await tabPage.bringToFront();
+              }
+              const tab = await keepTab();
+              if (tab) this.keptResults.add(tab);
+              return tab;
+            },
+          }
+        : {}),
       ...(readFile
         ? {
             /** 同 Node 的 fs.readFile：不传编码返回 Buffer，传了返回字符串 */
@@ -567,12 +605,14 @@ export class BrowserRepl implements Repl {
     }
     for (const change of this.localChanges) {
       if (change.page && change.page === page) continue;
-      const target = change.page ? `${(await titleOf(change.page)) || "（无标题）"} — ${change.page.url()}` : `${change.title ? `${change.title} — ` : ""}${change.url}`;
+      const target = change.page
+        ? `${(await titleOf(change.page)) || "（无标题）"} — ${shortUrl(change.page.url())}`
+        : `${change.title ? `${change.title} — ` : ""}${shortUrl(change.url ?? "")}`;
       lines.push(`- ${change.who}：${target}`);
     }
     this.localChanges = [];
     if (this.pageReplaced) {
-      lines.push(`- page 原来指向的标签页已经关闭，${page ? `现在 page 指向 ${page.url()}` : "现在没有标签页，page 是 undefined"}`);
+      lines.push(`- page 原来指向的标签页已经关闭，${page ? `现在 page 指向 ${shortUrl(page.url())}` : "现在没有标签页，page 是 undefined"}`);
       this.pageReplaced = false;
     }
     const pages = this.watched?.pages() ?? [];
@@ -583,8 +623,8 @@ export class BrowserRepl implements Repl {
     if (!lines.length && !fresh.length) return undefined;
     const out = [header, ...lines];
     if (fresh.length) {
-      const list = await Promise.all(fresh.map(async (p) => `[${pages.indexOf(p)}] ${(await titleOf(p)) || "（无标题）"} — ${p.url()}`));
-      out.push(`不是你开的新标签页（序号是在 context.pages() 里的位置）：${list.join("；")}。page 仍指向 ${page && !page.isClosed() ? page.url() : "undefined"}。`);
+      const list = await Promise.all(fresh.map(async (p) => `[${pages.indexOf(p)}] ${(await titleOf(p)) || "（无标题）"} — ${shortUrl(p.url())}`));
+      out.push(`不是你开的新标签页（序号是在 context.pages() 里的位置）：${list.join("；")}。page 仍指向 ${page && !page.isClosed() ? shortUrl(page.url()) : "undefined"}。`);
     }
     if (turnEnd) out.push("你开的标签页在一轮结束时会自动关闭，除非调用过 keepTab()；留下的会一直在用户的面板里，下一轮也还在。");
     return `（${out.join("\n")}）`;
@@ -595,7 +635,7 @@ export class BrowserRepl implements Repl {
     try {
       script = transform(code);
     } catch (err) {
-      return { text: `语法错误：${(err as Error).message}`, images: [], isError: true, opened: false };
+      return { text: `语法错误：${(err as Error).message}`, images: [], isError: true, opened: false, tabs: [] };
     }
     const { context } = await this.current(signal);
     // 上次调用以来被关掉的标签页：放在这次结果的最前面（在跑代码之前取，代码自己关的不算）
@@ -645,7 +685,11 @@ export class BrowserRepl implements Repl {
     if (notice) parts.unshift(notice);
     let isError = false;
     if ("value" in outcome) {
-      if (outcome.value !== undefined) parts.push(show(outcome.value));
+      if (outcome.value !== undefined) {
+        const value: unknown = outcome.value;
+        const kept = typeof value === "object" && value !== null && this.keptResults.has(value) ? (value as { title: string; url: string }) : null;
+        parts.push(show(kept && typeof kept.url === "string" ? { ...kept, url: shortUrl(kept.url) } : value));
+      }
     } else if ("error" in outcome) {
       isError = true;
       parts.push(errorText(outcome.error));
@@ -662,7 +706,8 @@ export class BrowserRepl implements Repl {
     // 这次调用期间标签页的变化（网页弹出的、用户这时关掉的……；AI 自己开、关的不说）
     const changes = await this.describeChanges("这次调用期间，标签页有这些变化：");
     if (changes) parts.push(changes);
-    return { text: truncate(parts.join("\n") || "（没有输出）"), images: sink.images, isError, opened };
+    const tabs = after.pages.map((p) => (p.isClosed() ? "" : p.url()));
+    return { text: truncate(parts.join("\n") || "（没有输出）"), images: sink.images, isError, opened, tabs };
   }
 }
 
@@ -739,7 +784,7 @@ function trackPage(page: Page): void {
 function describeEvent(e: TabEvent): string | null {
   // 还没加载出来时标题是空的或 about:blank，不显示
   const title = e.title && e.title !== e.url && e.title !== "about:blank" ? e.title : "";
-  const target = `${title ? `${title} — ` : ""}${e.url || "（网址还没加载出来）"}`;
+  const target = `${title ? `${title} — ` : ""}${e.url ? shortUrl(e.url) : "（网址还没加载出来）"}`;
   if (e.kind === "opened") {
     if (e.by === "agent") return null;
     if (e.by === "user") return `用户在面板里新开了标签页：${target}`;
@@ -753,11 +798,11 @@ function describeEvent(e: TabEvent): string | null {
     if (e.by === "turn-end") return `上一轮结束时自动关闭了你开的临时标签页：${target}`;
     return `网页自己关闭了标签页（window.close 或崩溃）：${target}`;
   }
-  const name = `「${e.title && e.title !== "about:blank" ? e.title : e.url || "新标签页"}」`;
+  const name = `「${e.title && e.title !== "about:blank" ? e.title : e.url ? shortUrl(e.url) : "新标签页"}」`;
   if (e.action === "back" || e.action === "forward" || e.action === "reload") {
     return `用户在标签页${name}上点了${e.action === "back" ? "后退" : e.action === "forward" ? "前进" : "刷新"}`;
   }
-  return `用户在标签页${name}的地址栏里跳转到了 ${e.url}`;
+  return `用户在标签页${name}的地址栏里跳转到了 ${shortUrl(e.url)}`;
 }
 
 function snapshotPages(context: BrowserContext, page: Page | undefined) {
