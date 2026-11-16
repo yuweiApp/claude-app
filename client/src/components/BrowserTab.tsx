@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { flushSync } from "react-dom";
 import { ELEMENT_CONTEXT_FUNCTION } from "@gateway/shared/element-context";
 import type { BrowserLogo } from "../api";
 import { fileManagerName, type BrowserDownload, type BrowserSuggestion, type BrowserTabInfo, type DesktopBrowserApi } from "../desktop";
 import { dismissDownloads, useTabDownloads } from "../state/browserDownloads";
 import { sanitizeElement, uploadElementScreenshot } from "../state/responseAnnotations";
 import { closePageAnnotation, startPageAnnotation } from "./ResponseAnnotations";
+
+/** 视图叠回窗口后，下面的快照再留多久（毫秒） */
+const UNCOVER_DELAY_MS = 300;
 
 interface Props {
   api: DesktopBrowserApi;
@@ -119,6 +123,8 @@ export function BrowserTab({ api, id, info, active }: Props) {
     let wasCovered = false;
     let shown = false;
     let seq = 0;
+    /** 视图叠回去后撤掉快照的定时器；还没到点时快照仍贴在视图下面 */
+    let uncover: ReturnType<typeof setTimeout> | undefined;
     const tick = () => {
       const el = areaRef.current;
       if (el) {
@@ -132,20 +138,33 @@ export function BrowserTab({ api, id, info, active }: Props) {
           if (hidden) {
             last = "hidden";
             const hide = () => {
-              setCovered(true);
               api.hide();
               shown = false;
             };
-            if (shown && !empty && !blocked) {
+            if (uncover !== undefined) {
+              // 刚叠回去又被盖住，上一张快照还贴着：直接收
+              clearTimeout(uncover);
+              uncover = undefined;
+              hide();
+            } else if (shown && !empty && !blocked) {
               void api.snapshot(id).then((url) => {
                 // 拍快照期间又露出来了：不用收
                 if (mine !== seq) return;
-                setSnapshot(url);
-                hide();
+                // 快照画到界面上以后再收视图：收视图是立刻的，快照晚一两帧才画出来，中间会露出画面区域的白底
+                flushSync(() => {
+                  setSnapshot(url);
+                  setCovered(true);
+                });
+                requestAnimationFrame(() =>
+                  requestAnimationFrame(() => {
+                    if (mine === seq) hide();
+                  }),
+                );
               });
-            } else hide();
-          } else {
-            setCovered(false);
+            } else {
+              setCovered(true);
+              hide();
+            }
           }
         }
         if (!hidden) {
@@ -154,7 +173,13 @@ export function BrowserTab({ api, id, info, active }: Props) {
             last = key;
             api.show(id, { x: r.left, y: r.top, width: r.width, height: r.height });
             shown = true;
-            setSnapshot(null);
+            // 视图叠回窗口要过几帧才出画面：快照先留在下面（视图总在界面之上，挡不住它），过一会儿再撤，不然这几帧露出白底
+            clearTimeout(uncover);
+            uncover = setTimeout(() => {
+              uncover = undefined;
+              setCovered(false);
+              setSnapshot(null);
+            }, UNCOVER_DELAY_MS);
           }
         }
       }
@@ -163,6 +188,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
     tick();
     return () => {
       cancelAnimationFrame(frame);
+      clearTimeout(uncover);
       seq++;
       api.hide();
     };
@@ -215,7 +241,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
         ) : (
           covered && (
             <div className="browser-covered">
-              {snapshot ? <img src={snapshot} alt="" draggable={false} /> : <span>{info?.title || url}</span>}
+              {snapshot ? <img src={snapshot} alt="" draggable={false} decoding="sync" /> : <span>{info?.title || url}</span>}
               {snapshot && picked && <div className="browser-picked" style={picked} />}
             </div>
           )
