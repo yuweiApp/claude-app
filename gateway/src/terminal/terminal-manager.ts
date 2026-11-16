@@ -34,13 +34,29 @@ interface Proc {
   write(data: string): void;
   resize(cols: number, rows: number): void;
   kill(): void;
-  /** 前台进程组的程序名；拿不到时 undefined */
-  foreground(): string | undefined;
   /**
-   * shell 下面还有没有别的进程（回到了提示符，但有放到后台的任务、停住的任务）。只有本机的 Unix 查得了（pgrep），
-   * 查失败按有算；Windows 和远端查不了，按没有算
+   * 问系统这个终端此刻的前台：shell 在不在前台（回到了提示符）、不在时前台程序的名字。
+   * children：在提示符时再查 shell 下面有没有别的进程（放到后台的任务、停住的任务），查不出来是 undefined。
+   * 查不了（Windows，靠提示符标记）、查失败时 undefined
    */
-  hasChildren(): Promise<boolean>;
+  probe(children: boolean): Promise<ProcProbe | undefined>;
+}
+
+interface ProcProbe {
+  atPrompt: boolean;
+  /** 不在提示符时前台程序的名字，拿不到是 null */
+  running: string | null;
+  children?: boolean;
+}
+
+/** 终端此刻的情况（TerminalManager.state） */
+export interface TerminalState {
+  /** true 回到了提示符，false 还有东西在跑，undefined 判断不出来 */
+  idle: boolean | undefined;
+  /** 在跑的程序的名字，拿不到时 null */
+  running: string | null;
+  /** 回到了提示符时，shell 下面有没有后台任务；查不出来是 undefined（只在 state(id, true) 时查） */
+  children?: boolean;
 }
 
 interface Terminal extends TerminalInfo {
@@ -54,6 +70,8 @@ interface Terminal extends TerminalInfo {
   atPrompt?: boolean;
   /** 按标记：上一条命令的退出码 */
   lastExit?: number;
+  /** 敲过几次回车（模型的、用户的）：一轮结束时问完系统再关之前，看这期间有没有又敲了命令 */
+  enters: number;
   promptWaiters: Set<() => void>;
   /** 正在面板里显示着它的网页（终端的 WebSocket），有就是用户正在看 */
   viewers: Set<unknown>;
@@ -81,13 +99,14 @@ export class TerminalManager {
   /** 每个会话的模型开的终端里，自动关掉的、用户关掉的，还没告诉模型的 */
   private closedNotes = new Map<string, ClosedTerminal[]>();
 
-  list(cwd?: string): TerminalInfo[] {
-    return [...this.terminals.values()].filter((t) => !cwd || t.cwd === cwd).map(info);
+  /** sessionId：只要这个会话的（加上不属于哪个会话的旧终端） */
+  list(cwd?: string, sessionId?: string): TerminalInfo[] {
+    return [...this.terminals.values()].filter((t) => (!cwd || t.cwd === cwd) && (!sessionId || !t.sessionId || t.sessionId === sessionId)).map(info);
   }
 
   /**
    * cwd 是 ssh://… 时在远端开（远端用户的登录 shell）；dir 是 shell 起始的目录，不传是 cwd（写法见 TerminalInfo.dir）；
-   * sessionId：模型开的终端记下是哪个会话开的
+   * sessionId：属于哪个会话（面板里开的是当前会话，模型开的是它所在的会话）
    */
   async create(
     cwd: string,
@@ -119,6 +138,7 @@ export class TerminalManager {
       ...(marked ? { marks: new PromptMarkParser(nonce) } : {}),
       promptWaiters: new Set(),
       viewers: new Set(),
+      enters: 0,
     };
     proc.onData((data) => {
       term.activeAt = Date.now();
@@ -160,9 +180,12 @@ export class TerminalManager {
     const term = this.get(id);
     if (from === "user") term.userTyped = true;
     // 敲了回车：到下一个提示符标记之前算有命令在跑（标记生效了的终端才这么记）
-    if (from !== "emulator" && term.atPrompt !== undefined && /[\r\n]/.test(data)) {
-      term.atPrompt = false;
-      delete term.lastExit;
+    if (from !== "emulator" && /[\r\n]/.test(data)) {
+      term.enters++;
+      if (term.atPrompt !== undefined) {
+        term.atPrompt = false;
+        delete term.lastExit;
+      }
     }
     if (term.status === "running") term.proc.write(data);
   }
@@ -172,29 +195,23 @@ export class TerminalManager {
   }
 
   /**
-   * 前台在跑的程序：shell 自己在前台说明回到了提示符（null）；拿不到时（Windows 上不准）是 undefined。
-   * node-pty 在 Unix 上用 tcgetpgrp 取前台进程组的程序名
+   * 终端此刻的情况：里面的命令跑完了没有、在跑什么。
+   * PowerShell 的终端看提示符标记；本机的 Unix 问系统前台进程组（node-pty），远端的 Unix 经 SSH 用 ps 问（remotePty）；
+   * 标记没生效的、问不到的判断不出来。children：回到了提示符时再查 shell 下面有没有后台任务（Windows 查不了，按没有算）
    */
-  foreground(id: string): string | null | undefined {
+  async state(id: string, children = false): Promise<TerminalState> {
     const term = this.get(id);
-    if (term.status !== "running") return null;
-    const fg = term.proc.foreground();
-    if (fg === undefined) return undefined;
-    // 可能是完整路径（/bin/bash），登录 shell 前面带 -
-    const name = fg.split(/[\\/]/).pop()?.replace(/^-/, "") ?? "";
-    return !name || name === term.shell ? null : name;
+    if (term.status !== "running") return { idle: true, running: null, children: false };
+    if (term.atPrompt !== undefined) return { idle: term.atPrompt, running: null, children: false };
+    if (term.marks) return { idle: undefined, running: null };
+    const probe = await term.proc.probe(children).catch(() => undefined);
+    if (!probe) return { idle: undefined, running: null };
+    return probe.atPrompt ? { idle: true, running: null, ...(children ? { children: probe.children } : {}) } : { idle: false, running: probe.running };
   }
 
-  /**
-   * 里面的命令跑完了没有：true 回到了提示符，false 还有东西在跑，undefined 判断不出来。
-   * PowerShell 的终端看提示符标记，本机的 Unix 看前台进程组；标记没生效的、远端的 Unix 判断不出来
-   */
-  idle(id: string): boolean | undefined {
-    const term = this.get(id);
-    if (term.status !== "running") return true;
-    if (term.atPrompt !== undefined) return term.atPrompt;
-    const fg = this.foreground(id);
-    return fg === undefined ? undefined : fg === null;
+  /** 里面的命令跑完了没有：true 回到了提示符，false 还有东西在跑，undefined 判断不出来（见 state） */
+  async idle(id: string): Promise<boolean | undefined> {
+    return (await this.state(id)).idle;
   }
 
   /** 上一条命令的退出码：只有提示符标记生效了的终端（PowerShell）有，命令还在跑、还没跑过命令时没有 */
@@ -257,19 +274,21 @@ export class TerminalManager {
   async turnEnded(sessionId: string): Promise<void> {
     for (const term of [...this.terminals.values()]) {
       if (term.sessionId !== sessionId || term.openedBy !== "agent" || term.userTyped || term.viewers.size) continue;
-      if (term.status === "running" && (this.idle(term.id) !== true || (await term.proc.hasChildren()))) continue;
-      // 查后台任务的这一会儿里：被关掉了、用户敲了东西或切过来看了、模型又敲了命令
-      if (this.terminals.get(term.id) !== term || term.userTyped || term.viewers.size) continue;
-      if (term.status === "running" && this.idle(term.id) !== true) continue;
+      const enters = term.enters;
+      if (term.status === "running") {
+        const st = await this.state(term.id, true);
+        if (st.idle !== true || st.children !== false) continue;
+      }
+      // 问系统的这一会儿里（远端要一次网络往返）：被关掉了、用户敲了东西或切过来看了、又敲了命令
+      if (this.terminals.get(term.id) !== term || term.userTyped || term.viewers.size || term.enters !== enters) continue;
       this.noteClosed(term, "turn-end");
       this.close(term.id);
     }
   }
 
-  private noteClosed(term: Terminal, by: ClosedTerminal["by"]): void {
+  private noteClosed(term: Terminal, by: ClosedTerminal["by"], running = false): void {
     if (!term.sessionId) return;
     const exitCode = term.status === "exited" ? (term.exitCode ?? undefined) : term.lastExit;
-    const running = by === "user" && term.status === "running" && this.idle(term.id) === false;
     const notes = this.closedNotes.get(term.sessionId) ?? [];
     notes.push({ id: term.id, title: term.title ?? `终端（${term.shell}）`, by, ...(exitCode === undefined ? {} : { exitCode }), ...(running ? { running } : {}) });
     this.closedNotes.set(term.sessionId, notes.slice(-MAX_CLOSED_NOTES));
@@ -315,14 +334,32 @@ export class TerminalManager {
     if (term.status === "running") term.proc.resize(clamp(cols, 20, 500, 80), clamp(rows, 5, 200, 24));
   }
 
-  /** by：用户在面板里关的（模型开的终端记下来，告诉开它的那个会话的模型）；不传是模型自己关的、一轮结束自动关的（另外记） */
-  close(id: string, by?: "user"): void {
+  /** 用户在面板里关的：模型开的终端记下来（关的时候里面还在不在跑），告诉开它的那个会话的模型 */
+  async closeByUser(id: string): Promise<void> {
     const term = this.get(id);
-    if (by === "user" && term.openedBy === "agent") this.noteClosed(term, "user");
+    if (term.openedBy === "agent") {
+      const running = (await this.state(id).catch(() => null))?.idle === false;
+      // 问系统的这一会儿里已经被关掉了（一轮结束、模型关的）
+      if (this.terminals.get(id) !== term) return;
+      this.noteClosed(term, "user", running);
+    }
+    this.close(id);
+  }
+
+  /** 模型自己关的、一轮结束自动关的（后者在 turnEnded 里另外记） */
+  close(id: string): void {
+    const term = this.get(id);
     this.terminals.delete(id);
     term.listeners.clear();
     term.promptWaiters.forEach((done) => done());
     if (term.status === "running") term.proc.kill();
+  }
+
+  /** 会话删除了：关掉属于它的终端（模型开的、用户在它的面板里开的），不然会一直开着、哪个会话都看不到 */
+  closeSession(sessionId: string): void {
+    for (const term of [...this.terminals.values()]) if (term.sessionId === sessionId) this.close(term.id);
+    this.closedNotes.delete(sessionId);
+    this.toolCalls.delete(sessionId);
   }
 
   closeAll(): void {
@@ -422,29 +459,30 @@ function localPty(cwd: string, size: { cols: number; rows: number }, nonce: stri
           // 已经退出了
         }
       },
-      // node-pty 在 Unix 上用 tcgetpgrp 取前台进程组的程序名，Windows 上不准
-      foreground: () => {
-        if (process.platform === "win32") return undefined;
+      // node-pty 在 Unix 上用 tcgetpgrp 取前台进程组的程序名（不准的是 Windows，那里靠提示符标记）；
+      // 和 shell 同名就算 shell 自己在前台（可能是完整路径 /bin/bash，登录 shell 前面带 -）
+      probe: async (children) => {
+        if (windows) return undefined;
+        let fg: string;
         try {
-          return p.process ?? "";
+          fg = p.process ?? "";
         } catch {
           return undefined;
         }
+        const name = programName(fg);
+        if (name && name !== programName(shell)) return { atPrompt: false, running: name };
+        if (!children) return { atPrompt: true, running: null };
+        // pgrep -P：有子进程退出码 0，没有是 1；别的（没装 pgrep 等）是查不出来
+        const code = await new Promise<unknown>((resolve) => execFile("pgrep", ["-P", String(p.pid)], { timeout: 3000 }, (err) => resolve(err ? (err as { code?: unknown }).code : 0)));
+        return { atPrompt: true, running: null, ...(code === 0 ? { children: true } : code === 1 ? { children: false } : {}) };
       },
-      hasChildren: () =>
-        windows
-          ? Promise.resolve(false)
-          : new Promise((resolve) => {
-              // pgrep -P：有子进程退出码 0，没有是 1；别的（没装 pgrep 等）按有算，不关
-              execFile("pgrep", ["-P", String(p.pid)], { timeout: 3000 }, (err) => resolve(!err || (err as { code?: unknown }).code !== 1));
-            }),
     },
   };
 }
 
 /**
  * 远端的终端：SSH 上开带 pty 的通道，在工作目录里起远端用户的登录 shell（Windows 是 PowerShell）。
- * 前台在跑什么拿不到：Windows 靠提示符标记知道命令结束了没有，Unix 判断不出来
+ * 命令结束了没有：Windows 靠提示符标记；Unix 的 shell 启动前报出进程号，之后要判断时在同一条连接上另开一个通道用 ps 问（probeScript）
  */
 async function remotePty(cwd: string, size: { cols: number; rows: number }, start: string | undefined, nonce: string): Promise<{ proc: Proc; shell: string; marked: boolean }> {
   const remote = parseRemote(cwd)!;
@@ -460,19 +498,37 @@ async function remotePty(cwd: string, size: { cols: number; rows: number }, star
           `powershell.exe -NoLogo -NoExit -EncodedCommand ${psEncoded(`Set-Location -LiteralPath ${psQuote(nativePath(true, dir))}\n${powershellPromptScript(nonce)}`)}`,
           { pty },
         )
-      : await host.openExec(`cd -- ${shQuote(dir)} 2>/dev/null; COLORTERM=truecolor; export COLORTERM; exec "\${SHELL:-/bin/sh}" -l`, { pty });
+      : // Unix：exec 之前先报出进程号（exec 之后登录 shell 还是这个进程），见 SHELL_PID
+        await host.openExec(
+          `cd -- ${shQuote(dir)} 2>/dev/null; COLORTERM=truecolor; export COLORTERM; printf '\\033]633;P;ShellPid=%s;aid=${nonce}\\007' "$$"; exec "\${SHELL:-/bin/sh}" -l`,
+          { pty },
+        );
   } catch (err) {
     throw new TerminalError(`远端终端启动失败：${err instanceof Error ? err.message : String(err)}`);
   }
   const decoder = new StringDecoder("utf8");
   const ch = channel;
   let exitCode = 0;
+  // Unix：shell 的进程号，从输出开头认（SHELL_PID）；认到之前、或者开头的输出超过 PID_SCAN_CHARS 还没有（被别的东西吃掉了）就判断不出来
+  let shellPid: number | undefined;
+  let scanned = host.env!.windows ? null : "";
+  const scan = (text: string) => {
+    if (scanned === null) return;
+    scanned += text;
+    const m = SHELL_PID.exec(scanned);
+    if (m && m[2] === nonce) shellPid = Number(m[1]);
+    if (m || scanned.length > PID_SCAN_CHARS) scanned = null;
+  };
   return {
     shell: host.env!.shell,
     marked: host.env!.windows,
     proc: {
       onData: (cb) => {
-        ch.on("data", (d: Buffer) => cb(decoder.write(d)));
+        ch.on("data", (d: Buffer) => {
+          const text = decoder.write(d);
+          scan(text);
+          cb(text);
+        });
         ch.stderr.on("data", (d: Buffer) => cb(d.toString("utf8")));
       },
       onExit: (cb) => {
@@ -493,10 +549,51 @@ async function remotePty(cwd: string, size: { cols: number; rows: number }, star
         }
         ch.close();
       },
-      foreground: () => undefined,
-      hasChildren: () => Promise.resolve(false),
+      probe: async (children) => {
+        if (shellPid === undefined) return undefined;
+        const r = await host.exec(probeScript(shellPid, children), { now: true, timeoutMs: PROBE_TIMEOUT_MS }).catch(() => null);
+        return r?.code === 0 ? parseProbe(r.stdout.toString("utf8")) : undefined;
+      },
     },
   };
+}
+
+/** 远端 Unix 的 shell 启动前报出的进程号：OSC 633（VS Code 的 shell 集成用的那组，P 是设属性），xterm.js 不认识就忽略，plainText 也去掉 */
+const SHELL_PID = /\x1b\]633;P;ShellPid=(\d+);aid=([0-9a-f]+)\x07/;
+/** 进程号应该在输出的最开头（登录 shell 的启动文件还没跑），开头这么多字符里没有就不再找 */
+const PID_SCAN_CHARS = 4096;
+/** 经 SSH 问一次前台最多等多久；连接断了、远端卡住时判断不出来 */
+const PROBE_TIMEOUT_MS = 3000;
+
+/** 程序名：去掉路径，登录 shell 前面的 - 也去掉 */
+function programName(path: string): string {
+  return path.split(/[\\/]/).pop()?.replace(/^-/, "") ?? "";
+}
+
+/**
+ * 远端 Unix 上问 shell（pid）此刻是不是在前台：它的进程组和终端的前台进程组（tpgid）一样就是回到了提示符，
+ * 不一样时前台进程组组长的程序名就是在跑的命令；children 时再用 pgrep -P 查 shell 下面有没有别的进程。
+ * Linux（procps）和 macOS（BSD ps）都有 pgid、tpgid、comm；查不到（ps 不支持这些字段、进程没了）时退出码 3
+ */
+function probeScript(pid: number, children: boolean): string {
+  return [
+    `set -- $(ps -o pgid= -o tpgid= -p ${pid} 2>/dev/null)`,
+    `[ $# -eq 2 ] || exit 3`,
+    `if [ "$1" = "$2" ]; then`,
+    children ? `  pgrep -P ${pid} >/dev/null 2>&1; echo "prompt $?"` : `  echo prompt`,
+    `else`,
+    `  echo "running $(ps -o comm= -p "$2" 2>/dev/null)"`,
+    `fi`,
+  ].join("\n");
+}
+
+/** probeScript 的输出：prompt [pgrep 的退出码：0 有子进程，1 没有，别的查不出来] 或 running <程序名> */
+export function parseProbe(out: string): ProcProbe | undefined {
+  const line = out.trim().split("\n").pop()?.trim() ?? "";
+  if (line.startsWith("running")) return { atPrompt: false, running: programName(line.slice("running".length).trim()) || null };
+  const m = /^prompt(?: (\d+))?$/.exec(line);
+  if (!m) return undefined;
+  return { atPrompt: true, running: null, ...(m[1] === "0" ? { children: true } : m[1] === "1" ? { children: false } : {}) };
 }
 
 function clamp(n: number, min: number, max: number, fallback: number): number {

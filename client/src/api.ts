@@ -189,9 +189,10 @@ export const api = {
   pageUrl: (cwd: string, path: string) => request<{ url: string }>("GET", `/files/page-url?${q({ cwd, path })}`).then((r) => BASE + r.url),
   rawFileUrl: (cwd: string, path: string, v?: number) => withToken(`/files/raw?${q({ cwd, path, ...(v ? { v: String(Math.round(v)) } : {}) })}`),
   /** 右侧面板的终端 */
-  terminals: (cwd: string) => request<{ terminals: TerminalInfo[] }>("GET", `/terminals?${q({ cwd })}`).then((r) => r.terminals),
-  createTerminal: (cwd: string, cols: number, rows: number) =>
-    request<{ terminal: TerminalInfo }>("POST", "/terminals", { cwd, cols, rows }).then((r) => r.terminal),
+  /** 这个会话的终端（加上不属于哪个会话的旧终端） */
+  terminals: (cwd: string, sessionId: string) => request<{ terminals: TerminalInfo[] }>("GET", `/terminals?${q({ cwd, sessionId })}`).then((r) => r.terminals),
+  createTerminal: (cwd: string, sessionId: string, cols: number, rows: number) =>
+    request<{ terminal: TerminalInfo }>("POST", "/terminals", { cwd, sessionId, cols, rows }).then((r) => r.terminal),
   closeTerminal: (id: string) => request("DELETE", `/terminals/${id}`),
   /** 终端的 WebSocket 地址（输出、输入、改大小） */
   terminalSocketUrl: (id: string) => {

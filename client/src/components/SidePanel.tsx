@@ -21,12 +21,20 @@ export type PanelTab =
   /** root：工作目录外的文件、文件夹（回复里的链接）用它所在的文件夹做根（绝对路径），path 相对它；没有就是会话的工作目录 */
   /** line：回复里的链接带了行号，打开后滚到并选中这几行；reveal 每次点链接都换，再点同一个链接也重新定位 */
   | { id: string; kind: "files"; path: string | null; transient: boolean; root?: string; line?: LineRange; reveal?: number }
-  | { id: string; kind: "terminal"; terminalId: string; label: string }
+  /** sessionId：终端属于哪个会话，面板里只显示当前会话的（同浏览器）；没有的是不属于哪个会话的旧终端，都显示 */
+  | { id: string; kind: "terminal"; terminalId: string; label: string; sessionId?: string }
   /**
    * 内置浏览器（只有桌面版有）：标签页属于对话会话，面板里只显示当前会话的。
    * key 是外壳给的、不随重启变的编号：桌面版重启后标签页恢复了但 browserId 是新的，按 key 对回来
    */
   | { id: string; kind: "browser"; browserId: string; sessionId: string; key?: string };
+
+/** 当前会话看得见的标签：浏览器、终端只显示这个会话的（面板的状态按项目文件夹存，同项目的会话共用一份） */
+function visibleIn(tab: PanelTab, sessionId: string): boolean {
+  if (tab.kind === "browser") return tab.sessionId === sessionId;
+  if (tab.kind === "terminal") return !tab.sessionId || tab.sessionId === sessionId;
+  return true;
+}
 
 /** 一个项目文件夹的面板：标签页和当前选中的 */
 export interface PanelState {
@@ -181,8 +189,9 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
     commitWidth(clampWidth(Math.min(width, maxWidth()) + (e.key === "ArrowLeft" ? 20 : -20)));
   };
 
-  // 和网关上这个项目的终端对齐（每 2 秒）：刷新页面后还开着的、模型用 run_in_terminal 开的补成标签页（不抢当前标签），
-  // 模型关掉的去掉，标题跟着网关的（模型开的终端有标题）
+  // 和网关上这个会话的终端对齐（每 2 秒）：刷新页面后还开着的、模型用 run_in_terminal 开的补成标签页（不抢当前标签），
+  // 模型关掉的、一轮结束自动关的去掉，标题跟着网关的（模型开的终端有标题）。别的会话的终端标签留在状态里、不显示（visibleIn），
+  // 不算在这次的对比里：它们不在这个会话的列表里，但没有被关掉
   const seen = useRef(new Set<string>());
   // 第一次对齐之前不接终端：上次保存的终端标签可能在网关上已经没有了
   const [terminalsChecked, setTerminalsChecked] = useState(false);
@@ -190,7 +199,7 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
     let stale = false;
     let first = true;
     const sync = () =>
-      api.terminals(cwd).then((list) => {
+      api.terminals(cwd, sessionId).then((list) => {
         if (stale) return;
         const ids = new Set(list.map((t) => t.id));
         // 之前见过、现在没了的才算被关掉（刚开的终端可能还没出现在这次的列表里）；
@@ -202,15 +211,16 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
         onChange((s) => {
           let changed = false;
           let tabs = s.tabs.flatMap((tab): PanelTab[] => {
-            if (tab.kind !== "terminal") return [tab];
+            if (tab.kind !== "terminal" || (tab.sessionId && tab.sessionId !== sessionId)) return [tab];
             if (gone.has(tab.terminalId) || (initial && !ids.has(tab.terminalId))) {
               changed = true;
               return [];
             }
-            const title = list.find((t) => t.id === tab.terminalId)?.title;
-            if (title && title !== tab.label) {
+            const info = list.find((t) => t.id === tab.terminalId);
+            // 旧的面板状态没记 sessionId：按网关的补上
+            if (info && ((info.title && info.title !== tab.label) || info.sessionId !== tab.sessionId)) {
               changed = true;
-              return [{ ...tab, label: title }];
+              return [{ ...tab, label: info.title || tab.label, ...(info.sessionId ? { sessionId: info.sessionId } : {}) }];
             }
             return [tab];
           });
@@ -219,10 +229,13 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
           let active = s.active;
           if (missing.length) {
             changed = true;
-            const added = missing.map((t, i): PanelTab => ({ id: crypto.randomUUID(), kind: "terminal", terminalId: t.id, label: t.title ?? terminalLabel(tabs, i) }));
-            // 只有一个空的新标签页时直接换掉
-            const onlyNew = tabs.length === 1 && tabs[0]!.kind === "new";
-            tabs = onlyNew ? added : [...tabs, ...added];
+            const added = missing.map(
+              (t, i): PanelTab => ({ id: crypto.randomUUID(), kind: "terminal", terminalId: t.id, label: t.title ?? terminalLabel(tabs, i), ...(t.sessionId ? { sessionId: t.sessionId } : {}) }),
+            );
+            // 这个会话看得见的只有一个空的新标签页时直接换掉
+            const visible = tabs.filter((t) => visibleIn(t, sessionId));
+            const onlyNew = visible.length === 1 && visible[0]!.kind === "new" ? visible[0]! : null;
+            tabs = onlyNew ? [...tabs.filter((t) => t !== onlyNew), ...added] : [...tabs, ...added];
             if (onlyNew) active = added[0]!.id;
           }
           if (!changed) return s;
@@ -238,7 +251,7 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
       stale = true;
       clearInterval(timer);
     };
-  }, [cwd]);
+  }, [cwd, sessionId]);
 
   // 内置浏览器：外壳推来全部标签页。当前会话的、面板里还没有的（AI 开的、刷新页面前开的）补成标签页（不抢当前标签），关掉的去掉。
   // null 是还没从外壳拿到列表
@@ -295,7 +308,7 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
           // 已经要切过去的那个（切换通知比标签页列表先到）
           const wanted = want ? added.find((t) => t.kind === "browser" && t.browserId === want) : undefined;
           // 当前会话正看着的是空的新标签页：就地换成第一个，切过去（同渲染时的 activeId：当前标签看不见就算第一个看得见的）
-          const visible = tabs.filter((t) => t.kind !== "browser" || t.sessionId === sessionId);
+          const visible = tabs.filter((t) => visibleIn(t, sessionId));
           const current = visible.find((t) => t.id === s.active) ?? visible[0];
           if (current?.kind === "new") {
             const [first, ...rest] = added;
@@ -311,14 +324,14 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
     });
   }, [browserTabs, sessionId]);
 
-  // 只显示当前会话的浏览器标签页；当前标签是别的会话的就退到第一个看得见的，一个都没有就补一个新标签页
-  const visibleTabs = state.tabs.filter((t) => t.kind !== "browser" || t.sessionId === sessionId);
+  // 只显示当前会话的浏览器、终端标签页；当前标签是别的会话的就退到第一个看得见的，一个都没有就补一个新标签页
+  const visibleTabs = state.tabs.filter((t) => visibleIn(t, sessionId));
   const activeId = visibleTabs.some((t) => t.id === state.active) ? state.active : visibleTabs[0]?.id;
   useEffect(() => {
     if (visibleTabs.length) return;
     // 按最新状态再判断一次：开发模式（StrictMode）挂载时 effect 跑两次，两次看到的都是旧的 visibleTabs，不能各补一个
     onChange((s) => {
-      if (s.tabs.some((t) => t.kind !== "browser" || t.sessionId === sessionId)) return s;
+      if (s.tabs.some((t) => visibleIn(t, sessionId))) return s;
       const tab: PanelTab = { id: crypto.randomUUID(), kind: "new" };
       return { tabs: [...s.tabs, tab], active: tab.id };
     });
@@ -372,7 +385,7 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
       if (focus && tabs.some((t) => t.id === focus)) return { tabs, active: focus };
       if (!ids.has(s.active)) return { tabs, active: s.active };
       // 关了当前标签：切到同一个会话里看得见的、原来在它右边最近的那个，右边没有就左边最近的
-      const visible = s.tabs.filter((t) => t.kind !== "browser" || t.sessionId === sessionId);
+      const visible = s.tabs.filter((t) => visibleIn(t, sessionId));
       const index = visible.findIndex((t) => t.id === s.active);
       const next = visible.slice(index + 1).find((t) => !ids.has(t.id)) ?? visible.slice(0, Math.max(index, 0)).reverse().find((t) => !ids.has(t.id));
       return { tabs, active: next?.id ?? tabs[0]!.id };
@@ -449,9 +462,9 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
   };
   const openTerminal = async (id: string) => {
     try {
-      const terminal = await api.createTerminal(cwd, 80, 24);
+      const terminal = await api.createTerminal(cwd, sessionId, 80, 24);
       onChange((s) => {
-        const tab: PanelTab = { id, kind: "terminal", terminalId: terminal.id, label: terminalLabel(s.tabs.filter((t) => t.id !== id), 0) };
+        const tab: PanelTab = { id, kind: "terminal", terminalId: terminal.id, label: terminalLabel(s.tabs.filter((t) => t.id !== id && visibleIn(t, sessionId)), 0), sessionId };
         return { tabs: s.tabs.map((t) => (t.id === id ? tab : t)), active: id };
       });
     } catch (err) {

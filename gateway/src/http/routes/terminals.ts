@@ -10,12 +10,13 @@ type IdParams = { id: string };
 
 /** 右侧面板的终端：建、列、连上（WebSocket：输出、输入、改大小）、关 */
 export function terminalRoutes(app: FastifyInstance, terminals: TerminalManager): void {
-  app.get<{ Querystring: { cwd?: string } }>("/terminals", async (req) => ({ terminals: terminals.list(req.query.cwd) }));
+  // sessionId：只要这个会话的（面板按会话显示）
+  app.get<{ Querystring: { cwd?: string; sessionId?: string } }>("/terminals", async (req) => ({ terminals: terminals.list(req.query.cwd, req.query.sessionId || undefined) }));
 
-  app.post<{ Body: { cwd: string; cols?: number; rows?: number } }>("/terminals", async (req) => {
-    const { cwd, cols = 80, rows = 24 } = req.body ?? {};
+  app.post<{ Body: { cwd: string; cols?: number; rows?: number; sessionId?: string } }>("/terminals", async (req) => {
+    const { cwd, cols = 80, rows = 24, sessionId } = req.body ?? {};
     if (!cwd || !(path.isAbsolute(cwd) || isRemote(cwd))) throw new BadRequestError("缺少项目文件夹");
-    return { terminal: await terminals.create(cwd, cols, rows) };
+    return { terminal: await terminals.create(cwd, cols, rows, typeof sessionId === "string" && sessionId ? { sessionId } : {}) };
   });
 
   // 输出、输入、改大小走一条 WebSocket：SSE 每个终端占一个 HTTP 连接，浏览器对同一个源最多 6 个，
@@ -56,7 +57,7 @@ export function terminalRoutes(app: FastifyInstance, terminals: TerminalManager)
   });
 
   app.delete<{ Params: IdParams }>("/terminals/:id", async (req) => {
-    terminals.close(req.params.id, "user");
+    await terminals.closeByUser(req.params.id);
     return { ok: true };
   });
 }

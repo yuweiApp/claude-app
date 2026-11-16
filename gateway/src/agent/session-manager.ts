@@ -437,6 +437,8 @@ export class SessionManager {
     disposeDesktopSession(sessionId);
     // 内置浏览器里这个会话的标签页也关掉：AI 留下的、用户开的不会自动关，不关的话会一直留在桌面版后台（会话没了，面板里也看不到）
     this.browser?.closeSession(sessionId);
+    // 右侧面板里这个会话的终端（面板按会话显示，会话没了就没人看得到了）
+    this.terminals?.closeSession(sessionId);
   }
 
   listTasks(sessionId: string): BackgroundTask[] {
