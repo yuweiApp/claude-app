@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction, type Range } from "@codemirror/state";
 import {
   Decoration,
@@ -14,13 +15,15 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
 import { markdown, markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
 import { tags } from "@lezer/highlight";
-import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common";
+import type { SyntaxNode, SyntaxNodeRef, Tree } from "@lezer/common";
 import { api } from "../api";
+import { MermaidBlock } from "./MermaidBlock";
 
 /*
  * 从 codex-app-server 的 MarkdownLiveEditor 移植（去掉了选中文字后的「添加到对话」）。
  * Markdown 的实时预览编辑（与 ChatGPT 桌面应用一致，用 CodeMirror）：编辑的始终是源码，只是把 Markdown 符号藏起来、
  * 按渲染效果显示。整个标题、链接、强调都选中时才露出它的符号；表格的每一行排成表格的样子（竖线藏起来，单元格按列对齐）。
+ * ```mermaid 代码块显示成图（和回复里一样，MermaidBlock），光标进到代码块里时露出源码、图跟在下面（这部分是本项目加的）。
  * 保存的就是源码本身，不会改动没编辑过的地方
  */
 
@@ -186,6 +189,8 @@ function inlineDecorations(view: EditorView, opts: PreviewOptions): DecorationSe
             return false;
           }
           case "FencedCode": {
+            // 显示成图的 mermaid 代码块：源码整块收起来了
+            if (state.field(mermaidBlocks, false)?.hidden.has(doc.lineAt(n.from).from)) return false;
             eachLine(n.from, n.to, (k, first, last) => `cm-md-code${k === first ? " cm-md-code-first" : ""}${k === last ? " cm-md-code-last" : ""}`);
             if (!covered(n.from, n.to)) {
               const firstLine = doc.lineAt(n.from);
@@ -298,6 +303,7 @@ function livePreview(opts: PreviewOptions) {
           u.selectionSet ||
           u.focusChanged ||
           u.state.field(dragging, false) !== u.startState.field(dragging, false) ||
+          u.state.field(mermaidBlocks, false) !== u.startState.field(mermaidBlocks, false) ||
           syntaxTree(u.state) !== syntaxTree(u.startState)
         )
           this.decorations = inlineDecorations(u.view, opts);
@@ -401,6 +407,168 @@ const pointerTracking = [
 ];
 
 // ---------------------------------------------------------------------------
+// ```mermaid 代码块：下面跟一张图（MermaidBlock，同回复里的）。平时源码整块收起来只看图；编辑器有焦点、光标或选区
+// 碰到这个代码块时露出源码（和别的代码块一样编辑），图留在下面跟着改。列表、引用里的代码块源码一直显示。
+// 占整行的小部件、整块收起只能由状态字段给出（插件给的装饰不能改变行的结构），所以不放在 livePreview 里
+
+const setFocused = StateEffect.define<boolean>();
+
+/** 编辑器有没有焦点（状态字段里读不到 view.hasFocus） */
+const focused = StateField.define<boolean>({
+  create: () => false,
+  update: (v, tr) => tr.effects.reduce((acc, e) => (e.is(setFocused) ? e.value : acc), v),
+});
+
+interface MermaidCode {
+  /** 整个代码块（从 ``` 那行的行首到结尾 ``` 那行的行尾） */
+  from: number;
+  to: number;
+  code: string;
+  /** 顶层的代码块（不在列表、引用里，``` 前面没有别的字）：可以整块收起 */
+  top: boolean;
+}
+
+/** 可能包着代码块的节点，其余的不用往里找 */
+const BLOCK_CONTAINERS = new Set(["Document", "Blockquote", "BulletList", "OrderedList", "ListItem"]);
+
+function findMermaid(state: EditorState, tree: Tree): MermaidCode[] {
+  const doc = state.doc;
+  const found: MermaidCode[] = [];
+  tree.iterate({
+    enter: (n) => {
+      if (n.name !== "FencedCode") return BLOCK_CONTAINERS.has(n.name);
+      const node = n.node;
+      const info = node.getChild("CodeInfo");
+      const text = node.getChildren("CodeText");
+      // 没写完的（还没有结尾的 ```）当普通代码块
+      if (!info || doc.sliceString(info.from, info.to).trim().toLowerCase() !== "mermaid" || node.getChildren("CodeMark").length < 2 || !text.length) return false;
+      const code = doc.sliceString(text[0]!.from, text[text.length - 1]!.to);
+      if (!code.trim()) return false;
+      const first = doc.lineAt(n.from);
+      const top = node.parent?.name === "Document" && !first.text.slice(0, n.from - first.from).trim();
+      found.push({ from: first.from, to: doc.lineAt(n.to).to, code, top });
+      return false;
+    },
+  });
+  return found;
+}
+
+/** 小部件的 React 根：小部件换了内容（改了源码、源码露出或收起）时接着用，图不会先消失再出现，展开的大图也不会被关掉 */
+const mermaidRoots = new WeakMap<HTMLElement, Root>();
+
+class MermaidWidget extends WidgetType {
+  constructor(
+    readonly code: string,
+    /** 编辑器正在上面显示源码 */
+    readonly sourceAbove: boolean,
+    /** 可以点「编辑源码」把光标放进源码 */
+    readonly canEdit: boolean,
+  ) {
+    super();
+  }
+  eq(other: MermaidWidget) {
+    return other.code === this.code && other.sourceAbove === this.sourceAbove && other.canEdit === this.canEdit;
+  }
+  private render(dom: HTMLElement, view: EditorView) {
+    const edit = () => {
+      // 小部件放在代码块最后一行的行尾；光标放到源码第一行
+      const block = view.state.field(mermaidBlocks).blocks.find((b) => b.to === view.posAtDOM(dom));
+      if (!block) return;
+      const first = view.state.doc.lineAt(block.from);
+      view.focus();
+      view.dispatch({ selection: { anchor: Math.min(first.to + 1, block.to) }, scrollIntoView: true });
+    };
+    mermaidRoots.get(dom)?.render(
+      <MermaidBlock
+        code={this.code}
+        sourceAbove={this.sourceAbove}
+        onEdit={this.canEdit ? edit : undefined}
+        // 大图开着时键盘不该还打进编辑器里
+        onExpand={() => view.contentDOM.blur()}
+      />,
+    );
+  }
+  toDOM(view: EditorView) {
+    const dom = document.createElement("div");
+    dom.className = "cm-md-mermaid";
+    // 点图上的按钮不抢编辑器的焦点（焦点一丢源码就收起，图跟着挪位置，按钮点不中）
+    dom.addEventListener("mousedown", (e) => e.preventDefault());
+    mermaidRoots.set(dom, createRoot(dom));
+    this.render(dom, view);
+    return dom;
+  }
+  updateDOM(dom: HTMLElement, view: EditorView) {
+    if (!mermaidRoots.has(dom)) return false;
+    this.render(dom, view);
+    return true;
+  }
+  destroy(dom: HTMLElement) {
+    const root = mermaidRoots.get(dom);
+    mermaidRoots.delete(dom);
+    // 可能正处在 React 的渲染、提交过程中（外面换内容、编辑器销毁），这时不能同步卸载
+    if (root) setTimeout(() => root.unmount());
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+interface MermaidBlocks {
+  tree: Tree;
+  blocks: MermaidCode[];
+  /** 露出源码的那个代码块（blocks 的下标），没有时 -1 */
+  active: number;
+  readOnly: boolean;
+  /** 源码整块收起来的代码块的起点：livePreview 不再给它们加代码块的样式 */
+  hidden: Set<number>;
+  decorations: DecorationSet;
+}
+
+const hideBlock = Decoration.replace({ block: true });
+
+function mermaidDecorations(blocks: MermaidCode[], active: number, readOnly: boolean): Pick<MermaidBlocks, "hidden" | "decorations"> {
+  const hidden = new Set<number>();
+  const out: Range<Decoration>[] = [];
+  blocks.forEach((b, i) => {
+    const collapsed = b.top && i !== active;
+    if (collapsed) {
+      hidden.add(b.from);
+      out.push(hideBlock.range(b.from, b.to));
+    }
+    out.push(Decoration.widget({ widget: new MermaidWidget(b.code, !collapsed, collapsed && !readOnly), block: true, side: 1 }).range(b.to));
+  });
+  return { hidden, decorations: Decoration.set(out, true) };
+}
+
+/** 光标或选区碰到的代码块；编辑器没有焦点时没有 */
+function activeMermaid(state: EditorState, blocks: MermaidCode[]): number {
+  if (!state.field(focused, false)) return -1;
+  const sel = state.selection.main;
+  return blocks.findIndex((b) => sel.from <= b.to && sel.to >= b.from);
+}
+
+const mermaidBlocks: StateField<MermaidBlocks> = StateField.define<MermaidBlocks>({
+  create(state) {
+    const tree = syntaxTree(state);
+    const blocks = findMermaid(state, tree);
+    return { tree, blocks, active: -1, readOnly: state.readOnly, ...mermaidDecorations(blocks, -1, state.readOnly) };
+  },
+  update(value, tr) {
+    const state = tr.state;
+    const tree = syntaxTree(state);
+    const rescan = tr.docChanged || tree !== value.tree;
+    const blocks = rescan ? findMermaid(state, tree) : value.blocks;
+    // 按着鼠标拖选时不切换（源码一露出来文字就跳），松开后再按选区算
+    const active = state.field(dragging, false) && !rescan ? value.active : activeMermaid(state, blocks);
+    if (!rescan && active === value.active && state.readOnly === value.readOnly) return value;
+    return { tree, blocks, active, readOnly: state.readOnly, ...mermaidDecorations(blocks, active, state.readOnly) };
+  },
+  provide: (f) => EditorView.decorations.from(f, (v) => v.decorations),
+});
+
+const mermaidPreview = [focused, EditorView.focusChangeEffect.of((_state, focusing) => setFocused.of(focusing)), mermaidBlocks];
+
+// ---------------------------------------------------------------------------
 // 样式：Markdown 本身的符号、强调等用高亮，代码块、标题等用行样式（styles.css 的 .cm-md-*）
 
 const markdownStyle = HighlightStyle.define([
@@ -486,6 +654,7 @@ export function MarkdownLiveEditor({ cwd, path, value, onChange, onOpenFile, onS
           editableConf.current.of(editableExt(editableRef.current)),
           placeholder ? placeholderText(placeholder) : [],
           pointerTracking,
+          mermaidPreview,
           livePreview(opts),
           EditorView.updateListener.of((u) => {
             if (u.docChanged && !u.transactions.some((t) => t.annotation(external))) latest.current.onChange(u.state.doc.toString());

@@ -131,11 +131,13 @@ const RENDER_DELAY_MS = 300;
 
 /**
  * ```mermaid 代码块：渲染成图（同 codex-app-server 的 MermaidBlock）。鼠标移上去右上角出现复制源码、下载图片、
- * 展开；点图也能展开看大图。源码有错（包括流式输出还没写完）时显示源码和错误原因
+ * 展开；点图也能展开看大图。源码有错（包括流式输出还没写完）时显示源码和错误原因。
+ * 文件面板的 Markdown 编辑器（MarkdownLiveEditor）里也用它：onEdit 是把光标放进源码（工具里多一个「编辑源码」，
+ * 出不了图时点源码也是）；sourceAbove 是编辑器正在上面显示源码，这里就不再显示一遍，出错时留着上一张图、下面写原因
  */
-export function MermaidBlock({ code }: { code: string }) {
+export function MermaidBlock({ code, onEdit, onExpand, sourceAbove = false }: { code: string; onEdit?: () => void; onExpand?: () => void; sourceAbove?: boolean }) {
   const dark = useIsDark();
-  const [result, setResult] = useState<{ code: string; dark: boolean; svg?: string; error?: string } | null>(() => {
+  const [result, setResult] = useState<{ code: string; dark: boolean; svg?: string; /** 出错时留着的上一张图是按哪种配色画的 */ svgDark?: boolean; error?: string } | null>(() => {
     const svg = done.get(cacheKey(code, dark));
     return svg ? { code, dark, svg } : null;
   });
@@ -147,7 +149,8 @@ export function MermaidBlock({ code }: { code: string }) {
       renderSvg(code, dark).then(
         (svg) => live && setResult({ code, dark, svg }),
         // 解析错误后面几行是源码片段和插入符，只留第一行（Parse error on line 4:）
-        (err: unknown) => live && setResult({ code, dark, error: (err instanceof Error ? err.message : String(err)).split("\n")[0] }),
+        // 上一张图留着：编辑器里边改边看时（sourceAbove）出错不把图撤掉
+        (err: unknown) => live && setResult((r) => ({ code, dark, svg: r?.svg, svgDark: r?.svgDark ?? r?.dark, error: (err instanceof Error ? err.message : String(err)).split("\n")[0] })),
       );
     const svg = done.get(cacheKey(code, dark));
     if (svg) {
@@ -176,20 +179,25 @@ export function MermaidBlock({ code }: { code: string }) {
   // 源码变了但新图还没出来时，先留着上一张图（流式输出时不来回闪）；第一次渲染前显示源码
   const svg = result?.svg;
   const error = result && result.code === code && result.dark === dark ? result.error : undefined;
-  if (!svg || error) {
+  const errorLine = error && <div className="md-mermaid-error">图表无法显示：{error}</div>;
+  if (sourceAbove && !svg) return errorLine || null;
+  if (!svg || (error && !sourceAbove)) {
     return (
       <div className="md-code md-mermaid">
-        <pre>
+        <pre className={onEdit ? "md-mermaid-editable" : undefined} title={onEdit ? "点击编辑源码" : undefined} onClick={onEdit}>
           <code className="language-mermaid">{code}</code>
         </pre>
         <CopyAction className="md-code-copy" title="复制代码" text={source} />
-        {error && <div className="md-mermaid-error">图表无法显示：{error}</div>}
+        {errorLine}
       </div>
     );
   }
 
-  const shownDark = result!.dark;
-  const expand = () => setExpanded(URL.createObjectURL(new Blob([standaloneSvg(svg, shownDark).text], { type: "image/svg+xml" })));
+  const shownDark = result!.svgDark ?? result!.dark;
+  const expand = () => {
+    onExpand?.();
+    setExpanded(URL.createObjectURL(new Blob([standaloneSvg(svg, shownDark).text], { type: "image/svg+xml" })));
+  };
   return (
     <div className="md-mermaid">
       <div
@@ -208,6 +216,13 @@ export function MermaidBlock({ code }: { code: string }) {
         dangerouslySetInnerHTML={{ __html: svg }}
       />
       <div className="md-mermaid-tools">
+        {onEdit && (
+          <button className="msg-action" title="编辑源码" aria-label="编辑源码" onClick={onEdit}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M10.5 3 13 5.5 6 12.5l-3 .5.5-3 7-7Z" />
+            </svg>
+          </button>
+        )}
         <CopyAction title="复制源码" text={source} />
         <button className="msg-action" title="下载图片" aria-label="下载图片" onClick={() => void downloadPng(svg, shownDark).catch(() => {})}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -220,6 +235,7 @@ export function MermaidBlock({ code }: { code: string }) {
           </svg>
         </button>
       </div>
+      {errorLine}
       {expanded && <ImageViewer src={expanded} alt="图表" onClose={() => setExpanded(null)} />}
     </div>
   );

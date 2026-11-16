@@ -662,6 +662,7 @@ main {
 .md-mermaid:hover .md-mermaid-tools, .md-mermaid-tools:focus-within { opacity: 1; }
 @media (hover: none) { .md-mermaid-tools { opacity: 1; } }
 .md-mermaid-error { margin-top: 6px; color: var(--err); font-size: 12px; }
+.md-mermaid-editable { cursor: text; }
 /* Markdown 表格：细边框、表头浅底；列多时表格自己横向滚动，不撑宽对话 */
 .assistant table {
   display: block; width: max-content; max-width: 100%; overflow-x: auto; margin: 0.6em 0;
@@ -1615,6 +1616,11 @@ main {
 .md-live .cm-md-bullet { display: inline-block; width: 0.8em; color: var(--muted); }
 .md-live .cm-md-task { margin: 0 4px 0 0; vertical-align: middle; cursor: pointer; }
 .md-live .cm-md-hr { display: inline-block; width: 100%; border-top: 1px solid var(--border); vertical-align: middle; }
+/* mermaid 代码块下面的图（MarkdownLiveEditor.tsx 的 MermaidWidget）：占整行的小部件上下不能有外边距（编辑器量不准高度），用内边距 */
+.md-live .cm-md-mermaid { display: flow-root; padding: 0.5em 0; cursor: default; line-height: normal; }
+.md-live .cm-md-mermaid .md-mermaid, .md-live .cm-md-mermaid .md-code { margin: 0; }
+.md-live .cm-md-mermaid .md-mermaid-error { margin: 0; padding-top: 6px; }
+.md-live .cm-md-mermaid pre { padding: 8px 40px 8px 12px; border-radius: 8px; background: var(--code-bg); font-family: var(--font-mono); font-size: 0.92em; line-height: 1.6; white-space: pre-wrap; }
 .md-live .cm-md-image-broken { display: inline-block; padding: 2px 8px; border: 1px dashed var(--border); border-radius: 6px; color: var(--muted); font-size: 12px; }
 .md-live .cm-md-image { max-width: 100%; max-height: 480px; border-radius: 8px; vertical-align: middle; }
 /* 文本文件的编辑器（CodeEditor.tsx，CodeMirror）：占满剩下的高度，自己滚动；字体、颜色在它的 theme 里 */
