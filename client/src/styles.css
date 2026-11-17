@@ -1708,7 +1708,9 @@ main {
 .browser-error-retry { margin-top: 8px; color: var(--text); }
 /* 快照和画面区域一样大时正好铺满；没在面板里显示过的标签页（视图还是停放窗口里的大小）拍的不一样大，按比例铺满、从左上角起，不拉变形 */
 .browser-covered img { width: 100%; height: 100%; object-fit: cover; object-position: left top; display: block; }
-.browser-covered:has(img) { padding: 0; }
+.browser-covered:has(img) { padding: 0; align-items: flex-start; justify-content: flex-start; overflow: hidden; }
+/* 按拍时的大小贴，靠左上，变大露出底色、变小裁掉 */
+.browser-covered img.fixed { flex: none; object-fit: fill; }
 /* 画面区域下面的下载条（BrowserTab.tsx 的 DownloadBar） */
 .browser-downloads { flex: none; display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px 6px 12px; border-top: 1px solid var(--border); background: var(--panel); }
 .browser-downloads-list { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }

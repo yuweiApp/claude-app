@@ -4,6 +4,7 @@ import { ELEMENT_CONTEXT_FUNCTION } from "@gateway/shared/element-context";
 import type { BrowserLogo } from "../api";
 import { fileManagerName, type BrowserDownload, type BrowserSuggestion, type BrowserTabInfo, type DesktopBrowserApi } from "../desktop";
 import { dismissDownloads, useTabDownloads } from "../state/browserDownloads";
+import { isLayoutDragging } from "../state/layoutDrag";
 import { sanitizeElement, uploadElementScreenshot } from "../state/responseAnnotations";
 import { closePageAnnotation, startPageAnnotation } from "./ResponseAnnotations";
 
@@ -36,6 +37,8 @@ export function BrowserTab({ api, id, info, active }: Props) {
   const [covered, setCovered] = useState(false);
   /** 贴在画面区域里的网页快照：被盖住时代替视图；不在前面时也留着一张，切回来时垫在视图下面 */
   const [snapshot, setSnapshot] = useState<string | null>(null);
+  /** 收起视图时拍的快照按拍时画面区域的大小贴（CSS 像素），不跟着缩放：拖动分割线时画面区域在变，网页松手后才按新大小重排 */
+  const [snapshotSize, setSnapshotSize] = useState<{ width: number; height: number } | null>(null);
   /** 没加载出来：收起原生视图（它总在界面之上），画面区域显示错误提示 */
   const failed = info?.error;
   const failedRef = useRef(false);
@@ -123,6 +126,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
     void api.snapshot(id).then((url) => {
       if (stale || !url) return;
       setSnapshot(url);
+      setSnapshotSize(null);
       setCovered(true);
     });
     return () => {
@@ -152,7 +156,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
         const r = el.getBoundingClientRect();
         const empty = r.width < 1 || r.height < 1;
         const blocked = failedRef.current;
-        const hidden = empty || blocked || pickedRef.current || isCovered(el, r);
+        const hidden = empty || blocked || pickedRef.current || isLayoutDragging() || isCovered(el, r);
         if (hidden !== wasCovered) {
           wasCovered = hidden;
           const mine = ++seq;
@@ -168,12 +172,14 @@ export function BrowserTab({ api, id, info, active }: Props) {
               uncover = undefined;
               hide();
             } else if (shown && !empty && !blocked) {
+              const size = { width: r.width, height: r.height };
               void api.snapshot(id).then((url) => {
                 // 拍快照期间又露出来了：不用收
                 if (mine !== seq) return;
                 // 快照画到界面上以后再收视图：收视图是立刻的，快照晚一两帧才画出来，中间会露出画面区域的白底
                 flushSync(() => {
                   setSnapshot(url);
+                  setSnapshotSize(url ? size : null);
                   setCovered(true);
                 });
                 requestAnimationFrame(() =>
@@ -200,6 +206,7 @@ export function BrowserTab({ api, id, info, active }: Props) {
               uncover = undefined;
               setCovered(false);
               setSnapshot(null);
+              setSnapshotSize(null);
             }, UNCOVER_DELAY_MS);
           }
         }
@@ -265,7 +272,11 @@ export function BrowserTab({ api, id, info, active }: Props) {
         ) : (
           covered && (
             <div className="browser-covered">
-              {snapshot ? <img src={snapshot} alt="" draggable={false} decoding="sync" /> : <span>{info?.title || url}</span>}
+              {snapshot ? (
+                <img src={snapshot} alt="" draggable={false} decoding="sync" className={snapshotSize ? "fixed" : undefined} style={snapshotSize ?? undefined} />
+              ) : (
+                <span>{info?.title || url}</span>
+              )}
               {snapshot && picked && <div className="browser-picked" style={picked} />}
             </div>
           )

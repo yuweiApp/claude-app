@@ -1,4 +1,5 @@
-import { useRef, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent, type PointerEvent } from "react";
+import { beginLayoutDrag } from "../state/layoutDrag";
 
 export const DEFAULT_SIDEBAR_WIDTH = 260;
 const MIN_WIDTH = 200;
@@ -20,7 +21,9 @@ interface Props {
 
 /** 侧边栏和对话区之间的分割线：拖动调整侧边栏宽度，拖过最小宽度时收起，双击恢复默认，也可以用左右方向键 */
 export function SidebarResizer({ width, onResize, onCommit, onCollapse }: Props) {
-  const drag = useRef<{ x: number; width: number; latest: number } | null>(null);
+  const drag = useRef<{ x: number; width: number; latest: number; end?: () => void } | null>(null);
+  // 拖动中被卸载
+  useEffect(() => () => drag.current?.end?.(), []);
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -33,16 +36,22 @@ export function SidebarResizer({ width, onResize, onCommit, onCollapse }: Props)
     if (next < MIN_WIDTH - COLLAPSE_MARGIN) {
       // 宽度回到拖动之前，下次展开还是原来的样子
       onResize(drag.current.width);
-      drag.current = null;
+      endDrag();
       onCollapse();
       return;
     }
+    // 真的拖起来才算（单击、双击分割线不算）：内置浏览器拖动期间换成快照
+    if (next !== drag.current.width) drag.current.end ??= beginLayoutDrag();
     drag.current.latest = clamp(next);
     onResize(drag.current.latest);
   };
+  const endDrag = () => {
+    drag.current?.end?.();
+    drag.current = null;
+  };
   const onPointerUp = () => {
     if (drag.current) onCommit(drag.current.latest);
-    drag.current = null;
+    endDrag();
   };
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;

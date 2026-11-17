@@ -3,6 +3,7 @@ import { api } from "../api";
 import { desktop, type BrowserTabInfo } from "../desktop";
 import { BrowserTab, BrowserToolbar, GlobeIcon, SiteIcon } from "./BrowserTab";
 import { getDraft, setDraft, useHasDraft } from "../state/fileDrafts";
+import { beginLayoutDrag } from "../state/layoutDrag";
 import { useDismiss } from "./ComposerPickers";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FileBrowser, type LineRange } from "./FileBrowser";
@@ -141,7 +142,7 @@ interface Props {
 /** 对话区右边的面板（参照 codex-app-server 的 SidePanel）：标签页，新标签页里选「文件」「终端」 */
 export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
   const [width, setWidth] = useState(initialWidth);
-  const drag = useRef<{ x: number; width: number; latest: number } | null>(null);
+  const drag = useRef<{ x: number; width: number; latest: number; end?: () => void } | null>(null);
   const asideRef = useRef<HTMLElement>(null);
   // 能用的宽度是对话区加面板（侧边栏开着时比窗口窄），窗口或侧边栏变了要重新算
   const [available, setAvailable] = useState(window.innerWidth);
@@ -167,17 +168,25 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
     if (next < MIN_WIDTH - COLLAPSE_MARGIN) {
       // 宽度回到拖动之前，下次打开还是原来的样子
       setWidth(drag.current.width);
-      drag.current = null;
+      endDrag();
       onClose();
       return;
     }
+    // 真的拖起来才算（单击、双击分割线不算）：内置浏览器拖动期间换成快照
+    if (next !== drag.current.width) drag.current.end ??= beginLayoutDrag();
     drag.current.latest = clampWidth(next);
     setWidth(drag.current.latest);
   };
-  const onPointerUp = () => {
-    if (drag.current) saveWidth(drag.current.latest);
+  const endDrag = () => {
+    drag.current?.end?.();
     drag.current = null;
   };
+  const onPointerUp = () => {
+    if (drag.current) saveWidth(drag.current.latest);
+    endDrag();
+  };
+  // 拖动中被卸载（切换会话之类）
+  useEffect(() => () => drag.current?.end?.(), []);
   const commitWidth = (n: number) => {
     setWidth(n);
     saveWidth(n);
