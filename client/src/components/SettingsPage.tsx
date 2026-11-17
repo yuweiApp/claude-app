@@ -231,7 +231,7 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
           )}
           {browsing && <ConnectorDirectory key={directoryKey} search={search} servers={data?.mcpServers ?? []} onChanged={() => load(false)} />}
           {section === "mcp" && !browsing && (
-            <List empty={data ? (keyword ? "没有匹配的连接器" : "还没有连接器，在「连接器市场」里添加，或点右上角手动添加") : "加载中…"}>
+            <List className="server-list" empty={data ? (keyword ? "没有匹配的连接器" : "还没有连接器，在「连接器市场」里添加，或点右上角手动添加") : "加载中…"}>
               {servers.map((server) => (
                 <ServerRow key={server.name} server={server} onChanged={() => load(false)} onError={setError} />
               ))}
@@ -263,8 +263,8 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
   );
 }
 
-function List({ empty, children }: { empty: string; children: ReactNode[] }) {
-  return children.length ? <div className="settings-list">{children}</div> : <div className="settings-empty">{empty}</div>;
+function List({ empty, className, children }: { empty: string; className?: string; children: ReactNode[] }) {
+  return children.length ? <div className={className ?? "settings-list"}>{children}</div> : <div className="settings-empty">{empty}</div>;
 }
 
 /** 插件带的技能（插件名:技能名）、MCP 服务器（plugin:插件名:服务器名）和子代理（插件名:…） */
@@ -835,34 +835,43 @@ function ServerRow({ server, onChanged, onError }: { server: McpServerInfo; onCh
   };
 
   return (
-    <div className="settings-row">
+    <div className={`server-row${server.status === "disabled" ? " dimmed" : ""}`}>
       <ConnectorIcon name={server.connector?.title ?? server.name} icon={server.connector?.icon} />
       <div className="settings-row-main">
         <div className="settings-row-name">
-          {server.name}
+          <span className="server-row-title" title={server.name}>
+            {server.name}
+          </span>
           {server.type && <span className="settings-tag">{server.type.toUpperCase()}</span>}
+          {server.source && <span className="settings-tag">{server.source}</span>}
         </div>
         {server.target && <div className="settings-row-target" title={server.target}>{server.target}</div>}
-        <div className="settings-row-status">
-          <span className={`mcp-status ${server.status}`}>{STATUS_TEXT[server.status] ?? server.status}</span>
+        <div className="server-row-status">
+          <span className={`server-status ${server.status}`}>
+            <i aria-hidden />
+            {STATUS_TEXT[server.status] ?? server.status}
+          </span>
           {server.status === "connected" && (
             <>
-              {` · ${server.tools.length} 个工具`}
+              <span className="server-row-count">{server.tools.length} 个工具</span>
               {server.tools.length > 0 && (
-                <>
-                  {" · "}
-                  <button className="settings-link" onClick={() => setToolsOpen((o) => !o)}>
-                    {toolsOpen ? "收起工具" : "查看工具"}
-                  </button>
-                </>
+                <button className="server-row-toggle" aria-expanded={toolsOpen} onClick={() => setToolsOpen((o) => !o)}>
+                  {toolsOpen ? "收起工具" : "查看工具"}
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </button>
               )}
             </>
           )}
-          {server.error && ` · ${server.error}`}
-          {server.source && ` · ${server.source}`}
+          {server.error && (
+            <span className="server-row-error" title={server.error}>
+              {server.error}
+            </span>
+          )}
         </div>
         {toolsOpen && (
-          <ul className="settings-tools">
+          <ul className={`settings-tools server-tools${server.tools.some((t) => t.description) ? "" : " compact"}`}>
             {server.tools.map((tool) => (
               <li key={tool.name} title={tool.description}>
                 <code>{tool.name}</code>

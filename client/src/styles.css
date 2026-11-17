@@ -445,6 +445,54 @@ main {
 .settings-row-open:hover { background: none; }
 .settings-row-open:hover .settings-row-name { color: var(--accent); }
 .settings-row-sub.wrap { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.5; white-space: normal; }
+/* 已添加的连接器：每个一张横条卡片，和连接器市场的卡片同样的底色、圆角、悬停描边，图标 36px */
+.server-list { display: flex; flex-direction: column; gap: 10px; }
+.server-row {
+  display: flex; align-items: flex-start; gap: 14px; min-width: 0; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 14px; background: color-mix(in srgb, var(--panel) 45%, var(--bg));
+  transition: border-color 140ms, box-shadow 140ms;
+}
+.server-row:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); box-shadow: 0 6px 20px -10px color-mix(in srgb, var(--accent) 35%, transparent); }
+.server-row > .capability-avatar { width: 36px; height: 36px; border-radius: 10px; font-size: 16px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent); }
+.server-row.dimmed > .capability-avatar, .server-row.dimmed .settings-row-name { opacity: 0.6; }
+.server-row .settings-row-name { min-width: 0; font-size: 14.5px; }
+.server-row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.server-row .settings-row-name .settings-tag { flex: none; }
+.server-row .settings-row-target { margin-top: 2px; }
+/* 状态行：带圆点的状态胶囊、工具数、展开工具的按钮、错误信息（一行，悬停看全文） */
+.server-row-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 12px; }
+.server-status {
+  --c: var(--muted);
+  display: inline-flex; align-items: center; gap: 6px; padding: 1px 9px 1px 7px; border-radius: 999px;
+  background: color-mix(in srgb, var(--c) 14%, transparent); color: var(--c); font-weight: 500; line-height: 18px;
+}
+.server-status > i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.server-status.connected { --c: var(--ok); }
+.server-status.failed { --c: var(--err); }
+.server-status.needs-auth { --c: var(--warn); }
+.server-status.pending > i { animation: server-status-pulse 1.2s ease-in-out infinite; }
+@keyframes server-status-pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .server-status.pending > i { animation: none; } }
+.server-row-toggle {
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px;
+  background: none; color: var(--muted); font-size: 12px; line-height: 18px;
+}
+.server-row-toggle:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); background: none; color: var(--text); }
+.server-row-toggle > svg { transition: transform 140ms; }
+.server-row-toggle[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.server-row-error { min-width: 0; max-width: 100%; overflow: hidden; color: var(--err); text-overflow: ellipsis; white-space: nowrap; }
+/* 展开的工具列表：浅底圆角框，工具名用强调色 */
+.server-tools { margin-top: 10px; padding: 6px 10px; border-radius: 10px; background: color-mix(in srgb, var(--text) 4%, transparent); }
+.server-tools li { padding: 4px 0; }
+.server-tools li + li { border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.server-tools code { color: var(--accent); background: none; }
+/* 工具都没有说明时：工具名排成自动换行的小标签 */
+.server-tools.compact { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px; }
+.server-tools.compact li { padding: 0; }
+.server-tools.compact li + li { border-top: none; }
+.server-tools.compact code { padding: 2px 8px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.server-row .settings-row-actions { align-self: center; }
+.server-row .settings-row-actions button:not(.switch) { padding: 4px 12px; border-radius: 8px; font-size: 13px; }
 .settings-back { align-self: flex-start; margin: -6px 0 14px; padding: 4px 0; border: none; background: none; color: var(--muted); font-size: 13px; }
 .settings-back:hover, .settings-back:hover:not(:disabled) { background: none; color: var(--text); }
 .plugin-head { display: flex; align-items: center; gap: 12px; }
