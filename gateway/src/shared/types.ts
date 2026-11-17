@@ -680,3 +680,28 @@ export interface ProxySettingsInput {
 export type ProxyTestResult =
   | { ok: true; target: string; via: string | null; status: number; ms: number }
   | { ok: false; target: string; via: string | null; error: string };
+
+/** 局域网分享（见 docs/lan-share.md）：一个会话一条 */
+export interface ShareEntry {
+  sessionId: string;
+  token: string;
+  /** ISO 时间 */
+  createdAt: string;
+}
+
+/** GET /shares：所有分享，加上拼链接用的端口和本机的局域网地址 */
+export interface SharesView {
+  shares: ShareEntry[];
+  port: number;
+  addresses: string[];
+}
+
+/** GET /share/info（访客）：分享的是哪个会话 */
+export interface ShareInfo {
+  sessionId: string;
+  /** 右侧面板的工作目录 */
+  cwd: string;
+  title: string | null;
+  /** 普通会话（工作目录是网关建的 scratch 目录）：标题旁边不显示文件夹名 */
+  chat: boolean;
+}

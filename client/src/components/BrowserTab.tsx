@@ -587,7 +587,7 @@ function isCovered(el: HTMLElement, r: DOMRect): boolean {
 }
 
 /** Chromium 的网络错误码（net_error_list.h）说成人话；没列到的只显示错误名 */
-function loadErrorText(code: number): string {
+export function loadErrorText(code: number): string {
   if (code <= -200 && code > -300) return "网站的安全证书有问题，连接不安全。";
   switch (code) {
     case -105:
@@ -627,7 +627,7 @@ function loadErrorText(code: number): string {
 }
 
 /** 空白页不显示 about:blank */
-function displayUrl(url: string | undefined): string {
+export function displayUrl(url: string | undefined): string {
   return !url || url === "about:blank" ? "" : url;
 }
 

@@ -1,6 +1,7 @@
 import { app } from "electron";
 import { CdpProxy } from "./cdp-proxy.js";
 import type { NetworkProxy } from "./network-proxy.js";
+import { ShareStream } from "./share-stream.js";
 import type { BrowserViews } from "./views.js";
 
 /**
@@ -18,6 +19,7 @@ import type { BrowserViews } from "./views.js";
  *   { type: "downloads", id, downloads }（这个会话的下载，见 views.ts 的 DownloadInfo）、
  *   { type: "tabEvent", session, event }（标签页新开、关闭、用户跳转，带上是谁做的，见 views.ts 的 TabEvent）、
  *   { type: "sessionDir", session }（问会话的工作目录：下载存到那里；和是不是远程会话：远程会话的标签页开在那台主机的分区里。连上时问有标签页的会话，之后新开标签页前问）
+ * - 局域网分享的访客操作内置浏览器：share 开头的消息，见 share-stream.ts
  * 网关重启、还没起来时每 2 秒重连
  */
 export class GatewayBridge {
@@ -26,6 +28,7 @@ export class GatewayBridge {
   /** 在等网关回答会话信息的（askSession） */
   private readonly asking = new Map<string, ((remote: string | null) => void)[]>();
   private stopped = false;
+  private readonly share: ShareStream;
 
   constructor(
     private readonly url: string,
@@ -40,6 +43,7 @@ export class GatewayBridge {
     });
     // 新开标签页前要知道会话是不是远程的（远程会话的标签页在那台主机的分区里，见 views.ts 的 partitionFor）
     views.setRemoteResolver((session) => this.askSession(session));
+    this.share = new ShareStream(views, (msg) => this.post(msg), () => this.socket?.bufferedAmount ?? 0);
   }
 
   /** 等网关回答一个会话的信息（sessionDir）；没连上、3 秒没回答按本机会话 */
@@ -79,6 +83,7 @@ export class GatewayBridge {
       this.socket = null;
       this.network.stopReporting();
       this.closeAll();
+      this.share.stopAll();
       if (!this.stopped) setTimeout(() => this.start(), 2000);
     });
     // error 之后一定还会有 close，重连在那里做
@@ -89,6 +94,7 @@ export class GatewayBridge {
     this.stopped = true;
     this.network.stopReporting();
     this.closeAll();
+    this.share.stopAll();
     this.socket?.close();
   }
 
@@ -99,6 +105,8 @@ export class GatewayBridge {
     } catch {
       return;
     }
+    // 局域网分享的访客操作内置浏览器（share-stream.ts），id 是标签页 id（字符串）
+    if (msg.type?.startsWith("share")) return void this.share.handle(msg as Parameters<ShareStream["handle"]>[0]);
     // 设置页「网络代理」：连上时和每次保存后网关推过来
     if (msg.type === "proxy") return void this.network.update(msg.config).catch((err: Error) => this.log(`设置内置浏览器的代理失败：${err.message}`));
     const session = msg.session;

@@ -1988,3 +1988,17 @@ svg.ic-mcp { color: var(--ic-mcp); }
 .settings-form .select { display: flex; }
 .settings-form .select-btn { height: auto; padding: 7px 10px; font-size: 14px; color: var(--text); }
 .settings-form .select-pop { left: 0; right: auto; }
+
+/* 局域网分享：访客页面在分享结束后（见 ShareApp.tsx） */
+.share-ended { height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--bg); }
+/* 局域网分享：侧栏里分享中的会话的图标，和分享相关的提示（见 Sidebar.tsx） */
+.session-shared { flex: none; display: inline-flex; color: var(--ic-chat); }
+.share-notice {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 60; max-width: min(560px, calc(100vw - 32px));
+  padding: 8px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text);
+  box-shadow: var(--raised-shadow); font-size: 13px; overflow-wrap: anywhere;
+}
+/* 局域网分享的访客看到的内置浏览器（RemoteBrowserTab.tsx）：分享方推来的画面按比例缩放、居中；键盘输入接在看不见的输入框里 */
+.remote-browser-area { overflow: hidden; background: var(--panel); }
+.remote-browser-frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; }
+.remote-browser-keys { position: absolute; left: 8px; bottom: 8px; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; resize: none; overflow: hidden; pointer-events: none; }

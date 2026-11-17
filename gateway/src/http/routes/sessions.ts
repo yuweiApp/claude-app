@@ -16,6 +16,7 @@ import { cancelMcpAuth, clearMcpAuth, getMcpAuth, McpAuthError, startMcpAuth, su
 import { installMarketPlugin, PluginMarketError, queryMarketPlugins, uninstallMarketPlugin, updateMarketPlugin } from "../../agent/plugin-market.js";
 import { config } from "../../config.js";
 import { isRemote } from "../../ssh/location.js";
+import type { ShareStore } from "../../share/store.js";
 
 const permissionModes = ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"];
 const effortLevels = ["low", "medium", "high", "xhigh", "max"];
@@ -46,7 +47,7 @@ function requireContent(body: { text: string; attachments?: string[]; elements?:
   if (!body.text.trim() && !body.attachments?.length && !body.elements?.length) throw new AttachmentError("消息不能为空");
 }
 
-export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hub: EventHub): void {
+export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hub: EventHub, shares: ShareStore): void {
   app.get("/sessions", async () => ({ sessions: await sessions.list() }));
 
   /** Claude Code 的模型列表（SDK 的 ModelInfo） */
@@ -390,7 +391,12 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
    * 清空会话（同 Claude Code 的 /clear）：上下文清掉，返回清空后的会话 id（Claude Code 换了新的 id，原来的记录留在原来的 id 下）。
    * 这一轮还在进行、有后台任务在跑时 409
    */
-  app.post<{ Params: IdParams }>("/sessions/:id/clear", async (req) => ({ sessionId: await sessions.clear(req.params.id) }));
+  app.post<{ Params: IdParams }>("/sessions/:id/clear", async (req) => {
+    const sessionId = await sessions.clear(req.params.id);
+    // 局域网分享跟到清空后的会话（见 docs/lan-share.md）
+    shares.move(req.params.id, sessionId);
+    return { sessionId };
+  });
 
   app.post<{
     Params: IdParams & { requestId: string };
@@ -448,6 +454,7 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
   /** 删除会话（会话记录一起删，不能恢复） */
   app.delete<{ Params: IdParams }>("/sessions/:id", async (req) => {
     await sessions.delete(req.params.id);
+    shares.remove(req.params.id);
     return { ok: true };
   });
 }

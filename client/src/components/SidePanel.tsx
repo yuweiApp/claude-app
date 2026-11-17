@@ -1,7 +1,9 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent, type ReactNode } from "react";
 import { api } from "../api";
 import { desktop, type BrowserTabInfo } from "../desktop";
 import { BrowserTab, BrowserToolbar, GlobeIcon, SiteIcon } from "./BrowserTab";
+import { RemoteBrowserTab } from "./RemoteBrowserTab";
+import { RemoteBrowserContext } from "../state/remoteBrowser";
 import { getDraft, setDraft, useHasDraft } from "../state/fileDrafts";
 import { beginLayoutDrag } from "../state/layoutDrag";
 import { useDismiss } from "./ComposerPickers";
@@ -264,7 +266,9 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
 
   // 内置浏览器：外壳推来全部标签页。当前会话的、面板里还没有的（AI 开的、刷新页面前开的）补成标签页（不抢当前标签），关掉的去掉。
   // null 是还没从外壳拿到列表
-  const browserApi = desktop?.browser;
+  // 局域网分享的访客页面没有桌面版，用经网关连到分享方桌面版的 RemoteBrowser（见 state/remoteBrowser.ts）；本机的界面没有它
+  const remoteBrowser = useContext(RemoteBrowserContext);
+  const browserApi = desktop?.browser ?? remoteBrowser ?? undefined;
   const [browserTabs, setBrowserTabs] = useState<Map<string, BrowserTabInfo> | null>(null);
   useEffect(() => {
     if (!browserApi) return;
@@ -567,7 +571,11 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
               />
             )}
             {tab.kind === "browser" && browserApi && (
-              <BrowserTab api={browserApi} id={tab.browserId} info={browserTabs?.get(tab.browserId)} active={tab.id === activeId} />
+              remoteBrowser && !desktop?.browser ? (
+                <RemoteBrowserTab browser={remoteBrowser} id={tab.browserId} info={browserTabs?.get(tab.browserId)} active={tab.id === activeId} />
+              ) : (
+                <BrowserTab api={browserApi} id={tab.browserId} info={browserTabs?.get(tab.browserId)} active={tab.id === activeId} />
+              )
             )}
             {tab.kind === "files" && (
               <FileBrowser
@@ -812,6 +820,7 @@ function TabList({ tabs, activeId, label, icon, onSelect }: { tabs: PanelTab[]; 
  */
 function NewTab({ onFiles, onTerminal, browser }: { onFiles?: () => void; onTerminal: () => void; browser?: (url: string) => void }) {
   const [address, setAddress] = useState("");
+  const remoteBrowser = useContext(RemoteBrowserContext);
   return (
     <div className="panel-new-tab-wrap">
       {browser !== undefined && (
@@ -820,7 +829,7 @@ function NewTab({ onFiles, onTerminal, browser }: { onFiles?: () => void; onTerm
           onAddress={setAddress}
           onReset={() => undefined}
           onSubmit={(url) => browser?.(url)}
-          suggest={desktop?.browser.suggest}
+          suggest={desktop?.browser.suggest ?? remoteBrowser?.suggest}
         />
       )}
     <div className="panel-new-tab">

@@ -51,6 +51,20 @@ export interface DownloadInfo {
   startTime: number;
 }
 
+/** 外壳发来的局域网分享消息（desktop/src/browser/share-stream.ts）：shareTabs、shareFrame、shareCursor、shareActivate、shareReply */
+export interface ShareShellMessage {
+  type: string;
+  session?: string;
+  id?: string;
+  tabs?: unknown[];
+  data?: string;
+  width?: number;
+  height?: number;
+  cursor?: string;
+  reqId?: number;
+  result?: unknown;
+}
+
 /** 每个会话最多攒多少条没告诉模型的标签页变化 */
 const MAX_TAB_EVENTS = 50;
 
@@ -88,6 +102,7 @@ export class BrowserHost {
     this.dropAll("桌面版重新连接了");
     this.socket = socket;
     this.post({ type: "proxy", config: browserProxyConfig() });
+    this.shareConnection?.(true);
     socket.on("message", (data) => {
       let msg: {
         type?: string;
@@ -106,6 +121,8 @@ export class BrowserHost {
       } catch {
         return;
       }
+      // 局域网分享的访客操作内置浏览器（share/browser-relay.ts、desktop/src/browser/share-stream.ts）
+      if (typeof msg.type === "string" && msg.type.startsWith("share")) return void this.shareListener?.(msg as ShareShellMessage);
       if (msg.type === "cdp" && msg.session && msg.message) this.transports.get(msg.session)?.onmessage?.(msg.message);
       // 桌面版的进程号：桌面工具（desktop/guard.ts）不能读取、操作这些进程的窗口
       else if (msg.type === "hello" && Array.isArray(msg.pids)) setOwnPids(msg.pids.filter((pid) => Number.isInteger(pid)));
@@ -138,9 +155,24 @@ export class BrowserHost {
       // 桌面版报的操作系统代理不再用：它关着时系统代理变了网关不知道
       setSystemProxy(undefined);
       this.dropAll("桌面版断开了");
+      this.shareConnection?.(false);
       for (const resolve of this.waiting.values()) resolve(null);
       this.waiting.clear();
     });
+  }
+
+  /** 局域网分享：外壳发来的 share 开头的消息、外壳连上 / 断开，交给 ShareBrowserRelay */
+  private shareListener: ((msg: ShareShellMessage) => void) | null = null;
+  private shareConnection: ((connected: boolean) => void) | null = null;
+
+  onShare(listener: (msg: ShareShellMessage) => void, connection: (connected: boolean) => void): void {
+    this.shareListener = listener;
+    this.shareConnection = connection;
+  }
+
+  /** 发给外壳的 share 开头的消息（局域网分享，见 desktop/src/browser/share-stream.ts）；外壳没连着时丢掉 */
+  postShare(msg: { type: string } & Record<string, unknown>): void {
+    this.post(msg);
   }
 
   /** 取走这个会话还没告诉模型的标签页变化 */

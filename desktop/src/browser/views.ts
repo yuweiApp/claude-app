@@ -570,6 +570,11 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     });
   }
 
+  /** 这个标签页正叠在主窗口上显示着（局域网分享推画面时据此决定怎么截图，见 share-stream.ts） */
+  isShown(id: string): boolean {
+    return this.shown?.id === id;
+  }
+
   /** 这个标签页正显示着就收回停放窗口；显示的已经换成别的标签页时不动（界面收视图比换标签页晚几帧，见 BrowserTab.tsx） */
   hide(id: string): void {
     if (this.shown?.id === id) this.toPark(this.shown);

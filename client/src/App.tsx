@@ -1,5 +1,6 @@
 import { HostIcon, HostStatusDot } from "./components/HostIcon";
 import { refreshSshConnections, sshName } from "./state/sshConnections";
+import { refreshShares } from "./state/shares";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { GearGlyph, HomeGlyph, IosIcon } from "./components/IosIcon";
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
@@ -205,6 +206,8 @@ export function App() {
   const refresh = useCallback(() => {
     // 远程主机的连接状态（侧栏、标题栏的小圆点）：会话用到主机时连上，断线、空闲时断开，跟会话列表一起刷新
     void refreshSshConnections();
+    // 局域网分享：侧栏的图标和菜单用（访客清空会话后分享跟到了新的 id）
+    void refreshShares();
     api.listSessions().then(
       (list) => {
         setSessions(list);
@@ -451,9 +454,11 @@ interface ChatProps {
   cwd: string | null;
   /** 新会话页输入框工具栏里的选文件夹 */
   folderPicker?: ReactNode;
+  /** 局域网分享的访客（见 ShareApp）：输入框上面不放按钮，不能分叉。本机不传，和原来一样 */
+  guest?: boolean;
 }
 
-function Chat({
+export function Chat({
   sessionId,
   cwd,
   config,
@@ -466,6 +471,7 @@ function Chat({
   title,
   folder,
   folderPicker,
+  guest,
 }: ChatProps) {
   const [view, dispatch] = useReducer(reduce, undefined, emptyView);
   // 打开会话时向网关取的上下文用量和目标（GET /sessions/:id/context）
@@ -762,7 +768,7 @@ function Chat({
           {(!sessionId || view.historyLoaded) && <Messages
             view={view}
             onFork={
-              sessionId
+              sessionId && !guest
                 ? (messageId) => api.forkSession(sessionId, messageId).then(onCreated, (e: Error) => onError(`分叉失败：${e.message}`))
                 : undefined
             }
@@ -821,6 +827,7 @@ function Chat({
           )
         }
         top={
+          !guest && (
           <>
             {folderPicker}
             {/* 远程会话（SSH）只留「浏览器」：技能、插件、Computer Use 远端都不挂 */}
@@ -838,6 +845,7 @@ function Chat({
               onPickDesktop={() => composerRef.current?.mentionBrowser("桌面")}
             />
           </>
+          )
         }
         right={
           <>

@@ -25,6 +25,10 @@ import { SshConfigError } from "./ssh/connections.js";
 import { SshError } from "./ssh/host.js";
 import { parseRemote } from "./ssh/location.js";
 import { handleTunnel } from "./browser/tunnel.js";
+import { shareRoutes } from "./http/routes/shares.js";
+import { LanServer } from "./share/lan-server.js";
+import { ShareBrowserRelay } from "./share/browser-relay.js";
+import { ShareStore } from "./share/store.js";
 
 // 终端里用 pino-pretty 格式化。不用 transport：它在 worker 线程里把 UTF-8 字节直接写 fd 1，
 // 中文 Windows 控制台按 GBK 显示会乱码；交给 process.stdout 由 Node 转成 UTF-16 写控制台。
@@ -38,6 +42,8 @@ export interface App {
   sessions: SessionManager;
   terminals: TerminalManager;
   browser: BrowserHost;
+  /** 局域网分享的入口：网关监听之后 sync() 一次（有分享就开始监听），退出时 close() */
+  lan: LanServer;
 }
 
 export function buildApp(): App {
@@ -64,6 +70,9 @@ export function buildApp(): App {
   const conversationLog = new ConversationLog(config.conversationLog, app.log);
   setDesktopLog((entry) => conversationLog.recordDesktop(entry));
   const sessions = new SessionManager(hub, app.log, conversationLog, terminals, browser);
+  const shares = new ShareStore();
+  const lan = new LanServer(shares, app.log);
+  const relay = new ShareBrowserRelay(browser, shares);
 
   if (config.apiToken) {
     app.addHook("onRequest", async (req, reply) => {
@@ -103,7 +112,8 @@ export function buildApp(): App {
   // WebSocket 路由（终端、桌面版外壳）要在这个插件加载之后声明，所以放在各路由前面
   void app.register(websocket);
 
-  sessionRoutes(app, sessions, hub);
+  sessionRoutes(app, sessions, hub, shares);
+  shareRoutes(app, sessions, shares, lan, relay);
   uploadRoutes(app);
   folderRoutes(app);
   fileRoutes(app);
@@ -133,5 +143,5 @@ export function buildApp(): App {
     // 远程会话的内置浏览器访问远端 localhost 的连接，每条一个
     scoped.get<{ Querystring: { host?: string; dest?: string; port?: string } }>("/browser/tunnel", { websocket: true }, (socket, req) => handleTunnel(socket, req.query));
   });
-  return { app, sessions, terminals, browser };
+  return { app, sessions, terminals, browser, lan };
 }

@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SessionListItem, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SessionListItem, ShareInfo, SharesView, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { MessagePriority, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
+export type { MessagePriority, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, ShareInfo, SharesView, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -16,6 +16,25 @@ function token(): string | null {
   }
 }
 
+/**
+ * 局域网分享的访客页面（/share/<令牌>，见 docs/lan-share.md）：请求都带上分享令牌，
+ * 请求头 X-Share-Token，带不了请求头的（EventSource、WebSocket、<img>）用 ?share=。本机的页面不设，和原来一样
+ */
+let shareToken: string | null = null;
+
+export function setShareToken(value: string | null): void {
+  shareToken = value;
+}
+
+/** 请求要带的鉴权头：网关的 API_TOKEN、分享令牌 */
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const t = token();
+  if (t) headers.authorization = `Bearer ${t}`;
+  if (shareToken) headers["x-share-token"] = shareToken;
+  return headers;
+}
+
 /** 网关返回的错误，带 HTTP 状态码（保存文件冲突是 409） */
 export class RequestError extends Error {
   constructor(
@@ -28,19 +47,21 @@ export class RequestError extends Error {
 
 /** 浏览器直接请求的地址（EventSource、WebSocket、<img>）带不了请求头，令牌放进 ?token= */
 export function withToken(path: string): string {
+  const params = new URLSearchParams();
   const t = token();
-  if (!t) return BASE + path;
-  return `${BASE}${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(t)}`;
+  if (t) params.set("token", t);
+  if (shareToken) params.set("share", shareToken);
+  const query = params.toString();
+  if (!query) return BASE + path;
+  return `${BASE}${path}${path.includes("?") ? "&" : "?"}${query}`;
 }
 
 const q = (params: Record<string, string>) => new URLSearchParams(params).toString();
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = {};
+  const headers = authHeaders();
   const isForm = body instanceof FormData;
   if (body !== undefined && !isForm) headers["content-type"] = "application/json";
-  const t = token();
-  if (t) headers.authorization = `Bearer ${t}`;
   const res = await fetch(BASE + path, {
     method,
     headers,
@@ -121,8 +142,7 @@ export const api = {
     request<{ mtimeMs: number; size: number }>("POST", "/files/write", { cwd, path, text, mtimeMs, encoding, force }),
   /** 整个文件的字节（右侧面板预览 Office 文档用） */
   readBytes: async (cwd: string, path: string): Promise<ArrayBuffer> => {
-    const t = token();
-    const res = await fetch(`${BASE}/files/download?${q({ cwd, path })}`, { headers: t ? { authorization: `Bearer ${t}` } : {} });
+    const res = await fetch(`${BASE}/files/download?${q({ cwd, path })}`, { headers: authHeaders() });
     if (!res.ok) {
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       throw new RequestError(data.error || `${res.status} ${res.statusText}`, res.status);
@@ -131,10 +151,9 @@ export const api = {
   },
   /** 按字节保存文件（改了 Office 文档以后）；冲突的规则同 writeFile */
   writeBytes: async (cwd: string, path: string, bytes: Uint8Array<ArrayBuffer>, mtimeMs: number, force = false): Promise<{ mtimeMs: number; size: number }> => {
-    const t = token();
     const res = await fetch(`${BASE}/files/write-bytes?${q({ cwd, path, mtimeMs: String(mtimeMs), ...(force ? { force: "1" } : {}) })}`, {
       method: "POST",
-      headers: { "content-type": "application/octet-stream", ...(t ? { authorization: `Bearer ${t}` } : {}) },
+      headers: { "content-type": "application/octet-stream", ...authHeaders() },
       body: bytes,
     });
     const data = (await res.json().catch(() => ({}))) as { mtimeMs: number; size: number; error?: string };
@@ -162,8 +181,7 @@ export const api = {
     const xhr = new XMLHttpRequest();
     const done = new Promise<void>((resolve, reject) => {
       xhr.open("POST", `${BASE}/files/upload?${q({ cwd, dir, ...(overwrite ? { overwrite: "1" } : {}) })}`);
-      const t = token();
-      if (t) xhr.setRequestHeader("authorization", `Bearer ${t}`);
+      for (const [key, value] of Object.entries(authHeaders())) xhr.setRequestHeader(key, value);
       xhr.upload.onprogress = (e) => onProgress(e.loaded);
       xhr.onload = () => {
         if (xhr.status < 400) return resolve();
@@ -312,6 +330,11 @@ export const api = {
   renameSession: (id: string, title: string) => request("PATCH", `/sessions/${id}`, { title }),
   /** 删除会话，会话记录一起删，不能恢复 */
   deleteSession: (id: string) => request("DELETE", `/sessions/${id}`),
+  /** 局域网分享（见 docs/lan-share.md）：本机开关分享、列出分享；shareInfo 是访客页面取分享的会话 */
+  shares: () => request<SharesView>("GET", "/shares"),
+  shareSession: (id: string) => request<SharesView>("POST", `/sessions/${id}/share`),
+  unshareSession: (id: string) => request<SharesView>("DELETE", `/sessions/${id}/share`),
+  shareInfo: () => request<ShareInfo>("GET", "/share/info"),
   setPermissionMode: (id: string, mode: PermissionMode) => request("POST", `/sessions/${id}/permission-mode`, { mode }),
   /** answers：AskUserQuestion 的回答（问题原文 → 选中的选项） */
   replyPermission: (id: string, requestId: string, behavior: "allow" | "deny", always = false, answers?: Record<string, string>) =>
@@ -331,6 +354,7 @@ export function subscribe(sessionId: string, onEvent: (event: GatewayEvent) => v
     const params = new URLSearchParams();
     const t = token();
     if (t) params.set("token", t);
+    if (shareToken) params.set("share", shareToken);
     if (lastId) params.set("since", lastId);
     const query = params.toString();
     source = new EventSource(`${BASE}/sessions/${sessionId}/events${query ? `?${query}` : ""}`);

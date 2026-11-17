@@ -7,6 +7,7 @@ import type { SessionListItem } from "../api";
 import { useDismiss } from "./ComposerPickers";
 import { SidebarToggle } from "./SidebarToggle";
 import { SESSION_DRAG_TYPE } from "./MentionText";
+import { copyShareLink, shareLinks, startShare, stopShare, useShareNotice, useShares } from "../state/shares";
 
 /** 会话标题：网关在第一条消息时生成的 customTitle；没有时用第一条提问。不用 summary，它没有自定义标题时跟着最新一条提问变 */
 /** 会话标题；第一条消息里引用的标签页 @[标题](网址)、@chrome[标题](网址) 这样的只留标题 */
@@ -197,6 +198,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
 
   return (
     <aside className="sidebar" style={{ "--sidebar-width": `${width}px` } as CSSProperties}>
+      <ShareNotice />
       <div className="sidebar-top">
         {onCollapse && <SidebarToggle collapsed={false} onToggle={onCollapse} />}
         <button className="nav-item" onClick={() => onNew()}>
@@ -380,6 +382,15 @@ function SessionRow({
   // 远程项目里的会话不用，项目那一行已经标了
   useSshConnections();
   const remote = s.chat ? parseRemote(s.cwd) : null;
+  // 局域网分享（见 docs/lan-share.md）：分享中的会话标题后面有个图标，菜单里是复制链接、停止分享
+  const links = shareLinks(useShares(), s.sessionId);
+  const shared = links.length > 0;
+  const shareItems: MenuAction[] = shared
+    ? [
+        ...links.map((link) => ({ label: links.length > 1 ? `复制分享链接（${link.address}）` : "复制分享链接", onClick: () => copyShareLink(link.url) })),
+        { label: "停止分享", onClick: () => void stopShare(s.sessionId) },
+      ]
+    : [{ label: "分享到局域网", onClick: () => void startShare(s.sessionId) }];
   const itemClass = `session-item${branch ? " branch-row" : ""}${branch && branchEnd ? " branch-end" : ""}${menu.at ? " menu-open" : ""}`;
   if (renaming)
     return (
@@ -415,6 +426,11 @@ function SessionRow({
             <span className="session-host-name">{sshName(remote.host)}</span>
           </span>
         )}
+        {shared && (
+          <span className="session-shared" title="已分享到局域网" aria-label="已分享到局域网">
+            <ShareIcon />
+          </span>
+        )}
         <span className="session-meta">{relativeTime(s.lastResponseAt)}</span>
         {isWorking(s) && <span className="session-spinner" aria-label={s.state === "running" ? "运行中" : "后台任务运行中"} />}
       </button>
@@ -423,6 +439,7 @@ function SessionRow({
         menu={menu}
         items={[
           { label: "重命名", onClick: () => setRenaming(true) },
+          ...shareItems,
           { label: "删除", danger: true, onClick: () => onDelete(s) },
         ]}
       />
@@ -572,6 +589,29 @@ function ComposeIcon() {
   );
 }
 
+
+/** 分享中的会话：标题后面的图标（三个点连成的分享符号） */
+function ShareIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <circle cx="12" cy="3.5" r="2" />
+      <circle cx="4" cy="8" r="2" />
+      <circle cx="12" cy="12.5" r="2" />
+      <path d="M5.8 7 10.2 4.5M5.8 9l4.4 2.5" />
+    </svg>
+  );
+}
+
+/** 分享相关的提示（链接已复制、出错），浮在侧栏底部，几秒后消失 */
+function ShareNotice() {
+  const notice = useShareNotice();
+  if (!notice) return null;
+  return (
+    <div className="share-notice" role="status">
+      {notice}
+    </div>
+  );
+}
 
 function MoreIcon() {
   return (

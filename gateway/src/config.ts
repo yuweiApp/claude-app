@@ -108,6 +108,11 @@ export const config = {
   /** 单个上传文件的大小上限（MB） */
   maxUploadMb: int("MAX_UPLOAD_MB", 20),
 
+  /** 局域网分享的入口端口：有分享时监听 0.0.0.0 的这个端口，见 docs/lan-share.md */
+  sharePort: int("SHARE_PORT", 8789),
+  /** 访客的页面从哪来：开发时是 Vite（同桌面版的 DESKTOP_CLIENT_URL） */
+  shareClientUrl: env.SHARE_CLIENT_URL?.trim() || "http://localhost:5180",
+
   /** 对话日志：用户的原始内容和模型的实际响应，见 src/logging/conversation-log.ts */
   conversationLog: {
     enabled: env.LOG_ENABLED !== "0",
