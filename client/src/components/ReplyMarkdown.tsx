@@ -29,9 +29,10 @@ export const FileLinkContext = createContext<{
  * Claude 回复的 Markdown：GFM（加上 cjk-friendly：`**……。**中文` 这种标点后面紧跟汉字的结尾，
  * CommonMark 不算闭合，会原样显示星号），本地文件链接点开在右侧面板，网址在内置浏览器（桌面版）或新窗口打开。
  * 行内代码像文件路径（`index.html`、`src/a.ts:12`）、又是工作目录里存在的文件时，显示成文件链接，
- * 同写成 [index.html](index.html)；只改显示，消息内容不变。```mermaid 代码块渲染成图
+ * 同写成 [index.html](index.html)；只改显示，消息内容不变。```mermaid 代码块渲染成图。
+ * 裸网址后面紧跟中文标点时网址在标点前结束，见 remarkCjkAutolinkEnd
  */
-const REMARK_PLUGINS = [remarkGfm, remarkCjkFriendly, remarkCjkFriendlyGfmStrikethrough, remarkKeepWindowsPaths];
+const REMARK_PLUGINS = [remarkGfm, remarkCjkFriendly, remarkCjkFriendlyGfmStrikethrough, remarkKeepWindowsPaths, remarkCjkAutolinkEnd];
 
 /**
  * 按文字 memo：会话里每来一个事件（流式的每个字、state、tasks 等）整个对话都会重新渲染，
@@ -356,4 +357,71 @@ function remarkKeepWindowsPaths(this: { data(): object }) {
       definitionDestinationString: keepWindowsPathDestination,
     },
   });
+}
+
+/** 中文标点（非 ASCII 的标点）：GFM 的裸网址只在空白处结束，中文句子里网址后面紧跟的标点和文字都会算进网址 */
+const CJK_PUNCTUATION = /(?![\x00-\x7f])\p{P}/u;
+
+/**
+ * GFM 的裸网址（http://…、www.…）一直延伸到空白，中文里网址后面通常不留空格：
+ * `访问 **http://a/**。` 整段 `http://a/**。` 成了网址，加粗的星号也被吞进去、原样显示。
+ * 网址里出现中文标点时在那里截断（再按 GFM 去掉末尾的 .,:;*_~ 等），原文里改写成 <网址>
+ * 后用同一套插件重新解析一遍；网址里的汉字不截（中文维基这类地址本来就带汉字）。
+ * 只改显示，消息内容不变
+ */
+function remarkCjkAutolinkEnd(this: { parse(file: string): unknown }) {
+  const processor = this;
+  return (tree: MdNode, file: { value: unknown }) => {
+    const source = String(file.value);
+    if (!CJK_PUNCTUATION.test(source)) return;
+    const edits: { start: number; end: number; text: string }[] = [];
+    const walk = (node: MdNode) => {
+      if (node.type === "link") {
+        const edit = autolinkEdit(node, source);
+        if (edit) edits.push(edit);
+        return;
+      }
+      node.children?.forEach(walk);
+    };
+    walk(tree);
+    if (!edits.length) return;
+    let fixed = source;
+    for (const { start, end, text } of edits.sort((a, b) => b.start - a.start)) {
+      fixed = fixed.slice(0, start) + text + fixed.slice(end);
+    }
+    return processor.parse(fixed);
+  };
+}
+
+interface MdNode {
+  type: string;
+  url?: string;
+  value?: string;
+  children?: MdNode[];
+  position?: { start: { offset?: number }; end: { offset?: number } };
+}
+
+function autolinkEdit(node: MdNode, source: string) {
+  const start = node.position?.start.offset;
+  const end = node.position?.end.offset;
+  if (start === undefined || end === undefined) return null;
+  // 裸网址的原文就是显示的文字；[文字](地址) 和 <地址> 的原文带括号，不动
+  const literal = source.slice(start, end);
+  const text = node.children?.length === 1 ? node.children[0]?.value : undefined;
+  if (literal !== text || !/^(?:https?:\/\/|www\.)/i.test(literal)) return null;
+  const cut = literal.search(CJK_PUNCTUATION);
+  if (cut <= 0) return null;
+  let url = literal.slice(0, cut);
+  for (;;) {
+    const last = url.at(-1);
+    if (last && `?!.,:;*_~"'`.includes(last)) url = url.slice(0, -1);
+    else if (last === ")" && url.split(")").length > url.split("(").length) url = url.slice(0, -1);
+    else break;
+  }
+  if (!url || /^www\.$/i.test(url) || /^https?:\/\/$/i.test(url)) return null;
+  return {
+    start,
+    end: start + url.length,
+    text: /^www\./i.test(url) ? `[${url}](http://${url})` : `<${url}>`,
+  };
 }
