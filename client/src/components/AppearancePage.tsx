@@ -88,7 +88,7 @@ export function AppearancePage() {
           ))}
           <SkinCard
             name="自定义背景"
-            desc={skin.image ? "用你上传的图片当背景" : "上传一张喜欢的图片当背景"}
+            desc={skin.image ? "用你上传的图片当对话区背景" : "上传一张喜欢的图片当对话区背景"}
             active={skin.id === CUSTOM_SKIN}
             onSelect={() => (skin.image ? setSkin(CUSTOM_SKIN) : chooseImage())}
             preview={
