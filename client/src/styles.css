@@ -534,12 +534,15 @@ span.connector-added { color: var(--ok); font-weight: 500; }
 .market-card-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .market-card-title { min-width: 0; overflow: hidden; font-size: 14.5px; font-weight: 600; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .market-card-subtitle { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-/* 简介最多 3 行；下面的信息行、底部一行用 margin-top: auto 推到底部，同一行的卡片底部对齐 */
+/* 简介最多 3 行，不满 3 行也占 3 行的高度；信息行只占一行，放不下截断（悬停看全文），后面的「代码仓库」链接不截。
+   这样同一页的卡片一样高；信息行、底部一行用 margin-top: auto 推到底部 */
 .market-card-desc {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
-  color: var(--muted); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere;
+  min-height: calc(3 * 1.55em); color: var(--muted); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere;
 }
-.market-card-meta { margin-top: auto; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.market-card-meta { display: flex; min-width: 0; margin-top: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.market-card-meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.market-card-meta-link { flex: none; white-space: pre; }
 .market-card-meta a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .market-card-foot {
   display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px;

@@ -158,14 +158,16 @@ export function PluginDirectory({
                 description={plugin.description}
                 meta={
                   <>
-                    {meta}
+                    <span className="market-card-meta-text" title={meta}>
+                      {meta}
+                    </span>
                     {plugin.repository && (
-                      <>
+                      <span className="market-card-meta-link">
                         {" · "}
                         <a href={plugin.repository} target="_blank" rel="noreferrer" title={plugin.repository}>
                           代码仓库
                         </a>
-                      </>
+                      </span>
                     )}
                   </>
                 }
