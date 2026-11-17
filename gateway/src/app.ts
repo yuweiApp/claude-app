@@ -60,6 +60,7 @@ export function buildApp(): App {
   });
   const hub = new EventHub(config.eventBufferSize);
   const terminals = new TerminalManager();
+  terminals.onAgentRunning = (sessionId, running) => hub.publish(sessionId, { type: "terminals_running", running });
   // 桌面版问会话的工作目录（内置浏览器的下载存到那里）时用 sessions 回答，两边互相引用，所以传函数
   // 远程会话的工作目录在远端，内置浏览器的下载放不进去，交给桌面版按默认的下载位置存；标签页按主机分区（browser/tunnel.ts）
   const browser = new BrowserHost(async (sessionId) => {

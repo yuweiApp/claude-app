@@ -531,8 +531,8 @@ export function Chat({
     let tasksRunning: boolean | undefined;
     const unsubscribe = subscribe(sessionId, (event) => {
       dispatch({ type: "event", event });
-      // 后台任务开始、全部结束时也刷新列表（侧栏的转圈、首页图标的动效看它）
-      if (event.type === "state" || event.type === "title") onChanged();
+      // 后台任务开始、全部结束时，模型开的终端里的命令开始、结束时也刷新列表（侧栏的转圈、首页图标的动效看它）
+      if (event.type === "state" || event.type === "title" || event.type === "terminals_running") onChanged();
       else if (event.type === "tasks") {
         const running = event.tasks.some((t) => t.status === "running");
         if (running !== tasksRunning) {
@@ -715,8 +715,10 @@ export function Chat({
   // 最后一轮是中断的（后面只有 result、换模型之类的提示）：输入框空着时可以一键「继续」
   const lastItem = view.items.findLast((item) => item.kind !== "result" && item.kind !== "model" && item.kind !== "notice");
   const interrupted = !!sessionId && view.state !== "running" && lastItem?.kind === "interrupted";
-  // 运行中的动效：一轮在跑，或者一轮结束了、后台任务还在跑或通知还没交给模型（任务结束的通知会再唤起新的一轮）
-  const working = view.state === "running" || (view.state === "idle" && (view.noticePending || view.backgroundTasks.some((t) => t.status === "running")));
+  // 运行中的动效：一轮在跑，或者一轮结束了、后台任务还在跑或通知还没交给模型（任务结束的通知会再唤起新的一轮）；
+  // 模型开的终端里有命令在跑也算（终端不随子进程回收，不看会话状态）
+  const working =
+    view.state === "running" || (view.state === "idle" && (view.noticePending || view.backgroundTasks.some((t) => t.status === "running"))) || view.terminalsRunning;
 
   const permissionMode = sessionId ? (view.permissionMode ?? config.permissionMode) : newMode;
   const changeMode = (mode: string) => {

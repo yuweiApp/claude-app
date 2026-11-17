@@ -18,6 +18,10 @@ const MAX_TERMINALS = 16;
 const FIRST_PROMPT_MS = 10_000;
 /** 自动关闭的终端记给模型看，每个会话最多留这么多条 */
 const MAX_CLOSED_NOTES = 20;
+/** 模型开的终端里敲了回车之后，每隔这么久问一次命令结束了没有（命令结束时没有通知），回到提示符就不再问 */
+const RUNNING_CHECK_MS = 3000;
+/** 敲了回车之后这么久之内问到在提示符，还接着问：命令可能还没起来（前台还是 shell） */
+const RUNNING_GRACE_MS = 1500;
 
 type PtyModule = typeof import("@lydell/node-pty");
 let ptyModule: PtyModule | null = null;
@@ -75,6 +79,10 @@ interface Terminal extends TerminalInfo {
   promptWaiters: Set<() => void>;
   /** 正在面板里显示着它的网页（终端的 WebSocket），有就是用户正在看 */
   viewers: Set<unknown>;
+  /** 模型开的终端：最近一次敲回车的时间，到问出命令已经结束为止（见 checkRunning）；没在问是 undefined */
+  watchedAt?: number;
+  /** 模型开的终端：最近一次问到里面有命令在跑 */
+  busy: boolean;
 }
 
 /** 模型开的终端被关掉了（不是它自己关的），记到这个会话下一次终端工具的结果里 */
@@ -98,6 +106,13 @@ export class TerminalManager {
   private toolCalls = new Map<string, number>();
   /** 每个会话的模型开的终端里，自动关掉的、用户关掉的，还没告诉模型的 */
   private closedNotes = new Map<string, ClosedTerminal[]>();
+  /** 模型开的终端里有命令在跑的会话（已经通知过 onAgentRunning 的） */
+  private agentBusy = new Set<string>();
+  private runningTimer: ReturnType<typeof setInterval> | undefined;
+  private checking = false;
+  private checkAgain = false;
+  /** 某个会话的模型开的终端里有没有命令在跑，变了时调用（网页的输入框、侧栏据此显示在运行） */
+  onAgentRunning?: (sessionId: string, running: boolean) => void;
 
   /** sessionId：只要这个会话的（加上不属于哪个会话的旧终端） */
   list(cwd?: string, sessionId?: string): TerminalInfo[] {
@@ -139,6 +154,7 @@ export class TerminalManager {
       promptWaiters: new Set(),
       viewers: new Set(),
       enters: 0,
+      busy: false,
     };
     proc.onData((data) => {
       term.activeAt = Date.now();
@@ -147,6 +163,7 @@ export class TerminalManager {
         if (mark.kind !== "B") continue;
         term.atPrompt = true;
         term.promptWaiters.forEach((done) => done());
+        if (term.watchedAt !== undefined) void this.checkRunning();
       }
       term.chunks.push(data);
       term.chars += data.length;
@@ -158,6 +175,9 @@ export class TerminalManager {
       term.exitCode = exitCode;
       term.promptWaiters.forEach((done) => done());
       term.listeners.forEach((l) => l({ type: "exit", code: exitCode }));
+      delete term.watchedAt;
+      term.busy = false;
+      this.publishRunning();
     });
     this.terminals.set(term.id, term);
     return info(term);
@@ -186,6 +206,7 @@ export class TerminalManager {
         term.atPrompt = false;
         delete term.lastExit;
       }
+      if (term.openedBy === "agent" && term.sessionId && term.status === "running") this.watchRunning(term);
     }
     if (term.status === "running") term.proc.write(data);
   }
@@ -301,6 +322,64 @@ export class TerminalManager {
     return notes;
   }
 
+  /** 这个会话的模型开的终端里有没有命令在跑（问到的结果，见 checkRunning） */
+  agentRunning(sessionId: string): boolean {
+    return this.agentBusy.has(sessionId);
+  }
+
+  /** 模型开的终端里敲了回车：过一会儿先问一次，之后定时问，直到命令结束 */
+  private watchRunning(term: Terminal): void {
+    term.watchedAt = Date.now();
+    setTimeout(() => void this.checkRunning(), RUNNING_GRACE_MS).unref();
+    if (!this.runningTimer) {
+      // 上一次还没问完（远端要一次网络往返）就跳过这次
+      this.runningTimer = setInterval(() => !this.checking && void this.checkRunning(), RUNNING_CHECK_MS);
+      this.runningTimer.unref();
+    }
+  }
+
+  /** 问一遍敲过回车的模型开的终端：命令还在跑的记 busy，回到提示符、判断不出来的不再问；问完通知变化 */
+  private async checkRunning(): Promise<void> {
+    if (this.checking) {
+      this.checkAgain = true;
+      return;
+    }
+    this.checking = true;
+    try {
+      do {
+        this.checkAgain = false;
+        const watched = [...this.terminals.values()].filter((t) => t.watchedAt !== undefined);
+        await Promise.all(
+          watched.map(async (term) => {
+            const since = term.watchedAt!;
+            const st = await this.state(term.id).catch(() => undefined);
+            // 问的这一会儿里被关掉了
+            if (this.terminals.get(term.id) !== term) return;
+            term.busy = st?.idle === false;
+            // 又敲了回车的（watchedAt 变了）接着问
+            if (!term.busy && term.watchedAt === since && Date.now() - since >= RUNNING_GRACE_MS) delete term.watchedAt;
+          }),
+        );
+        this.publishRunning();
+      } while (this.checkAgain);
+    } finally {
+      this.checking = false;
+    }
+    if (this.runningTimer && ![...this.terminals.values()].some((t) => t.watchedAt !== undefined)) {
+      clearInterval(this.runningTimer);
+      this.runningTimer = undefined;
+    }
+  }
+
+  /** 按各终端的 busy 算出哪些会话的模型开的终端里有命令在跑，和上次不同的通知 onAgentRunning */
+  private publishRunning(): void {
+    const now = new Set<string>();
+    for (const t of this.terminals.values()) if (t.busy && t.openedBy === "agent" && t.sessionId && t.status === "running") now.add(t.sessionId);
+    const before = this.agentBusy;
+    this.agentBusy = now;
+    for (const id of new Set([...before, ...now])) if (before.has(id) !== now.has(id)) this.onAgentRunning?.(id, now.has(id));
+  }
+
   /** 屏幕上的文字（去掉颜色等控制序列、按回车覆盖处理），最后 lines 行 */
   text(id: string, lines: number): { text: string; truncated: boolean } {
     const all = plainText(this.get(id).chunks.join("")).split("\n");
@@ -353,10 +432,14 @@ export class TerminalManager {
     term.listeners.clear();
     term.promptWaiters.forEach((done) => done());
     if (term.status === "running") term.proc.kill();
+    this.publishRunning();
   }
 
   /** 会话删除了：关掉属于它的终端（模型开的、用户在它的面板里开的），不然会一直开着、哪个会话都看不到 */
   closeSession(sessionId: string): void {
+    // 会话已经没了，不再通知它不在跑了
+    this.agentBusy.delete(sessionId);
+    for (const term of this.terminals.values()) if (term.sessionId === sessionId) term.busy = false;
     for (const term of [...this.terminals.values()]) if (term.sessionId === sessionId) this.close(term.id);
     this.closedNotes.delete(sessionId);
     this.toolCalls.delete(sessionId);

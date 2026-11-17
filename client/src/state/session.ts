@@ -165,6 +165,8 @@ export interface SessionView {
   /** 会话的后台任务（网关的 tasks 事件，整个列表）；backgroundTasksLive：已经从事件流收到过，不再用接口拉到的覆盖 */
   backgroundTasks: BackgroundTask[];
   backgroundTasksLive: boolean;
+  /** 模型开的终端里有命令在跑（网关的 terminals_running 事件） */
+  terminalsRunning: boolean;
   /** 对话里已经体现的模型：最近一条主线程 assistant 消息的，或已经显示过的切换 */
   shownModel?: string;
   /**
@@ -228,6 +230,7 @@ export function emptyView(): SessionView {
     noticePending: false,
     backgroundTasks: [],
     backgroundTasksLive: false,
+    terminalsRunning: false,
     queued: [],
     turnStartUuids: [],
     unstartedUuids: [],
@@ -281,6 +284,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
     next.toolResultSinceRequest = view.toolResultSinceRequest;
     next.backgroundTasks = view.backgroundTasks;
     next.backgroundTasksLive = view.backgroundTasksLive;
+    next.terminalsRunning = view.terminalsRunning;
     next.desktopTarget = view.desktopTarget;
     next.context = view.context;
     next.goal = view.goal;
@@ -366,6 +370,9 @@ export function reduce(view: SessionView, action: Action): SessionView {
       next.items = next.items.map((item) => (item.kind === "task" ? withDetail(item) : item));
       break;
     }
+    case "terminals_running":
+      next.terminalsRunning = event.running;
+      break;
     case "desktop_target":
       next.desktopTarget = event.target;
       break;

@@ -258,9 +258,9 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
 }
 
 /** 相对时间：刚刚、N 分钟前、N 小时前、N 天前，更早的显示日期（同 codex-app-server 的 relativeTime；ms 是毫秒） */
-/** 会话在运行：一轮在跑，或者一轮结束了、后台任务还在跑 */
+/** 会话在运行：一轮在跑，或者一轮结束了、后台任务还在跑，或者模型开的终端里有命令在跑 */
 export function isWorking(s: SessionListItem): boolean {
-  return s.state === "running" || (s.state === "idle" && !!s.tasksRunning);
+  return s.state === "running" || (s.state === "idle" && !!s.tasksRunning) || !!s.terminalsRunning;
 }
 
 function relativeTime(ms: number) {
@@ -432,7 +432,7 @@ function SessionRow({
           </span>
         )}
         <span className="session-meta">{relativeTime(s.lastResponseAt)}</span>
-        {isWorking(s) && <span className="session-spinner" aria-label={s.state === "running" ? "运行中" : "后台任务运行中"} />}
+        {isWorking(s) && <span className="session-spinner" aria-label={s.state === "running" ? "运行中" : s.state === "idle" && s.tasksRunning ? "后台任务运行中" : "终端里有命令在运行"} />}
       </button>
       <MoreButton className="row-more" label={`「${title}」的更多操作`} menu={menu} />
       <MenuPopup

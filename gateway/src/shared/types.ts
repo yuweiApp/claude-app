@@ -51,6 +51,8 @@ export type GatewayEvent =
   | { type: "title"; title: string }
   /** 会话的后台任务有变化：整个列表 */
   | { type: "tasks"; tasks: BackgroundTask[] }
+  /** 这个会话的模型开的终端（run_in_terminal）里有没有命令在跑，变了才发；和会话的子进程无关，空闲回收之后也照样发 */
+  | { type: "terminals_running"; running: boolean }
   /**
    * 转到后台的网关工具调用（browser_run_code 等）的结果，跟在那个任务的 task_notification 后面发：
    * SDK 的通知里只有 summary（工具名），结果原文 Claude Code 直接交给了模型，网页拿不到，失败时用它显示原因
@@ -457,6 +459,8 @@ export type SessionListItem = SDKSessionInfo & {
    * 一轮结束后 state 是 idle，任务结束的通知会再唤起新的一轮
    */
   tasksRunning?: boolean;
+  /** 这个会话的模型开的终端里有命令在跑（不管子进程还在不在） */
+  terminalsRunning?: boolean;
   /** 最后一次 AI 回复的时间（毫秒），列表按它倒序；还没回复过的是创建时间。不用 lastModified：打开会话也会改到记录文件 */
   lastResponseAt: number;
 };
