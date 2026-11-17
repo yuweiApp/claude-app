@@ -865,6 +865,16 @@ main {
 
 /* AskUserQuestion 的选择题卡片 */
 .question-card .question { margin: 4px 0 12px; }
+/* 多道题时分页：标题右边是页码，下面一排题目标签，点了跳到那一题，答过的打勾 */
+.question-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.question-count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.question-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 10px; }
+.question-step { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 4px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.question-step:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.question-step.active { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.question-step-mark { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; font-size: 10px; background: color-mix(in srgb, var(--muted) 18%, transparent); }
+.question-step.done .question-step-mark { color: var(--bg); background: var(--accent); }
+.question-left { align-self: center; color: var(--muted); font-size: 12px; }
 .question-text { font-size: 14px; margin-bottom: 8px; line-height: 1.5; }
 .question-chip { display: inline-block; margin-right: 8px; padding: 1px 8px; border-radius: 999px; font-size: 12px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); vertical-align: 1px; }
 .question-hint { color: var(--muted); font-size: 12px; margin-left: 4px; }

@@ -66,11 +66,13 @@ function answerText(q: Question | undefined, a: Answer): string {
 
 /**
  * AskUserQuestion 的选择题卡片（同 Claude Code 终端里的问题界面）：每道题一组选项，单选或多选，另有「其他」可以自己写；
+ * 多道题时分页，一页一题，顶上一排题目标签可以直接跳过去（答过的打勾）；
  * 提交后把回答经权限回复交给网关（updatedInput.answers），「跳过」是拒绝这次调用
  */
 function QuestionCard({ request, onReply }: Props) {
   const questions = (Array.isArray(request.input.questions) ? request.input.questions : []) as Question[];
   const [answers, setAnswers] = useState<Answer[]>(() => questions.map(emptyAnswer));
+  const [page, setPage] = useState(0);
   const update = (index: number, change: (a: Answer) => Answer) => setAnswers((all) => all.map((a, i) => (i === index ? change(a) : a)));
 
   const pick = (index: number, q: Question, label: string) =>
@@ -82,22 +84,53 @@ function QuestionCard({ request, onReply }: Props) {
   const toggleOther = (index: number, q: Question, on: boolean) =>
     update(index, (a) => ({ ...a, otherOn: on, ...(on && !q.multiSelect ? { picked: [] } : {}) }));
 
-  const complete = answers.every((a, i) => answerText(questions[i], a) !== "");
+  const answered = questions.map((q, i) => answerText(q, answers[i] ?? emptyAnswer()) !== "");
+  const complete = answered.every(Boolean);
   const submit = () => {
     if (!complete) return;
     onReply("allow", false, Object.fromEntries(questions.map((q, i) => [q.question, answerText(q, answers[i] ?? emptyAnswer())])));
   };
 
+  const total = questions.length;
+  const current = Math.min(page, Math.max(total - 1, 0));
+  const last = current >= total - 1;
+  const left = answered.filter((x) => !x).length;
+
   return (
     <div className="permission question-card">
-      <div className="permission-title">需要你回答</div>
+      <div className="question-head">
+        <div className="permission-title">需要你回答</div>
+        {total > 1 && (
+          <span className="question-count">
+            {current + 1} / {total}
+          </span>
+        )}
+      </div>
+      {total > 1 && (
+        <div className="question-steps" role="tablist">
+          {questions.map((q, i) => (
+            <button
+              key={i}
+              type="button"
+              role="tab"
+              aria-selected={i === current}
+              className={`question-step${i === current ? " active" : ""}${answered[i] ? " done" : ""}`}
+              onClick={() => setPage(i)}
+            >
+              <span className="question-step-mark">{answered[i] ? "✓" : i + 1}</span>
+              {q.header || `问题 ${i + 1}`}
+            </button>
+          ))}
+        </div>
+      )}
       {questions.map((q, i) => {
+        if (i !== current) return null;
         const a = answers[i] ?? emptyAnswer();
         const preview = q.options.find((o) => a.picked.includes(o.label) && o.preview)?.preview;
         return (
           <div key={i} className="question">
             <div className="question-text">
-              {q.header && <span className="question-chip">{q.header}</span>}
+              {q.header && total === 1 && <span className="question-chip">{q.header}</span>}
               {q.question}
               {q.multiSelect && <span className="question-hint">（可多选）</span>}
             </div>
@@ -139,7 +172,10 @@ function QuestionCard({ request, onReply }: Props) {
                   onFocus={() => toggleOther(i, q, true)}
                   onChange={(e) => update(i, (x) => ({ ...x, other: e.target.value, otherOn: true, ...(q.multiSelect ? {} : { picked: [] }) }))}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.nativeEvent.isComposing) submit();
+                    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                      if (last) submit();
+                      else setPage(current + 1);
+                    }
                   }}
                 />
               </div>
@@ -149,10 +185,18 @@ function QuestionCard({ request, onReply }: Props) {
         );
       })}
       <div className="permission-actions">
-        <button className="primary" disabled={!complete} onClick={submit}>
-          提交
-        </button>
+        {current > 0 && <button onClick={() => setPage(current - 1)}>上一题</button>}
+        {last ? (
+          <button className="primary" disabled={!complete} onClick={submit}>
+            提交
+          </button>
+        ) : (
+          <button className="primary" onClick={() => setPage(current + 1)}>
+            下一题
+          </button>
+        )}
         <button onClick={() => onReply("deny")}>跳过</button>
+        {last && total > 1 && left > 0 && <span className="question-left">还有 {left} 题没答</span>}
       </div>
     </div>
   );
