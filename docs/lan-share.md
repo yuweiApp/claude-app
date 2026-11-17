@@ -60,6 +60,7 @@
 ## 5. 访客的网页
 
 - **入口**（`client/src/main.tsx`）：地址是 `/share/<令牌>` 时设上分享令牌（`api.ts` 的 `setShareToken`），渲染 `ShareApp`；否则照旧渲染 `App`。
+- **http 打开时缺的接口**（`client/src/insecure-context.ts`，入口最先加载）：访客用 `http://<局域网 IP>` 打开，不是安全来源，浏览器不给 `crypto.randomUUID`（界面到处用它生成 id，没有时页面一加载就出错、一片空白）和 `navigator.clipboard`。没有时补上：前者用 `crypto.getRandomValues` 拼，后者只能写文字（`execCommand("copy")`），复制图片不行。本机是 localhost，本来就有，走不到这里。只用 127.0.0.1 测发现不了，要用局域网 IP 打开测。
 - **请求**（`api.ts`）：有分享令牌时请求都带上（`authHeaders()`、`withToken()`、事件流）。本机不设，和原来完全一样。
 - **`ShareApp`**：每 5 秒问一次 `/share/info`。会话清空换了 id 就换到新会话；401 或连续 3 次连不上（最后一个分享停掉时入口不再监听，约 15 秒）显示「分享已结束」。对话是本机同一个 `Chat`，传 `guest`：输入框上面不放按钮、没有分叉。没有侧栏、设置。
 - **右侧面板**：同一个 `SidePanel`。文件的上传下载走 HTTP（访客不是桌面版，本来就走这条）；终端按会话列、按会话建（接口本来就支持）；回复里的文件链接、网址照本机打开在面板里。
