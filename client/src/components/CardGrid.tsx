@@ -14,11 +14,13 @@ const stop = (e: MouseEvent) => e.stopPropagation();
 /**
  * 一张卡片：头部是图标、标题（太长截断）、badge（标签）和 menu（右上角的菜单），下面是最多 3 行的描述、信息行和底部一行（foot）。
  * 传了 onOpen 的整张卡片可以点开详情，标题是按钮（键盘能选中）；点到卡片里的其他按钮、链接不算。
- * menu 里的点击（包括它弹出的菜单、确认框）不冒泡到卡片上。dimmed：停用的，图标和描述变淡
+ * menu 里的点击（包括它弹出的菜单、确认框）不冒泡到卡片上。dimmed：停用的，图标和描述变淡。
+ * subtitle：标题下面一行小字（连接器的注册表名称）
  */
 export function Card({
   icon,
   title,
+  subtitle,
   badge,
   menu,
   description,
@@ -29,6 +31,7 @@ export function Card({
 }: {
   icon: ReactNode;
   title: string;
+  subtitle?: string;
   badge?: ReactNode;
   menu?: ReactNode;
   description?: string;
@@ -44,15 +47,22 @@ export function Card({
     >
       <div className="market-card-head">
         {icon}
-        {onOpen ? (
-          <button className="market-card-title market-card-open" title={title} onClick={onOpen}>
-            {title}
-          </button>
-        ) : (
-          <div className="market-card-title" title={title}>
-            {title}
-          </div>
-        )}
+        <div className="market-card-titles">
+          {onOpen ? (
+            <button className="market-card-title market-card-open" title={title} onClick={onOpen}>
+              {title}
+            </button>
+          ) : (
+            <div className="market-card-title" title={title}>
+              {title}
+            </div>
+          )}
+          {subtitle && (
+            <div className="market-card-subtitle" title={subtitle}>
+              {subtitle}
+            </div>
+          )}
+        </div>
         {badge}
         {menu && (
           <span className="market-card-menu" onClick={stop}>

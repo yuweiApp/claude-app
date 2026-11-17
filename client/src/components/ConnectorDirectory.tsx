@@ -104,29 +104,29 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
                 key={entry.id}
                 icon={<ConnectorIcon name={entry.title} icon={entry.icon} />}
                 title={entry.title}
+                subtitle={entry.id}
                 description={entry.description}
-                meta={
-                  <div className="market-card-target">
-                    <div title={entry.id}>{entry.id}</div>
-                    <div title={entry.url}>{entry.url}</div>
-                  </div>
-                }
                 foot={
                   <>
-                    {entry.type === "sse" ? <span className="settings-tag">SSE</span> : <span />}
+                    <span className="market-card-host" title={entry.url}>
+                      <LinkIcon />
+                      <span>{hostOf(entry.url)}</span>
+                      {entry.type === "sse" && <span className="settings-tag">SSE</span>}
+                    </span>
                     {name ? (
                       status(name) === "needs-auth" ? (
-                        <button className="primary" title={`已添加为 ${name}，需要登录`} onClick={() => setSigningIn(name)}>
+                        <button className="market-card-action" title={`已添加为 ${name}，需要登录`} onClick={() => setSigningIn(name)}>
                           登录
                         </button>
                       ) : (
                         <span className="connector-added" title={`已添加为 ${name}`}>
+                          <CheckIcon />
                           已添加
                         </span>
                       )
                     ) : (
-                      <button className="primary" disabled={adding === entry.id} onClick={() => add(entry)}>
-                        {adding === entry.id ? "添加中…" : "添加"}
+                      <button className="market-card-action" disabled={adding === entry.id} onClick={() => add(entry)}>
+                        {adding === entry.id ? "添加中…" : "+ 添加"}
                       </button>
                     )}
                   </>
@@ -157,6 +157,32 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
         />
       )}
     </>
+  );
+}
+
+/** 卡片底部显示的主机名，完整地址在悬停提示里；解析不了的原样显示 */
+function hostOf(url: string) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+function LinkIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" />
+      <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
   );
 }
 

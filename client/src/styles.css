@@ -510,31 +510,63 @@ main {
 .mcp-hint { margin: 0; color: var(--muted); font-size: 13px; }
 .mcp-auth-text { margin: 0; font-size: 14px; line-height: 1.6; }
 .mcp-auth-text a { color: var(--accent); }
-/* 连接器市场：注册表里的图标（大小同首字母头像），已添加的标记；插件、连接器市场的分页 */
-.connector-icon { object-fit: contain; background: #fff; padding: 2px; }
-.connector-added { color: var(--muted); font-size: 13px; white-space: nowrap; }
+/* 连接器市场：注册表里的图标（白底，同卡片里的首字母头像大小），已添加的标记 */
+.connector-icon { object-fit: contain; background: #fff; padding: 4px; }
+.connector-added { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+span.connector-added { color: var(--ok); font-weight: 500; }
 /* 卡片网格（CardGrid）：插件市场、连接器市场、技能，卡片从左往右排，放不下换行 */
-.market-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; transition: opacity 120ms; }
+.market-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; transition: opacity 120ms; }
 /* 换页、搜索的请求还没回来：旧的卡片变淡 */
 .market-grid.loading { opacity: 0.5; }
-.market-card { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); transition: border-color 120ms; }
-.market-card:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
-.market-card-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.market-card-title { flex: 1; min-width: 0; overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-/* 简介最多 3 行；下面的信息行用 margin-top: auto 推到底部，同一行的卡片底部对齐 */
+.market-card {
+  position: relative; display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 16px 16px 12px;
+  border: 1px solid var(--border); border-radius: 14px; background: color-mix(in srgb, var(--panel) 45%, var(--bg));
+  transition: border-color 140ms, box-shadow 140ms, transform 140ms;
+}
+.market-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  box-shadow: 0 6px 20px -8px color-mix(in srgb, var(--accent) 35%, transparent);
+  transform: translateY(-1px);
+}
+.market-card-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+/* 卡片里的图标比列表里的大一号，圆角方块 */
+.market-card-head > .capability-avatar { width: 36px; height: 36px; border-radius: 10px; font-size: 16px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent); }
+.market-card-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.market-card-title { min-width: 0; overflow: hidden; font-size: 14.5px; font-weight: 600; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.market-card-subtitle { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+/* 简介最多 3 行；下面的信息行、底部一行用 margin-top: auto 推到底部，同一行的卡片底部对齐 */
 .market-card-desc {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
-  color: var(--muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere;
+  color: var(--muted); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere;
 }
 .market-card-meta { margin-top: auto; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-/* 连接器的注册表名称和地址：等宽字体，各占一行，太长截断 */
-.market-card-target { font-family: var(--font-mono); }
-.market-card-target > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .market-card-meta a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-.market-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
+.market-card-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px;
+  margin-top: auto; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.market-card-meta + .market-card-foot { margin-top: 0; }
+/* 连接器的主机名：底部左边，太长截断 */
+.market-card-host { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 12px; }
+.market-card-host > svg { flex: none; opacity: 0.8; }
+.market-card-host > span:not(.settings-tag) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.market-card-host > .settings-tag { flex: none; }
+/* 卡片上的添加、安装按钮：浅色底，悬停卡片时变成实心 */
+.market-card-action, .market-card-foot button.primary {
+  flex: none; padding: 4px 12px; border: 1px solid transparent; border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-size: 13px; font-weight: 600;
+  transition: background 140ms, color 140ms;
+}
+.market-card:hover .market-card-action:not(:disabled), .market-card:hover .market-card-foot button.primary:not(:disabled),
+.market-card-action:focus-visible {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-text);
+}
+.market-card .market-card-action:hover:not(:disabled), .market-card .market-card-foot button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, #000); border-color: transparent;
+}
 /* 能点开详情的卡片（技能）：整张卡片可以点，标题是按钮，悬停时变色；停用的图标和描述变淡；右上角的菜单按钮贴着角 */
 .market-card.openable { cursor: pointer; }
-.market-card-open { padding: 0; border: none; border-radius: 0; background: none; color: inherit; text-align: left; font: inherit; font-size: 14px; font-weight: 600; }
+.market-card-open { padding: 0; border: none; border-radius: 0; background: none; color: inherit; text-align: left; font: inherit; font-size: 14.5px; font-weight: 600; }
 .market-card-open:hover { background: none; }
 .market-card.openable:hover .market-card-open { color: var(--accent); }
 .market-card.dimmed .market-card-desc, .market-card.dimmed .capability-avatar { opacity: 0.6; }
