@@ -5,6 +5,8 @@ import { BrowserToolbar, displayUrl, loadErrorText } from "./BrowserTab";
 
 /** 鼠标移动最多多久发一次（毫秒） */
 const MOVE_INTERVAL_MS = 33;
+/** 画面区域大小变了（拖面板宽度、缩放窗口）停下来多久再告诉分享方，免得网页跟着拖动一直重排 */
+const RESIZE_DELAY_MS = 200;
 
 interface Props {
   browser: RemoteBrowser;
@@ -26,6 +28,7 @@ export function RemoteBrowserTab({ browser, id, info, active }: Props) {
   const [cursor, setCursor] = useState("default");
   const [shell, setShell] = useState(browser.shellConnected);
   const imgRef = useRef<HTMLImageElement>(null);
+  const areaRef = useRef<HTMLDivElement>(null);
   const keyRef = useRef<HTMLTextAreaElement>(null);
   const lastMove = useRef(0);
   const frameRef = useRef(frame);
@@ -39,6 +42,29 @@ export function RemoteBrowserTab({ browser, id, info, active }: Props) {
   useEffect(() => {
     if (!editing) setAddress(url);
   }, [url, editing]);
+  // 在前面时把画面区域的大小告诉分享方：分享方没在看这个标签页时网页按它排版，铺满画面区域（分享方正看着时按分享方的，这边留边）
+  useEffect(() => {
+    const area = areaRef.current;
+    if (!active || !area) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const report = () => {
+      const { width, height } = area.getBoundingClientRect();
+      if (width > 0 && height > 0) browser.resize(id, Math.round(width), Math.round(height));
+    };
+    report();
+    const observer = new ResizeObserver(() => {
+      clearTimeout(timer);
+      timer = setTimeout(report, RESIZE_DELAY_MS);
+    });
+    observer.observe(area);
+    // 重连、标签页列表刚到时网关才认得这个标签页，再报一次
+    const offTabs = browser.onTabs(() => report());
+    return () => {
+      clearTimeout(timer);
+      observer.disconnect();
+      offTabs();
+    };
+  }, [browser, id, active]);
 
   /** 界面上的位置换成网页的 CSS 像素：画面按比例缩放、居中（object-fit: contain） */
   const toPage = (e: { clientX: number; clientY: number }) => {
@@ -110,7 +136,7 @@ export function RemoteBrowserTab({ browser, id, info, active }: Props) {
         onGo={(action) => browser.go(id, action)}
         suggest={browser.suggest}
       />
-      <div className="browser-area remote-browser-area">
+      <div ref={areaRef} className="browser-area remote-browser-area">
         {frame && (
           <img
             ref={imgRef}

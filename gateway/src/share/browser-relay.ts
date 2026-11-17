@@ -8,7 +8,7 @@ import type { ShareStore } from "./store.js";
  * 外壳推来的标签页列表、画面转给看着的访客。几个访客看同一个会话、同一个标签页时，外壳那边只推一份。
  *
  * 访客 → 这里：frames { id, on }（看 / 不看这个标签页的画面）、create { url, reqId }、suggest { query, reqId }、
- *   close { id }、navigate { id, url }、go { id, action }、input { id, event }
+ *   close { id }、navigate { id, url }、go { id, action }、input { id, event }、resize { id, width, height }（访客面板的大小）
  * 这里 → 访客：shell { connected }、tabs { tabs }、frame { id, data, width, height }、cursor { id, cursor }、activate { id }、reply { reqId, result }
  */
 interface Viewer {
@@ -18,6 +18,8 @@ interface Viewer {
   /** 在看画面的标签页 */
   frames: Set<string>;
 }
+
+type ViewerMessage = { type?: string; id?: unknown; on?: unknown; url?: unknown; query?: unknown; action?: unknown; event?: unknown; reqId?: unknown; width?: unknown; height?: unknown };
 
 /** 发给一个访客时还没发出去的字节数超过这么多，画面这一帧不给他 */
 const MAX_VIEWER_BACKLOG = 4 * 1024 * 1024;
@@ -63,7 +65,7 @@ export class ShareBrowserRelay {
     if (firstOfSession) this.host.postShare({ type: "shareWatch", session: viewer.sessionId });
     else send(viewer, { type: "tabs", tabs: this.tabs.get(viewer.sessionId) ?? [] });
     socket.on("message", (data) => {
-      let msg: { type?: string; id?: unknown; on?: unknown; url?: unknown; query?: unknown; action?: unknown; event?: unknown; reqId?: unknown };
+      let msg: ViewerMessage;
       try {
         msg = JSON.parse(String(data));
       } catch {
@@ -74,7 +76,7 @@ export class ShareBrowserRelay {
     socket.on("close", () => this.drop(viewer));
   }
 
-  private fromViewer(viewer: Viewer, msg: { type?: string; id?: unknown; on?: unknown; url?: unknown; query?: unknown; action?: unknown; event?: unknown; reqId?: unknown }): void {
+  private fromViewer(viewer: Viewer, msg: ViewerMessage): void {
     if (msg.type === "create") {
       const reqId = this.request(viewer, msg.reqId);
       this.host.postShare({ type: "shareCreate", session: viewer.sessionId, url: typeof msg.url === "string" ? msg.url : "", reqId });
@@ -100,6 +102,7 @@ export class ShareBrowserRelay {
     else if (msg.type === "navigate" && typeof msg.url === "string") this.host.postShare({ type: "shareNavigate", id, url: msg.url });
     else if (msg.type === "go" && typeof msg.action === "string") this.host.postShare({ type: "shareGo", id, action: msg.action });
     else if (msg.type === "input" && msg.event && typeof msg.event === "object") this.host.postShare({ type: "shareInput", id, event: msg.event });
+    else if (msg.type === "resize" && Number.isFinite(msg.width) && Number.isFinite(msg.height)) this.host.postShare({ type: "shareResize", id, width: msg.width, height: msg.height });
   }
 
   private fromShell(msg: ShareShellMessage): void {

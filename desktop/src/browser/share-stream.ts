@@ -7,7 +7,8 @@ import { tabInfo, type BrowserViews, type Tab } from "./views.js";
  *
  * 网关 → 外壳：shareWatch / shareUnwatch { session }（开始 / 停止推这个会话的标签页列表）、shareFrames { id, on }（开始 / 停止推这个标签页的画面）、
  *   shareCreate { session, url, reqId }、shareSuggest { query, reqId }（要回复 shareReply { reqId, result }）、
- *   shareClose { id }、shareNavigate { id, url }、shareGo { id, action }、shareInput { id, event }
+ *   shareClose { id }、shareNavigate { id, url }、shareGo { id, action }、shareInput { id, event }、
+ *   shareResize { id, width, height }（访客面板的大小：本机没在显示这个标签页时网页按它排版，见 views.ts 的 fitParked）
  * 外壳 → 网关：shareTabs { session, tabs }、shareFrame { id, data, width, height }、shareCursor { id, cursor }、shareActivate { session, id }、shareReply
  */
 
@@ -24,7 +25,11 @@ export type ShareInput =
   | { type: "key"; kind: "down" | "up"; key: string; code: string; keyCode: number; text?: string; modifiers: number }
   | { type: "text"; text: string };
 
-type Message = { type?: string; session?: string; id?: string; on?: boolean; url?: string; query?: string; reqId?: number; action?: string; event?: ShareInput };
+type Message = { type?: string; session?: string; id?: string; on?: boolean; url?: string; query?: string; reqId?: number; action?: string; event?: ShareInput; width?: number; height?: number };
+
+/** 访客面板的大小限在这个范围里（CSS 像素） */
+const MIN_SIZE = { width: 200, height: 150 };
+const MAX_SIZE = { width: 2560, height: 1600 };
 
 export class ShareStream {
   /** 有访客看着的会话：标签页有变化时推列表 */
@@ -32,6 +37,8 @@ export class ShareStream {
   /** 正在推画面的标签页 → 停止用的开关 */
   private readonly frames = new Map<string, { on: boolean; off: () => void }>();
   private pushTimer: NodeJS.Timeout | undefined;
+  /** 访客要的网页大小（最近一次 shareResize）：本机在面板里显示过、又收回停放窗口后，截图循环里再按它改回来 */
+  private readonly sizes = new Map<string, { width: number; height: number }>();
 
   constructor(
     private readonly views: BrowserViews,
@@ -89,6 +96,16 @@ export class ShareStream {
       case "shareInput":
         if (msg.id && msg.event) void this.input(msg.id, msg.event).catch(() => undefined);
         return;
+      case "shareResize": {
+        if (!msg.id || typeof msg.width !== "number" || typeof msg.height !== "number") return;
+        const size = {
+          width: Math.round(Math.min(MAX_SIZE.width, Math.max(MIN_SIZE.width, msg.width))),
+          height: Math.round(Math.min(MAX_SIZE.height, Math.max(MIN_SIZE.height, msg.height))),
+        };
+        this.sizes.set(msg.id, size);
+        this.views.fitParked(msg.id, size.width, size.height);
+        return;
+      }
     }
   }
 
@@ -125,6 +142,8 @@ export class ShareStream {
     state.on = false;
     state.off();
     this.frames.delete(id);
+    // 网页保持访客最后的大小，等本机在面板里打开它时再按本机的
+    this.sizes.delete(id);
   }
 
   private async loop(tab: Tab, state: { on: boolean }): Promise<void> {
@@ -132,6 +151,8 @@ export class ShareStream {
     let last: Buffer | null = null;
     while (state.on && !wc.isDestroyed()) {
       const started = Date.now();
+      const size = this.sizes.get(tab.id);
+      if (size) this.views.fitParked(tab.id, size.width, size.height);
       const { width, height } = tab.view.getBounds();
       const image = await (this.views.isShown(tab.id) ? wc.capturePage() : wc.capturePage({ x: 0, y: 0, width, height }, { stayHidden: true })).catch(() => null);
       if (state.on && image && !image.isEmpty()) {

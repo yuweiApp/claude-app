@@ -205,6 +205,11 @@ export class RemoteBrowser implements DesktopBrowserApi {
   input(id: string, event: RemoteInput): void {
     this.send({ type: "input", id, event });
   }
+
+  /** 访客面板画面区域的大小（CSS 像素）：分享方没在看这个标签页时，网页按它排版，画面能铺满 */
+  resize(id: string, width: number, height: number): void {
+    this.send({ type: "resize", id, width, height });
+  }
 }
 
 /** 访客页面（ShareApp）提供，右侧面板据此用 RemoteBrowser 代替桌面版的内置浏览器；本机的界面没有，是 null */

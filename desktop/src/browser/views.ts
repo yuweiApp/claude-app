@@ -575,6 +575,22 @@ export class BrowserViews extends EventEmitter<BrowserViewsEvents> {
     return this.shown?.id === id;
   }
 
+  /**
+   * 局域网分享的访客看着这个标签页时，按访客面板的大小排版（share-stream.ts）：只改停放着的（本机没在显示的），
+   * 正显示在主窗口上的按本机面板的大小，不动。停放窗口比它小时放大停放窗口（在屏幕外，看不见），不然超出窗口的部分截不到
+   */
+  fitParked(id: string, width: number, height: number): void {
+    const tab = this.tabs.get(id);
+    if (!tab || this.shown === tab || tab.view.webContents.isDestroyed()) return;
+    const bounds = tab.view.getBounds();
+    if (bounds.width === width && bounds.height === height) return;
+    if (this.park && !this.park.isDestroyed()) {
+      const [parkWidth = 0, parkHeight = 0] = this.park.getContentSize();
+      if (width > parkWidth || height > parkHeight) this.park.setContentSize(Math.max(parkWidth, width), Math.max(parkHeight, height));
+    }
+    tab.view.setBounds({ x: 0, y: 0, width, height });
+  }
+
   /** 这个标签页正显示着就收回停放窗口；显示的已经换成别的标签页时不动（界面收视图比换标签页晚几帧，见 BrowserTab.tsx） */
   hide(id: string): void {
     if (this.shown?.id === id) this.toPark(this.shown);
