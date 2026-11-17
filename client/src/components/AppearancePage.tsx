@@ -92,8 +92,17 @@ export function AppearancePage() {
             active={skin.id === CUSTOM_SKIN}
             onSelect={() => (skin.image ? setSkin(CUSTOM_SKIN) : chooseImage())}
             preview={
-              <div className="skin-preview skin-preview-custom" style={skin.image ? { backgroundImage: `url("${skin.image}")` } : undefined}>
-                {skin.image ? MINI_UI : loading ? "正在读取…" : "＋ 选择图片"}
+              <div className="skin-preview skin-preview-custom">
+                {skin.image ? (
+                  <>
+                    <span className="skin-preview-chat" style={{ backgroundImage: `url("${skin.image}")`, "--preview-veil": `${skin.imageVeil}%` } as CSSProperties} />
+                    {MINI_UI}
+                  </>
+                ) : loading ? (
+                  "正在读取…"
+                ) : (
+                  "＋ 选择图片"
+                )}
               </div>
             }
           />

@@ -205,10 +205,11 @@
 .skin-card-name { display: flex; align-items: center; gap: 6px; padding: 0 2px; font-size: 14px; font-weight: 600; }
 .skin-check { margin-left: auto; color: var(--accent); }
 .skin-card-desc { padding: 0 2px; color: var(--muted); font-size: 12px; line-height: 1.4; }
-/* 自定义背景的预览：没上传时是一块「选择图片」 */
-.skin-preview.skin-preview-custom {
-  display: grid; place-items: center; background: var(--panel) center / cover no-repeat; color: var(--muted); font-size: 12px;
-}
+/* 自定义背景的预览：没上传时是一块「选择图片」；上传了同实际效果，图片只铺在侧边栏右边的对话区，上面盖一层遮罩，侧边栏不透明 */
+.skin-preview.skin-preview-custom { display: grid; place-items: center; background: var(--panel); color: var(--muted); font-size: 12px; }
+.skin-preview-chat { position: absolute; left: 30%; right: 0; top: 0; bottom: 0; background: center / cover no-repeat; }
+.skin-preview-chat::after { content: ""; position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) var(--preview-veil), transparent); }
+.skin-preview-custom .skin-preview-side { background-color: var(--frame); }
 
 /* 「调整」一节：按钮、取色、遮罩滑块 */
 .appearance-row-actions { flex: none; display: flex; align-items: center; gap: 8px; }

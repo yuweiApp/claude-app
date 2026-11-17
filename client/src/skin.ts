@@ -94,6 +94,8 @@ export interface SkinView {
   hasImage: boolean;
   /** 已上传的自定义背景图 */
   image: string | null;
+  /** 自定义背景图的遮罩浓度（没选它时也有，给设置页的预览卡片） */
+  imageVeil: number;
 }
 
 function view(): SkinView {
@@ -109,6 +111,7 @@ function view(): SkinView {
     veil: translucent ? (adj.veil ?? defaultVeil(hasImage)) : null,
     hasImage,
     image,
+    imageVeil: adjusts[CUSTOM_SKIN]?.veil ?? defaultVeil(true),
   };
 }
 
