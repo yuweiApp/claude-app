@@ -29,6 +29,7 @@ export function terminalServer(terminals: TerminalManager, cwd: string, sessionI
       "read_terminal 读屏幕上的文字；run_in_terminal 在终端里敲一行命令并回车，用户能在面板里实时看到、能接着输入、能 Ctrl-C。" +
       "run_in_terminal 敲完就返回，不等命令结束：命令结束时不会通知你，输出只能用 read_terminal 从屏幕上读（清屏之前的、被回车覆盖掉的进度行不在了）；" +
       "退出码只有 PowerShell 的终端有，在 read_terminal 结果开头的状态里。Bash 工具的命令结束时返回完整输出和退出码。" +
+      "Bash 工具的命令返回后还在运行的进程（脱离出去启动的服务之类）不出现在用户界面的任何地方，用户看不到它们和它们的输出；Bash 的 run_in_background 命令显示在用户界面的后台任务里。" +
       "命令在本轮结束后继续运行，直到它自己结束、被停止或终端被关闭。" +
       "你开的终端在一轮结束时，里面的命令已经结束的（回到了提示符，或 shell 已退出）会自动关闭、从面板里去掉，屏幕上的输出随之没有了；" +
       "不自动关闭的：命令还在跑的、shell 里还有后台任务的、判断不出命令结束没有的、用户在里面敲过东西的、用户那时正在面板里看着的。" +
