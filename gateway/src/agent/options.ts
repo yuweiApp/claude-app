@@ -15,6 +15,7 @@ import { nativePath, parseRemote } from "../ssh/location.js";
 import { sshHost } from "../ssh/hosts.js";
 import { remoteSpawner } from "../ssh/spawn.js";
 import { hostPort } from "../ssh/host.js";
+import { subagentModelHooks } from "./subagent-model.js";
 
 export interface SessionLaunch {
   sessionId: string;
@@ -72,6 +73,8 @@ export function buildOptions(launch: SessionLaunch): Options {
     // 不带这个标志启动的会话，之后无法用 setPermissionMode 切到 bypassPermissions（「全部允许」）
     allowDangerouslySkipPermissions: true,
     canUseTool: launch.canUseTool,
+    // 子代理跟着会话选的模型走（只在接第三方接口时），见 subagent-model.ts
+    ...withHooks(),
     ...(allowedTools.length ? { allowedTools } : {}),
     disallowedTools: [...config.disallowedTools, ...disabledAgents().map((name) => `Agent(${name})`)],
     settingSources: ["user", "project", "local"],
@@ -134,6 +137,8 @@ function buildRemoteOptions(launch: SessionLaunch): Options {
     permissionMode: launch.permissionMode,
     allowDangerouslySkipPermissions: true,
     canUseTool: launch.canUseTool,
+    // 子代理跟着会话选的模型走（只在接第三方接口时），见 subagent-model.ts
+    ...withHooks(),
     ...(allowedTools.length ? { allowedTools } : {}),
     disallowedTools: config.disallowedTools,
     settingSources: ["user", "project", "local"],
@@ -152,4 +157,9 @@ function buildRemoteOptions(launch: SessionLaunch): Options {
     abortController: launch.abortController,
     stderr: launch.stderr,
   };
+}
+
+function withHooks(): Pick<Options, "hooks"> {
+  const hooks = subagentModelHooks();
+  return hooks ? { hooks } : {};
 }

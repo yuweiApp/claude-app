@@ -246,6 +246,7 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 - `ANTHROPIC_MODEL`：默认模型（如 `gpt-6-luna`），新会话用它。
 - 模型菜单读接口的 `GET /v1/models`（`GET /models` 缓存 5 分钟），按 codex-app-server 的规则去掉图片、视频、语音、向量、3D 等不是对话的模型，`MODELS_FILTER` 正则可以再筛；默认模型排第一。切换用 `Query.setModel(<模型 id>)`。
 - Claude Code 的 opus / sonnet / haiku 档位（后台生成标题、WebFetch 总结、Explore 子代理用 haiku）默认会请求 `claude-*` 模型，第三方接口里没有。网关启动 claude 子进程时把 `ANTHROPIC_DEFAULT_OPUS_MODEL` / `SONNET` / `HAIKU` 都设成默认模型，配置文件里不用写。
+- 这样一来，模型调 Agent 工具时自己填的 `model`（`sonnet` 等）会让子代理固定跑默认模型，而不是会话在模型菜单里选的那个。接第三方接口时网关挂一个 `PreToolUse` hook（`gateway/src/agent/subagent-model.ts`），把 Agent 调用参数里的 `model` 去掉，子代理就继承会话当前的模型（中途切换的也算）；对话里显示的还是模型原来填的参数。子代理定义文件里自己写了 `model` 的仍按档位走。直连 Anthropic 时不挂，档位照原样。
 - 没配 `ANTHROPIC_BASE_URL`（直连 Anthropic）时，模型菜单用 Claude Code 自己的列表（`Query.supportedModels()`）。
 
 另外：
