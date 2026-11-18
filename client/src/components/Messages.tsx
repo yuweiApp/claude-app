@@ -5,7 +5,7 @@ import { Attachments } from "./Attachments";
 import { GoalIcon } from "./Goal";
 import { ImageThumb } from "./ImageThumb";
 import { CopyAction, ForkAction, MessageActions } from "./MessageActions";
-import { desktopCommandLine, StepGroup, stepImages, ToolIcon, ToolStep, type ToolUse } from "./Steps";
+import { desktopCommandLine, SparkIcon, StepGroup, stepImages, ToolIcon, ToolStep, type ToolUse } from "./Steps";
 import { StepThumbs } from "./StepThumbs";
 import { formatShortDuration } from "./TasksPopover";
 import { MentionText, splitImageRefs } from "./MentionText";
@@ -330,7 +330,7 @@ function BackgroundWorking({ tasks, noticePending }: { tasks: SessionView["backg
     if (!noticePending) return null;
     return (
       <div className="working background-working">
-        <ToolIcon icon="✳" running />
+        <ToolIcon icon={<SparkIcon />} running />
         <span className="working-label">后台任务已结束，结果正在交给模型</span>
       </div>
     );
@@ -345,7 +345,7 @@ function BackgroundWorking({ tasks, noticePending }: { tasks: SessionView["backg
   const since = Math.min(...running.map((t) => t.startedAt));
   return (
     <div className="working background-working" title={running.map((t) => t.description).join("\n")}>
-      <ToolIcon icon="✳" running />
+      <ToolIcon icon={<SparkIcon />} running />
       <span className="working-label">{label}</span>
       <span className="step-time">
         <Elapsed since={since} />
@@ -376,7 +376,7 @@ function RetryLine({ retry }: { retry: ApiRetry }) {
       : [retry.status, RETRY_ERRORS[retry.error] ?? retry.error].filter((part) => part !== null && part !== "").join(" ");
   return (
     <div className="working" title={`api_retry：attempt ${retry.attempt}/${retry.maxRetries}，error_status ${retry.status ?? "无"}，error ${retry.error}`}>
-      <ToolIcon icon="✳" running />
+      <ToolIcon icon={<SparkIcon />} running />
       <span className="working-label">
         模型接口出错（{cause}），第 {retry.attempt} 次重试（最多 {retry.maxRetries} 次）
       </span>
@@ -483,7 +483,7 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
               <RetryLine key={view.retry.at} retry={view.retry} />
             ) : (
               <div className="working">
-                <ToolIcon icon="✳" running />
+                <ToolIcon icon={<SparkIcon />} running />
                 <span className="working-label">思考中…</span>
               </div>
             ))}

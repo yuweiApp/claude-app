@@ -18,27 +18,27 @@ function toolLabel(block: ToolUse, running: boolean): { icon: ReactNode; verb: s
   const i = (block.input ?? {}) as Record<string, unknown>;
   const s = (key: string) => (typeof i[key] === "string" ? (i[key] as string) : "");
   const v = (doing: string, done: string) => (running ? doing : done);
-  // 右侧面板的终端（网关的 terminal MCP 服务器）用面板里终端标签页的图标，和 Bash 的 ⌘ 分开
+  // 右侧面板的终端（网关的 terminal MCP 服务器）用面板里终端标签页那个带框的图标，和 Bash 不带框的提示符分开
   const terminal = <TerminalIcon />;
   switch (block.name) {
     case "Bash":
-      return { icon: "⌘", verb: v("正在运行", "已运行"), target: s("command") };
+      return { icon: <PromptIcon />, verb: v("正在运行", "已运行"), target: s("command") };
     case "Read":
-      return { icon: "⌘", verb: v("正在读取", "已读取"), target: s("file_path") };
+      return { icon: <FileIcon />, verb: v("正在读取", "已读取"), target: s("file_path") };
     case "Grep":
-      return { icon: "⌕", verb: v("正在搜索", "已搜索"), target: s("pattern") };
+      return { icon: <SearchIcon />, verb: v("正在搜索", "已搜索"), target: s("pattern") };
     case "Glob":
-      return { icon: "⌕", verb: v("正在查找", "已查找"), target: s("pattern") };
+      return { icon: <SearchIcon />, verb: v("正在查找", "已查找"), target: s("pattern") };
     case "Edit":
     case "NotebookEdit":
-      return { icon: "✎", verb: v("正在编辑", "已编辑"), target: s("file_path") || s("notebook_path") };
+      return { icon: <PencilIcon />, verb: v("正在编辑", "已编辑"), target: s("file_path") || s("notebook_path") };
     case "Write":
-      return { icon: "✎", verb: v("正在写入", "已写入"), target: s("file_path") };
+      return { icon: <PencilIcon />, verb: v("正在写入", "已写入"), target: s("file_path") };
     case "WebFetch":
-      return { icon: "⌕", verb: v("正在获取", "已获取"), target: s("url") };
+      return { icon: <SearchIcon />, verb: v("正在获取", "已获取"), target: s("url") };
     case "Agent":
     case "Task":
-      return { icon: "✳", verb: v("子代理运行中", "子代理"), target: s("description") };
+      return { icon: <SparkIcon />, verb: v("子代理运行中", "子代理"), target: s("description") };
     // 右侧面板终端的工具（网关的 terminal MCP 服务器，参照 Claude 桌面版）
     case "mcp__terminal__read_terminal":
       return { icon: terminal, verb: v("正在读取终端", "已读取终端"), target: "" };
@@ -50,14 +50,63 @@ function toolLabel(block: ToolUse, running: boolean): { icon: ReactNode; verb: s
       return { icon: terminal, verb: i.close ? v("正在关闭终端", "已关闭终端") : v("正在停止终端", "已停止终端"), target: "" };
     // 桌面工具（网关的 desktop MCP 服务器，agent-desktop）
     case "mcp__desktop__run":
-      return { icon: "▣", verb: v("正在操作桌面", "已操作桌面"), target: desktopCommandLine(i) };
+      return { icon: <DesktopIcon />, verb: v("正在操作桌面", "已操作桌面"), target: desktopCommandLine(i) };
     case "mcp__desktop__run_code":
-      return { icon: "▣", verb: v("正在运行桌面脚本", "已运行桌面脚本"), target: firstLine(s("code")) };
+      return { icon: <DesktopIcon />, verb: v("正在运行桌面脚本", "已运行桌面脚本"), target: firstLine(s("code")) };
     default:
       // 浏览器工具（内置浏览器 inapp、外部浏览器 chrome / edge…，旧记录里的 web）：工具名都是 mcp__<服务器>__browser_…，
       // 图标用面板里浏览器标签页的那个地球
-      return { icon: BROWSER_TOOL.test(block.name) ? <GlobeIcon /> : "⚙", verb: v("正在调用", "已调用"), target: block.name };
+      return { icon: BROWSER_TOOL.test(block.name) ? <GlobeIcon /> : <WrenchIcon />, verb: v("正在调用", "已调用"), target: block.name };
   }
+}
+
+/* 工具行的图标：16×16 网格、1.4 线宽、圆角端点，和面板里终端、浏览器标签页的图标同一套画法 */
+function LineIcon({ children }: { children: ReactNode }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {children}
+    </svg>
+  );
+}
+
+/** Bash：不带框的提示符 >_（面板终端是带框的） */
+function PromptIcon() {
+  return <LineIcon><path d="m3 4.5 3.5 3.5L3 11.5M8.5 11.5h4.5" /></LineIcon>;
+}
+
+/** 读取：折角的文件 */
+function FileIcon() {
+  return (
+    <LineIcon>
+      <path d="M4.5 1.75h4.75L12.5 5v8.25a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1z" />
+      <path d="M9.25 1.75V5h3.25M5.75 8.25h4.5M5.75 10.75h3" />
+    </LineIcon>
+  );
+}
+
+/** 搜索、查找、获取网页：放大镜 */
+function SearchIcon() {
+  return <LineIcon><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3.5 3.5" /></LineIcon>;
+}
+
+/** 编辑、写入：铅笔 */
+function PencilIcon() {
+  return <LineIcon><path d="M10.5 2.5 13.5 5.5 6 13H3v-3z" /><path d="m9 4 3 3" /></LineIcon>;
+}
+
+/** 桌面工具：显示器 */
+function DesktopIcon() {
+  return <LineIcon><rect x="1.75" y="2.5" width="12.5" height="8.5" rx="1.5" /><path d="M5.5 14h5M8 11v3" /></LineIcon>;
+}
+
+/** 其他工具：扳手 */
+function WrenchIcon() {
+  return <LineIcon><path d="M10.2 2.1a3.5 3.5 0 0 0-3.9 4.6L2.2 10.8a1.4 1.4 0 0 0 2 2l4.1-4.1a3.5 3.5 0 0 0 4.6-3.9l-2 2-1.7-.4-.4-1.7z" /></LineIcon>;
+}
+
+/** 子代理、思考中、后台任务：三笔交叉的星号（字符 ✳ 在 Windows 上会显示成彩色 emoji） */
+export function SparkIcon() {
+  return <LineIcon><path d="M8 2v12M2.8 5l10.4 6M2.8 11l10.4-6" /></LineIcon>;
 }
 
 /** 桌面工具 run 的命令行：agent-desktop <命令> <参数…>，需要时加引号；headed 加 --headed */
@@ -110,7 +159,7 @@ function CopyButton({ getText }: { getText: () => string }) {
   );
 }
 
-/** icon：一个字符，或者 SVG 图标（浏览器工具的地球、终端工具的终端，大小见 .step-icon-glyph svg） */
+/** icon：SVG 线条图标（下面这一组和浏览器的地球、终端的终端同一套画法，大小见 .step-icon-glyph svg） */
 export function ToolIcon({ icon, running }: { icon: ReactNode; running: boolean }) {
   return (
     <span className={`step-icon${running ? " step-icon-running" : ""}`}>
@@ -234,7 +283,7 @@ export function StepGroup({ tools, view, renderChildren }: { tools: ToolUse[]; v
     <div className="step-group">
       <div className="step-row">
         <button className="step-line" onClick={() => setOpen((o) => !o)}>
-          <ToolIcon icon={commands ? "⌘" : "⚙"} running={running} />
+          <ToolIcon icon={commands ? <PromptIcon /> : <WrenchIcon />} running={running} />
           <span className="step-label">
             {title}
             <span className="step-count">{tools.length}</span>

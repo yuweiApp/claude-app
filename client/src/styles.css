@@ -781,7 +781,7 @@ span.connector-added { color: var(--ok); font-weight: 500; }
   width: 16px; height: 16px; line-height: 1; font-size: 12px;
 }
 .step-icon-glyph { display: inline-flex; align-items: center; justify-content: center; }
-/* SVG 图标（浏览器工具的地球、终端工具的终端）和 12px 的字符图标看起来一样大 */
+/* 工具行的 SVG 线条图标，16px 的画布缩到 13px，和行里 13px 的文字一样高 */
 .step-icon-glyph svg { width: 13px; height: 13px; }
 .step-icon-running { position: relative; color: var(--accent); }
 .step-icon-running::after {
