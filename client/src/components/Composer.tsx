@@ -45,6 +45,8 @@ interface Props {
   /** 排队消息的操作：立即发送、撤回到输入框编辑、删除 */
   onQueued?: (uuid: string, action: "send" | "edit" | "delete") => Promise<void>;
   onInterrupt: () => void;
+  /** 点了停止、这一轮还没结束：停止按钮转圈、不能再点 */
+  stopping?: boolean;
   /** 工具栏左边「+」后面：权限、新会话的选文件夹 */
   left?: ReactNode;
   /** 工具栏右边发送按钮前面：模型和推理强度 */
@@ -73,7 +75,7 @@ interface Props {
 }
 
 /** 输入框，样式同 codex-app-server：一个圆角框，上面输入，下面一行「+」、权限、模型、发送 */
-export function Composer({ running, working = running, maxUploadMb, onSend, onInterrupt, left, right, top, handle, cwd, draftKey, onContinue, notes, hasNotes = false, queued = [], onQueued, goal, onGoal, goalActive, onClear, clearBlocked }: Props) {
+export function Composer({ running, working = running, maxUploadMb, onSend, onInterrupt, stopping = false, left, right, top, handle, cwd, draftKey, onContinue, notes, hasNotes = false, queued = [], onQueued, goal, onGoal, goalActive, onClear, clearBlocked }: Props) {
   const [text, setText] = useDraftField(draftKey, "text");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
@@ -578,7 +580,13 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
         {right}
         {/* 只有一个按钮：运行中输入框空着是停止，有内容就换成「追加到当前任务」的发送 */}
         {running && !text.trim() && ready.length === 0 && !hasNotes ? (
-          <button className="send-btn send-stop" onClick={onInterrupt} title="停止" aria-label="停止">
+          <button
+            className={`send-btn send-stop${stopping ? " stopping" : ""}`}
+            disabled={stopping}
+            onClick={onInterrupt}
+            title={stopping ? "正在停止…" : "停止"}
+            aria-label={stopping ? "正在停止" : "停止"}
+          >
             <span className="stop-core" aria-hidden="true" />
           </button>
         ) : onContinue && !running && !text.trim() && files.length === 0 && !hasNotes ? (

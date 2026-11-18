@@ -1296,6 +1296,14 @@ span.connector-added { color: var(--ok); font-weight: 500; }
 .send-btn:disabled { opacity: 0.35; }
 /* 运行中的停止按钮：和发送按钮一样大小、一样的底色，中间一个小方块 */
 .stop-core { width: 10px; height: 10px; border-radius: 2px; background: currentColor; }
+/* 点了停止、还没停下：不变淡（盖住 :disabled），方块外面转一圈 */
+.send-btn.send-stop.stopping { position: relative; opacity: 1; cursor: default; }
+.send-btn.send-stop.stopping::after {
+  content: ""; position: absolute; inset: 4px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--bg) 30%, transparent); border-top-color: var(--bg);
+  animation: send-stop-spin 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .send-btn.send-stop.stopping::after { animation: none; } }
 @keyframes send-stop-spin { to { transform: rotate(1turn); } }
 .spacer { flex: 1; }
 

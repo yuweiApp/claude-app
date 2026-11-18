@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import net from "node:net";
 import { Duplex, type Readable, type Writable } from "node:stream";
-import ssh2, { Client, type AnyAuthMethod, type AuthHandlerMiddleware, type ClientChannel, type ExecOptions, type SFTPWrapper } from "ssh2";
+import ssh2, { Client, type AnyAuthMethod, type AuthHandlerMiddleware, type ClientChannel, type ConnectConfig, type ExecOptions, type SFTPWrapper } from "ssh2";
 import type { SshConnectionInfo, SshStatus } from "../shared/types.js";
 import { getConnection, patchConnection, type SshConnection } from "./connections.js";
 import { HostKeyError, hostKeyOf, knownHostsHas, type HostKey } from "./host-key.js";
@@ -60,8 +60,10 @@ const KEEPALIVE_COUNT_MAX = 4;
 const KEEPALIVE_DESC = `${((KEEPALIVE_COUNT_MAX + 1) * KEEPALIVE_INTERVAL_MS) / 1000} 秒内没收到远端的响应`;
 
 /**
- * 一台远程主机：一条 ssh2 连接，claude 进程、终端、SFTP、模型请求的反向转发都在这条连接上开通道。
+ * 一台远程主机：一条 ssh2 连接（主连接），claude 进程、终端、SFTP 都在这条连接上开通道。
  * 连上后先准备远端（上传 Claude Code、启动脚本，见 deploy.ts），再在远端 127.0.0.1 上开一个端口转发回网关（见 model-proxy.ts）。
+ * 模型请求的转发另开一条连接（见 openModelForward）：一次请求体有几 MB（上下文大时），和 claude 的标准输出挤在同一条 TCP 连接上，
+ * 远端上行慢时 claude 的输出要排在没发完的请求体后面（实测中断后的结果晚了约 10 秒才到）。
  * 断开后不自动重连，下次要用时（发消息、开终端、看文件）再连
  */
 export class SshHost {
@@ -81,6 +83,8 @@ export class SshHost {
   lastClose: { at: number; reason: string } | null = null;
 
   private client: Client | null = null;
+  /** 模型请求转发用的那条连接；没开成、退回到主连接上转发时是 null */
+  private modelClient: Client | null = null;
   private ready: Promise<void> | null = null;
   private sftpConn: Promise<SFTPWrapper> | null = null;
   /** 用户输入过的密码：只在内存里，断开后重连还用它 */
@@ -158,6 +162,7 @@ export class SshHost {
       if (this.ready === ready) this.ready = null;
       this.client?.end();
       this.client = null;
+      this.endModelClient();
       this.setStatus("error", err instanceof Error ? err.message : String(err));
       throw err;
     });
@@ -216,15 +221,8 @@ export class SshHost {
         }
         reject(new SshError(`连接 ${target.user}@${target.hostname}:${target.port} 失败：${err.message}`));
       });
-      client.connect({
-        host: target.hostname,
-        port: target.port,
-        username: target.user,
-        ...(target.proxyJump || target.proxyCommand ? { sock: proxySocket(target) } : {}),
-        readyTimeout: READY_TIMEOUT_MS,
-        keepaliveInterval: KEEPALIVE_INTERVAL_MS,
-        keepaliveCountMax: KEEPALIVE_COUNT_MAX,
-        hostVerifier: (blob: Buffer, verify: (ok: boolean) => void) => {
+      client.connect(
+        connectOptions(target, this.password, (blob, verify) => {
           void this.verifyHostKey(conn, target, blob).then(
             () => verify(true),
             (err: unknown) => {
@@ -232,9 +230,8 @@ export class SshHost {
               verify(false);
             },
           );
-        },
-        authHandler: authMethods(target, this.password),
-      });
+        }),
+      );
     });
     this.client = client;
     this.closeReason = undefined;
@@ -266,12 +263,68 @@ export class SshHost {
     this.progress = undefined;
     patchConnection(this.id, { facts: { platform: this.env.platform, home: this.env.home } });
     this.proxy ??= createModelProxy();
-    this.proxyPort = await new Promise<number>((resolve, reject) =>
-      client.forwardIn("127.0.0.1", 0, (err, port) => (err ? reject(new SshError(`远端不允许端口转发，模型请求转发不了：${err.message}`)) : resolve(port))),
-    );
+    this.proxyPort = await this.openModelForward(client, target, 0);
     await this.syncForwards(target.remoteForwards);
     this.connectedAt = Date.now();
     this.setStatus("ready");
+  }
+
+  /**
+   * 模型请求的反向转发：另开一条连接，在远端 127.0.0.1:<port>（0 是随便一个空闲端口）上监听，返回实际端口。
+   * 另开的连接连不上、开不了转发时退回到主连接上转发（同以前）。
+   * 那条连接断了而主连接还在：重新连上、在同一个端口上再开（已经在跑的 claude 的 ANTHROPIC_BASE_URL 是这个端口），
+   * 重新连不上就在主连接上开这个端口；端口也开不回来（被占了）就断开主连接，会话报错，再发消息时重新连
+   */
+  private async openModelForward(main: Client, target: ResolvedTarget, port: number): Promise<number> {
+    const link = await this.dialModelLink(target).catch(() => null);
+    if (link) {
+      if (this.client !== main) {
+        link.end();
+        throw new SshError("SSH 连接已断开");
+      }
+      try {
+        const bound = await forwardIn(link, port);
+        link.on("tcp connection", (details, accept, reject) => {
+          if (details.destPort === this.proxyPort && this.proxy) this.proxy.handle(accept());
+          else reject();
+        });
+        link.on("close", () => this.modelLinkClosed(link, main, target));
+        this.modelClient = link;
+        return bound;
+      } catch {
+        link.end();
+      }
+    }
+    return forwardIn(main, port);
+  }
+
+  /** 连模型转发用的连接：认证同主连接，主机密钥要和主连接认过的一样 */
+  private dialModelLink(target: ResolvedTarget): Promise<Client> {
+    const trusted = this.connection.hostKey?.fingerprint;
+    const link = new Client();
+    return new Promise<Client>((resolve, reject) => {
+      link.once("ready", () => resolve(link));
+      link.on("error", (err) => reject(err));
+      link.connect(connectOptions(target, this.password, (blob, verify) => verify(!!trusted && hostKeyOf(blob).fingerprint === trusted)));
+    });
+  }
+
+  private modelLinkClosed(link: Client, main: Client, target: ResolvedTarget): void {
+    if (this.modelClient !== link) return;
+    this.modelClient = null;
+    const port = this.proxyPort;
+    if (this.client !== main || port === null) return;
+    void this.openModelForward(main, target, port).catch((err: unknown) => {
+      if (this.client !== main) return;
+      this.closeReason = `模型请求的转发断开后没能重新开：${err instanceof Error ? err.message : String(err)}`;
+      main.end();
+    });
+  }
+
+  private endModelClient(): void {
+    const link = this.modelClient;
+    this.modelClient = null;
+    link?.end();
   }
 
   /**
@@ -333,6 +386,7 @@ export class SshHost {
     if (this.client !== client) return;
     this.lastClose = { at: Date.now(), reason: this.closeReason ?? "远端关闭了连接" };
     this.client = null;
+    this.endModelClient();
     this.ready = null;
     this.sftpConn = null;
     this.proxyPort = null;
@@ -467,6 +521,28 @@ export function collect(channel: ClientChannel, stdin: Buffer | string | Readabl
     else if (typeof stdin === "string" || Buffer.isBuffer(stdin)) channel.end(stdin);
     else stdin.pipe(channel);
   });
+}
+
+/** 主连接和模型转发的连接共用的连接参数 */
+function connectOptions(target: ResolvedTarget, password: string | undefined, hostVerifier: (blob: Buffer, verify: (ok: boolean) => void) => void): ConnectConfig {
+  return {
+    host: target.hostname,
+    port: target.port,
+    username: target.user,
+    ...(target.proxyJump || target.proxyCommand ? { sock: proxySocket(target) } : {}),
+    readyTimeout: READY_TIMEOUT_MS,
+    keepaliveInterval: KEEPALIVE_INTERVAL_MS,
+    keepaliveCountMax: KEEPALIVE_COUNT_MAX,
+    hostVerifier,
+    authHandler: authMethods(target, password),
+  };
+}
+
+/** 在远端 127.0.0.1:<port> 上开反向转发（0 是随便一个空闲端口），返回实际端口 */
+function forwardIn(client: Client, port: number): Promise<number> {
+  return new Promise((resolve, reject) =>
+    client.forwardIn("127.0.0.1", port, (err, bound) => (err ? reject(new SshError(`远端不允许端口转发，模型请求转发不了：${err.message}`)) : resolve(bound || port))),
+  );
 }
 
 /** 认证顺序：配置里的私钥（加密了的跳过）→ ssh-agent → 用户输入的密码（密码登录和键盘交互都用它） */

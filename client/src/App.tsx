@@ -720,6 +720,21 @@ export function Chat({
   const working =
     view.state === "running" || (view.state === "idle" && (view.noticePending || view.backgroundTasks.some((t) => t.status === "running"))) || view.terminalsRunning;
 
+  // 点了停止、这一轮还没结束：按钮换成「正在停止」，免得以为没点上（远程会话的结果可能要过一会儿才回来）
+  const [stoppingId, setStoppingId] = useState<string | null>(null);
+  const stopping = !!sessionId && stoppingId === sessionId && view.state === "running";
+  useEffect(() => {
+    if (view.state !== "running") setStoppingId(null);
+  }, [view.state]);
+  const interrupt = () => {
+    if (!sessionId) return;
+    setStoppingId(sessionId);
+    api.interrupt(sessionId).catch((e: Error) => {
+      setStoppingId(null);
+      onError(e.message);
+    });
+  };
+
   const permissionMode = sessionId ? (view.permissionMode ?? config.permissionMode) : newMode;
   const changeMode = (mode: string) => {
     if (!sessionId) setNewMode(mode as PermissionMode);
@@ -801,7 +816,8 @@ export function Chat({
         onSend={send}
         queued={view.queued.filter((q) => q.next)}
         onQueued={queuedAction}
-        onInterrupt={() => sessionId && api.interrupt(sessionId).catch((e: Error) => onError(e.message))}
+        stopping={stopping}
+        onInterrupt={interrupt}
         onContinue={interrupted ? () => void send("继续", []).catch(() => undefined) : undefined}
         left={<PermissionPicker value={permissionMode} onChange={changeMode} />}
         handle={composerRef}
