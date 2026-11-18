@@ -267,7 +267,8 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 .session-row { justify-content: space-between; gap: 8px; min-height: 32px; padding: 6px 10px 6px 12px; font-size: 13.5px; }
 /* 悬停底色按整行算（和项目行一样）：鼠标移到右边的「…」上、菜单开着时也保持 */
 .session-item:hover .session-row, .session-item.menu-open .session-row { background: var(--frame-hover); }
-.session-meta { flex: none; font-size: 11.5px; color: var(--muted); }
+/* 时间至少和「…」一样宽：悬停时时间隐藏但照占位置，「…」盖在它上面，前面的分享图标、主机名不挪动 */
+.session-meta { flex: none; min-width: 24px; text-align: right; font-size: 11.5px; color: var(--muted); }
 .session-row.active, .session-item:hover .session-row.active, .session-item.menu-open .session-row.active { background: var(--bg); box-shadow: var(--raised-shadow); font-weight: 500; }
 .session-item:hover .session-meta, .session-item.menu-open .session-meta, .session-row.running .session-meta { visibility: hidden; }
 .session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -297,7 +298,7 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
   content: ""; position: absolute; top: 50%; right: 0; width: 2.5px; height: 2.5px; margin-top: -1.25px; border-radius: 50%; background: var(--accent);
 }
 @media (prefers-reduced-motion: reduce) { .session-spinner { animation: none; } }
-/* 会话行悬停或菜单开着：右边出现「…」，转圈让位，标题让出位置 */
+/* 会话行悬停或菜单开着：右边出现「…」（盖在隐藏的时间上），转圈让位 */
 .session-item { position: relative; }
 .branch-row { margin-left: 22px; }
 .branch-row::before {
@@ -318,7 +319,6 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 }
 .session-item:hover .row-more, .session-item.menu-open .row-more, .row-more:focus-visible { opacity: 1; pointer-events: auto; }
 .sidebar .row-more:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
-.session-item:hover .session-row, .session-item.menu-open .session-row { padding-right: 36px; }
 .session-item:hover .session-spinner, .session-item.menu-open .session-spinner { opacity: 0; }
 /* 重命名：输入框和会话行一样高、一样的左边距（项目里的会话缩进更多） */
 .session-title-input {
