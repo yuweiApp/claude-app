@@ -123,6 +123,17 @@ export function BrowsersPage() {
   );
 }
 
+/**
+ * 扩展连接页的复制按钮复制的是整行环境变量 `PLAYWRIGHT_MCP_EXTENSION_TOKEN=xxx`，粘贴进来只留等号后面的 token。
+ * 顺带去掉前面的 export / set / $env: 和两边的引号，免得从 shell 里抄来的也要手改
+ */
+function extractToken(value: string): string {
+  // 变量名要以 TOKEN 结尾，免得把带 = 填充的 token 本身当成「名=值」拆掉
+  const m = /^\s*(?:export\s+|set\s+|\$env:)?\w*TOKEN\s*=\s*(.*?)\s*$/i.exec(value);
+  if (!m) return value;
+  return (m[1] ?? "").replace(/^(["'])(.*)\1$/, "$2");
+}
+
 function BrowserRow({ browser: b, installUrl, apply }: { browser: BrowserEntry; installUrl: string; apply: (action: Promise<BrowserSettingsView>) => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [token, setToken] = useState("");
@@ -203,7 +214,7 @@ function BrowserRow({ browser: b, installUrl, apply }: { browser: BrowserEntry; 
                 autoComplete="off"
                 value={token}
                 placeholder={b.hasToken ? "已填写，输入新的可以替换" : "连接页上复制的 token，填了就免批准自动连接"}
-                onChange={(e) => setToken(e.target.value)}
+                onChange={(e) => setToken(extractToken(e.target.value))}
               />
               <button type="submit" disabled={!token.trim()}>
                 保存
