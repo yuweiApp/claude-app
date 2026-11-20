@@ -36,16 +36,26 @@ export function CopyAction({ text, title, className }: { text: string | (() => s
   );
 }
 
-/** 分叉按钮：从这条消息开一个新会话，这个会话不变；请求期间禁用（同 Claude 桌面版的 Fork from here） */
+/**
+ * 分叉按钮：从这条消息开一个新会话，这个会话不变（同 Claude 桌面版的 Fork from here）。
+ * 请求期间禁用，按钮换成转圈和「正在分叉…」，一直显示（远程会话要把记录传到远端，可能要几十秒）
+ */
 export function ForkAction({ onFork }: { onFork: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const title = "从这里分叉：开一个新会话，接着这条回复继续，当前会话保持不变";
+  if (busy) {
+    return (
+      <button className="msg-action msg-action-busy" aria-label="正在分叉" disabled>
+        <span className="msg-action-spinner" aria-hidden="true" />
+        正在分叉…
+      </button>
+    );
+  }
   return (
     <button
       className="msg-action"
-      title={busy ? "分叉中…" : title}
+      title={title}
       aria-label="从这里分叉"
-      disabled={busy}
       onClick={() => {
         setBusy(true);
         onFork().finally(() => setBusy(false));

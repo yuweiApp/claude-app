@@ -21,13 +21,21 @@ export async function mkdirp(host: SshHost, p: string): Promise<void> {
   await run(host, `mkdir -p -- ${shQuote(p)}`, `New-Item -ItemType Directory -Force -Path ${win(p)} | Out-Null`);
 }
 
-/** 连同里面的东西删掉，不存在的跳过 */
+/**
+ * 连同里面的东西删掉，不存在的跳过。
+ * Windows 上文件被别的进程开着时删不掉（刚退出的 claude、还没读完的 SFTP、杀毒软件扫描），隔 0.5 秒重试，最多 10 秒
+ */
 export async function rmrf(host: SshHost, ...paths: string[]): Promise<void> {
   if (!paths.length) return;
   await run(
     host,
     `rm -rf -- ${paths.map(shQuote).join(" ")}`,
-    paths.map((p) => `if (Test-Path -LiteralPath ${win(p)}) { Remove-Item -LiteralPath ${win(p)} -Recurse -Force }`).join("\n"),
+    paths
+      .map(
+        (p) =>
+          `for ($i = 0; (Test-Path -LiteralPath ${win(p)}); $i++) { try { Remove-Item -LiteralPath ${win(p)} -Recurse -Force; break } catch { if ($i -ge 19) { throw }; Start-Sleep -Milliseconds 500 } }`,
+      )
+      .join("\n"),
   );
 }
 

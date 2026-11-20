@@ -28,6 +28,8 @@ const HOST_SYNC_MS = 3_000;
 let manifest: Manifest | null = null;
 /** 分叉出来、正在传到远端的会话：远端还没有它的记录，整台主机同步时不能当成别处删了 */
 const uploading = new Set<string>();
+/** 分叉的记录传完的时刻：整台主机同步开始列目录之后才传完的，列出来的结果里可能没有它，也不能当成别处删了 */
+const uploadedAt = new Map<string, number>();
 
 function load(): Manifest {
   if (!manifest) {
@@ -86,6 +88,7 @@ export function syncHost(host: SshHost): Promise<void> {
 }
 
 async function doSyncHost(host: SshHost): Promise<void> {
+  const started = Date.now();
   const sftp = await host.sftp();
   const root = remoteProjects(host);
   // 读不出来（比如正好断开）不能当成远端没有会话，不然本机的副本会被当成「别处删了」一起删掉；只有目录不存在才算空的
@@ -119,9 +122,11 @@ async function doSyncHost(host: SshHost): Promise<void> {
       await syncFile(host, `${root}/${project.filename}/${f.filename}`, project.filename, f.filename, f.attrs.size).catch(() => undefined);
     }
   }
+  // 这台主机的同步一次只有一个在跑：比这次早传完的，这次列目录时已经在了
+  for (const [id, at] of uploadedAt) if (at < started && m.sessions[id]?.host === host.id) uploadedAt.delete(id);
   // 远端已经没有的（别处删了）：本机的副本也删掉；刚建、还没落盘的（没有 project）留着
   for (const [sessionId, v] of Object.entries(m.sessions)) {
-    if (v.host !== host.id || !v.project || seen.has(sessionId) || uploading.has(sessionId)) continue;
+    if (v.host !== host.id || !v.project || seen.has(sessionId) || uploading.has(sessionId) || (uploadedAt.get(sessionId) ?? 0) >= started) continue;
     await removeMirror(sessionId);
     delete m.sessions[sessionId];
     changed = true;
@@ -131,7 +136,8 @@ async function doSyncHost(host: SshHost): Promise<void> {
 
 /** 一个会话的记录同步到本机（打开会话、一轮结束时）；没连着就跳过，用本机已有的副本 */
 export async function syncSession(host: SshHost, sessionId: string): Promise<void> {
-  if (!host.isReady) return;
+  // 正在上传的分叉会话：远端的还没写完，本机的就是最新的
+  if (!host.isReady || uploading.has(sessionId)) return;
   const m = load();
   let project = m.sessions[sessionId]?.project;
   const file = `${sessionId}.jsonl`;
@@ -148,16 +154,44 @@ export async function syncSession(host: SshHost, sessionId: string): Promise<voi
   if (attrs) await syncFile(host, remote, project, file, attrs.size);
 }
 
-async function syncFile(host: SshHost, remote: string, project: string, name: string, size: number): Promise<void> {
-  const dir = path.join(PROJECTS, project);
-  const local = path.join(dir, name);
+/** 正在同步的文件（本机路径）：同一个文件同时只同步一次，两个同步一起往本机副本里写会写乱 */
+const fileSyncs = new Map<string, Promise<void>>();
+/** 正在读的远端记录（按本机路径）：删会话时先停掉，Windows 上远端的文件开着就删不掉 */
+const reading = new Map<string, AbortController>();
+
+/**
+ * 远端的一份记录同步到本机。size 是调用方看到的远端大小（列目录、stat 时的），和本机的一样就不用取。
+ * 不一样时再 stat 一次取当前的大小：列目录到轮到这个文件之间远端可能又变了（比如分叉的记录刚传完），
+ * 拿旧的大小会把「远端变长了」当成「远端变短了、被改写过」，把本机副本清空、整个重新下载
+ */
+function syncFile(host: SshHost, remote: string, project: string, name: string, size: number): Promise<void> {
+  const local = path.join(PROJECTS, project, name);
+  const running = fileSyncs.get(local);
+  // 前一个同步完再看要不要取（多半已经一样了）
+  const next = (running ?? Promise.resolve()).catch(() => undefined).then(() => doSyncFile(host, remote, local, size));
+  fileSyncs.set(local, next);
+  void next.finally(() => {
+    if (fileSyncs.get(local) === next) fileSyncs.delete(local);
+  }).catch(() => undefined);
+  return next;
+}
+
+async function doSyncFile(host: SshHost, remote: string, local: string, listed: number): Promise<void> {
   const have = (await stat(local).catch(() => null))?.size ?? 0;
-  if (have === size) return;
-  await mkdir(dir, { recursive: true });
+  if (have === listed) return;
   const sftp = await host.sftp();
+  const size = await new Promise<number | null>((resolve) => sftp.stat(remote, (err, s) => resolve(err ? null : s.size)));
+  if (size === null || size === have) return;
+  await mkdir(path.dirname(local), { recursive: true });
   // 只会追加；变短了说明被改写过，整个重取
   const start = size > have ? have : 0;
-  await pipeline(sftp.createReadStream(remote, { start, end: size - 1 }), createWriteStream(local, { flags: start ? "a" : "w", mode: 0o600 }));
+  const abort = new AbortController();
+  reading.set(local, abort);
+  try {
+    await pipeline(sftp.createReadStream(remote, { start, end: size - 1 }), createWriteStream(local, { flags: start ? "a" : "w", mode: 0o600 }), { signal: abort.signal });
+  } finally {
+    reading.delete(local);
+  }
 }
 
 /** 在远端会话记录末尾追加几行（改标题），再同步回本机 */
@@ -185,9 +219,17 @@ export async function uploadForkedSession(host: SshHost, sourceId: string, sessi
   uploading.add(sessionId);
   try {
     const data = await readFile(path.join(PROJECTS, project, `${sessionId}.jsonl`));
-    await sftpWrite(await host.sftp(), `${remoteProjects(host)}/${project}/${sessionId}.jsonl`, data).catch((err: Error) => {
-      throw new Error(`写远端会话记录失败：${err.message}`);
-    });
+    // 单独开一个 SFTP 通道，传完关掉：几 MB 的记录在慢的链路上要传好几分钟（实测 art 上 8MB 约 3 分钟），
+    // 共用的通道上打开会话、同步记录不用排在它后面
+    const sftp = await host.openSftp();
+    try {
+      await sftpWrite(sftp, `${remoteProjects(host)}/${project}/${sessionId}.jsonl`, data).catch((err: Error) => {
+        throw new Error(`写远端会话记录失败：${err.message}`);
+      });
+    } finally {
+      sftp.end();
+    }
+    uploadedAt.set(sessionId, Date.now());
   } catch (err) {
     delete load().sessions[sessionId];
     save();
@@ -201,6 +243,8 @@ export async function uploadForkedSession(host: SshHost, sourceId: string, sessi
 export async function deleteRemoteSession(host: SshHost, sessionId: string): Promise<void> {
   const project = load().sessions[sessionId]?.project;
   if (project && host.env) {
+    // 这边还在下载它的记录（链路慢时一份要好几分钟）：先停掉
+    reading.get(path.join(PROJECTS, project, `${sessionId}.jsonl`))?.abort();
     const base = `${remoteProjects(host)}/${project}/${sessionId}`;
     const dir = `${remoteProjects(host)}/${project}`;
     // 项目目录里没有别的会话了就删掉；Claude Code 会建一个空的 memory 文件夹，空的先删（rmdir 只删空目录）
