@@ -2,7 +2,7 @@ import { createWriteStream, existsSync, readFileSync, writeFileSync } from "node
 import { mkdir, readFile, rm, rmdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import type { Stats } from "ssh2";
+import type { SFTPWrapper, Stats } from "ssh2";
 import { config } from "../config.js";
 import type { SshHost } from "./host.js";
 import { appendText, killRemoteClaude, rmdirQuiet, rmrf, sftpWrite } from "./remote-ops.js";
@@ -26,8 +26,11 @@ const NO_SUCH_FILE = 2;
 const HOST_SYNC_MS = 3_000;
 
 let manifest: Manifest | null = null;
-/** 分叉出来、正在传到远端的会话：远端还没有它的记录，整台主机同步时不能当成别处删了 */
-const uploading = new Set<string>();
+/**
+ * 分叉出来、正在传到远端的会话：远端还没有它的记录，整台主机同步时不能当成别处删了。
+ * 记着上传用的 SFTP 通道：传的时候删会话要先停掉它，Windows 上远端的文件写着时删不掉
+ */
+const uploading = new Map<string, { cancel: () => void; done?: Promise<void> }>();
 /** 分叉的记录传完的时刻：整台主机同步开始列目录之后才传完的，列出来的结果里可能没有它，也不能当成别处删了 */
 const uploadedAt = new Map<string, number>();
 
@@ -211,37 +214,66 @@ export async function appendRemote(host: SshHost, sessionId: string, entries: un
  * 远端的 claude resume 时读的是远端那份。
  * 上传前先记成这台主机的会话：上传要好几秒，这期间列会话不能把它当成本机会话。传失败了去掉
  */
-export async function uploadForkedSession(host: SshHost, sourceId: string, sessionId: string): Promise<void> {
+export function uploadForkedSession(host: SshHost, sourceId: string, sessionId: string): Promise<void> {
   const project = load().sessions[sourceId]?.project;
-  if (!project) throw new Error("远端还没有这个会话的记录");
+  if (!project) return Promise.reject(new Error("远端还没有这个会话的记录"));
   load().sessions[sessionId] = { host: host.id, project };
   save();
-  uploading.add(sessionId);
-  try {
-    const data = await readFile(path.join(PROJECTS, project, `${sessionId}.jsonl`));
-    // 单独开一个 SFTP 通道，传完关掉：几 MB 的记录在慢的链路上要传好几分钟（实测 art 上 8MB 约 3 分钟），
-    // 共用的通道上打开会话、同步记录不用排在它后面
-    const sftp = await host.openSftp();
+  // 删会话时取消：关掉上传的通道。通道关了 writeFile 不会再回调，上传要靠这里结束
+  let cancel = (): void => undefined;
+  const cancelled = new Promise<never>((_, reject) => {
+    cancel = () => reject(new Error("分叉出的会话已经删除"));
+  });
+  cancelled.catch(() => undefined);
+  let channel: SFTPWrapper | undefined;
+  const upload: { cancel: () => void; done?: Promise<void> } = {
+    cancel: () => {
+      cancel();
+      channel?.end();
+    },
+  };
+  uploading.set(sessionId, upload);
+  upload.done = (async () => {
     try {
-      await sftpWrite(sftp, `${remoteProjects(host)}/${project}/${sessionId}.jsonl`, data).catch((err: Error) => {
-        throw new Error(`写远端会话记录失败：${err.message}`);
+      const data = await readFile(path.join(PROJECTS, project, `${sessionId}.jsonl`));
+      // 单独开一个 SFTP 通道，传完关掉：几 MB 的记录在慢的链路上要传好几分钟（实测 art 上 8MB 约 3 分钟），
+      // 共用的通道上打开会话、同步记录不用排在它后面
+      const opening = host.openSftp();
+      const sftp = await Promise.race([opening, cancelled]).catch((err: unknown) => {
+        // 通道还没开好就取消了：开好后关掉
+        void opening.then((s) => s.end(), () => undefined);
+        throw err;
       });
+      channel = sftp;
+      try {
+        const write = sftpWrite(sftp, `${remoteProjects(host)}/${project}/${sessionId}.jsonl`, data).catch((err: Error) => {
+          throw new Error(`写远端会话记录失败：${err.message}`);
+        });
+        await Promise.race([write, cancelled]);
+      } finally {
+        sftp.end();
+      }
+      uploadedAt.set(sessionId, Date.now());
+    } catch (err) {
+      delete load().sessions[sessionId];
+      save();
+      throw err;
     } finally {
-      sftp.end();
+      uploading.delete(sessionId);
     }
-    uploadedAt.set(sessionId, Date.now());
-  } catch (err) {
-    delete load().sessions[sessionId];
-    save();
-    throw err;
-  } finally {
-    uploading.delete(sessionId);
-  }
+  })();
+  return upload.done;
 }
 
 /** 删远程会话：远端的记录（jsonl 和同名文件夹）和本机的副本 */
 export async function deleteRemoteSession(host: SshHost, sessionId: string): Promise<void> {
   const project = load().sessions[sessionId]?.project;
+  // 分叉的记录还在往远端传：关掉上传的 SFTP 通道，等它停下（停下后这个会话就从清单里去掉了，project 要在这之前取）
+  const upload = uploading.get(sessionId);
+  if (upload) {
+    upload.cancel();
+    await upload.done?.catch(() => undefined);
+  }
   // Windows 远端上关掉通道后 claude 可能还在跑（有后台任务时），开着记录删不掉：先结束它
   if (host.env) await killRemoteClaude(host, host.env.bin, sessionId);
   if (project && host.env) {
@@ -253,7 +285,7 @@ export async function deleteRemoteSession(host: SshHost, sessionId: string): Pro
     await rmrf(host, `${base}.jsonl`, base);
     await rmdirQuiet(host, `${dir}/memory`, dir);
   }
-  await removeMirror(sessionId);
+  await removeMirror(sessionId, project);
   delete load().sessions[sessionId];
   save();
 }
@@ -267,8 +299,7 @@ export async function forgetHost(hostId: string): Promise<void> {
   save();
 }
 
-async function removeMirror(sessionId: string): Promise<void> {
-  const project = load().sessions[sessionId]?.project;
+async function removeMirror(sessionId: string, project = load().sessions[sessionId]?.project): Promise<void> {
   if (!project) return;
   const dir = path.join(PROJECTS, project);
   await rm(path.join(dir, `${sessionId}.jsonl`), { force: true });
