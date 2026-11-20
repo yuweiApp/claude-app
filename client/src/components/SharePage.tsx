@@ -137,8 +137,8 @@ export function SharePage() {
       .then(
         (r) => {
           setResult(r);
-          // 第一次连上时网关记下了主机密钥指纹
-          if (r.ok) void api.shareSettings().then((v) => setView((prev) => (prev ? { ...prev, server: { ...prev.server, fingerprint: v.server.fingerprint } } : v)), () => undefined);
+          // 第一次连上时网关记下了主机密钥指纹；测的是公网分享在用的服务器时，下面「当前」的状态也跟着变了
+          void api.shareSettings().then((v) => setView((prev) => (prev ? { ...prev, tunnel: v.tunnel, server: { ...prev.server, fingerprint: v.server.fingerprint } } : v)), () => undefined);
         },
         (err: Error) => setResult({ ok: false, error: err.message }),
       )

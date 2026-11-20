@@ -112,10 +112,13 @@ export function shareRoutes(app: FastifyInstance, sessions: SessionManager, shar
   app.post<{ Body: ShareSettingsInput }>("/share/settings/test", async (req): Promise<ShareTestResult> => {
     const next = parse(req.body, true);
     const live = shareSettings();
-    const tunnel = lan.tunnel.view;
-    // 公网分享正挂在同一台服务器的同一个端口上：再开一次会冲突，直接用现在的
     const same = (["connectionId", "host", "sshPort", "username", "remotePort", "publicHost"] as const).every((k) => (live.server[k] ?? "") === (next.server[k] ?? ""));
-    if (tunnel.status === "ready" && same) return { ok: true, url: tunnel.url ?? "", fingerprint: live.server.fingerprint ?? "" };
+    // 测的就是现在公网分享在用的服务器和端口：另开一条会和它抢端口，直接用（没连着就连）它，结果也就是公网分享的状态
+    if (same && (shares.list().some((s) => s.public) || lan.tunnel.view.status === "ready")) {
+      const state = await lan.tunnel.ensure();
+      if (state.status === "ready") return { ok: true, url: state.url ?? "", fingerprint: live.server.fingerprint ?? "" };
+      return { ok: false, error: state.error ?? "连接超时", ...(state.fix ? { fix: state.fix } : {}) };
+    }
     const { state, fingerprint } = await probeServer(next.server, app.log);
     if (state.status === "ready") return { ok: true, url: state.url ?? "", fingerprint: fingerprint ?? "" };
     return { ok: false, error: state.error ?? "连接超时", ...(state.fix ? { fix: state.fix } : {}) };
@@ -124,10 +127,11 @@ export function shareRoutes(app: FastifyInstance, sessions: SessionManager, shar
   /** 按请求体里的服务器配置登录服务器，开启 sshd 的 GatewayPorts（设置页自检报端口只开在 127.0.0.1 上时的按钮）；成功后有公网分享就重新连 */
   app.post<{ Body: ShareSettingsInput }>("/share/settings/fix-gateway-ports", async (req): Promise<ShareFixResult> => {
     const result = await fixGatewayPorts(parse(req.body, true).server, app.log);
-    // 现在的转发是改之前连的，GatewayPorts 对它不生效：断开，有公网分享就按设置重新连
+    // 现在的转发是改之前连的，GatewayPorts 对它不生效：断开，有公网分享就按设置重新连，等连好再返回（设置页接着测试时直接用它）
     if (result.ok) {
       lan.tunnel.stop();
       await lan.sync();
+      if (shares.list().some((s) => s.public)) await lan.tunnel.ensure();
     }
     return result;
   });

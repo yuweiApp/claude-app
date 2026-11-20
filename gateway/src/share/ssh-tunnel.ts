@@ -27,6 +27,9 @@ const KEEPALIVE_INTERVAL_MS = 15_000;
 const KEEPALIVE_COUNT_MAX = 3;
 /** 连上过又断了：隔多久重连，逐次加长，一直重试到没有公网分享 */
 const RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 30_000, 60_000];
+/** 服务器上的端口开不了时（上一条连接服务器还没发现断了、测试连接刚好占着）：隔多久再试、最多再试几次，期间状态一直是 starting */
+const BIND_RETRY_MS = 2_000;
+const BIND_RETRIES = 4;
 
 /** 链接里的主机：IPv6 加方括号 */
 export function publicUrlOf(server: ShareServer): string {
@@ -48,6 +51,8 @@ export class SshShareTunnel {
   private wanted = false;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private retries = 0;
+  /** 这一轮开端口失败后已经重试了几次 */
+  private bindRetries = 0;
   /** 这次连接记下的主机密钥指纹（测试连接时回给设置页） */
   fingerprint: string | null = null;
 
@@ -71,9 +76,10 @@ export class SshShareTunnel {
   /** 开公网分享时：没连着就连（包括上次出错的），等到通了、出错或超时 */
   async ensure(): Promise<ShareTunnelState> {
     this.wanted = true;
-    if (!this.client) {
+    if (!this.client && !(this.retryTimer && this.state.status === "starting")) {
       clearTimeout(this.retryTimer);
       this.retryTimer = undefined;
+      this.bindRetries = 0;
       this.start();
     }
     if (this.state.status === "starting") {
@@ -95,6 +101,7 @@ export class SshShareTunnel {
     clearTimeout(this.retryTimer);
     this.retryTimer = undefined;
     this.retries = 0;
+    this.bindRetries = 0;
     const client = this.client;
     this.client = null;
     if (client) {
@@ -179,7 +186,23 @@ export class SshShareTunnel {
       if (this.client !== client) return;
       client.forwardIn("0.0.0.0", server.remotePort, (err) => {
         if (this.client !== client) return;
-        if (err) return this.fail(client, `服务器上开不了端口 ${server.remotePort}（被占用，或者 sshd 不允许反向转发）：${err.message}`, false);
+        if (err) {
+          const message = `服务器上开不了端口 ${server.remotePort}（被上一条还没断干净的连接或别的程序占着，或者 sshd 不允许反向转发）：${err.message}`;
+          // 多半是一会儿就好的占用：断开，过 2 秒重新连，期间还算 starting；重试够了再报错（断线重连时报错后照样按退避继续）
+          if (this.bindRetries < BIND_RETRIES) {
+            this.bindRetries++;
+            this.client = null;
+            client.end();
+            this.log.info({ attempt: this.bindRetries, error: err.message }, "服务器上的端口开不了，稍后重试（公网分享）");
+            this.retryTimer = setTimeout(() => {
+              this.retryTimer = undefined;
+              if (this.wanted && !this.client) this.start(retrying);
+            }, BIND_RETRY_MS);
+            return;
+          }
+          this.bindRetries = 0;
+          return this.fail(client, message, retrying);
+        }
         void selfCheck(url).then(async (check) => {
           if (this.client !== client) return;
           if (check) {
@@ -189,6 +212,7 @@ export class SshShareTunnel {
           }
           ready = true;
           this.retries = 0;
+          this.bindRetries = 0;
           this.log.info({ url }, "公网分享已挂到服务器上");
           this.set({ status: "ready", url, error: null });
         });
