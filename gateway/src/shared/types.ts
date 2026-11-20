@@ -685,19 +685,33 @@ export type ProxyTestResult =
   | { ok: true; target: string; via: string | null; status: number; ms: number }
   | { ok: false; target: string; via: string | null; error: string };
 
-/** 局域网分享（见 docs/lan-share.md）：一个会话一条 */
+/** 局域网分享、公网分享（见 docs/lan-share.md）：一个会话一条，两种分享共用一个令牌 */
 export interface ShareEntry {
   sessionId: string;
   token: string;
   /** ISO 时间 */
   createdAt: string;
+  /** 分享到局域网（经 SHARE_PORT 的入口打开） */
+  lan: boolean;
+  /** 分享到公网（经 ngrok 隧道打开） */
+  public: boolean;
 }
 
-/** GET /shares：所有分享，加上拼链接用的端口和本机的局域网地址 */
+/** 公网分享的 ngrok 隧道 */
+export interface ShareTunnelState {
+  /** off：没有公网分享、没在跑；starting：ngrok 已拉起、还没拿到地址；error：没起来或退出了 */
+  status: "off" | "starting" | "ready" | "error";
+  /** 公网地址（https://…，不带结尾的 /），ready 时才有 */
+  url: string | null;
+  error: string | null;
+}
+
+/** GET /shares：所有分享，加上拼链接用的端口、本机的局域网地址和公网隧道 */
 export interface SharesView {
   shares: ShareEntry[];
   port: number;
   addresses: string[];
+  tunnel: ShareTunnelState;
 }
 
 /** GET /share/info（访客）：分享的是哪个会话 */

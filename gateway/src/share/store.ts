@@ -6,12 +6,15 @@ import { config } from "../config.js";
 import type { ShareEntry } from "../shared/types.js";
 
 /**
- * 局域网分享的记录（见 docs/lan-share.md）：一个会话一条，存在 gateway-shares.json，网关重启后照旧有效。
- * 变化时通知监听者（局域网入口据此开关监听、断开停掉的分享的连接）
+ * 分享的记录（见 docs/lan-share.md）：一个会话一条，局域网、公网两种分享共用一个令牌，存在 gateway-shares.json，网关重启后照旧有效。
+ * 变化时通知监听者（入口据此开关监听、断开停掉的分享的连接，公网隧道据此拉起、停掉 ngrok）
  */
 const FILE = path.join(config.claudeConfigDir, "gateway-shares.json");
 
 type Listener = () => void;
+
+/** 分享到哪：局域网（SHARE_PORT 的入口）、公网（ngrok 隧道连的入口） */
+export type ShareScope = "lan" | "public";
 
 export class ShareStore {
   private shares: ShareEntry[] = load();
@@ -29,17 +32,39 @@ export class ShareStore {
     return this.shares.find((s) => s.sessionId === sessionId);
   }
 
-  /** 开分享，已经分享了就返回原来的 */
-  add(sessionId: string): ShareEntry {
+  /** 开分享，已经有这个会话的分享时沿用它的令牌 */
+  add(sessionId: string, scope: ShareScope): ShareEntry {
     const existing = this.bySession(sessionId);
-    if (existing) return existing;
-    const entry: ShareEntry = { sessionId, token: randomBytes(24).toString("base64url"), createdAt: new Date().toISOString() };
+    if (existing) {
+      if (!existing[scope]) {
+        existing[scope] = true;
+        this.save();
+      }
+      return existing;
+    }
+    const entry: ShareEntry = {
+      sessionId,
+      token: randomBytes(24).toString("base64url"),
+      createdAt: new Date().toISOString(),
+      lan: scope === "lan",
+      public: scope === "public",
+    };
     this.shares.push(entry);
     this.save();
     return entry;
   }
 
-  /** 停止分享；没有分享时什么也不做 */
+  /** 停止一种分享；两种都停了就删掉这条记录（令牌作废） */
+  removeScope(sessionId: string, scope: ShareScope): void {
+    const entry = this.bySession(sessionId);
+    if (!entry?.[scope]) return;
+    const other: ShareScope = scope === "lan" ? "public" : "lan";
+    if (!entry[other]) return this.remove(sessionId);
+    entry[scope] = false;
+    this.save();
+  }
+
+  /** 停止这个会话的所有分享；没有分享时什么也不做 */
   remove(sessionId: string): void {
     const next = this.shares.filter((s) => s.sessionId !== sessionId);
     if (next.length === this.shares.length) return;
@@ -72,9 +97,11 @@ function load(): ShareEntry[] {
     if (!existsSync(FILE)) return [];
     const parsed = JSON.parse(readFileSync(FILE, "utf8")) as { shares?: unknown };
     if (!Array.isArray(parsed.shares)) return [];
-    return parsed.shares.filter(
-      (s): s is ShareEntry => typeof s?.sessionId === "string" && typeof s?.token === "string" && typeof s?.createdAt === "string",
-    );
+    return parsed.shares
+      .filter((s): s is ShareEntry => typeof s?.sessionId === "string" && typeof s?.token === "string" && typeof s?.createdAt === "string")
+      // 加公网分享之前的记录没有这两项：都是局域网分享
+      .map((s) => ({ sessionId: s.sessionId, token: s.token, createdAt: s.createdAt, lan: s.lan !== false, public: s.public === true }))
+      .filter((s) => s.lan || s.public);
   } catch {
     return [];
   }

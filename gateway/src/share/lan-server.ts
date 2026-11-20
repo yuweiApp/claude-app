@@ -4,34 +4,56 @@ import type { Duplex } from "node:stream";
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import { PAGE_PREFIX } from "../http/routes/files.js";
-import type { ShareStore } from "./store.js";
+import type { ShareScope, ShareStore } from "./store.js";
+import { NgrokTunnel } from "./tunnel.js";
+
+/** 每种分享的入口：局域网的对局域网开放；公网的只给本机的 ngrok 连 */
+const LISTEN: Record<ShareScope, { host: string; port: () => number; name: string }> = {
+  lan: { host: "0.0.0.0", port: () => config.sharePort, name: "局域网分享的入口" },
+  public: { host: "127.0.0.1", port: () => config.shareTunnelPort, name: "公网分享的本机入口" },
+};
+const SCOPES: ShareScope[] = ["lan", "public"];
 
 /**
- * 局域网分享的入口（见 docs/lan-share.md「局域网入口」）：有分享时监听 0.0.0.0:SHARE_PORT，没有分享时不监听。
- * 进来的请求都是访客的：/api/* 校验分享令牌、只放行这个会话用到的接口，转发给网关自己（127.0.0.1:PORT）；
+ * 分享的入口（见 docs/lan-share.md「局域网入口」「公网分享」）：
+ * 有局域网分享时监听 0.0.0.0:SHARE_PORT；有公网分享时监听 127.0.0.1:SHARE_TUNNEL_PORT、拉起 ngrok 连它。没有分享时都不监听。
+ * 进来的请求都是访客的：/api/* 校验分享令牌（只认分享到这个入口的）、只放行这个会话用到的接口，转发给网关自己（127.0.0.1:PORT）；
  * 其余（页面、脚本、HMR）转发给页面服务（开发时是 Vite）。网关原来的监听、鉴权都不经过这里，也不受影响。
  */
 export class LanServer {
-  private server: http.Server | null = null;
+  private readonly servers: Record<ShareScope, http.Server | null> = { lan: null, public: null };
   /** 正在进行的 sync()，排队执行 */
   private syncing: Promise<void> = Promise.resolve();
-  /** 每个令牌的连接（HTTP 响应、WebSocket），停止分享时全部断开 */
-  private readonly connections = new Map<string, Set<{ destroy(): void }>>();
+  /** 每个入口、每个令牌的连接（HTTP 响应、WebSocket），停止分享时全部断开 */
+  private readonly connections: Record<ShareScope, Map<string, Set<{ destroy(): void }>>> = { lan: new Map(), public: new Map() };
   /** 上一次开始监听失败的原因（端口被占用等），开分享的接口据此报错 */
-  error: string | null = null;
+  readonly errors: Record<ShareScope, string | null> = { lan: null, public: null };
+  /** 公网分享的 ngrok */
+  readonly tunnel: NgrokTunnel;
 
   constructor(
     private readonly shares: ShareStore,
     private readonly log: FastifyBaseLogger,
   ) {
+    this.tunnel = new NgrokTunnel(config.shareTunnelPort, log);
     shares.onChange(() => void this.sync());
   }
 
+  /** 局域网入口在不在监听 */
   get listening(): boolean {
-    return this.server !== null;
+    return this.servers.lan !== null;
   }
 
-  /** 按现在的分享开关监听，断开已经停掉的分享的连接 */
+  /** 局域网入口上一次监听失败的原因 */
+  get error(): string | null {
+    return this.errors.lan;
+  }
+
+  isListening(scope: ShareScope): boolean {
+    return this.servers[scope] !== null;
+  }
+
+  /** 按现在的分享开关监听、拉起或停掉 ngrok，断开已经停掉的分享的连接 */
   sync(): Promise<void> {
     this.syncing = this.syncing.then(() => this.doSync());
     return this.syncing;
@@ -39,58 +61,64 @@ export class LanServer {
 
   async close(): Promise<void> {
     await this.syncing;
-    await this.stop();
+    this.tunnel.stop();
+    for (const scope of SCOPES) await this.stop(scope);
   }
 
   private async doSync(): Promise<void> {
-    const tokens = new Set(this.shares.list().map((s) => s.token));
-    for (const [token, set] of this.connections) {
-      if (tokens.has(token)) continue;
-      for (const c of set) c.destroy();
-      this.connections.delete(token);
+    const list = this.shares.list();
+    for (const scope of SCOPES) {
+      const tokens = new Set(list.filter((s) => s[scope]).map((s) => s.token));
+      for (const [token, set] of this.connections[scope]) {
+        if (tokens.has(token)) continue;
+        for (const c of set) c.destroy();
+        this.connections[scope].delete(token);
+      }
+      if (tokens.size > 0 && !this.servers[scope]) await this.start(scope);
+      else if (tokens.size === 0 && this.servers[scope]) await this.stop(scope);
+      if (scope === "public") this.tunnel.sync(tokens.size > 0);
     }
-    if (tokens.size > 0 && !this.server) await this.start();
-    else if (tokens.size === 0 && this.server) await this.stop();
   }
 
-  private start(): Promise<void> {
-    const server = http.createServer((req, res) => this.handle(req, res));
-    server.on("upgrade", (req, socket, head) => this.upgrade(req, socket, head));
+  private start(scope: ShareScope): Promise<void> {
+    const { host, port, name } = LISTEN[scope];
+    const server = http.createServer((req, res) => this.handle(scope, req, res));
+    server.on("upgrade", (req, socket, head) => this.upgrade(scope, req, socket, head));
     return new Promise((resolve) => {
       server.once("error", (err) => {
-        this.error = `局域网分享的端口 ${config.sharePort} 监听失败：${err.message}`;
-        this.log.error({ err }, this.error);
+        this.errors[scope] = `${name}端口 ${port()} 监听失败：${err.message}`;
+        this.log.error({ err }, this.errors[scope]);
         resolve();
       });
-      server.listen(config.sharePort, "0.0.0.0", () => {
-        this.server = server;
-        this.error = null;
-        this.log.info({ port: config.sharePort }, "局域网分享的入口已开始监听");
+      server.listen(port(), host, () => {
+        this.servers[scope] = server;
+        this.errors[scope] = null;
+        this.log.info({ host, port: port() }, `${name}已开始监听`);
         resolve();
       });
     });
   }
 
-  private async stop(): Promise<void> {
-    const server = this.server;
+  private async stop(scope: ShareScope): Promise<void> {
+    const server = this.servers[scope];
     if (!server) return;
-    this.server = null;
-    for (const set of this.connections.values()) for (const c of set) c.destroy();
-    this.connections.clear();
+    this.servers[scope] = null;
+    for (const set of this.connections[scope].values()) for (const c of set) c.destroy();
+    this.connections[scope].clear();
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    this.log.info("没有分享了，局域网分享的入口已关闭");
+    this.log.info(`没有这种分享了，${LISTEN[scope].name}已关闭`);
   }
 
-  private track(token: string, conn: { destroy(): void }, closer: { once(event: "close", fn: () => void): unknown }): void {
-    let set = this.connections.get(token);
-    if (!set) this.connections.set(token, (set = new Set()));
+  private track(scope: ShareScope, token: string, conn: { destroy(): void }, closer: { once(event: "close", fn: () => void): unknown }): void {
+    let set = this.connections[scope].get(token);
+    if (!set) this.connections[scope].set(token, (set = new Set()));
     set.add(conn);
     closer.once("close", () => set.delete(conn));
   }
 
   /** 判断一个请求：转给谁、用什么路径，或者直接拒绝 */
-  private route(req: IncomingMessage): Route {
+  private route(scope: ShareScope, req: IncomingMessage): Route {
     const url = new URL(req.url ?? "/", "http://lan");
     if (url.pathname !== "/api" && !url.pathname.startsWith("/api/")) {
       // 没带分享链接打开根目录时，页面会当成本机的界面，接口全是 401，直接提示。
@@ -105,13 +133,13 @@ export class LanServer {
     if (apiPath.startsWith(PAGE_PREFIX)) return { kind: "gateway", path: target, token: null };
     const token = headerValue(req.headers["x-share-token"]) ?? url.searchParams.get("share");
     const share = this.shares.byToken(token);
-    if (!share || !token) return { kind: "reject", status: 401, message: "分享已结束或链接无效" };
+    if (!share || !token || !share[scope]) return { kind: "reject", status: 401, message: "分享已结束或链接无效" };
     if (!allowed(req.method ?? "GET", apiPath, share.sessionId)) return { kind: "reject", status: 403, message: "分享的访客不能使用这个功能" };
     return { kind: "gateway", path: target, token };
   }
 
-  private handle(req: IncomingMessage, res: ServerResponse): void {
-    const route = this.route(req);
+  private handle(scope: ShareScope, req: IncomingMessage, res: ServerResponse): void {
+    const route = this.route(scope, req);
     if (route.kind === "reject") {
       const accept = req.headers.accept ?? "";
       if (accept.includes("text/html") && !req.url?.startsWith("/api")) {
@@ -139,12 +167,12 @@ export class LanServer {
     });
     // 访客关掉页面时取消上游的请求（事件流不会自己结束）
     res.on("close", () => proxyReq.destroy());
-    if (route.kind === "gateway" && route.token) this.track(route.token, res, res);
+    if (route.kind === "gateway" && route.token) this.track(scope, route.token, res, res);
     req.pipe(proxyReq);
   }
 
-  private upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
-    const route = this.route(req);
+  private upgrade(scope: ShareScope, req: IncomingMessage, socket: Duplex, head: Buffer): void {
+    const route = this.route(scope, req);
     if (route.kind === "reject") {
       socket.end(`HTTP/1.1 ${route.status} ${http.STATUS_CODES[route.status] ?? ""}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`);
       return;
@@ -169,7 +197,7 @@ export class LanServer {
     socket.on("error", destroy);
     upstream.on("close", destroy);
     socket.on("close", destroy);
-    if (route.kind === "gateway" && route.token) this.track(route.token, { destroy }, socket);
+    if (route.kind === "gateway" && route.token) this.track(scope, route.token, { destroy }, socket);
   }
 
   /** 上游地址和转发的请求头：Host 换成上游自己的（Vite 只认本机的 Host），令牌换成校验过的，网关设了 API_TOKEN 时补上 */
@@ -219,7 +247,7 @@ export function allowed(method: string, path: string, sessionId: string): boolea
   }
   if (id !== sessionId) return false;
   const rest = m[2] ?? "";
-  // 会话本身只能读：重命名（PATCH）、删除（DELETE）不行；分叉出来的新会话不在分享里；开关分享是本机的事
+  // 会话本身只能读：重命名（PATCH）、删除（DELETE）不行；分叉出来的新会话不在分享里；开关分享（/share、/share/public）是本机的事
   if (rest === "") return method === "GET";
-  return rest !== "/fork" && rest !== "/share";
+  return rest !== "/fork" && !/^\/share(\/|$)/.test(rest);
 }

@@ -7,7 +7,7 @@ import type { SessionListItem } from "../api";
 import { useDismiss } from "./ComposerPickers";
 import { SidebarToggle } from "./SidebarToggle";
 import { SESSION_DRAG_TYPE } from "./MentionText";
-import { copyShareLink, shareLinks, startShare, stopShare, useShareNotice, useShares } from "../state/shares";
+import { copyShareLink, publicShareLink, shareLinks, startPublicShare, startShare, stopPublicShare, stopShare, useShareNotice, useShares } from "../state/shares";
 
 /** 会话标题：网关在第一条消息时生成的 customTitle；没有时用第一条提问。不用 summary，它没有自定义标题时跟着最新一条提问变 */
 /** 会话标题；第一条消息里引用的标签页 @[标题](网址)、@chrome[标题](网址) 这样的只留标题 */
@@ -382,15 +382,28 @@ function SessionRow({
   // 远程项目里的会话不用，项目那一行已经标了
   useSshConnections();
   const remote = s.chat ? parseRemote(s.cwd) : null;
-  // 局域网分享（见 docs/lan-share.md）：分享中的会话标题后面有个图标，菜单里是复制链接、停止分享
-  const links = shareLinks(useShares(), s.sessionId);
-  const shared = links.length > 0;
-  const shareItems: MenuAction[] = shared
+  // 局域网分享、公网分享（见 docs/lan-share.md）：分享中的会话标题后面有个图标，菜单里是复制链接、停止分享
+  const sharesView = useShares();
+  const links = shareLinks(sharesView, s.sessionId);
+  const sharedLan = links.length > 0;
+  const sharedPublic = !!sharesView?.shares.some((x) => x.sessionId === s.sessionId && x.public);
+  const shared = sharedLan || sharedPublic;
+  const sharedLabel = sharedLan && sharedPublic ? "已分享到局域网和公网" : sharedPublic ? "已分享到公网" : "已分享到局域网";
+  const lanItems: MenuAction[] = sharedLan
     ? [
         ...links.map((link) => ({ label: links.length > 1 ? `复制分享链接（${link.address}）` : "复制分享链接", onClick: () => copyShareLink(link.url) })),
-        { label: "停止分享", onClick: () => void stopShare(s.sessionId) },
+        { label: sharedPublic ? "停止局域网分享" : "停止分享", onClick: () => void stopShare(s.sessionId) },
       ]
     : [{ label: "分享到局域网", onClick: () => void startShare(s.sessionId) }];
+  // 复制公网链接也走开分享的接口：ngrok 退出了、地址换了时会重新拉起、拿新地址
+  const publicUrl = publicShareLink(sharesView, s.sessionId);
+  const publicItems: MenuAction[] = sharedPublic
+    ? [
+        { label: "复制公网链接", onClick: () => (publicUrl && sharesView?.tunnel.status === "ready" ? copyShareLink(publicUrl) : void startPublicShare(s.sessionId)) },
+        { label: "停止公网分享", onClick: () => void stopPublicShare(s.sessionId) },
+      ]
+    : [{ label: "分享到公网", onClick: () => void startPublicShare(s.sessionId) }];
+  const shareItems = [...lanItems, ...publicItems];
   const itemClass = `session-item${branch ? " branch-row" : ""}${branch && branchEnd ? " branch-end" : ""}${menu.at ? " menu-open" : ""}`;
   if (renaming)
     return (
@@ -427,7 +440,7 @@ function SessionRow({
           </span>
         )}
         {shared && (
-          <span className="session-shared" title="已分享到局域网" aria-label="已分享到局域网">
+          <span className="session-shared" title={sharedLabel} aria-label={sharedLabel}>
             <ShareIcon />
           </span>
         )}

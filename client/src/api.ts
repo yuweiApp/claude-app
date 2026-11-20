@@ -330,10 +330,12 @@ export const api = {
   renameSession: (id: string, title: string) => request("PATCH", `/sessions/${id}`, { title }),
   /** 删除会话，会话记录一起删，不能恢复 */
   deleteSession: (id: string) => request("DELETE", `/sessions/${id}`),
-  /** 局域网分享（见 docs/lan-share.md）：本机开关分享、列出分享；shareInfo 是访客页面取分享的会话 */
+  /** 局域网分享、公网分享（见 docs/lan-share.md）：本机开关分享、列出分享；shareInfo 是访客页面取分享的会话 */
   shares: () => request<SharesView>("GET", "/shares"),
   shareSession: (id: string) => request<SharesView>("POST", `/sessions/${id}/share`),
   unshareSession: (id: string) => request<SharesView>("DELETE", `/sessions/${id}/share`),
+  shareSessionPublic: (id: string) => request<SharesView>("POST", `/sessions/${id}/share/public`),
+  unshareSessionPublic: (id: string) => request<SharesView>("DELETE", `/sessions/${id}/share/public`),
   shareInfo: () => request<ShareInfo>("GET", "/share/info"),
   setPermissionMode: (id: string, mode: PermissionMode) => request("POST", `/sessions/${id}/permission-mode`, { mode }),
   /** answers：AskUserQuestion 的回答（问题原文 → 选中的选项） */

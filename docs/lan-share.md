@@ -1,6 +1,7 @@
 # 局域网会话分享
 
 > 状态：第一版已完成（2026-11-16）。Linux 本机实测过对话、文件、终端、内置浏览器；Windows、macOS 还没实测。
+> 公网分享（第 9 节，2026-11-20）：用假的 ngrok 走通过开关、入口和转发，没用真的 ngrok 测过。
 
 把一个会话分享给同一局域网里的人。对方用自己的浏览器打开分享链接，进的是**同一个会话**，可以接着对话，会话里能做的和本机一样；右侧面板有文件、终端、内置浏览器。
 
@@ -32,11 +33,12 @@
 
 ## 3. 分享的管理（网关）
 
-- **存储**（`share/store.ts`）：`$CLAUDE_CONFIG_DIR/gateway-shares.json`（600），每条 `{ sessionId, token, createdAt }`，一个会话最多一条，令牌是 24 字节随机数的 base64url。网关重启后照旧有效，启动时有分享就开始监听入口。
+- **存储**（`share/store.ts`）：`$CLAUDE_CONFIG_DIR/gateway-shares.json`（600），每条 `{ sessionId, token, createdAt, lan, public }`，一个会话最多一条，令牌是 24 字节随机数的 base64url。`lan`、`public` 是分享到局域网、公网（第 9 节），两种共用一个令牌，都停了才删掉这条；加公网分享之前的记录没有这两项，读的时候当成只分享到局域网。网关重启后照旧有效，启动时有分享就开始监听入口。
 - **接口**（`http/routes/shares.ts`，给本机用，局域网入口不放行）：
-  - `GET /shares`：所有分享，加上入口端口和本机的 IPv4 地址（`os.networkInterfaces()`，去掉回环和 169.254.x.x）
+  - `GET /shares`：所有分享，加上入口端口、本机的 IPv4 地址（`os.networkInterfaces()`，去掉回环和 169.254.x.x）和公网隧道的状态
   - `POST /sessions/:id/share`：开分享，已有就用原来的。入口没能监听（端口被占用）时撤掉这次新开的、报 500
-  - `DELETE /sessions/:id/share`：停止分享
+  - `DELETE /sessions/:id/share`：停止局域网分享（还分享到公网时只去掉 `lan`）
+  - `POST`、`DELETE /sessions/:id/share/public`：开、停公网分享，见第 9 节
 - **入口的开关**（`LanServer.sync()`）：有分享时监听 `0.0.0.0:<SHARE_PORT>`（默认 8789），最后一条停掉时关闭；停掉的分享的连接（事件流、终端、浏览器）立刻断开。
 - **会话删除时**删掉它的分享；**会话清空后**（Claude Code 换了新的会话 id）分享跟到新 id，令牌不变（`routes/sessions.ts` 的 delete、clear 里各一行）。
 
@@ -50,7 +52,7 @@
 | 用途 | 接口 |
 | --- | --- |
 | 分享本身 | `GET /share/info`（会话 id、工作目录、标题、是不是普通会话）、`/share/browser`（WebSocket，第 6 节） |
-| 会话 | `GET /sessions/:id`，`/sessions/:id/` 下除了 `fork`、`share` 的所有接口（不能 PATCH 重命名、DELETE 删除） |
+| 会话 | `GET /sessions/:id`，`/sessions/:id/` 下除了 `fork`、`share`、`share/public` 的所有接口（不能 PATCH 重命名、DELETE 删除） |
 | 输入框要的 | `GET /config`、`/models`、`/capabilities`、`/external/tabs`（消息里 `@Chrome` 之类的名字和图标）、`/health`，`POST /uploads` |
 | 右侧面板 | `/files*`、`/terminals*` |
 
@@ -106,9 +108,35 @@
 5. 第一次开分享时，Windows 会问是否允许 Node.js 访问网络，要点允许；macOS 可能也会提示。
 6. 分享存在文件里，网关重启后仍然有效。
 7. `Chat` 导出了，多一个 `guest` 属性；`SidePanel` 多读一个 context；`BrowserTab.tsx` 导出了 `loadErrorText`、`displayUrl`；`api.ts` 的请求头统一由 `authHeaders()` 生成（本机没有分享令牌时内容和原来一样）；`views.ts` 多了只读的 `isShown()` 和 `fitParked()`；`BrowserHost` 多了 `onShare` / `postShare`。
+8. 公网分享（第 9 节）带来的：`DELETE /sessions/:id/share` 只停局域网分享（没分享到公网时和原来一样删掉整条）；`ShareApp` 连续 3 次 404 也算分享结束；两种都分享着时局域网那项叫「停止局域网分享」，只分享到局域网时菜单和原来一样，只是多一项「分享到公网」。
 
-## 9. 要实测的
+## 9. 公网分享（ngrok）
+
+侧栏菜单里「分享到局域网」下面是「分享到公网」：同一个会话、同一个访客页面，只是经 ngrok 的公网地址打开。
+
+```
+访客的浏览器 ──https://<ngrok 域名>──▶ ngrok ──▶ 本机的 ngrok 进程 ──▶ 公网分享的本机入口（127.0.0.1:8790，有公网分享时才监听）
+                                                                       └─ 和局域网入口同一套转发（第 4 节）
+```
+
+- **入口**：`LanServer` 多一个只监听 `127.0.0.1:<SHARE_TUNNEL_PORT>`（默认 8790）的入口，有 `public` 的分享时才监听，转发规则和局域网入口一样。两个入口各认各的：经公网入口进来的只认 `public` 的分享，经局域网入口进来的只认 `lan` 的。所以只分享到公网时 8789 不对局域网开；只分享到局域网的链接换成公网地址打不开。
+- **ngrok**（`share/tunnel.ts`）：有公网分享时网关拉起 `ngrok http 127.0.0.1:8790 --log stdout --log-format json`（设了 `NGROK_URL` 时加 `--url`），从它的日志里 `started tunnel` 那条读出公网地址；最后一个公网分享停掉、网关退出时结束它。用 ngrok 自己配好的 authtoken（`ngrok config add-authtoken`），网关不存。
+  - `NGROK_PATH`：ngrok 不在 PATH 里时填路径。
+  - `NGROK_URL`：固定域名（免费账号在 ngrok 的 dashboard 里领一个）。不设时每次拉起 ngrok 地址都不一样，网关重启、ngrok 重新拉起后，之前发出去的链接就打不开了。
+  - 没装、没登录、域名不对、免费账号的并发隧道超了：ngrok 一启动就退出，它的报错原样显示在侧栏底部的提示里，这次新开的公网分享撤掉。
+  - 连上过又意外退出：3 秒后再拉起一次，还起不来就停在出错状态，等下次点「分享到公网」「复制公网链接」。
+- **接口**：`POST /sessions/:id/share/public` 开分享、开入口、拉起 ngrok，等到拿到地址（最多 20 秒），返回 `SharesView`（`tunnel.url` 是公网地址）；`DELETE` 停掉。
+- **菜单**：没分享到公网时「分享到公网」，分享中是「复制公网链接」和「停止公网分享」。两种都分享着时，局域网那项叫「停止局域网分享」。复制公网链接时 ngrok 没在跑会重新拉起。
+- **链接**：`https://<ngrok 域名>/share/<令牌>`。
+- **访客那边**：
+  - https 是安全来源，`crypto.randomUUID`、剪贴板都有，`insecure-context.ts` 用不到。
+  - ngrok 免费版第一次打开会先显示一页提示（You are about to visit…），点 Visit 后进去；之后同一个浏览器带着 cookie，接口、事件流、WebSocket 都不再经过这页。去掉要用付费版。
+  - 停掉公网分享后，ngrok 也结束了，ngrok 对这个地址回 404；`ShareApp` 把连续 3 次 404 也当成分享结束（入口本身不会对 `/share/info` 回 404，局域网分享不受影响）。
+- **前提**：同局域网分享，本机的网关和页面服务（开发时是 Vite）要开着。
+
+## 10. 要实测的
 
 - Windows、macOS：分享入口的防火墙提示；macOS 隐藏的停放窗口里的标签页截图有没有画面。
 - 另一台设备打开链接（Linux 本机只用本机的局域网 IP 测过）。
 - 手机浏览器打开：软键盘输入、触屏（现在只转发鼠标事件）。
+- 公网分享：真的 ngrok（日志格式、`--url`、报错文字）、经 ngrok 打开后 Vite 的 HMR（`wss://`）、事件流有没有被缓冲。

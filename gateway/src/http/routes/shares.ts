@@ -15,29 +15,53 @@ interface IdParams {
 }
 
 /**
- * 局域网分享（见 docs/lan-share.md）。
+ * 局域网分享、公网分享（见 docs/lan-share.md）。
  * 开关分享的接口给本机用：局域网入口不放行它们。/share/info 给访客用：局域网入口校验过令牌，放在 X-Share-Token 里转过来
  */
 export function shareRoutes(app: FastifyInstance, sessions: SessionManager, shares: ShareStore, lan: LanServer, relay: ShareBrowserRelay): void {
-  const view = (): SharesView => ({ shares: shares.list(), port: config.sharePort, addresses: lanAddresses() });
+  const view = (): SharesView => ({ shares: shares.list(), port: config.sharePort, addresses: lanAddresses(), tunnel: lan.tunnel.view });
 
   app.get("/shares", async () => view());
 
   app.post<{ Params: IdParams }>("/sessions/:id/share", async (req, reply) => {
     if (!(await sessions.cwd(req.params.id))) throw new NotFoundError(`会话不存在：${req.params.id}`);
-    const existed = shares.bySession(req.params.id);
-    shares.add(req.params.id);
+    const existed = shares.bySession(req.params.id)?.lan;
+    shares.add(req.params.id, "lan");
     await lan.sync();
-    if (!lan.listening) {
+    if (!lan.isListening("lan")) {
       // 端口被占用等：这次新开的分享撤掉，免得留下一条打不开的
-      if (!existed) shares.remove(req.params.id);
-      return reply.code(500).send({ error: lan.error ?? "局域网分享的入口没能开始监听" });
+      if (!existed) shares.removeScope(req.params.id, "lan");
+      return reply.code(500).send({ error: lan.errors.lan ?? "局域网分享的入口没能开始监听" });
     }
     return view();
   });
 
   app.delete<{ Params: IdParams }>("/sessions/:id/share", async (req) => {
-    shares.remove(req.params.id);
+    shares.removeScope(req.params.id, "lan");
+    await lan.sync();
+    return view();
+  });
+
+  // 公网分享：开本机入口、拉起 ngrok，等到拿到公网地址（最多 20 秒，还没好时照常返回，tunnel.status 是 starting）
+  app.post<{ Params: IdParams }>("/sessions/:id/share/public", async (req, reply) => {
+    if (!(await sessions.cwd(req.params.id))) throw new NotFoundError(`会话不存在：${req.params.id}`);
+    const existed = shares.bySession(req.params.id)?.public;
+    shares.add(req.params.id, "public");
+    await lan.sync();
+    const undo = async (error: string) => {
+      // 这次新开的分享撤掉，免得留下一条打不开的
+      if (!existed) shares.removeScope(req.params.id, "public");
+      await lan.sync();
+      return reply.code(500).send({ error });
+    };
+    if (!lan.isListening("public")) return undo(lan.errors.public ?? "公网分享的本机入口没能开始监听");
+    const tunnel = await lan.tunnel.ensure();
+    if (tunnel.status === "error") return undo(tunnel.error ?? "ngrok 没能连上");
+    return view();
+  });
+
+  app.delete<{ Params: IdParams }>("/sessions/:id/share/public", async (req) => {
+    shares.removeScope(req.params.id, "public");
     await lan.sync();
     return view();
   });
