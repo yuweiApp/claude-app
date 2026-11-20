@@ -26,6 +26,8 @@ const NO_SUCH_FILE = 2;
 const HOST_SYNC_MS = 3_000;
 
 let manifest: Manifest | null = null;
+/** 分叉出来、正在传到远端的会话：远端还没有它的记录，整台主机同步时不能当成别处删了 */
+const uploading = new Set<string>();
 
 function load(): Manifest {
   if (!manifest) {
@@ -108,6 +110,8 @@ async function doSyncHost(host: SshHost): Promise<void> {
       if (owner && owner.host !== host.id) continue;
       if (!owner && existsSync(path.join(PROJECTS, project.filename, f.filename))) continue;
       seen.add(sessionId);
+      // 正在上传的分叉会话：远端这份可能还没写完，不拿它覆盖本机的
+      if (uploading.has(sessionId)) continue;
       if (!owner || owner.project !== project.filename) {
         m.sessions[sessionId] = { host: host.id, project: project.filename };
         changed = true;
@@ -117,7 +121,7 @@ async function doSyncHost(host: SshHost): Promise<void> {
   }
   // 远端已经没有的（别处删了）：本机的副本也删掉；刚建、还没落盘的（没有 project）留着
   for (const [sessionId, v] of Object.entries(m.sessions)) {
-    if (v.host !== host.id || !v.project || seen.has(sessionId)) continue;
+    if (v.host !== host.id || !v.project || seen.has(sessionId) || uploading.has(sessionId)) continue;
     await removeMirror(sessionId);
     delete m.sessions[sessionId];
     changed = true;
@@ -170,17 +174,27 @@ export async function appendRemote(host: SshHost, sessionId: string, entries: un
 
 /**
  * 分叉出来的远程会话：本机副本旁边新建的记录（forkSession 写在源会话的同一个目录里）原样传到远端的同一个目录，
- * 远端的 claude resume 时读的是远端那份
+ * 远端的 claude resume 时读的是远端那份。
+ * 上传前先记成这台主机的会话：上传要好几秒，这期间列会话不能把它当成本机会话。传失败了去掉
  */
 export async function uploadForkedSession(host: SshHost, sourceId: string, sessionId: string): Promise<void> {
   const project = load().sessions[sourceId]?.project;
   if (!project) throw new Error("远端还没有这个会话的记录");
-  const data = await readFile(path.join(PROJECTS, project, `${sessionId}.jsonl`));
-  await sftpWrite(await host.sftp(), `${remoteProjects(host)}/${project}/${sessionId}.jsonl`, data).catch((err: Error) => {
-    throw new Error(`写远端会话记录失败：${err.message}`);
-  });
   load().sessions[sessionId] = { host: host.id, project };
   save();
+  uploading.add(sessionId);
+  try {
+    const data = await readFile(path.join(PROJECTS, project, `${sessionId}.jsonl`));
+    await sftpWrite(await host.sftp(), `${remoteProjects(host)}/${project}/${sessionId}.jsonl`, data).catch((err: Error) => {
+      throw new Error(`写远端会话记录失败：${err.message}`);
+    });
+  } catch (err) {
+    delete load().sessions[sessionId];
+    save();
+    throw err;
+  } finally {
+    uploading.delete(sessionId);
+  }
 }
 
 /** 删远程会话：远端的记录（jsonl 和同名文件夹）和本机的副本 */
