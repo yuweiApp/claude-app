@@ -7,13 +7,13 @@ import type { ShareEntry } from "../shared/types.js";
 
 /**
  * 分享的记录（见 docs/lan-share.md）：一个会话一条，局域网、公网两种分享共用一个令牌，存在 gateway-shares.json，网关重启后照旧有效。
- * 变化时通知监听者（入口据此开关监听、断开停掉的分享的连接，公网隧道据此拉起、停掉 ngrok）
+ * 变化时通知监听者（入口据此开关监听、断开停掉的分享的连接，公网隧道据此连上、断开服务器）
  */
 const FILE = path.join(config.claudeConfigDir, "gateway-shares.json");
 
 type Listener = () => void;
 
-/** 分享到哪：局域网（SHARE_PORT 的入口）、公网（ngrok 隧道连的入口） */
+/** 分享到哪：局域网（SHARE_PORT 的入口）、公网（到服务器的 SSH 反向转发连的入口） */
 export type ShareScope = "lan" | "public";
 
 export class ShareStore {

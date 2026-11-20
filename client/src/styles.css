@@ -372,6 +372,8 @@ main {
 .appearance-row-desc.proxy-ok { color: var(--ok); }
 .appearance-row-desc.proxy-warn { color: var(--warn); }
 .appearance-row-desc.proxy-failed { color: var(--err); }
+/* 设置页「公网分享」：端口框窄一些 */
+.proxy-field.share-port-field { flex: 0 0 140px; min-width: 120px; }
 .proxy-page .appearance-row-desc { overflow-wrap: anywhere; }
 .proxy-nodes { display: flex; flex-direction: column; max-height: 360px; padding: 6px 8px; border-top: 1px solid var(--border); overflow-y: auto; }
 .proxy-node { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: none; border-radius: 8px; background: none; font-size: 13.5px; text-align: left; }

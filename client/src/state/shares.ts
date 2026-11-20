@@ -58,7 +58,7 @@ export function shareLinks(v: SharesView | null, sessionId: string): { address: 
   return addresses.map((address) => ({ address, url: `http://${address}:${v.port}/share/${share.token}` }));
 }
 
-/** 这个会话的公网分享链接；没分享到公网、ngrok 还没拿到地址时是 null */
+/** 这个会话的公网分享链接；没分享到公网、还没连上服务器时是 null */
 export function publicShareLink(v: SharesView | null, sessionId: string): string | null {
   const share = v?.shares.find((s) => s.sessionId === sessionId);
   if (!v?.tunnel.url || !share?.public) return null;
@@ -96,15 +96,15 @@ export async function stopShare(sessionId: string): Promise<void> {
   }
 }
 
-/** 分享到公网：拉起 ngrok（没在跑、上次出错时），拿到地址后复制链接。已经分享了再调用就是重新复制 */
+/** 分享到公网：连上设置里的服务器（没连着、上次出错时），自检通过后复制链接。已经分享了再调用就是重新复制 */
 export async function startPublicShare(sessionId: string): Promise<void> {
-  showNotice("正在连接 ngrok…");
+  showNotice("正在连接服务器…");
   try {
     const next = await api.shareSessionPublic(sessionId);
     setView(next);
     const url = publicShareLink(next, sessionId);
     if (url) await copy(url);
-    else showNotice("ngrok 还没连上，稍后再点「复制公网链接」");
+    else showNotice("公网地址还没就绪，稍后再点「复制公网链接」");
   } catch (e) {
     showNotice(`分享到公网失败：${(e as Error).message}`);
   }

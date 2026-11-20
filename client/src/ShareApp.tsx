@@ -41,9 +41,8 @@ export function ShareApp() {
         (e: Error) => {
           if (stopped) return;
           if (e instanceof RequestError && e.status === 401) return setEnded(true);
-          // 连不上：最后一个分享停掉时入口不再监听，分享方的电脑关了也是这样；网关重启只有几秒，连续几次才算结束。
-          // 公网分享停掉后 ngrok 也结束了，ngrok 那边对这个地址回 404（入口本身不会对 /share/info 回 404）
-          if ((!(e instanceof RequestError) || e.status === 404) && ++failures >= OFFLINE_POLLS) setEnded(true);
+          // 连不上：最后一个分享停掉时入口不再监听（公网分享停掉时服务器上的端口也关了），分享方的电脑关了也是这样；网关重启只有几秒，连续几次才算结束
+          if (!(e instanceof RequestError) && ++failures >= OFFLINE_POLLS) setEnded(true);
         },
       );
     void load();

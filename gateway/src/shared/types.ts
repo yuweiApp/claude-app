@@ -693,24 +693,69 @@ export interface ShareEntry {
   createdAt: string;
   /** 分享到局域网（经 SHARE_PORT 的入口打开） */
   lan: boolean;
-  /** 分享到公网（经 ngrok 隧道打开） */
+  /** 分享到公网（经设置页配置的服务器打开） */
   public: boolean;
 }
 
-/** 公网分享的 ngrok 隧道 */
+/** 公网分享到服务器的 SSH 反向转发 */
 export interface ShareTunnelState {
-  /** off：没有公网分享、没在跑；starting：ngrok 已拉起、还没拿到地址；error：没起来或退出了 */
+  /** off：没有公网分享、没连；starting：正在连、开端口、自检；error：没连上或断了 */
   status: "off" | "starting" | "ready" | "error";
-  /** 公网地址（https://…，不带结尾的 /），ready 时才有 */
+  /** 公网地址（http://<服务器>:<端口>，不带结尾的 /），ready 时才有 */
   url: string | null;
   error: string | null;
 }
+
+/** 设置页「公网分享」：GET /share/settings（密码不回给网页，只说有没有） */
+export interface ShareSettingsView {
+  /** 选了 SSH 连接，或者填了服务器地址和用户名：会话菜单里才有「分享到公网」 */
+  configured: boolean;
+  server: {
+    /** 用设置「SSH 连接」里的哪个连接（地址、账号、密钥、跳板都按它的）；空是下面手动填的 */
+    connectionId: string;
+    /** 服务器地址（IP 或域名），SSH 连它 */
+    host: string;
+    sshPort: number;
+    username: string;
+    hasPassword: boolean;
+    /** 私钥文件的路径（选填，只存路径） */
+    identityFile: string;
+    /** 服务器上对外开的端口，访客连它 */
+    remotePort: number;
+    /** 拼链接用的地址（有域名时填），空时用 host */
+    publicHost: string;
+    /** 第一次连上时记下的主机密钥指纹（SHA256:…），之后不一样就不连 */
+    fingerprint: string | null;
+  };
+  /** 现在的公网隧道 */
+  tunnel: ShareTunnelState;
+}
+
+/** PUT /share/settings、POST /share/settings/test 的请求体；password 不传是沿用已存的，传空串是清除。没选连接、地址和用户名都空是不用公网分享 */
+export interface ShareSettingsInput {
+  /** 设置「SSH 连接」里的连接 id；空串是手动填 */
+  connectionId?: string;
+  host: string;
+  sshPort: number;
+  username: string;
+  password?: string;
+  identityFile: string;
+  remotePort: number;
+  publicHost: string;
+  /** true：忘掉记下的主机密钥指纹，下次连上时重新记 */
+  forgetFingerprint?: boolean;
+}
+
+/** POST /share/settings/test：连上服务器、开端口、从外面访问一次，然后断开 */
+export type ShareTestResult = { ok: true; url: string; fingerprint: string } | { ok: false; error: string };
 
 /** GET /shares：所有分享，加上拼链接用的端口、本机的局域网地址和公网隧道 */
 export interface SharesView {
   shares: ShareEntry[];
   port: number;
   addresses: string[];
+  /** 设置里配置了公网分享的服务器：没配置时菜单里没有「分享到公网」 */
+  publicEnabled: boolean;
   tunnel: ShareTunnelState;
 }
 

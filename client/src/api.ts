@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SessionListItem, ShareInfo, SharesView, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SessionListItem, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo } from "@gateway/shared/types";
 
-export type { MessagePriority, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, ShareInfo, SharesView, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
+export type { MessagePriority, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -337,6 +337,10 @@ export const api = {
   shareSessionPublic: (id: string) => request<SharesView>("POST", `/sessions/${id}/share/public`),
   unshareSessionPublic: (id: string) => request<SharesView>("DELETE", `/sessions/${id}/share/public`),
   shareInfo: () => request<ShareInfo>("GET", "/share/info"),
+  /** 设置页「公网分享」：服务器的地址、账号、端口 */
+  shareSettings: () => request<ShareSettingsView>("GET", "/share/settings"),
+  saveShareSettings: (input: ShareSettingsInput) => request<ShareSettingsView>("PUT", "/share/settings", input),
+  testShareServer: (input: ShareSettingsInput) => request<ShareTestResult>("POST", "/share/settings/test", input),
   setPermissionMode: (id: string, mode: PermissionMode) => request("POST", `/sessions/${id}/permission-mode`, { mode }),
   /** answers：AskUserQuestion 的回答（问题原文 → 选中的选项） */
   replyPermission: (id: string, requestId: string, behavior: "allow" | "deny", always = false, answers?: Record<string, string>) =>

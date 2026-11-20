@@ -17,9 +17,10 @@ import { IosIcon } from "./IosIcon";
 import { AppearancePage } from "./AppearancePage";
 import { BrowsersPage } from "./BrowsersPage";
 import { ProxyPage } from "./ProxyPage";
+import { SharePage } from "./SharePage";
 import { SshPage } from "./SshPage";
 
-export type SettingsSection = "appearance" | "proxy" | "plugins" | "skills" | "agents" | "mcp" | "browsers" | "ssh";
+export type SettingsSection = "appearance" | "proxy" | "plugins" | "skills" | "agents" | "mcp" | "browsers" | "ssh" | "share";
 type Section = SettingsSection;
 /** 技能、子代理、插件页顶部的标签：个人（导入的、项目里的、导入插件带的、从市场装的）和 Claude Code 自带的；插件页还有插件市场 */
 type Origin = "mine" | "builtin" | "directory";
@@ -38,6 +39,7 @@ const SECTIONS: { key: Section; label: string; icon: ReactNode; group?: string; 
   { key: "mcp", label: "连接器", icon: <IosIcon tone="pink"><McpIcon /></IosIcon> },
   { key: "browsers", label: "浏览器", icon: <IosIcon tone="green"><BrowsersIcon /></IosIcon> },
   { key: "ssh", label: "SSH 连接", icon: <IosIcon tone="indigo"><SshIcon /></IosIcon>, group: "远程" },
+  { key: "share", label: "公网分享", icon: <IosIcon tone="orange"><ShareIcon /></IosIcon> },
 ];
 
 /** 设置页（同 codex-app-server 的设置页）：左边分组导航，右边是列表；navCollapsed 时收起左边的导航（跟着侧边栏的收起状态） */
@@ -104,9 +106,9 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
           </button>,
         ])}
       </nav>
-      {section === "appearance" || section === "proxy" || section === "browsers" || section === "ssh" ? (
+      {section === "appearance" || section === "proxy" || section === "browsers" || section === "ssh" || section === "share" ? (
         <main className="settings-main">
-          {section === "appearance" ? <AppearancePage /> : section === "proxy" ? <ProxyPage /> : section === "ssh" ? <SshPage /> : <BrowsersPage />}
+          {section === "appearance" ? <AppearancePage /> : section === "proxy" ? <ProxyPage /> : section === "ssh" ? <SshPage /> : section === "share" ? <SharePage /> : <BrowsersPage />}
         </main>
       ) : (
         <main className="settings-main">
@@ -1242,6 +1244,18 @@ function ProxyIcon() {
       <circle cx="13.25" cy="8" r="1.5" />
       <rect x="6" y="5.5" width="4" height="5" rx="1" />
       <path d="M4.25 8H6M10 8h1.75" />
+    </svg>
+  );
+}
+
+/** 公网分享：三个点连成的分享符号 */
+function ShareIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+      <circle cx="12" cy="3.5" r="2" />
+      <circle cx="4" cy="8" r="2" />
+      <circle cx="12" cy="12.5" r="2" />
+      <path d="M5.8 7 10.2 4.5M5.8 9l4.4 2.5" />
     </svg>
   );
 }

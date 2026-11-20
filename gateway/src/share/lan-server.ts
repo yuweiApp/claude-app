@@ -5,9 +5,10 @@ import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import { PAGE_PREFIX } from "../http/routes/files.js";
 import type { ShareScope, ShareStore } from "./store.js";
-import { NgrokTunnel } from "./tunnel.js";
+import { onShareSettingsChange, shareSettings } from "./share-settings.js";
+import { ENTRY_CHECK_PATH, ENTRY_ID, SshShareTunnel } from "./ssh-tunnel.js";
 
-/** 每种分享的入口：局域网的对局域网开放；公网的只给本机的 ngrok 连 */
+/** 每种分享的入口：局域网的对局域网开放；公网的只给到服务器的 SSH 反向转发连 */
 const LISTEN: Record<ShareScope, { host: string; port: () => number; name: string }> = {
   lan: { host: "0.0.0.0", port: () => config.sharePort, name: "局域网分享的入口" },
   public: { host: "127.0.0.1", port: () => config.shareTunnelPort, name: "公网分享的本机入口" },
@@ -16,7 +17,7 @@ const SCOPES: ShareScope[] = ["lan", "public"];
 
 /**
  * 分享的入口（见 docs/lan-share.md「局域网入口」「公网分享」）：
- * 有局域网分享时监听 0.0.0.0:SHARE_PORT；有公网分享时监听 127.0.0.1:SHARE_TUNNEL_PORT、拉起 ngrok 连它。没有分享时都不监听。
+ * 有局域网分享时监听 0.0.0.0:SHARE_PORT；有公网分享时监听 127.0.0.1:SHARE_TUNNEL_PORT、SSH 登录设置里的服务器开反向转发连它。没有分享时都不监听。
  * 进来的请求都是访客的：/api/* 校验分享令牌（只认分享到这个入口的）、只放行这个会话用到的接口，转发给网关自己（127.0.0.1:PORT）；
  * 其余（页面、脚本、HMR）转发给页面服务（开发时是 Vite）。网关原来的监听、鉴权都不经过这里，也不受影响。
  */
@@ -28,15 +29,20 @@ export class LanServer {
   private readonly connections: Record<ShareScope, Map<string, Set<{ destroy(): void }>>> = { lan: new Map(), public: new Map() };
   /** 上一次开始监听失败的原因（端口被占用等），开分享的接口据此报错 */
   readonly errors: Record<ShareScope, string | null> = { lan: null, public: null };
-  /** 公网分享的 ngrok */
-  readonly tunnel: NgrokTunnel;
+  /** 公网分享到服务器的 SSH 反向转发 */
+  readonly tunnel: SshShareTunnel;
 
   constructor(
     private readonly shares: ShareStore,
     private readonly log: FastifyBaseLogger,
   ) {
-    this.tunnel = new NgrokTunnel(config.shareTunnelPort, log);
+    this.tunnel = new SshShareTunnel(() => config.shareTunnelPort, () => shareSettings().server, log);
     shares.onChange(() => void this.sync());
+    // 服务器的设置改了：断开现在的，还有公网分享就按新设置重新连（公网地址可能变，之前发出去的链接跟着失效）
+    onShareSettingsChange(() => {
+      this.tunnel.stop();
+      void this.sync();
+    });
   }
 
   /** 局域网入口在不在监听 */
@@ -53,7 +59,7 @@ export class LanServer {
     return this.servers[scope] !== null;
   }
 
-  /** 按现在的分享开关监听、拉起或停掉 ngrok，断开已经停掉的分享的连接 */
+  /** 按现在的分享开关监听、连上或断开服务器，断开已经停掉的分享的连接 */
   sync(): Promise<void> {
     this.syncing = this.syncing.then(() => this.doSync());
     return this.syncing;
@@ -139,6 +145,12 @@ export class LanServer {
   }
 
   private handle(scope: ShareScope, req: IncomingMessage, res: ServerResponse): void {
+    // 公网分享经自己的服务器时，网关从外面访问一次，确认打开的是这里（share/ssh-tunnel.ts 的自检）
+    if (req.url === ENTRY_CHECK_PATH) {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ id: ENTRY_ID }));
+      return;
+    }
     const route = this.route(scope, req);
     if (route.kind === "reject") {
       const accept = req.headers.accept ?? "";

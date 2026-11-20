@@ -395,14 +395,16 @@ function SessionRow({
         { label: sharedPublic ? "停止局域网分享" : "停止分享", onClick: () => void stopShare(s.sessionId) },
       ]
     : [{ label: "分享到局域网", onClick: () => void startShare(s.sessionId) }];
-  // 复制公网链接也走开分享的接口：ngrok 退出了、地址换了时会重新拉起、拿新地址
+  // 公网分享要先在设置「公网分享」里配置服务器，没配置时不显示。复制公网链接也走开分享的接口：断开了、出错了时会重新连
   const publicUrl = publicShareLink(sharesView, s.sessionId);
   const publicItems: MenuAction[] = sharedPublic
     ? [
         { label: "复制公网链接", onClick: () => (publicUrl && sharesView?.tunnel.status === "ready" ? copyShareLink(publicUrl) : void startPublicShare(s.sessionId)) },
         { label: "停止公网分享", onClick: () => void stopPublicShare(s.sessionId) },
       ]
-    : [{ label: "分享到公网", onClick: () => void startPublicShare(s.sessionId) }];
+    : sharesView?.publicEnabled
+      ? [{ label: "分享到公网", onClick: () => void startPublicShare(s.sessionId) }]
+      : [];
   const shareItems = [...lanItems, ...publicItems];
   const itemClass = `session-item${branch ? " branch-row" : ""}${branch && branchEnd ? " branch-end" : ""}${menu.at ? " menu-open" : ""}`;
   if (renaming)

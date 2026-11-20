@@ -112,12 +112,8 @@ export const config = {
   sharePort: int("SHARE_PORT", 8789),
   /** 访客的页面从哪来：开发时是 Vite（同桌面版的 DESKTOP_CLIENT_URL） */
   shareClientUrl: env.SHARE_CLIENT_URL?.trim() || "http://localhost:5180",
-  /** 公网分享：本机给 ngrok 隧道连的入口端口（只监听 127.0.0.1），有公网分享时才监听 */
+  /** 公网分享：本机给到服务器的 SSH 反向转发连的入口端口（只监听 127.0.0.1），有公网分享时才监听 */
   shareTunnelPort: int("SHARE_TUNNEL_PORT", 8790),
-  /** ngrok 的可执行文件，不在 PATH 里时填完整路径 */
-  ngrokPath: env.NGROK_PATH?.trim() || "ngrok",
-  /** ngrok 的固定域名（免费账号送一个），不设时每次拉起 ngrok 地址都不一样 */
-  ngrokUrl: env.NGROK_URL?.trim() || undefined,
 
   /** 对话日志：用户的原始内容和模型的实际响应，见 src/logging/conversation-log.ts */
   conversationLog: {

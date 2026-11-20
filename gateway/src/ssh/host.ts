@@ -100,6 +100,11 @@ export class SshHost {
 
   constructor(readonly id: string) {}
 
+  /** 这次在设置页输入的密码（只在内存里）：公网分享用这个连接时也拿来登录 */
+  get sessionPassword(): string | undefined {
+    return this.password;
+  }
+
   get connection(): SshConnection {
     const conn = getConnection(this.id);
     if (!conn) throw new SshError("SSH 连接不存在（可能已经在设置里删掉了）");
@@ -523,8 +528,8 @@ export function collect(channel: ClientChannel, stdin: Buffer | string | Readabl
   });
 }
 
-/** 主连接和模型转发的连接共用的连接参数 */
-function connectOptions(target: ResolvedTarget, password: string | undefined, hostVerifier: (blob: Buffer, verify: (ok: boolean) => void) => void): ConnectConfig {
+/** 主连接和模型转发的连接共用的连接参数；公网分享用 SSH 连接时也用它（share/ssh-tunnel.ts） */
+export function connectOptions(target: ResolvedTarget, password: string | undefined, hostVerifier: (blob: Buffer, verify: (ok: boolean) => void) => void): ConnectConfig {
   return {
     host: target.hostname,
     port: target.port,
