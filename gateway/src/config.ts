@@ -114,6 +114,10 @@ export const config = {
   shareClientUrl: env.SHARE_CLIENT_URL?.trim() || "http://localhost:5180",
   /** 公网分享：本机给到服务器的 SSH 反向转发连的入口端口（只监听 127.0.0.1），有公网分享时才监听 */
   shareTunnelPort: int("SHARE_TUNNEL_PORT", 8790),
+  /** 网页的源码目录（公网分享给访客打包用） */
+  clientDir: path.resolve(env.CLIENT_DIR || path.join(gatewayRoot, "..", "client")),
+  /** 公网分享的访客用的打包版网页放在哪（网关自己打包，见 share/client-bundle.ts） */
+  shareClientDist: path.resolve(env.SHARE_CLIENT_DIST || path.join(gatewayRoot, ".data", "share-client")),
 
   /** 对话日志：用户的原始内容和模型的实际响应，见 src/logging/conversation-log.ts */
   conversationLog: {

@@ -1,5 +1,6 @@
 import http, { type IncomingMessage, type OutgoingHttpHeaders, type ServerResponse } from "node:http";
 import net from "node:net";
+import zlib from "node:zlib";
 import type { Duplex } from "node:stream";
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
@@ -7,6 +8,7 @@ import { PAGE_PREFIX } from "../http/routes/files.js";
 import type { ShareScope, ShareStore } from "./store.js";
 import { onShareSettingsChange, shareSettings } from "./share-settings.js";
 import { ENTRY_CHECK_PATH, ENTRY_ID, SshShareTunnel } from "./ssh-tunnel.js";
+import { ClientBundle, compressible, pickEncoding } from "./client-bundle.js";
 
 /** 每种分享的入口：局域网的对局域网开放；公网的只给到服务器的 SSH 反向转发连 */
 const LISTEN: Record<ShareScope, { host: string; port: () => number; name: string }> = {
@@ -31,12 +33,15 @@ export class LanServer {
   readonly errors: Record<ShareScope, string | null> = { lan: null, public: null };
   /** 公网分享到服务器的 SSH 反向转发 */
   readonly tunnel: SshShareTunnel;
+  /** 公网的访客用的打包版网页 */
+  readonly bundle: ClientBundle;
 
   constructor(
     private readonly shares: ShareStore,
     private readonly log: FastifyBaseLogger,
   ) {
     this.tunnel = new SshShareTunnel(() => config.shareTunnelPort, () => shareSettings().server, log);
+    this.bundle = new ClientBundle(log);
     shares.onChange(() => void this.sync());
     // 服务器的设置改了：断开现在的，还有公网分享就按新设置重新连（公网地址可能变，之前发出去的链接跟着失效）
     onShareSettingsChange(() => {
@@ -82,7 +87,11 @@ export class LanServer {
       }
       if (tokens.size > 0 && !this.servers[scope]) await this.start(scope);
       else if (tokens.size === 0 && this.servers[scope]) await this.stop(scope);
-      if (scope === "public") this.tunnel.sync(tokens.size > 0);
+      if (scope === "public") {
+        this.tunnel.sync(tokens.size > 0);
+        // 有公网分享时先把访客用的网页打好（源码没改就什么都不做）
+        if (tokens.size > 0) this.bundle.check(true);
+      }
     }
   }
 
@@ -163,9 +172,42 @@ export class LanServer {
       }
       return;
     }
+    // 公网的访客：页面用打包版（share/client-bundle.ts），还没打好、没有的文件照旧转给 Vite
+    if (scope === "public" && route.kind === "client") {
+      const pathname = new URL(req.url ?? "/", "http://share").pathname;
+      void this.bundle.serve(req, res, pathname).then(
+        (served) => served || this.proxy(scope, req, res, route),
+        (err: unknown) => {
+          this.log.error({ err }, "发公网分享的打包版网页出错，改转给页面服务");
+          if (!res.headersSent) this.proxy(scope, req, res, route);
+        },
+      );
+      return;
+    }
+    this.proxy(scope, req, res, route);
+  }
+
+  /** 转给网关或页面服务；公网入口上能压缩的内容压缩了再发（经服务器、SSH 转一圈，带宽有限） */
+  private proxy(scope: ShareScope, req: IncomingMessage, res: ServerResponse, route: Exclude<Route, { kind: "reject" }>): void {
     const { host, port, headers } = this.upstream(route, req);
     const proxyReq = http.request({ host, port, method: req.method, path: route.path, headers }, (proxyRes) => {
-      res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
+      const status = proxyRes.statusCode ?? 502;
+      const encoding = scope === "public" ? compressionFor(req, proxyRes) : null;
+      if (encoding) {
+        const out: OutgoingHttpHeaders = { ...proxyRes.headers, "content-encoding": encoding };
+        delete out["content-length"];
+        out.vary = proxyRes.headers.vary ? `${proxyRes.headers.vary}, accept-encoding` : "accept-encoding";
+        res.writeHead(status, out);
+        const z = encoding === "br" ? zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } }) : zlib.createGzip({ level: 6 });
+        proxyRes.pipe(z).pipe(res);
+        z.on("error", () => res.destroy());
+        // 上游没发完就断了才断开访客这边（压缩流还在往外写时 proxyRes 已经关了）
+        proxyRes.on("close", () => {
+          if (!proxyRes.complete && !res.writableEnded) res.destroy();
+        });
+        return;
+      }
+      res.writeHead(status, proxyRes.headers);
       proxyRes.pipe(res);
       // 上游（网关重启、停止分享）断了，访客这边的长连接（事件流）也断开，页面才会重连
       proxyRes.on("close", () => {
@@ -262,4 +304,15 @@ export function allowed(method: string, path: string, sessionId: string): boolea
   // 会话本身只能读：重命名（PATCH）、删除（DELETE）不行；分叉出来的新会话不在分享里；开关分享（/share、/share/public）是本机的事
   if (rest === "") return method === "GET";
   return rest !== "/fork" && !/^\/share(\/|$)/.test(rest);
+}
+
+/** 公网入口转发的响应要不要压缩、用什么压：文本类、上游没压过、有内容的才压；事件流不压（会憋着不发） */
+function compressionFor(req: IncomingMessage, res: IncomingMessage): "br" | "gzip" | null {
+  if (req.method === "HEAD" || res.headers["content-encoding"]) return null;
+  const status = res.statusCode ?? 0;
+  if (status === 204 || status === 304 || status < 200) return null;
+  if (!compressible(res.headers["content-type"])) return null;
+  const length = Number(res.headers["content-length"] ?? NaN);
+  if (Number.isFinite(length) && length < 1024) return null;
+  return pickEncoding(req);
 }
