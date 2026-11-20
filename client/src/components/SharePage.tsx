@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, type ShareSettingsInput, type ShareSettingsView, type ShareTestResult } from "../api";
+import { api, type ShareFixResult, type ShareSettingsInput, type ShareSettingsView, type ShareTestResult } from "../api";
 import { refreshShares } from "../state/shares";
 import { refreshSshConnections, useSshConnections } from "../state/sshConnections";
 import { Select } from "./Select";
@@ -76,6 +76,8 @@ export function SharePage() {
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<ShareTestResult | null>(null);
+  const [fixing, setFixing] = useState(false);
+  const [fixResult, setFixResult] = useState<ShareFixResult | null>(null);
 
   useEffect(() => {
     api.shareSettings().then(
@@ -101,6 +103,7 @@ export function SharePage() {
     setDraft((d) => (d ? { ...d, ...patch } : d));
     setSaved(false);
     setResult(null);
+    setFixResult(null);
     setError(null);
   };
 
@@ -124,10 +127,11 @@ export function SharePage() {
       .finally(() => setSaving(false));
   };
 
-  const test = () => {
+  const test = (keepFix = false) => {
     if (!draft) return;
     setTesting(true);
     setResult(null);
+    if (!keepFix) setFixResult(null);
     api
       .testShareServer(inputOf(draft))
       .then(
@@ -141,7 +145,28 @@ export function SharePage() {
       .finally(() => setTesting(false));
   };
 
+  /** 在服务器上开启 GatewayPorts，成功后接着测一次 */
+  const fixGatewayPorts = () => {
+    if (!draft) return;
+    setFixing(true);
+    setFixResult(null);
+    api
+      .fixShareGatewayPorts(inputOf(draft))
+      .then(
+        (r) => {
+          setFixResult(r);
+          if (r.ok) test(true);
+          // 有公网分享时网关已经按新配置重新连了
+          void api.shareSettings().then((v) => setView((prev) => (prev ? { ...prev, tunnel: v.tunnel } : v)), () => undefined);
+        },
+        (err: Error) => setFixResult({ ok: false, error: err.message }),
+      )
+      .finally(() => setFixing(false));
+  };
+
   const dirty = view && draft ? dirtyOf(draft, view) : false;
+  // 测试连接、或者公网分享的转发报了「端口只开在服务器的 127.0.0.1 上」：给一键开启的按钮
+  const canFix = result ? !result.ok && result.fix === "gatewayPorts" : !dirty && view?.tunnel.status === "error" && view.tunnel.fix === "gatewayPorts";
   const connections = useSshConnections();
   useEffect(() => {
     void refreshSshConnections();
@@ -287,7 +312,7 @@ export function SharePage() {
                 </span>
                 <span className="appearance-row-actions">
                   {filled && (
-                    <button type="button" className="btn-small" disabled={testing} onClick={test}>
+                    <button type="button" className="btn-small" disabled={testing || fixing} onClick={() => test()}>
                       {testing ? "测试中…" : "测试连接"}
                     </button>
                   )}
@@ -296,9 +321,30 @@ export function SharePage() {
                   </button>
                 </span>
               </div>
+              {fixResult && (
+                <div className="appearance-row">
+                  <span className="appearance-row-text">
+                    <span className={`proxy-result ${fixResult.ok ? "ok" : "failed"}`}>{fixResult.ok ? `${fixResult.message}${testing ? "，正在重新测试…" : ""}` : fixResult.error}</span>
+                    {!fixResult.ok && fixResult.manual && <pre className="share-manual">{fixResult.manual}</pre>}
+                  </span>
+                </div>
+              )}
               {result && (
                 <div className="appearance-row">
                   <span className={`proxy-result ${result.ok ? "ok" : "failed"}`}>{result.ok ? `连通了：访客打开 ${result.url}/share/… 就能进来` : result.error}</span>
+                </div>
+              )}
+              {canFix && !(fixResult && !fixResult.ok) && (
+                <div className="appearance-row">
+                  <span className="appearance-row-text">
+                    <span className="appearance-row-label">在服务器上开启 GatewayPorts</span>
+                    <span className="appearance-row-desc">
+                      用这个账号的 sudo（要免密）在服务器上新建 /etc/ssh/sshd_config.d/99-claude-app.conf，写入 GatewayPorts clientspecified，sshd -t 检查通过后重启 sshd（已经连着的 SSH 不会断）。安全组要在云服务器的控制台里放行，这里改不了
+                    </span>
+                  </span>
+                  <button type="button" className="primary" disabled={fixing || testing} onClick={fixGatewayPorts}>
+                    {fixing ? "开启中…" : "开启"}
+                  </button>
                 </div>
               )}
             </div>

@@ -701,6 +701,8 @@ export interface ShareEntry {
 export interface ShareTunnelState {
   /** off：没有公网分享、没连；starting：正在连、开端口、自检；error：没连上或断了 */
   status: "off" | "starting" | "ready" | "error";
+  /** 出错时能在设置页一键修的：gatewayPorts 是服务器 sshd 的 GatewayPorts 没开，端口只开在服务器的 127.0.0.1 上 */
+  fix?: "gatewayPorts";
   /** 公网地址（http://<服务器>:<端口>，不带结尾的 /），ready 时才有 */
   url: string | null;
   error: string | null;
@@ -747,7 +749,10 @@ export interface ShareSettingsInput {
 }
 
 /** POST /share/settings/test：连上服务器、开端口、从外面访问一次，然后断开 */
-export type ShareTestResult = { ok: true; url: string; fingerprint: string } | { ok: false; error: string };
+export type ShareTestResult = { ok: true; url: string; fingerprint: string } | { ok: false; error: string; fix?: ShareTunnelState["fix"] };
+
+/** POST /share/settings/fix-gateway-ports：在服务器上开启 GatewayPorts；自动开不了时 manual 是手动执行的命令 */
+export type ShareFixResult = { ok: true; message: string } | { ok: false; error: string; manual?: string };
 
 /** GET /shares：所有分享，加上拼链接用的端口、本机的局域网地址和公网隧道 */
 export interface SharesView {

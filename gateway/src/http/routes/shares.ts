@@ -9,8 +9,8 @@ import type { ShareBrowserRelay } from "../../share/browser-relay.js";
 import type { LanServer } from "../../share/lan-server.js";
 import { lanAddresses, type ShareStore } from "../../share/store.js";
 import { saveShareSettings, settingsFrom, shareConfigured, ShareSettingsError, shareSettings, type ShareSettings } from "../../share/share-settings.js";
-import { probeServer } from "../../share/ssh-tunnel.js";
-import type { ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult } from "../../shared/types.js";
+import { fixGatewayPorts, probeServer } from "../../share/ssh-tunnel.js";
+import type { ShareFixResult, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult } from "../../shared/types.js";
 
 interface IdParams {
   id: string;
@@ -118,7 +118,18 @@ export function shareRoutes(app: FastifyInstance, sessions: SessionManager, shar
     if (tunnel.status === "ready" && same) return { ok: true, url: tunnel.url ?? "", fingerprint: live.server.fingerprint ?? "" };
     const { state, fingerprint } = await probeServer(next.server, app.log);
     if (state.status === "ready") return { ok: true, url: state.url ?? "", fingerprint: fingerprint ?? "" };
-    return { ok: false, error: state.error ?? "连接超时" };
+    return { ok: false, error: state.error ?? "连接超时", ...(state.fix ? { fix: state.fix } : {}) };
+  });
+
+  /** 按请求体里的服务器配置登录服务器，开启 sshd 的 GatewayPorts（设置页自检报端口只开在 127.0.0.1 上时的按钮）；成功后有公网分享就重新连 */
+  app.post<{ Body: ShareSettingsInput }>("/share/settings/fix-gateway-ports", async (req): Promise<ShareFixResult> => {
+    const result = await fixGatewayPorts(parse(req.body, true).server, app.log);
+    // 现在的转发是改之前连的，GatewayPorts 对它不生效：断开，有公网分享就按设置重新连
+    if (result.ok) {
+      lan.tunnel.stop();
+      await lan.sync();
+    }
+    return result;
   });
 
   app.get("/share/info", async (req, reply): Promise<ShareInfo | undefined> => {

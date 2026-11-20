@@ -368,6 +368,8 @@ main {
 .proxy-result { font-size: 13px; overflow-wrap: anywhere; }
 .proxy-result.ok { color: var(--ok); }
 .proxy-result.failed { color: var(--err); }
+/* 设置页「公网分享」：自动开启不了时手动执行的命令 */
+.share-manual { margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 /* 订阅模式：代理内核状态的颜色；节点列表一行一个单选（左边圆点，右边延迟） */
 .appearance-row-desc.proxy-ok { color: var(--ok); }
 .appearance-row-desc.proxy-warn { color: var(--warn); }

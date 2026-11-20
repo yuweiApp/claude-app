@@ -148,6 +148,18 @@
   - 手动填写的：第一次连上时记下指纹（不弹确认），之后服务器的密钥和记下的不一样就不连、报出两个指纹；设置页「重新记录」或者改了地址、SSH 端口时忘掉记下的。
   - 选的连接：要是「SSH 连接」里信任过的，或者本机 known_hosts 里记着的；都没有时报错，让先在「SSH 连接」里连一次确认指纹。
 - **自检**：开了端口后，网关从外面访问一次 `http://<链接里的地址>:<公网端口>/.well-known/claude-app-share`，回的是这个网关的标识才算连上。sshd 默认 `GatewayPorts no`，端口只开在服务器自己的 127.0.0.1 上，外网打不开；没放行防火墙、安全组也一样——这时报错里写明要检查这几项，不会显示成功。
+- **外面打不开时的诊断**：自检连不上时，趁还登录着服务器跑一段 sh（`ss -ltn` / `netstat -ltn` 看这个端口监听在哪些地址，grep sshd 配置里的 `GatewayPorts`）：
+  - 只开在 127.0.0.1 / ::1 上（或者看不到监听、配置里没开）：报「GatewayPorts 没开」，状态带 `fix: "gatewayPorts"`，设置页显示一键开启的按钮。
+  - 已经在所有地址上监听：报「多半是防火墙或安全组没放行」。
+- **一键开启 GatewayPorts**（`POST /share/settings/fix-gateway-ports`，设置页的「开启」按钮，只在上面那种情况显示，点了才改）：用设置页填的配置登录服务器，执行一段 sh：
+  1. 不是 root 时要 `sudo -n` 能免密，否则不改（`nosudo`）。
+  2. `/etc/ssh/sshd_config` 里要有 `Include /etc/ssh/sshd_config.d/*.conf`，否则不改（`noinclude`，免得把一行写进 `Match` 段里）。
+  3. 写 `/etc/ssh/sshd_config.d/99-claude-app.conf`（`GatewayPorts clientspecified`）。
+  4. `sshd -t` 检查不过就删掉这个文件、不重启（`badconfig`）；`sshd -T` 看生效的值不是 clientspecified / yes（别处先写了）也删掉（`overridden`）。
+  5. 重启 sshd：`systemctl restart ssh`（或 sshd）→ `service ssh restart` → 给 `/run/sshd.pid` 里的监听进程发 HUP（sshd 收到 HUP 重新读配置），前一种不行才试后一种；已经连着的 SSH 都不断。
+  - 配置里已经写了、端口还是只开在 127.0.0.1 上（改了没重启）：诊断报「还没生效，要重启 sshd」，按钮照样显示，点了会重新走一遍（写的是同一个文件）。
+  - 自动改不了时报原因，附上手动执行的命令。成功后设置页接着测一次；有公网分享时断开现在的转发重新连（GatewayPorts 只对新连接生效）。
+  - 安全组在云服务器的控制台里，改不了。Windows 服务器不支持。
 - **断线**：连上过又断了（网络断、服务器重启）就按 2、5、10、30、60 秒退避重连，一直重试到没有公网分享；一次都没连上（密码不对、端口被占、自检不通）不重试，等下次点「分享到公网」。
 - **测试连接**（`POST /share/settings/test`）：按设置页填的（还没保存的）配置连一次、开端口、自检，然后断开。本机入口可能没在监听，进来的连接接到一个只回自检的临时服务上。公网分享正挂在同一台服务器的同一个端口上时直接回现在的结果（再开一次会冲突）。
 - **链接**：`http://<链接里的地址>:<公网端口>/share/<令牌>`；链接里的地址自己带了端口（服务器上经 nginx 等转过的）就不再拼公网端口。是 http，同局域网分享靠 `insecure-context.ts` 补上缺的接口，复制图片不行；要 https 得在服务器上另配 nginx / Caddy。

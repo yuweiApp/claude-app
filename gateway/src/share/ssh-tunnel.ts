@@ -7,11 +7,11 @@ import path from "node:path";
 import type { FastifyBaseLogger } from "fastify";
 import ssh2, { type AnyAuthMethod, type AuthHandlerMiddleware, type ConnectConfig } from "ssh2";
 import { getConnection } from "../ssh/connections.js";
-import { connectOptions } from "../ssh/host.js";
+import { collect, connectOptions, type ExecResult } from "../ssh/host.js";
 import { hostKeyOf, knownHostsHas } from "../ssh/host-key.js";
 import { existingHost } from "../ssh/hosts.js";
 import { resolveTarget } from "../ssh/ssh-config.js";
-import type { ShareTunnelState } from "../shared/types.js";
+import type { ShareFixResult, ShareTunnelState } from "../shared/types.js";
 import { rememberFingerprint, type ShareServer } from "./share-settings.js";
 
 /** 入口自检用的路径：分享入口直接回 ENTRY_ID，网关从外面访问公网地址，拿到的一样才算真的通了 */
@@ -110,12 +110,12 @@ export class SshShareTunnel {
   }
 
   /** 这条连接出错、断了：记下原因；连上过的按退避重连 */
-  private fail(client: ssh2.Client, message: string, wasReady: boolean): void {
+  private fail(client: ssh2.Client, message: string, wasReady: boolean, fix?: ShareTunnelState["fix"]): void {
     if (this.client !== client) return;
     this.client = null;
     client.end();
     this.log.error(message);
-    this.set({ status: "error", url: null, error: message });
+    this.set({ status: "error", url: null, error: message, ...(fix ? { fix } : {}) });
     if (!wasReady || !this.wanted) return;
     const delay = RETRY_DELAYS_MS[Math.min(this.retries++, RETRY_DELAYS_MS.length - 1)]!;
     this.retryTimer = setTimeout(() => {
@@ -180,9 +180,13 @@ export class SshShareTunnel {
       client.forwardIn("0.0.0.0", server.remotePort, (err) => {
         if (this.client !== client) return;
         if (err) return this.fail(client, `服务器上开不了端口 ${server.remotePort}（被占用，或者 sshd 不允许反向转发）：${err.message}`, false);
-        void selfCheck(url).then((problem) => {
+        void selfCheck(url).then(async (check) => {
           if (this.client !== client) return;
-          if (problem) return this.fail(client, problem, retrying);
+          if (check) {
+            // 外面连不上：登录着服务器看一眼端口开在哪、GatewayPorts 是什么，报得具体些
+            const { message, fix } = check.unreachable ? await explainUnreachable(client, url, server.remotePort, check.reason) : { message: check.message, fix: undefined };
+            return this.fail(client, message, retrying, fix);
+          }
           ready = true;
           this.retries = 0;
           this.log.info({ url }, "公网分享已挂到服务器上");
@@ -274,17 +278,156 @@ async function connectionDial(server: ShareServer, id: string): Promise<Dial> {
 }
 
 /** 从外面访问一次公网地址的自检路径：回的是这个网关的入口才算通了；不通时返回原因 */
-async function selfCheck(url: string): Promise<string | null> {
-  const hint = "检查服务器的 sshd_config 里有没有 GatewayPorts clientspecified（或 yes，改完重启 sshd），以及防火墙、云服务器的安全组有没有放行这个端口";
+async function selfCheck(url: string): Promise<{ message: string; unreachable: boolean; reason: string } | null> {
   try {
     const res = await fetch(`${url}${ENTRY_CHECK_PATH}`, { signal: AbortSignal.timeout(CHECK_TIMEOUT_MS) });
     const body = (await res.json().catch(() => null)) as { id?: string } | null;
     if (body?.id === ENTRY_ID) return null;
-    return `${url} 打开的不是这里的分享入口（HTTP ${res.status}），端口可能被服务器上别的程序占着`;
+    return { message: `${url} 打开的不是这里的分享入口（HTTP ${res.status}），端口可能被服务器上别的程序占着`, unreachable: false, reason: "" };
   } catch (err) {
     const cause = (err as { cause?: { code?: string; message?: string } }).cause;
     const reason = (err as Error).name === "TimeoutError" ? "超时" : (cause?.code ?? cause?.message ?? (err as Error).message);
-    return `已经登录服务器、开了端口，但从外面打不开 ${url}（${reason}）。${hint}`;
+    return { message: "", unreachable: true, reason };
+  }
+}
+
+/** 在服务器上跑一段 sh 脚本（从标准输入喂进去） */
+function runScript(client: ssh2.Client, script: string, timeoutMs: number): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    client.exec("sh -s", (err, channel) => {
+      if (err) return resolve({ code: null, stdout: Buffer.alloc(0), stderr: err.message });
+      void collect(channel, script, timeoutMs).then(resolve);
+    });
+  });
+}
+
+/** 服务器上这个端口监听在哪些地址、sshd 配置文件里写的 GatewayPorts（没写是默认的 no） */
+const DIAGNOSE = (port: number) => `p=${port}
+if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null | awk -v p=":$p" 'substr($4, length($4)-length(p)+1) == p {print "LISTEN " $4}'
+elif command -v netstat >/dev/null 2>&1; then netstat -ltn 2>/dev/null | awk -v p=":$p" 'substr($4, length($4)-length(p)+1) == p {print "LISTEN " $4}'
+else echo "NOTOOL"; fi
+g=$(grep -hiE '^[[:space:]]*GatewayPorts[[:space:]]' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | head -n 1 | awk '{print tolower($2)}')
+[ -n "$g" ] || g=no
+echo "GP $g"
+`;
+
+/**
+ * 外面打不开公网地址时的说明：端口只开在服务器的 127.0.0.1 上（sshd 的 GatewayPorts 没开）是能一键修的（fix），
+ * 已经开在所有地址上还打不开是防火墙、安全组
+ */
+async function explainUnreachable(client: ssh2.Client, url: string, port: number, reason: string): Promise<{ message: string; fix?: ShareTunnelState["fix"] }> {
+  const head = `已经登录服务器、开了端口，但从外面打不开 ${url}（${reason}）`;
+  const result = await runScript(client, DIAGNOSE(port), 10_000).catch(() => null);
+  const out = result?.stdout.toString("utf8") ?? "";
+  const listen = [...out.matchAll(/^LISTEN (\S+)/gm)].map((m) => m[1]!);
+  const gatewayPorts = /^GP (\S+)/m.exec(out)?.[1] ?? null;
+  const loopback = (a: string) => a.startsWith("127.") || a.startsWith("[::1]") || a.startsWith("::1");
+  if (listen.length ? listen.every(loopback) : gatewayPorts === "no") {
+    // 配置里已经开了、端口还是只开在 127.0.0.1 上：改完没重启 sshd
+    const configured = gatewayPorts === "clientspecified" || gatewayPorts === "yes";
+    return {
+      message: configured
+        ? `${head}：服务器上的这个端口只开在 127.0.0.1 上。sshd 配置里已经写了 GatewayPorts ${gatewayPorts}，但还没生效，要重启 sshd`
+        : `${head}：服务器上的这个端口只开在 127.0.0.1 上，因为 sshd 的 GatewayPorts 没开（现在是 ${gatewayPorts ?? "no"}）。要在 sshd 配置里加 GatewayPorts clientspecified 并重启 sshd`,
+      fix: "gatewayPorts",
+    };
+  }
+  if (listen.length) return { message: `${head}：服务器上已经在所有地址上监听 ${port}（${listen.join("、")}），多半是服务器的防火墙或云服务器的安全组没放行 TCP ${port}` };
+  return { message: `${head}。检查服务器 sshd 配置里的 GatewayPorts（要 clientspecified 或 yes，改完重启 sshd），以及防火墙、云服务器的安全组有没有放行 TCP ${port}` };
+}
+
+/** 在服务器上开启 GatewayPorts：sudo 免密写一个单独的配置文件，sshd -t 检查过才重启；每种失败各有一个标记，见 fixGatewayPorts */
+// String.raw：脚本里 grep 的 \. \* 要原样留着
+const FIX_SCRIPT = String.raw`SUDO=""
+if [ "$(id -u)" != "0" ]; then
+  if ! sudo -n true >/dev/null 2>&1; then echo "RESULT nosudo"; exit 0; fi
+  SUDO="sudo -n"
+fi
+SSHD=$(command -v sshd 2>/dev/null || echo /usr/sbin/sshd)
+if ! grep -qiE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config 2>/dev/null; then echo "RESULT noinclude"; exit 0; fi
+F=/etc/ssh/sshd_config.d/99-claude-app.conf
+echo "GatewayPorts clientspecified" | $SUDO tee "$F" >/dev/null || { echo "RESULT writefail"; exit 0; }
+if ! err=$($SUDO "$SSHD" -t 2>&1); then $SUDO rm -f "$F"; echo "RESULT badconfig $err"; exit 0; fi
+v=$($SUDO "$SSHD" -T 2>/dev/null | awk 'tolower($1)=="gatewayports"{print tolower($2)}')
+if [ "$v" != "clientspecified" ] && [ "$v" != "yes" ]; then $SUDO rm -f "$F"; echo "RESULT overridden $v"; exit 0; fi
+# 重启 sshd：systemd → service → 给监听进程发 HUP（sshd 收到 HUP 重新读配置），已经连着的 SSH 都不断
+restarted=""
+if command -v systemctl >/dev/null 2>&1; then
+  $SUDO systemctl restart ssh >/dev/null 2>&1 || $SUDO systemctl restart sshd >/dev/null 2>&1 && restarted=1
+fi
+if [ -z "$restarted" ] && command -v service >/dev/null 2>&1; then
+  $SUDO service ssh restart >/dev/null 2>&1 || $SUDO service sshd restart >/dev/null 2>&1 && restarted=1
+fi
+if [ -z "$restarted" ]; then
+  for f in /run/sshd.pid /var/run/sshd.pid; do
+    if [ -f "$f" ]; then $SUDO kill -HUP "$(cat "$f")" >/dev/null 2>&1 && restarted=1 && break; fi
+  done
+fi
+[ -n "$restarted" ] || { echo "RESULT norestart"; exit 0; }
+echo "RESULT ok"
+`;
+
+/** 手动开启的命令（自动开不了时给设置页显示） */
+export const GATEWAY_PORTS_MANUAL = [
+  'echo "GatewayPorts clientspecified" | sudo tee /etc/ssh/sshd_config.d/99-claude-app.conf',
+  "sudo sshd -t && sudo systemctl restart ssh",
+  "sudo sshd -T | grep -i gatewayports",
+].join("\n");
+
+/**
+ * 设置页「在服务器上开启 GatewayPorts」：用填的配置登录服务器，写 /etc/ssh/sshd_config.d/99-claude-app.conf、sshd -t 检查、
+ * 确认生效后重启 sshd（已经连着的 SSH 不断）。主配置不读 sshd_config.d、sudo 要密码等情况不改，给出原因
+ */
+export async function fixGatewayPorts(server: ShareServer, log: FastifyBaseLogger): Promise<ShareFixResult> {
+  let dial: Dial;
+  try {
+    dial = await dialOf(server);
+  } catch (err) {
+    return { ok: false, error: (err as Error).message, manual: GATEWAY_PORTS_MANUAL };
+  }
+  const client = new ssh2.Client();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let hostKeyError: string | null = null;
+      client.once("ready", () => resolve());
+      client.once("error", (err) => reject(new Error(hostKeyError ?? ((err as { level?: string }).level === "client-authentication" ? `登录不了 ${dial.where}：${dial.authHint}` : `连不上 ${dial.where}：${err.message}`))));
+      client.connect(
+        dial.config((blob, verify) => {
+          void dial.verify(blob).then((problem) => {
+            hostKeyError = problem;
+            verify(!problem);
+          });
+        }),
+      );
+    });
+    const result = await runScript(client, FIX_SCRIPT, 30_000);
+    const line = /^RESULT (\S+)(?: (.*))?$/m.exec(result.stdout.toString("utf8"));
+    const kind = line?.[1];
+    const detail = line?.[2]?.trim() ?? "";
+    log.info({ server: dial.where, result: kind, detail }, "在服务器上开启 GatewayPorts（公网分享）");
+    const fail = (error: string): ShareFixResult => ({ ok: false, error, manual: GATEWAY_PORTS_MANUAL });
+    switch (kind) {
+      case "ok":
+        return { ok: true, message: "已经在服务器上加了 /etc/ssh/sshd_config.d/99-claude-app.conf（GatewayPorts clientspecified）并重启了 sshd" };
+      case "nosudo":
+        return fail("这个账号用 sudo 要输密码（或者不能 sudo），没法自动改，请登录服务器手动执行下面的命令");
+      case "noinclude":
+        return fail("服务器的 /etc/ssh/sshd_config 不读 sshd_config.d 目录，没有自动改（免得改错位置），请手动在 sshd_config 开头加 GatewayPorts clientspecified 再重启 sshd");
+      case "writefail":
+        return fail("写不了 /etc/ssh/sshd_config.d/99-claude-app.conf");
+      case "badconfig":
+        return fail(`sshd -t 检查没通过，已经删掉刚写的文件、没有重启：${detail}`);
+      case "overridden":
+        return fail(`sshd 的配置里别处已经写了 GatewayPorts ${detail || "（别的值）"}，新加的不生效，已经删掉刚写的文件；请手动改那一处`);
+      case "norestart":
+        return fail("配置已经写好、检查通过，但重启不了 sshd（systemctl、service、给 sshd 发 HUP 都不行），请手动重启 sshd");
+      default:
+        return fail(`在服务器上执行没有结果（退出码 ${result.code ?? "无"}）：${result.stderr.trim() || "没有输出"}，Windows 服务器不支持自动开启`);
+    }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message, manual: GATEWAY_PORTS_MANUAL };
+  } finally {
+    client.end();
   }
 }
 
