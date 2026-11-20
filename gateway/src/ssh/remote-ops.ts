@@ -39,6 +39,21 @@ export async function rmrf(host: SshHost, ...paths: string[]): Promise<void> {
   );
 }
 
+/**
+ * Windows 远端：结束某个会话还在跑的 claude（可执行文件是 bin、命令行里带会话 id），连同它拉起的子进程（后台任务）。
+ * Windows 的 OpenSSH 不支持给远端进程发信号，关掉通道后 claude 有后台任务在跑时不退出，一直开着会话记录，删不掉。
+ * 没有这样的进程、结束不了的跳过，不报错；Linux、macOS 远端什么也不做（通道上发得了信号，文件开着也删得掉）
+ */
+export async function killRemoteClaude(host: SshHost, bin: string, sessionId: string): Promise<void> {
+  if (!host.windows) return;
+  const script = [
+    `$ids = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'claude%'" | Where-Object { $_.ExecutablePath -eq ${win(bin)} -and $_.CommandLine -like ${psQuote(`*${sessionId}*`)} } | ForEach-Object { $_.ProcessId })`,
+    "foreach ($id in $ids) { try { taskkill.exe /T /F /PID $id 2>&1 | Out-Null } catch {} }",
+    "exit 0",
+  ].join("\n");
+  await run(host, "true", script).catch(() => undefined);
+}
+
 /** 删空目录，不空、不存在的跳过，不报错 */
 export async function rmdirQuiet(host: SshHost, ...paths: string[]): Promise<void> {
   await run(

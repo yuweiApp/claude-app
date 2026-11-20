@@ -5,7 +5,7 @@ import { pipeline } from "node:stream/promises";
 import type { Stats } from "ssh2";
 import { config } from "../config.js";
 import type { SshHost } from "./host.js";
-import { appendText, rmdirQuiet, rmrf, sftpWrite } from "./remote-ops.js";
+import { appendText, killRemoteClaude, rmdirQuiet, rmrf, sftpWrite } from "./remote-ops.js";
 
 /**
  * 远程会话的记录（jsonl）由远端的 claude 写在远端的配置目录里。网关把它们按原样同步到本机配置目录的 projects/ 下（同样的目录名、文件名），
@@ -242,6 +242,8 @@ export async function uploadForkedSession(host: SshHost, sourceId: string, sessi
 /** 删远程会话：远端的记录（jsonl 和同名文件夹）和本机的副本 */
 export async function deleteRemoteSession(host: SshHost, sessionId: string): Promise<void> {
   const project = load().sessions[sessionId]?.project;
+  // Windows 远端上关掉通道后 claude 可能还在跑（有后台任务时），开着记录删不掉：先结束它
+  if (host.env) await killRemoteClaude(host, host.env.bin, sessionId);
   if (project && host.env) {
     // 这边还在下载它的记录（链路慢时一份要好几分钟）：先停掉
     reading.get(path.join(PROJECTS, project, `${sessionId}.jsonl`))?.abort();
