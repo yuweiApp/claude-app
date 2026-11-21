@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { WidgetReport, WidgetReportError } from "@gateway/shared/types";
+import { FileLinkContext } from "./ReplyMarkdown";
 
 /**
  * 部件和会话之间的事，Chat 提供，不在会话里时没有：
@@ -178,6 +179,10 @@ export function Widget({ code, title, loadingMessages, reportId }: { code: strin
   const host = useContext(WidgetHostContext);
   const hostRef = useRef(host);
   hostRef.current = host;
+  // 网址和回复里的链接一样打开：桌面版、分享页在内置浏览器里开（openUrl），没有内置浏览器时新窗口（桌面版外壳交给系统浏览器）
+  const files = useContext(FileLinkContext);
+  const openUrlRef = useRef(files?.openUrl);
+  openUrlRef.current = files?.openUrl;
   // 要报告的 tool_use id 按第一次渲染时的为准：报告前工具结果可能已经到了（超时），之后不再报
   const [toReport] = useState(reportId);
   const reportedRef = useRef(false);
@@ -205,7 +210,10 @@ export function Widget({ code, title, loadingMessages, reportId }: { code: strin
         });
         hostRef.current.report(toReport, { width: data.width ?? 0, height: data.height ?? 0, loaded: data.loaded === true, errors });
       }
-      else if (data.type === "link" && typeof data.url === "string" && /^https?:/i.test(data.url)) window.open(data.url, "_blank", "noopener,noreferrer");
+      else if (data.type === "link" && typeof data.url === "string" && /^https?:/i.test(data.url)) {
+        if (openUrlRef.current) openUrlRef.current(data.url);
+        else window.open(data.url, "_blank", "noopener,noreferrer");
+      }
     };
     window.addEventListener("message", onMessage);
     // 加载完先按 iframe 所在位置的变量同步一次（皮肤可能覆盖了根上的值），之后主题、皮肤、外观设置变了再发

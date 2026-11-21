@@ -549,7 +549,7 @@ client/
 - **桥**：部件页面开头注入一小段脚本，经 `postMessage` 和外面通信：
   - 高度：`ResizeObserver` 量 body（加上超出 body 的部分，`height: 100vh` 的容器里内容更高时），报给外面设 iframe 的高度。内容高跟着 iframe 高走时（`min-height: 100vh` 再加内边距）会一直长下去：iframe 变高多少、内容就跟着变高多少（差 1 像素以内），或者 3 秒内连着 8 次都是 iframe 变高后内容也变高，就不再报更高的，超出的部分裁掉（实测过不加这条时 iframe 长到两万多像素还在长）。
   - `sendPrompt(text)`：外面按用户在输入框里发消息处理（一轮进行中时排队）。
-  - 链接：点 http(s) 链接或调用 `openLink(url)`，由外面 `window.open`，桌面版用系统浏览器打开。
+  - 链接：点 http(s) 链接或调用 `openLink(url)`，外面和回复里的链接一样打开（`FileLinkContext.openUrl`）：桌面版、分享页在内置浏览器里开一个标签页，没有内置浏览器时 `window.open`。
   - 主题：说明里列的 CSS 变量（`--bg`、`--text`、`--accent`…）和 `data-theme` 第一次写进页面；切换主题、皮肤、外观设置时外面再发一次新值，部件不重新加载。
   - 部件报上第一次高度之前 iframe 是透明的（不能隐藏：隐藏的跨源 iframe 不跑渲染，量不出高度），上面显示 `loading_messages`；部件拿到宽度之前不报高度（量出来是 0，报了 iframe 变成 0 高就一直拿不到尺寸）。
 - **和 Claude 桌面版对齐的部分**：服务器名、工具名、`widget_code` / `title` / `loading_messages` 三个参数、`sendPrompt`、`openLink`、能连的 CDN 一致；另外定义了一组和桌面版同名的 CSS 变量（`--surface-0~3`、`--text-primary`、`--text-secondary`、`--border-strong`、`--bg-accent`、`--radius`…），值取自本项目的主题变量，照桌面版习惯写的部件也能显示正常。不跟的：`read_me` 和里面的设计建议（说明只写事实）、色板 class（`c-blue`…）、Tabler 图标字体；`title`、`loading_messages` 在桌面版是必填，这里是选填。

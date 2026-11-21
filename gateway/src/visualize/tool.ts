@@ -36,7 +36,7 @@ const DESCRIPTION = [
     "--text-success / --bg-success、--text-warning / --bg-warning、--text-danger / --bg-danger 同理（取自 --ok、--warn、--err）；--font-sans = --font-ui；--radius 是 8px。",
   "  <html> 的 data-theme 属性是 light 或 dark。body 默认：外边距 0，字体 var(--font-ui)，颜色 var(--text)，字号 15px。",
   "- 全局函数 sendPrompt(text)：以用户的身份把 text 作为一条新消息发出（一轮进行中时排队）。除此之外，用户在部件里的操作不会传给你。",
-  "- 全局函数 openLink(url)：在用户的浏览器里打开 http(s) 地址；点击 http(s) 链接也一样。",
+  "- 全局函数 openLink(url)：打开 http(s) 地址，点击 http(s) 链接也一样：用户在桌面版或分享页里时，在用户界面右侧面板的内置浏览器里开一个新标签页（同回复里的链接），否则在浏览器的新窗口打开。",
   "loading_messages：生成这次调用的参数期间，部件的位置上轮流显示这几句（每句约 2.5 秒），部件显示出来后消失；" +
     "参数是按顺序生成的，loading_messages 写在 widget_code 前面时，生成 widget_code 期间就能显示，写在后面时那时还没有；没有可显示的句子时显示「正在生成部件…」。",
   `工具结果在网页显示出部件之后返回：部件页面的 load 事件触发后约 1 秒（load 一直没触发时是开始加载后约 6 秒），网页报告部件的宽和内容高（像素）、load 触发了没有，` +
