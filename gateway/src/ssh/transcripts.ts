@@ -31,6 +31,11 @@ let manifest: Manifest | null = null;
  * 记着上传用的 SFTP 通道：传的时候删会话要先停掉它，Windows 上远端的文件写着时删不掉
  */
 const uploading = new Map<string, { cancel: () => void; done?: Promise<void> }>();
+/**
+ * 正在删除的会话：删除要先在远端找进程、再删文件，要好几秒；这期间同步不能碰它——
+ * 不能把远端还在的记录当成新会话收回来、重新下载，下载时远端的文件开着，Windows 上删不掉
+ */
+const deleting = new Set<string>();
 /** 分叉的记录传完的时刻：整台主机同步开始列目录之后才传完的，列出来的结果里可能没有它，也不能当成别处删了 */
 const uploadedAt = new Map<string, number>();
 
@@ -111,6 +116,10 @@ async function doSyncHost(host: SshHost): Promise<void> {
     for (const f of files) {
       if (!SESSION_FILE.test(f.filename) || !f.attrs.isFile()) continue;
       const sessionId = f.filename.slice(0, -".jsonl".length);
+      if (deleting.has(sessionId)) {
+        seen.add(sessionId);
+        continue;
+      }
       const owner = m.sessions[sessionId];
       // 同一个 id 已经是别的主机（或本机）的会话：不覆盖
       if (owner && owner.host !== host.id) continue;
@@ -140,7 +149,7 @@ async function doSyncHost(host: SshHost): Promise<void> {
 /** 一个会话的记录同步到本机（打开会话、一轮结束时）；没连着就跳过，用本机已有的副本 */
 export async function syncSession(host: SshHost, sessionId: string): Promise<void> {
   // 正在上传的分叉会话：远端的还没写完，本机的就是最新的
-  if (!host.isReady || uploading.has(sessionId)) return;
+  if (!host.isReady || uploading.has(sessionId) || deleting.has(sessionId)) return;
   const m = load();
   let project = m.sessions[sessionId]?.project;
   const file = `${sessionId}.jsonl`;
@@ -171,7 +180,10 @@ function syncFile(host: SshHost, remote: string, project: string, name: string, 
   const local = path.join(PROJECTS, project, name);
   const running = fileSyncs.get(local);
   // 前一个同步完再看要不要取（多半已经一样了）
-  const next = (running ?? Promise.resolve()).catch(() => undefined).then(() => doSyncFile(host, remote, local, size));
+  // 排着队的时候会话开始删了：不取
+  const next = (running ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(() => (deleting.has(path.basename(name, ".jsonl")) ? undefined : doSyncFile(host, remote, local, size)));
   fileSyncs.set(local, next);
   void next.finally(() => {
     if (fileSyncs.get(local) === next) fileSyncs.delete(local);
@@ -221,8 +233,12 @@ export function uploadForkedSession(host: SshHost, sourceId: string, sessionId: 
   save();
   // 删会话时取消：关掉上传的通道。通道关了 writeFile 不会再回调，上传要靠这里结束
   let cancel = (): void => undefined;
+  let cancelledByDelete = false;
   const cancelled = new Promise<never>((_, reject) => {
-    cancel = () => reject(new Error("分叉出的会话已经删除"));
+    cancel = () => {
+      cancelledByDelete = true;
+      reject(new Error("分叉出的会话已经删除"));
+    };
   });
   cancelled.catch(() => undefined);
   let channel: SFTPWrapper | undefined;
@@ -255,6 +271,9 @@ export function uploadForkedSession(host: SshHost, sourceId: string, sessionId: 
       }
       uploadedAt.set(sessionId, Date.now());
     } catch (err) {
+      // 不是删除取消的（比如断线）：远端写了一半的记录也删掉（删不掉就算了），不然整台主机同步时会把它当成一个会话收回来，
+      // 记录不完整，标题（在最后一行）也没了
+      if (!cancelledByDelete) await rmrf(host, `${remoteProjects(host)}/${project}/${sessionId}.jsonl`).catch(() => undefined);
       delete load().sessions[sessionId];
       save();
       throw err;
@@ -267,6 +286,15 @@ export function uploadForkedSession(host: SshHost, sourceId: string, sessionId: 
 
 /** 删远程会话：远端的记录（jsonl 和同名文件夹）和本机的副本 */
 export async function deleteRemoteSession(host: SshHost, sessionId: string): Promise<void> {
+  deleting.add(sessionId);
+  try {
+    await doDeleteRemoteSession(host, sessionId);
+  } finally {
+    deleting.delete(sessionId);
+  }
+}
+
+async function doDeleteRemoteSession(host: SshHost, sessionId: string): Promise<void> {
   const project = load().sessions[sessionId]?.project;
   // 分叉的记录还在往远端传：关掉上传的 SFTP 通道，等它停下（停下后这个会话就从清单里去掉了，project 要在这之前取）
   const upload = uploading.get(sessionId);
@@ -278,7 +306,10 @@ export async function deleteRemoteSession(host: SshHost, sessionId: string): Pro
   if (host.env) await killRemoteClaude(host, host.env.bin, sessionId);
   if (project && host.env) {
     // 这边还在下载它的记录（链路慢时一份要好几分钟）：先停掉
-    reading.get(path.join(PROJECTS, project, `${sessionId}.jsonl`))?.abort();
+    const local = path.join(PROJECTS, project, `${sessionId}.jsonl`);
+    reading.get(local)?.abort();
+    // 等它真的停下（远端的文件关掉）
+    await fileSyncs.get(local)?.catch(() => undefined);
     const base = `${remoteProjects(host)}/${project}/${sessionId}`;
     const dir = `${remoteProjects(host)}/${project}`;
     // 项目目录里没有别的会话了就删掉；Claude Code 会建一个空的 memory 文件夹，空的先删（rmdir 只删空目录）
