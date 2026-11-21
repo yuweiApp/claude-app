@@ -1,8 +1,5 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-/** 网关的部件工具（gateway/src/visualize/tool.ts）：模型把 HTML / SVG 放在参数 widget_code 里，网页按参数渲染 */
-export const SHOW_WIDGET_TOOL = "mcp__visualize__show_widget";
-
 /** 部件里 sendPrompt(text) 发消息：Chat 提供（以用户的身份发一条消息），没提供时（不在会话里）忽略 */
 export const WidgetPromptContext = createContext<((text: string) => void) | null>(null);
 
@@ -154,10 +151,50 @@ export function Widget({ code, title, loadingMessages }: { code: string; title?:
         title={title || "部件"}
         sandbox="allow-scripts"
         srcDoc={doc}
-        style={{ height: height ?? 120 }}
+        style={{ height: height ?? LOADING_HEIGHT }}
       />
     </div>
   );
+}
+
+/** 部件报上高度之前 iframe 的高度，和生成中的占位一样高（只有一行提示），换过去时不跳 */
+const LOADING_HEIGHT = 28;
+
+/** 部件调用的参数还在生成：在部件的位置轮流显示 loading_messages（已经完整收到的那几句），还没有时显示「正在生成部件…」 */
+export function WidgetPending({ json }: { json: string }) {
+  const messages = partialLoadingMessages(json);
+  return (
+    <div className="widget loading widget-pending">
+      <LoadingLine messages={messages.length ? messages : ["正在生成部件…"]} />
+    </div>
+  );
+}
+
+/**
+ * 从还没生成完的参数（不完整的 JSON）里取 loading_messages：只取已经完整的字符串，半截的不显示。
+ * 参数按工具定义的顺序生成，loading_messages 在 widget_code 前面；只在 "widget_code" 之前找，免得找到部件代码里的同名文字
+ */
+export function partialLoadingMessages(json: string): string[] {
+  const code = json.indexOf('"widget_code"');
+  const head = code < 0 ? json : json.slice(0, code);
+  const key = head.indexOf('"loading_messages"');
+  if (key < 0) return [];
+  let i = head.indexOf("[", key);
+  if (i < 0) return [];
+  const out: string[] = [];
+  for (i++; i < head.length && head[i] !== "]"; i++) {
+    if (head[i] !== '"') continue;
+    let j = i + 1;
+    while (j < head.length && head[j] !== '"') j += head[j] === "\\" ? 2 : 1;
+    if (j >= head.length) break;
+    try {
+      out.push(JSON.parse(head.slice(i, j + 1)) as string);
+    } catch {
+      break;
+    }
+    i = j;
+  }
+  return out.filter((m) => m.trim());
 }
 
 /** 部件显示出来之前的提示：模型给的 loading_messages 每 2.5 秒换一句，没给时不显示 */

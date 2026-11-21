@@ -29,7 +29,8 @@ const DESCRIPTION = [
   "  <html> 的 data-theme 属性是 light 或 dark。body 默认：外边距 0，字体 var(--font-ui)，颜色 var(--text)，字号 15px。",
   "- 全局函数 sendPrompt(text)：以用户的身份把 text 作为一条新消息发出（一轮进行中时排队）。除此之外，用户在部件里的操作不会传给你。",
   "- 全局函数 openLink(url)：在用户的浏览器里打开 http(s) 地址；点击 http(s) 链接也一样。",
-  "loading_messages：部件显示出来之前，它的位置上轮流显示这几句（每句约 2.5 秒）；不传时那里是空白。",
+  "loading_messages：生成这次调用的参数期间，部件的位置上轮流显示这几句（每句约 2.5 秒），部件显示出来后消失；" +
+    "参数是按顺序生成的，loading_messages 写在 widget_code 前面时，生成 widget_code 期间就能显示，写在后面时那时还没有；没有可显示的句子时显示「正在生成部件…」。",
   "工具结果只表示部件已交给界面显示，不包含显示出来的样子，也不包含脚本错误。",
   "部件的代码留在会话记录里：重新打开会话时部件重新显示，脚本重新执行，之前在部件里的操作状态不保留。",
 ].join("\n");
@@ -41,7 +42,7 @@ export function visualizeServer(): McpSdkServerConfigWithInstance {
     DESCRIPTION,
     {
       title: z.string().optional().describe("部件的简短名称，给读屏软件和 iframe 的 title 用"),
-      loading_messages: z.array(z.string()).max(4).optional().describe("部件显示出来之前轮流显示的提示，1–4 句"),
+      loading_messages: z.array(z.string()).max(4).optional().describe("生成参数期间在部件位置轮流显示的提示，1–4 句"),
       widget_code: z.string().describe("HTML 片段或 SVG"),
     },
     async ({ widget_code }) => {

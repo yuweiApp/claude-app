@@ -656,7 +656,7 @@ export function Chat({
     const el = scrollRef.current;
     el?.scrollTo({ top: el.scrollHeight, behavior });
   };
-  useEffect(pinToBottom, [view.items.length, view.streaming.text, view.permissions.length]);
+  useEffect(pinToBottom, [view.items.length, view.streaming.text, view.streaming.widget?.id, view.permissions.length]);
   // 内容变高（流式文字、图片加载完、展开工具输出）或对话区变矮（输入框变高）时，在底部的继续贴着底部
   useEffect(() => {
     const el = scrollRef.current;

@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { isGoalStart, type AgentItem, type ApiRetry, type GoalItem, type Item, type SessionView, type TaskItem } from "../state/session";
+import { isGoalStart, SHOW_WIDGET_TOOL, type AgentItem, type ApiRetry, type GoalItem, type Item, type SessionView, type TaskItem } from "../state/session";
 import { Attachments } from "./Attachments";
 import { GoalIcon } from "./Goal";
 import { ImageThumb } from "./ImageThumb";
 import { CopyAction, ForkAction, MessageActions } from "./MessageActions";
 import { desktopCommandLine, SparkIcon, StepGroup, stepImages, ToolIcon, ToolStep, type ToolUse } from "./Steps";
-import { SHOW_WIDGET_TOOL, Widget } from "./Widget";
+import { Widget, WidgetPending } from "./Widget";
 import { StepThumbs } from "./StepThumbs";
 import { formatShortDuration } from "./TasksPopover";
 import { MentionText, splitImageRefs } from "./MentionText";
@@ -425,6 +425,8 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
   const widgets = units.filter(shownWidget);
   const process = units.filter((u, i) => i !== finalIdx && inProcess(u));
   const streaming = live && view.streaming.text;
+  // 正在生成参数的部件调用：参数完整、出现在消息里之前，在部件的位置显示 loading 提示
+  const pendingWidget = live && view.streaming.widget && !widgets.some((u) => u.kind === "widget" && u.block.id === view.streaming.widget!.id) ? view.streaming.widget : null;
   const hasProcess = process.length > 0;
   const duration = live ? null : turnDuration(turn);
   const expanded = live ? !liveCollapsed : open;
@@ -482,6 +484,7 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
           )}
           {live &&
             !streaming &&
+            !pendingWidget &&
             !(expanded && toolRunning) &&
             (view.retry ? (
               <RetryLine key={view.retry.at} retry={view.retry} />
@@ -496,6 +499,7 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
       {widgets.map((u) => (
         <UnitView key={u.key} unit={u} view={view} />
       ))}
+      {pendingWidget && <WidgetPending json={pendingWidget.json} />}
       {final && (
         <div className="msg-group">
           <UnitView unit={final} view={view} />

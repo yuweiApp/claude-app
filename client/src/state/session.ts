@@ -2,6 +2,9 @@ import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
 import { withToken, type BackgroundTask, type ContextUsage, type DesktopTarget, type GatewayEvent, type GoalState, type GoalStatusRecord, type HistoryMessage } from "../api";
 import { parseSelectedElement, splitResponseAnnotations, type SentResponseAnnotation } from "./responseAnnotations";
 
+/** 网关的部件工具（gateway/src/visualize/tool.ts）：模型把 HTML / SVG 放在参数 widget_code 里，网页按参数渲染（components/Widget.tsx） */
+export const SHOW_WIDGET_TOOL = "mcp__visualize__show_widget";
+
 /** 消息里显示的附件（历史消息里只有路径，没有大小） */
 export interface AttachmentChip {
   name: string;
@@ -130,8 +133,11 @@ export interface SessionView {
   toolResults: Record<string, ToolResult>;
   /** 工具调用开始的时间（毫秒），按 tool_use id，算耗时用 */
   toolStarts: Record<string, number>;
-  /** 正在生成、还没收到完整 assistant 消息的文字 */
-  streaming: { text: string };
+  /**
+   * 正在生成、还没收到完整 assistant 消息的文字；widget 是正在生成参数的部件调用（show_widget）：
+   * id 是 tool_use 的 id，index 是它在这条消息里的内容块序号，json 是到目前为止收到的参数（不完整的 JSON）
+   */
+  streaming: { text: string; widget?: { id: string; index: number; json: string } };
   permissions: PermissionRequest[];
   state: string;
   model?: string;
@@ -414,7 +420,13 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
         view.streaming = { text: "" };
         view.retry = null;
       }
-      if (e.type === "content_block_delta" && e.delta.type === "text_delta") view.streaming = { text: view.streaming.text + e.delta.text };
+      if (e.type === "content_block_delta" && e.delta.type === "text_delta") view.streaming = { ...view.streaming, text: view.streaming.text + e.delta.text };
+      // 部件调用的参数边生成边记下：网页在部件的位置显示 loading_messages，参数完整了（收到 assistant 消息）再显示部件
+      if (e.type === "content_block_start" && e.content_block.type === "tool_use" && e.content_block.name === SHOW_WIDGET_TOOL)
+        view.streaming = { ...view.streaming, widget: { id: e.content_block.id, index: e.index, json: "" } };
+      const widget = view.streaming.widget;
+      if (e.type === "content_block_delta" && e.delta.type === "input_json_delta" && widget && widget.index === e.index)
+        view.streaming = { ...view.streaming, widget: { ...widget, json: widget.json + e.delta.partial_json } };
       return;
     }
     case "assistant":

@@ -755,6 +755,8 @@ span.connector-added { color: var(--ok); font-weight: 500; }
 .widget-frame { display: block; width: 100%; border: 0; background: transparent; }
 /* 部件报上高度之前：iframe 透明，左上角轮流显示 loading_messages */
 .widget.loading .widget-frame { opacity: 0; }
+/* 参数还在生成：只有一行提示，和部件刚插进页面时的 iframe 一样高（Widget.tsx 的 LOADING_HEIGHT） */
+.widget-pending { height: 28px; }
 .widget-loading { position: absolute; top: 0; left: 0; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
 .widget-loading-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: widget-pulse 1.2s ease-in-out infinite; }
 @keyframes widget-pulse { 50% { opacity: 0.3; } }
