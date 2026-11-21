@@ -107,15 +107,19 @@ function splitTurns(items: Item[], turnStartUuids: string[]): Turn[] {
 
 /**
  * 这一轮的用时：有 result 用它的；插入过消息的最后一段和历史里没有 result 的（网关重启过、这一轮没跑完），
- * 按这一段开头那条消息到下一段开始、result 到达或最后一条消息的时间算
+ * 按这一段开头那条消息到下一段开始、result 到达或最后一条消息的时间算。
+ * result 的用时不会比这一轮开头到最后一条回复还短：比这还短的（Claude Code 自己造的 duration_ms 为 0 的 result、
+ * 挂错了轮的 result）按消息的时间算
  */
 function turnDuration(turn: Turn): number | null {
-  if (turn.result) {
-    // 插入过消息的一轮，result 的用时是整轮的，最后一段只算它自己那部分
-    if (!turn.continued) return turn.result.durationMs;
-  }
   const start = (turn.user ?? turn.task ?? turn.agent ?? turn.compact ?? turn.goal)?.at;
-  const end = turn.nextAt ?? turn.result?.at ?? turn.body.findLast((item) => item.kind === "assistant")?.at;
+  const lastReply = turn.body.findLast((item) => item.kind === "assistant")?.at;
+  // 插入过消息的一轮，result 的用时是整轮的，最后一段只算它自己那部分
+  if (turn.result && !turn.continued) {
+    const span = start && lastReply && lastReply > start ? lastReply - start : 0;
+    return Math.max(turn.result.durationMs, span);
+  }
+  const end = turn.nextAt ?? turn.result?.at ?? lastReply;
   return start && end && end > start ? end - start : null;
 }
 
