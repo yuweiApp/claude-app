@@ -37,7 +37,7 @@ import { existingHost, sshHost } from "../ssh/hosts.js";
 import type { SshHost } from "../ssh/host.js";
 import { rmdirQuiet } from "../ssh/remote-ops.js";
 import { remoteFs } from "../ssh/host-fs.js";
-import { appendRemote, deleteRemoteSession, registerRemoteSession, remoteProjectShared, remoteSessionHost, syncHost, syncSession, uploadForkedSession } from "../ssh/transcripts.js";
+import { appendRemote, deleteRemoteSession, forkUploaded, registerRemoteSession, remoteProjectShared, remoteSessionHost, syncHost, syncSession, uploadForkedSession } from "../ssh/transcripts.js";
 import { listConnections } from "../ssh/connections.js";
 import type { SessionContextInfo } from "../shared/types.js";
 import { compactedSinceReply, forgetSession, savedUsage, saveUsage } from "./context-usage.js";
@@ -150,7 +150,7 @@ export class SessionManager {
     return (await this.activate(sessionId)).send(text, attachments, elements, priority, draft);
   }
 
-  /** 活跃会话直接返回；子进程已回收的用原来的工作目录 resume。远程会话先连上主机、同步一下记录 */
+  /** 活跃会话直接返回；子进程已回收的用原来的工作目录 resume。远程会话先等分叉的记录传完、连上主机、同步一下记录 */
   async activate(sessionId: string): Promise<AgentSession> {
     const session = this.active.get(sessionId);
     // 子进程是按旧的代理设置启动的：能关就关掉再 resume，这条消息就走新的代理
@@ -159,7 +159,11 @@ export class SessionManager {
       await session.close();
     } else if (session) return session;
     const hostId = remoteSessionHost(sessionId);
-    if (hostId) await syncSession(await readyHost(hostId), sessionId).catch(() => undefined);
+    if (hostId) {
+      // 分叉出的会话：远端的记录传完了才能 resume
+      await forkUploaded(sessionId);
+      await syncSession(await readyHost(hostId), sessionId).catch(() => undefined);
+    }
     const info = await getSessionInfo(sessionId);
     if (!info) throw new NotFoundError(`会话不存在：${sessionId}`);
     const settings = this.lastSettings.get(sessionId) ?? { model: await this.recordedModel(sessionId) };

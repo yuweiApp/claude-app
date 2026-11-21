@@ -284,6 +284,17 @@ export function uploadForkedSession(host: SshHost, sourceId: string, sessionId: 
   return upload.done;
 }
 
+/**
+ * 分叉出的会话的记录还在往远端传：等它传完，传失败了抛错。
+ * 本机副本一写好列表里就有这个会话，上传要好几秒到几分钟，这期间可能已经在给它发消息；
+ * Windows 远端上 SFTP 以写方式开着的文件别的进程读不了，这时拉起的 claude 读不了记录（EBUSY），resume 失败
+ */
+export async function forkUploaded(sessionId: string): Promise<void> {
+  await uploading.get(sessionId)?.done?.catch((err: Error) => {
+    throw new Error(`分叉的会话记录没有传到远端：${err.message}`);
+  });
+}
+
 /** 删远程会话：远端的记录（jsonl 和同名文件夹）和本机的副本 */
 export async function deleteRemoteSession(host: SshHost, sessionId: string): Promise<void> {
   deleting.add(sessionId);
