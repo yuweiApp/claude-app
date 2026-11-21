@@ -10,6 +10,7 @@ import type { BrowserHost } from "../browser/host.js";
 import { activeBrowsers, externalNote, externalServers, externalTools, fileReader, fileSaver, filesFact } from "../browser/external.js";
 import { desktopEnabled } from "../config-file.js";
 import { DESKTOP_SERVER, DESKTOP_TOOLS, desktopServer } from "../desktop/tool.js";
+import { VISUALIZE_SERVER, VISUALIZE_TOOLS, visualizeServer } from "../visualize/tool.js";
 import type { DesktopTarget } from "../shared/types.js";
 import { nativePath, parseRemote } from "../ssh/location.js";
 import { sshHost } from "../ssh/hosts.js";
@@ -60,6 +61,8 @@ export function buildOptions(launch: SessionLaunch): Options {
     ...externalTools(active),
     // 桌面工具（run_code）不弹权限卡片
     ...(desktop ? DESKTOP_TOOLS : []),
+    // 对话里的部件（show_widget）只是显示，不弹权限卡片
+    ...VISUALIZE_TOOLS,
   ];
   return {
     cwd: launch.cwd,
@@ -87,6 +90,8 @@ export function buildOptions(launch: SessionLaunch): Options {
       ...(browser ? { [BROWSER_SERVER]: browser } : {}),
       ...external,
       ...(desktop ? { [DESKTOP_SERVER]: desktop } : {}),
+      // 在对话里显示 HTML / SVG 部件，网页按调用参数渲染（docs/README.md「对话里的部件」）
+      [VISUALIZE_SERVER]: visualizeServer(),
     },
     plugins: importedPlugins(),
     ...(launch.skills ? { skills: launch.skills } : {}),
@@ -103,7 +108,7 @@ export function buildOptions(launch: SessionLaunch): Options {
 
 /**
  * 远程会话（docs/README.md「SSH 远程开发」）：claude 经 SSH 在远端跑，模型请求经反向转发回网关。
- * 工具只挂浏览器（本机的内置浏览器和外部浏览器）和右侧面板的终端（远端的）；插件、技能白名单、设置页的连接器、桌面操作都不给
+ * 工具只挂浏览器（本机的内置浏览器和外部浏览器）、右侧面板的终端（远端的）和对话里的部件；插件、技能白名单、设置页的连接器、桌面操作都不给
  */
 function buildRemoteOptions(launch: SessionLaunch): Options {
   const remote = parseRemote(launch.cwd)!;
@@ -123,7 +128,7 @@ function buildRemoteOptions(launch: SessionLaunch): Options {
   ]
     .filter(Boolean)
     .join("\n\n");
-  const allowedTools = [...(terminal ? TERMINAL_READ_TOOLS : []), ...(browser ? BROWSER_TOOLS : []), ...externalTools(active)];
+  const allowedTools = [...(terminal ? TERMINAL_READ_TOOLS : []), ...(browser ? BROWSER_TOOLS : []), ...externalTools(active), ...VISUALIZE_TOOLS];
   return {
     cwd: remote.path,
     // 远端的附件目录（发消息时上传到这里）
@@ -147,6 +152,8 @@ function buildRemoteOptions(launch: SessionLaunch): Options {
       ...(terminal ? { [TERMINAL_SERVER]: terminal } : {}),
       ...(browser ? { [BROWSER_SERVER]: browser } : {}),
       ...external,
+      // 对话里的部件在网页上显示，远程会话一样能用
+      [VISUALIZE_SERVER]: visualizeServer(),
     },
     systemPrompt: {
       type: "preset",

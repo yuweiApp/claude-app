@@ -6,6 +6,7 @@ import { GoalIcon } from "./Goal";
 import { ImageThumb } from "./ImageThumb";
 import { CopyAction, ForkAction, MessageActions } from "./MessageActions";
 import { desktopCommandLine, SparkIcon, StepGroup, stepImages, ToolIcon, ToolStep, type ToolUse } from "./Steps";
+import { SHOW_WIDGET_TOOL, Widget } from "./Widget";
 import { StepThumbs } from "./StepThumbs";
 import { formatShortDuration } from "./TasksPopover";
 import { MentionText, splitImageRefs } from "./MentionText";
@@ -417,8 +418,11 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
   const finalIdx = !live && units[lastIdx]?.kind === "text" ? lastIdx : -1;
   const final = finalIdx >= 0 ? units[finalIdx]! : null;
   // 网关报的错、目标达成这些不折叠；目标检查没通过的那几行算过程
-  const inProcess = (u: Unit) => u.kind !== "item" || (u.item.kind === "goal" && u.item.event === "check");
-  const errors = units.filter((u) => !inProcess(u));
+  // 部件（show_widget）不折叠，按顺序显示在过程下面；调用出错的（参数是空的、被中断）还是过程里的一步
+  const shownWidget = (u: Unit) => u.kind === "widget" && !view.toolResults[u.block.id]?.isError;
+  const inProcess = (u: Unit) => !shownWidget(u) && (u.kind !== "item" || (u.item.kind === "goal" && u.item.event === "check"));
+  const errors = units.filter((u) => u.kind === "item" && !inProcess(u));
+  const widgets = units.filter(shownWidget);
   const process = units.filter((u, i) => i !== finalIdx && inProcess(u));
   const streaming = live && view.streaming.text;
   const hasProcess = process.length > 0;
@@ -489,6 +493,9 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
             ))}
         </div>
       )}
+      {widgets.map((u) => (
+        <UnitView key={u.key} unit={u} view={view} />
+      ))}
       {final && (
         <div className="msg-group">
           <UnitView unit={final} view={view} />
@@ -527,7 +534,9 @@ type Unit =
   | { kind: "item"; key: string; item: Exclude<Item, { kind: "assistant" }> }
   /** uuid：所在的那条 assistant 消息（会话记录里一行一个内容块） */
   | { kind: "text"; key: string; uuid: string; text: string }
-  | { kind: "steps"; key: string; messageId?: string; tools: ToolUse[] };
+  | { kind: "steps"; key: string; messageId?: string; tools: ToolUse[] }
+  /** 部件（show_widget）：单独一个单元，不和同一次响应里的其他工具调用合成一组 */
+  | { kind: "widget"; key: string; block: ToolUse };
 
 function toUnits(items: Item[]): Unit[] {
   const units: Unit[] = [];
@@ -539,6 +548,7 @@ function toUnits(items: Item[]): Unit[] {
     item.blocks.forEach((block, i) => {
       const key = `${item.uuid}:${i}`;
       if (block.type === "text") units.push({ kind: "text", key, uuid: item.uuid, text: block.text });
+      else if (block.name === SHOW_WIDGET_TOOL) units.push({ kind: "widget", key, block });
       else {
         const last = units.at(-1);
         if (last?.kind === "steps" && item.messageId && last.messageId === item.messageId) last.tools.push(block);
@@ -571,6 +581,14 @@ function UnitView({ unit, view }: { unit: Unit; view: SessionView }) {
           <ReplyMarkdown>{unit.text}</ReplyMarkdown>
         </AnnotatableText>
       );
+    case "widget": {
+      const input = (unit.block.input ?? {}) as { widget_code?: unknown; title?: unknown; loading_messages?: unknown };
+      // 出错的调用（参数是空的、被中断）显示成一步
+      if (typeof input.widget_code !== "string" || !input.widget_code.trim() || view.toolResults[unit.block.id]?.isError)
+        return <ToolStep block={unit.block} view={view} renderChildren={renderChildren} />;
+      const loading = Array.isArray(input.loading_messages) ? input.loading_messages.filter((m): m is string => typeof m === "string") : undefined;
+      return <Widget code={input.widget_code} title={typeof input.title === "string" ? input.title : undefined} loadingMessages={loading} />;
+    }
     case "steps":
       return unit.tools.length === 1 ? (
         <ToolStep block={unit.tools[0]!} view={view} renderChildren={renderChildren} />

@@ -750,6 +750,15 @@ span.connector-added { color: var(--ok); font-weight: 500; }
 .user-text-more:hover { background: none; color: var(--text); }
 .mention { color: var(--skill); }
 .mention-sigil { color: var(--muted); }
+/* 对话里的部件（show_widget）：沙箱 iframe，背景透明，高度由里面报上来 */
+.widget { position: relative; margin: 10px 0 14px; }
+.widget-frame { display: block; width: 100%; border: 0; background: transparent; }
+/* 部件报上高度之前：iframe 透明，左上角轮流显示 loading_messages */
+.widget.loading .widget-frame { opacity: 0; }
+.widget-loading { position: absolute; top: 0; left: 0; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.widget-loading-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: widget-pulse 1.2s ease-in-out infinite; }
+@keyframes widget-pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .widget-loading-dot { animation: none; } }
 .assistant { line-height: 1.75; }
 .assistant p { margin: 0.5em 0; }
 .assistant > :first-child, .annotatable > [data-response-annotation-target] > :first-child { margin-top: 0; }

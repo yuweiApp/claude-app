@@ -1,7 +1,7 @@
 # 网关功能上的配置，启动时读一次，改完要重启网关。
 # 端口、密钥、目录、默认模型这些部署相关的仍在 .env.local（见 src/config.ts）。
 
-# 网关自带的 MCP 工具：内置浏览器 mcp__inapp__…、外部浏览器 mcp__chrome__…、mcp__brave__… 这样（设置页「浏览器」里启用的）、终端 mcp__terminal__…、桌面 mcp__desktop__…
+# 网关自带的 MCP 工具：内置浏览器 mcp__inapp__…、外部浏览器 mcp__chrome__…、mcp__brave__… 这样（设置页「浏览器」里启用的）、终端 mcp__terminal__…、桌面 mcp__desktop__…、对话里的部件 mcp__visualize__show_widget
 tools:
   # 常驻的工具：第一轮就把完整定义给模型，不藏在 ToolSearch 后面；没列的照旧延迟加载，用到时模型先 ToolSearch。
   # 写工具全名，* 代替服务器名（外部浏览器的服务器名跟着设置页走，写成 mcp__*__browser_run_code）。只对上面这几个服务器生效，

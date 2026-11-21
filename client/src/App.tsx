@@ -33,6 +33,7 @@ import { emptyView, reduce } from "./state/session";
 import { AnnotationEditor, AnnotationSelectionButton, AnnotationSessionContext, NotesChip } from "./components/ResponseAnnotations";
 import { ANNOTATION_SCOPE_ATTR, clearResponseAnnotations, restoreResponseAnnotations, useResponseAnnotations, withResponseAnnotations, type ResponseAnnotation } from "./state/responseAnnotations";
 import { moveComposerDraft, setComposerDraft, type ComposerDraft } from "./state/composerDrafts";
+import { WidgetPromptContext } from "./components/Widget";
 
 export function App() {
   const [config, setConfig] = useState<GatewayConfig | null>(null);
@@ -694,6 +695,9 @@ export function Chat({
     }
   };
 
+  // 部件里的 sendPrompt(text)：和在输入框里发一样（一轮进行中时排队）；出错时 send 已经提示过
+  const widgetPrompt = sessionId ? (text: string) => void send(text, []).catch(() => {}) : null;
+
   // 以 next 排队的消息：立即发送（改成 now）、撤回到输入框编辑（还原发送时的草稿和标注）、删除
   const queuedAction = async (uuid: string, action: "send" | "edit" | "delete") => {
     if (!sessionId) return;
@@ -782,6 +786,7 @@ export function Chat({
           </div>
         )}
         <AnnotationSessionContext.Provider value={sessionId}>
+          <WidgetPromptContext.Provider value={widgetPrompt}>
           {(!sessionId || view.historyLoaded) && <Messages
             view={view}
             onFork={
@@ -790,6 +795,7 @@ export function Chat({
                 : undefined
             }
           />}
+          </WidgetPromptContext.Provider>
         </AnnotationSessionContext.Provider>
         {view.permissions.map((request) => (
           <PermissionCard

@@ -53,6 +53,9 @@ function toolLabel(block: ToolUse, running: boolean): { icon: ReactNode; verb: s
       return { icon: <DesktopIcon />, verb: v("正在操作桌面", "已操作桌面"), target: desktopCommandLine(i) };
     case "mcp__desktop__run_code":
       return { icon: <DesktopIcon />, verb: v("正在运行桌面脚本", "已运行桌面脚本"), target: firstLine(s("code")) };
+    // 对话里的部件（网关的 visualize MCP 服务器）：正常显示时不走这里，出错的调用才显示成一步
+    case "mcp__visualize__show_widget":
+      return { icon: <WidgetIcon />, verb: v("正在显示部件", "显示部件"), target: s("title") };
     default:
       // 浏览器工具（内置浏览器 inapp、外部浏览器 chrome / edge…，旧记录里的 web）：工具名都是 mcp__<服务器>__browser_…，
       // 图标用面板里浏览器标签页的那个地球
@@ -97,6 +100,11 @@ function PencilIcon() {
 /** 桌面工具：显示器 */
 function DesktopIcon() {
   return <LineIcon><rect x="1.75" y="2.5" width="12.5" height="8.5" rx="1.5" /><path d="M5.5 14h5M8 11v3" /></LineIcon>;
+}
+
+/** 部件：一个窗口，里面一块图 */
+function WidgetIcon() {
+  return <LineIcon><rect x="1.75" y="2.5" width="12.5" height="11" rx="1.5" /><path d="M1.75 5.5h12.5M4.5 11l2.25-2.5 1.75 1.5 2.5-3 1.5 1.5" /></LineIcon>;
 }
 
 /** 其他工具：扳手 */
