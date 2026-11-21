@@ -338,14 +338,20 @@ export interface ConnectorRef {
   id: string;
   title: string;
   icon?: string;
+  /** 来自哪个连接器市场；没有是 MCP 注册表（以前添加的都是） */
+  source?: ConnectorSource;
 }
 
+/** 连接器市场的来源：directory 是 Claude 目录（claude.ai 上的连接器目录），registry 是 MCP 官方注册表 */
+export type ConnectorSource = "directory" | "registry";
+
 /**
- * 连接器市场里的一项（GET /connectors）：MCP 官方注册表里有远程地址的服务器。
- * id 是注册表里的名称，如 com.figma.mcp/mcp；斜杠前的反向域名注册表验证过所有权（io.github.用户名 验证的是 GitHub 账号）
+ * 连接器市场里的一项（GET /connectors）：Claude 目录或 MCP 官方注册表里有远程地址的服务器。
+ * Claude 目录的 id 是目录里的 UUID；注册表的 id 是注册表里的名称，如 com.figma.mcp/mcp，斜杠前的反向域名注册表验证过所有权（io.github.用户名 验证的是 GitHub 账号）
  */
 export interface ConnectorEntry {
   id: string;
+  source: ConnectorSource;
   title: string;
   description: string;
   version: string;
@@ -362,6 +368,36 @@ export interface ConnectorEntry {
   suggestedName: string;
   /** 已经添加了的话，是哪个 MCP 服务器 */
   added?: string;
+  /** 以下只有 Claude 目录的有 */
+  /** 按地区等分开的几个地址，添加时选一个（这时 url 为空） */
+  urlOptions?: { url: string; label: string; description?: string }[];
+  /** 地址要用户自己填（各自的实例、工作区），填的要匹配这个正则；url 不为空时是示例地址 */
+  urlPattern?: string;
+  author?: string;
+  /** 审核情况：anthropic 是 Anthropic 自己的，partner 是合作伙伴的 */
+  review?: "anthropic" | "partner";
+  /** 分类（目录里的英文标识，如 productivity） */
+  categories?: string[];
+  toolCount?: number;
+  /** 目录列出的支持客户端里有没有 Claude Code */
+  claudeCode?: boolean;
+  /** 不用登录 */
+  authless?: boolean;
+  /** 在 claude.ai 上的目录页 */
+  directoryUrl?: string;
+  /** 加不了的原因（要自备 OAuth 客户端等）；有这个时不能添加 */
+  unsupported?: string;
+}
+
+/** GET /connectors 的一页 */
+export interface ConnectorPage {
+  connectors: ConnectorEntry[];
+  /** Claude 目录：筛过之后的总数（connectors 只是 offset 开始的一页） */
+  total?: number;
+  /** Claude 目录：所有分类，按连接器个数从多到少 */
+  categories?: string[];
+  /** MCP 注册表：还有下一页时取下一页用 */
+  nextCursor?: string;
 }
 
 export interface ConnectorField {
@@ -373,9 +409,12 @@ export interface ConnectorField {
   choices?: string[];
 }
 
-/** 添加连接器（POST /connectors）：name 不填用建议的名称，variables 填地址里的变量，headers 填请求头 */
+/** 添加连接器（POST /connectors）：name 不填用建议的名称，variables 填地址里的变量，headers 填请求头，url 是 Claude 目录里选的或填的地址 */
 export interface ConnectorInput {
   id: string;
+  /** 没有是 MCP 注册表 */
+  source?: ConnectorSource;
+  url?: string;
   name?: string;
   variables?: Record<string, string>;
   headers?: Record<string, string>;

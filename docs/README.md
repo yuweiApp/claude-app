@@ -80,10 +80,17 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
   - 列表用临时 query 的 `supportedAgents()`，只有名字、描述和模型，不带来源和路径。定义文件由网关按名字自己找（`agentFiles`），对的是 Claude Code 的命名（实测 2.1.322）：用户和项目的名字是文件开头的 `name`（没有时取文件名），子文件夹不算进名字；插件里的是 `插件名:子文件夹:名字`；同名时项目的优先。找不到文件、名字里也没有插件名的算内置的（Claude Code 自带的 Explore、Plan、general-purpose 等），内置插件带的也算内置。
   - 停用：名字存在 `$CLAUDE_CONFIG_DIR/gateway-disabled-agents.json`，本地会话的 `disallowedTools` 里加上 `Agent(名字)`。`supportedAgents()` 照样列出停用的，但模型看不到、也调用不了（实测：让模型列出 Agent 工具的 subagent_type，停用的不在里面，带冒号的插件代理也一样）。在拉起 claude 进程时确定，已经活跃的会话要等进程重启才更新。远程会话不管（远端用它自己的配置），同技能白名单。
 - MCP 服务器：设置页添加的存在 `$CLAUDE_CONFIG_DIR/gateway-mcp-servers.json`（权限 600，请求头和环境变量可能有令牌），启用的通过 `options.mcpServers` 传给会话，对新会话和子进程重启后的会话生效。插件或配置文件带来的服务器只显示，不能在设置页改。
-- 连接器（`gateway/src/agent/connectors.ts`、`client/src/components/ConnectorDirectory.tsx`）：设置页原来的「MCP」改叫「连接器」，分「已添加」和「连接器市场」两个标签。连接器市场的数据来自 MCP 官方注册表（`config.yml` 的 `connectors.registry`，默认 `https://registry.modelcontextprotocol.io`），只列有远程地址（streamable-http 优先，其次 SSE）的服务器，删除了的不列。
-  - 注册表很大（2 万多条，不少是批量发布的杂项），所以不搜索时只列 `connectors.featured` 里推荐的（按名称逐个取最新版本，缓存 1 小时，取不到的跳过）；搜索时查整个注册表（`version=latest`，网关一页 100 条，缓存 5 分钟），推荐的和名称主体就是搜索词的排在前面。网页按卡片网格显示，每页个数同插件市场按可见区域算，翻到已经取回来的最后一页再往后时取注册表的下一页（还有没取的时，最后一个页码后面多一个省略号）。
-  - 名称是反向域名（`com.figma.mcp/mcp`），注册表验证过所有权：`com.figma` 验证域名，`io.github.用户名` 验证 GitHub 账号，所以列表里显示完整名称和地址，看得出是不是官方的。没写 title 的，标题用斜杠后面那段，那段只是 mcp 的用名称主体（`com.notion/mcp` → Notion）。
-  - 添加（`POST /connectors`）由网关按名称再取一次注册表，填好地址变量和请求头，存成设置页的 MCP 服务器（`gateway-mcp-servers.json` 里多记一个 `connector`：注册表名称、标题、图标），之后的连接、登录、启停、删除和手动添加的一样。默认名称是名称主体（figma、linear），`io.github.*` 的用标题；被别的服务器占了加 `-2`。有请求头或地址变量的先弹表单（可选的请求头不填就不带），没有的直接添加；添加后直接打开登录对话框，不用登录的连上就自动关掉。
+- 连接器（`gateway/src/agent/connectors.ts`、`client/src/components/ConnectorDirectory.tsx`）：设置页原来的「MCP」改叫「连接器」，分「已添加」和「连接器市场」两个标签。连接器市场布局同插件市场：顶部是总数、「来源」「分类」两个下拉框，卡片网格，底部页码（每页个数同插件市场按可见区域算），搜索词停 300ms 再查。两个来源，都只列有远程地址（streamable-http 优先，其次 SSE）的服务器：
+  - **Claude 目录**（默认）：claude.ai 上的连接器目录（`config.yml` 的 `connectors.directory`，默认 `https://api.anthropic.com/api/directory/servers`）。Claude Code 查目录也用这个接口，公开的，不用登录。目录共 1200 多项，去掉桌面版扩展（`type: local`，.dxt，要在本机装）和没有地址的，远程的 1070 个左右（2026-11-21）。网关一页 500 条一次取完，缓存 1 小时；搜索（标题、作者、描述、分类，标题以搜索词开头的、标题里有的排前面）、分类、分页都在网关里做，接口只返回 `offset` 开始的一页和总数。默认按目录的 `rank` 排（和 claude.ai 一样热门的在前）。
+    - 卡片的信息行是作者、审核情况（`verified_tier`：Anthropic、合作伙伴）、工具数、不用登录的（`auth_posture: no_auth`）、地址的主机名，后面链到 claude.ai 上的目录页；底部是分类（按分类筛时是筛的那个，否则是第一个）。
+    - 图标：`logo` 是图片地址的优先，其次 `icon_url`。`icon_url` 有三百多个不是图片而是服务商的网站（`https://slack.com/`、`https://mcp.linear.app/mcp`），当图片加载会拿到网页（401、被跨域拦截），网关换成 Google 的网站图标服务（`t0.gstatic.com/faviconV2`，目录里 Google 自己的几个本来就是这样写的）；网站没有图标时返回 404，网页退回首字母。分类是目录的 `categories`（英文标识，网页上有中文名对照，没对上的显示原样），下拉框按连接器个数从多到少排。
+    - 目录的 `works_with` 里没有 `claude-code` 的（约 150 个）标「未列出 Claude Code」：多半是服务商只给 claude.ai 预先注册了 OAuth 客户端、不让自助注册，登录时可能报 `mcp_client_registration_unavailable`。照样能添加，失败原因显示在登录对话框里。
+    - 地址有三种：固定的；按地区分开的几个（`url_options`，如 Zoho、Datadog），添加时在表单里选；要自己填的（`url_regex`，各自的实例或工作区，如 Snowflake、Smartsheet），表单里填，网关按目录给的正则检查（JavaScript 解析不了的正则不检查，只要求 https）。
+    - 少数服务商虽然列了支持 Claude Code，也不让自助注册客户端（实测 Smartsheet：`does not support dynamic client registration`，目录给 Claude Code 的命令也只是普通的 `claude mcp add`），能添加，登录对话框里显示失败原因。要在请求头里放 API 密钥的（Within、AthenaHQ，目录只在给 Claude Code 的命令里写了 `--header`）添加时不弹请求头表单，要在「已添加」里编辑加上。
+    - 不支持（按钮是灰的「不支持」，悬停看原因）：要自己在服务商那里注册 OAuth 客户端的（`required_fields` 里有 `custom_oauth_client_id`，二十来个，客户端密钥 Claude Code 存在它自己的凭据里，SDK 传不进去），和要用服务商给 Claude Code 预先注册的客户端的（目录给的 `claude mcp add` 命令带 `--client-id`，如 Slack）。
+  - **MCP 注册表**：MCP 官方注册表（`config.yml` 的 `connectors.registry`，默认 `https://registry.modelcontextprotocol.io`），删除了的不列。注册表很大（2 万多条，不少是批量发布的杂项），所以不搜索时只列 `connectors.featured` 里推荐的（按名称逐个取最新版本，缓存 1 小时，取不到的跳过）；搜索时查整个注册表（`version=latest`，网关一页 100 条，缓存 5 分钟），推荐的和名称主体就是搜索词的排在前面。注册表没有总数，网页在取回来的里面翻页，翻到最后一页再往后时取注册表的下一页（还有没取的时，最后一个页码后面多一个省略号），没有分类。
+    - 名称是反向域名（`com.figma.mcp/mcp`），注册表验证过所有权：`com.figma` 验证域名，`io.github.用户名` 验证 GitHub 账号，所以卡片上显示完整名称和地址，看得出是不是官方的。没写 title 的，标题用斜杠后面那段，那段只是 mcp 的用名称主体（`com.notion/mcp` → Notion）。
+  - 添加（`POST /connectors`，带 `source`）由网关按 id 再找一次（Claude 目录从缓存里找，注册表按名称再取一次），填好地址、地址变量和请求头，存成设置页的 MCP 服务器（`gateway-mcp-servers.json` 里多记一个 `connector`：id、标题、图标、来源，以前添加的没有来源，是注册表），之后的连接、登录、启停、删除和手动添加的一样。默认名称：Claude 目录的用标题（去掉 MCP、Server 这些词，`Google Drive` → `google-drive`）；注册表的是名称主体（figma、linear），`io.github.*` 的用标题；被别的服务器占了加 `-2`。要选地址、填地址、填请求头或地址变量的先弹表单（可选的请求头不填就不带），其余直接添加；添加后直接打开登录对话框，不用登录的连上就自动关掉。
   - 目录里地址和已有服务器相同的（插件带来的、手动添加的）显示「已添加」，免得重复；已添加但要登录的显示「登录」。
 - MCP 服务器的 OAuth 登录（`gateway/src/agent/mcp-auth.ts`）：状态是「需要认证」的服务器（设置页添加的、插件和配置文件带来的都算）在设置页有「登录」。登录整个由 Claude Code 自己做：发现授权服务器、动态注册客户端、PKCE、在 localhost 的随机端口上等回调、换令牌、存令牌（Linux / Windows 是 `$CLAUDE_CONFIG_DIR/.credentials.json` 的 `mcpOAuth`，按「服务器名称|配置的哈希」存；macOS 是钥匙串）、过期刷新。同一个配置目录下的会话共用令牌，所以登录一次，之后的新会话直接连上。
   - 网关起一个和会话同样配置的临时 query（`inspectQuery`），发 `mcp_authenticate` 控制请求拿到登录页地址给网页；query 留着等回调（端口在它的子进程里），每秒查一次 `mcpServerStatus()`，服务器变成 connected 就算成功，10 分钟没完成就结束。成功后开着的会话都 `reconnectMcpServer()`，不用等子进程重启。
@@ -341,8 +348,9 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | GET | `/mcp-servers/:name/auth` | 登录进度：`waiting`、`done`、`failed`（带 `error`），结束后留 5 分钟 |
 | POST | `/mcp-servers/:name/auth/callback` | 交回调网址 `{ url }`（浏览器和网关不在同一台电脑上时） |
 | DELETE | `/mcp-servers/:name/auth` | 放弃正在进行的登录 |
-| GET | `/connectors?search=&cursor=` | 连接器市场：不传 `search` 是推荐的，传了查 MCP 注册表，返回 `{ connectors, nextCursor }` |
-| POST | `/connectors` | 添加连接器 `{ id, name?, variables?, headers? }`，返回存成的 MCP 服务器名称 |
+| GET | `/connectors?source=directory&search=&category=&offset=&limit=` | 连接器市场 Claude 目录的一页，返回 `{ connectors, total, categories }` |
+| GET | `/connectors?search=&cursor=` | 连接器市场 MCP 注册表：不传 `search` 是推荐的，传了查整个注册表，返回 `{ connectors, nextCursor }` |
+| POST | `/connectors` | 添加连接器 `{ id, source?, url?, name?, variables?, headers? }`（`source` 不传是注册表，`url` 是 Claude 目录里选的或填的地址），返回存成的 MCP 服务器名称 |
 | GET | `/sessions/:id/tasks` | 会话的后台任务（打开会话时拉一次，之后靠 `tasks` 事件） |
 | GET | `/sessions/:id/tasks/:taskId/output` | 后台 Bash 任务输出的最后 64 KB，只能读这个会话记下的输出文件 |
 | POST | `/sessions/:id/tasks/:taskId/stop` | 停止后台任务（`Query.stopTask()`） |

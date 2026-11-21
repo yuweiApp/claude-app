@@ -628,6 +628,8 @@ span.connector-added { color: var(--ok); font-weight: 500; }
 .market-card-host > svg { flex: none; opacity: 0.8; }
 .market-card-host > span:not(.settings-tag) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .market-card-host > .settings-tag { flex: none; }
+.connector-tags { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.connector-tags > .settings-tag { flex: none; }
 /* 卡片上的添加、安装按钮：浅色底，悬停卡片时变成实心 */
 .market-card-action, .market-card-foot button.primary {
   flex: none; padding: 4px 12px; border: 1px solid transparent; border-radius: 8px;

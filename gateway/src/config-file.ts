@@ -22,7 +22,8 @@ export const ALWAYS_LOAD_META = "anthropic/alwaysLoad";
 /** 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 的 desktop.enabled，默认关（只有写成 true 才开），见 desktop/tool.ts */
 export const desktopEnabled: boolean = configFile?.desktop?.enabled === true;
 
-/** 连接器市场：MCP 注册表的地址和不搜索时列出的推荐连接器（config.yml 的 connectors），见 agent/connectors.ts */
+/** 连接器市场：Claude 目录的接口地址、MCP 注册表的地址和不搜索时列出的推荐连接器（config.yml 的 connectors），见 agent/connectors.ts */
+export const connectorDirectory: string = configFile?.connectors?.directory ?? "https://api.anthropic.com/api/directory/servers";
 export const connectorRegistry: string = (configFile?.connectors?.registry ?? "https://registry.modelcontextprotocol.io").replace(/\/+$/, "");
 export const featuredConnectors: string[] = configFile?.connectors?.featured ?? [];
 

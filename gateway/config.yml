@@ -27,10 +27,13 @@ tools:
 desktop:
   enabled: true
 
-# 连接器市场（设置页「连接器」→「连接器市场」）：数据来自 MCP 官方注册表，只列有远程地址（HTTP / SSE）的服务器。
-# 注册表很大，也有不少批量发布的杂项，所以不搜索时只列下面这些推荐的；搜索时查整个注册表。
-# 写注册表里的名称（反向域名，注册表验证过域名或 GitHub 账号的所有权），按这个顺序显示。
+# 连接器市场（设置页「连接器」→「连接器市场」），两个来源，都只列有远程地址（HTTP / SSE）的服务器：
+# - Claude 目录（directory，默认）：claude.ai 上的连接器目录，Claude Code 查目录用的同一个公开接口，不用登录。
+#   一千多个，带分类、热度排序和审核情况，网关一次取完缓存 1 小时。
+# - MCP 官方注册表（registry）：很大，也有不少批量发布的杂项，所以不搜索时只列下面 featured 里推荐的；搜索时查整个注册表。
+#   featured 写注册表里的名称（反向域名，注册表验证过域名或 GitHub 账号的所有权），按这个顺序显示。
 connectors:
+  directory: https://api.anthropic.com/api/directory/servers
   registry: https://registry.modelcontextprotocol.io
   featured:
     - com.figma.mcp/mcp

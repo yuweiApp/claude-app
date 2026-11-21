@@ -3,7 +3,7 @@ import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk
 import { listModels } from "../../agent/models.js";
 import { historyForDisplay, historyImage, sessionHistory } from "../../agent/history.js";
 import type { FastifyInstance } from "fastify";
-import type { ConnectorEntry, ConnectorInput, MarketPluginPage, McpAuthState, McpServerInput, MessagePriority, WidgetReport, WidgetReportError } from "../../shared/types.js";
+import type { ConnectorInput, ConnectorPage, MarketPluginPage, McpAuthState, McpServerInput, MessagePriority, WidgetReport, WidgetReportError } from "../../shared/types.js";
 import { reportWidget } from "../../visualize/tool.js";
 import { AttachmentError, type SelectedElementInput } from "../../agent/attachments.js";
 import { BadRequestError, NotFoundError, type SessionManager } from "../../agent/session-manager.js";
@@ -171,10 +171,26 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     return { ok: true };
   });
 
-  /** 连接器市场（MCP 官方注册表里有远程地址的服务器）：不传 search 是推荐的，传了查整个注册表，cursor 取下一页 */
-  app.get<{ Querystring: { search?: string; cursor?: string } }>("/connectors", async (req): Promise<{ connectors: ConnectorEntry[]; nextCursor?: string }> => {
-    return connectorCall(() => listConnectors(req.query.search, req.query.cursor));
-  });
+  /**
+   * 连接器市场的一页。source=directory 是 Claude 目录：按 search、category 筛，offset、limit 分页，带总数和分类；
+   * 不传 source 是 MCP 官方注册表：不传 search 是推荐的，传了查整个注册表，cursor 取下一页
+   */
+  app.get<{ Querystring: { source?: string; search?: string; cursor?: string; category?: string; offset?: string; limit?: string } }>(
+    "/connectors",
+    async (req): Promise<ConnectorPage> => {
+      const { source, search, cursor, category, offset, limit } = req.query;
+      return connectorCall(() =>
+        listConnectors({
+          source: source === "directory" ? "directory" : "registry",
+          search,
+          cursor,
+          category: category || undefined,
+          offset: offset ? Number(offset) || 0 : undefined,
+          limit: limit ? Number(limit) || undefined : undefined,
+        }),
+      );
+    },
+  );
 
   /** 添加连接器：存成 MCP 服务器，返回它的名称；之后要登录的照常走 /mcp-servers/:name/auth */
   app.post<{ Body: ConnectorInput }>("/connectors", async (req) => {

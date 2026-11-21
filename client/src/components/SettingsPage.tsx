@@ -124,7 +124,7 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
                   `连接器（MCP 服务器）把 Figma、Notion、GitHub 等外部服务接进对话，提供工具和数据。已添加 ${data?.mcpServers.length ?? 0} 个，已启用 ${data?.mcpServers.filter((m) => m.enabled).length ?? 0} 个。`}
               </p>
             </div>
-            <input className="settings-search" hidden={detail !== null} value={search} placeholder={browsing ? "在 MCP 注册表里搜索" : marketBrowsing ? "搜索插件市场" : `搜索${label}`} onChange={(e) => setSearch(e.target.value)} />
+            <input className="settings-search" hidden={detail !== null} value={search} placeholder={browsing ? "搜索连接器市场" : marketBrowsing ? "搜索插件市场" : `搜索${label}`} onChange={(e) => setSearch(e.target.value)} />
             <button
               disabled={loading}
               onClick={() => {

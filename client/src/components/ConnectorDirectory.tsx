@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, type ConnectorEntry, type McpServerInfo } from "../api";
+import { api, type ConnectorEntry, type ConnectorSource, type McpServerInfo } from "../api";
 import { Avatar } from "./CapabilityPicker";
 import { Card, CardGrid } from "./CardGrid";
 import { DirectoryLoading } from "./DirectoryLoading";
@@ -7,13 +7,58 @@ import { McpAuthDialog } from "./McpAuthDialog";
 import { Pager, pageOf, PROBE_SIZE, useFitPageSize } from "./Pager";
 import { Select } from "./Select";
 
+/** Claude 目录的分类（目录里是英文标识）；没列的显示原样 */
+const CATEGORY_LABELS: Record<string, string> = {
+  productivity: "效率",
+  "business-productivity": "商务效率",
+  "data-analytics": "数据分析",
+  data: "数据",
+  "financial-services": "金融服务",
+  "sales-and-marketing": "销售与营销",
+  "developer-tools": "开发工具",
+  code: "代码",
+  communication: "沟通协作",
+  legal: "法律",
+  creative: "创意",
+  design: "设计",
+  "commerce-shopping": "购物",
+  "e-commerce": "电商",
+  education: "教育",
+  "media-entertainment": "媒体娱乐",
+  travel: "旅行",
+  "health-life-sciences": "医疗与生命科学",
+  "life-sciences": "生命科学",
+  health: "健康",
+  healthcare: "医疗",
+  "consumer-health": "个人健康",
+  nonprofit: "非营利",
+  technology: "技术",
+  other: "其他",
+};
+const categoryLabel = (c: string) => CATEGORY_LABELS[c] ?? c;
+
+const SOURCE_OPTIONS: { value: ConnectorSource; label: string }[] = [
+  { value: "directory", label: "Claude 目录" },
+  { value: "registry", label: "MCP 注册表" },
+];
+
+const REVIEW_LABELS = { anthropic: "Anthropic", partner: "合作伙伴" } as const;
+
 /**
- * 设置 → 连接器 → 连接器市场：MCP 官方注册表里有远程地址的服务器。不搜索时是网关配置里推荐的，搜索时查整个注册表。
- * 添加后直接进入登录（不用登录的连上就关掉）；要填请求头、地址变量的先填表。
- * 卡片网格，每页的个数第一次显示时按可见区域算（useFitPageSize）；搜索结果网关一次给 100 条，翻到取回来的最后一页再往后时取下一批
+ * 设置 → 连接器 → 连接器市场，布局同插件市场（顶部总数、来源、分类，卡片网格，底部页码）。两个来源：
+ * - Claude 目录（默认）：claude.ai 上的连接器目录，搜索、分类、分页由网关做，每次只取当前这一页和总数。
+ * - MCP 注册表：不搜索时是网关配置里推荐的，搜索时查整个注册表；网关一次给 100 条，翻到取回来的最后一页再往后时取下一批。
+ * 添加后直接进入登录（不用登录的连上就关掉）；要选地址、填地址、填请求头、地址变量的先填表。
+ * 每页的个数第一次显示时按可见区域算（useFitPageSize）
  */
 export function ConnectorDirectory({ search, servers, onChanged }: { search: string; servers: McpServerInfo[]; onChanged: () => void }) {
+  const [source, setSource] = useState<ConnectorSource>("directory");
+  const [category, setCategory] = useState("");
   const [entries, setEntries] = useState<ConnectorEntry[] | null>(null);
+  /** Claude 目录：筛过之后的总数和所有分类 */
+  const [total, setTotal] = useState(0);
+  const [categories, setCategories] = useState<string[]>([]);
+  /** MCP 注册表：下一批的游标 */
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -22,47 +67,79 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
   const [adding, setAdding] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [page, setPage] = useState(0);
-  // 每页条数：第一次显示时按可见区域算（见 useFitPageSize），算出来之前先显示 PROBE_SIZE 条用来量
+  // 每页条数：第一次显示时按可见区域算（见 useFitPageSize），算出来之前先显示 PROBE_SIZE 条用来量。
+  // Claude 目录的请求里用 ref 读，算出来时不重新取：第一页已经取回来的够了，只是少显示一些
   const gridRef = useRef<HTMLDivElement>(null);
   const size = useFitPageSize(gridRef, (entries?.length ?? 0) > 0) ?? PROBE_SIZE;
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
 
-  // 搜索词停下来 400ms 再查
-  const keyword = search.trim();
+  // 搜索词停下来 300ms 再查，回到第一页
+  const [keyword, setKeyword] = useState(search.trim());
   useEffect(() => {
+    const next = search.trim();
+    const timer = setTimeout(() => {
+      setKeyword(next);
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Claude 目录：网关筛好只返回这一页，翻页、换条件时再取
+  useEffect(() => {
+    if (source !== "directory") return;
     let cancelled = false;
     setLoading(true);
-    const timer = setTimeout(
-      () =>
-        api
-          .connectors(keyword || undefined)
-          .then(
-            (page) => {
-              if (cancelled) return;
-              setEntries(page.connectors);
-              setNextCursor(page.nextCursor);
-              setPage(0);
-              setError(null);
-            },
-            (e: Error) => !cancelled && setError(e.message),
-          )
-          .finally(() => !cancelled && setLoading(false)),
-      keyword ? 400 : 0,
-    );
+    api
+      .connectors({ source, search: keyword, category, offset: page * sizeRef.current, limit: sizeRef.current })
+      .then(
+        (result) => {
+          if (cancelled) return;
+          setEntries(result.connectors);
+          setTotal(result.total ?? result.connectors.length);
+          setCategories(result.categories ?? []);
+          setError(null);
+        },
+        (e: Error) => !cancelled && setError(e.message),
+      )
+      .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
-      clearTimeout(timer);
     };
-  }, [keyword, reload]);
+  }, [source, keyword, category, page, reload]);
+
+  // MCP 注册表：搜索词变了从第一批取起，翻页在取回来的里面翻
+  useEffect(() => {
+    if (source !== "registry") return;
+    let cancelled = false;
+    setLoading(true);
+    api
+      .connectors({ source, search: keyword })
+      .then(
+        (result) => {
+          if (cancelled) return;
+          setEntries(result.connectors);
+          setNextCursor(result.nextCursor);
+          setPage(0);
+          setError(null);
+        },
+        (e: Error) => !cancelled && setError(e.message),
+      )
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [source, keyword, reload]);
 
   const more = () => {
     if (!nextCursor) return Promise.resolve();
     setLoading(true);
     return api
-      .connectors(keyword, nextCursor)
+      .connectors({ source: "registry", search: keyword, cursor: nextCursor })
       .then(
-        (page) => {
-          setEntries((prev) => [...(prev ?? []), ...page.connectors.filter((c) => !prev?.some((p) => p.id === c.id))]);
-          setNextCursor(page.nextCursor);
+        (result) => {
+          setEntries((prev) => [...(prev ?? []), ...result.connectors.filter((c) => !prev?.some((p) => p.id === c.id))]);
+          setNextCursor(result.nextCursor);
         },
         (e: Error) => setError(e.message),
       )
@@ -70,8 +147,16 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
   };
 
   const turn = (next: number) => {
-    if (entries && next * size >= entries.length && nextCursor) void more().then(() => setPage(next));
+    if (source === "registry" && entries && next * size >= entries.length && nextCursor) void more().then(() => setPage(next));
     else setPage(next);
+  };
+
+  const switchSource = (next: string) => {
+    setSource(next as ConnectorSource);
+    setEntries(null);
+    setCategory("");
+    setNextCursor(undefined);
+    setPage(0);
   };
 
   const added = (name: string) => {
@@ -80,71 +165,85 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
   };
 
   const add = (entry: ConnectorEntry) => {
-    if (entry.headers.length || entry.variables.length) return setFilling(entry);
+    if (entry.headers.length || entry.variables.length || entry.urlOptions || entry.urlPattern) return setFilling(entry);
     setAdding(entry.id);
     api
-      .addConnector({ id: entry.id })
+      .addConnector({ id: entry.id, source: entry.source })
       .then(added, (e: Error) => setError(e.message))
       .finally(() => setAdding(null));
   };
 
   const status = (name: string) => servers.find((s) => s.name === name)?.status;
   /** 已经有的服务器：从连接器市场添加的，或者地址相同的（插件带来的、手动添加的），免得重复添加 */
-  const existing = (entry: ConnectorEntry) => entry.added ?? servers.find((s) => s.target === entry.url)?.name;
+  const existing = (entry: ConnectorEntry) => {
+    const urls = entry.urlOptions?.map((o) => o.url) ?? (entry.url ? [entry.url] : []);
+    return entry.added ?? servers.find((s) => s.target && urls.includes(s.target))?.name;
+  };
+
+  const shown = source === "directory" ? (entries ?? []).slice(0, size) : pageOf(entries ?? [], page, size);
+  const count =
+    source === "directory"
+      ? `${total} 个连接器`
+      : keyword
+        ? `${entries?.length ?? 0}${nextCursor ? "+" : ""} 个连接器`
+        : `推荐的 ${entries?.length ?? 0} 个连接器，搜索时查整个注册表`;
 
   return (
     <>
       {error && <div className="settings-error">{error}</div>}
+      <div className="plugin-directory-bar">
+        <span>
+          {entries ? count : ""}
+          {loading && entries && <span className="plugin-directory-loading"> · 加载中…</span>}
+        </span>
+        <Select value={source} onChange={switchSource} aria-label="来源" options={SOURCE_OPTIONS} />
+        {source === "directory" && categories.length > 0 && (
+          <Select
+            value={category}
+            onChange={(value) => {
+              setCategory(value);
+              setPage(0);
+            }}
+            aria-label="分类"
+            options={[{ value: "", label: "全部分类" }, ...categories.map((c) => ({ value: c, label: categoryLabel(c) }))]}
+          />
+        )}
+      </div>
       {entries && entries.length > 0 ? (
         <CardGrid gridRef={gridRef} loading={loading}>
-          {pageOf(entries, page, size).map((entry) => {
-            const name = existing(entry);
-            return (
-              <Card
-                key={entry.id}
-                icon={<ConnectorIcon name={entry.title} icon={entry.icon} />}
-                title={entry.title}
-                subtitle={entry.id}
-                description={entry.description}
-                foot={
-                  <>
-                    <span className="market-card-host" title={entry.url}>
-                      <LinkIcon />
-                      <span>{hostOf(entry.url)}</span>
-                      {entry.type === "sse" && <span className="settings-tag">SSE</span>}
-                    </span>
-                    {name ? (
-                      status(name) === "needs-auth" ? (
-                        <button className="market-card-action" title={`已添加为 ${name}，需要登录`} onClick={() => setSigningIn(name)}>
-                          登录
-                        </button>
-                      ) : (
-                        <span className="connector-added" title={`已添加为 ${name}`}>
-                          <CheckIcon />
-                          已添加
-                        </span>
-                      )
-                    ) : (
-                      <button className="market-card-action" disabled={adding === entry.id} onClick={() => add(entry)}>
-                        {adding === entry.id ? "添加中…" : "+ 添加"}
-                      </button>
-                    )}
-                  </>
-                }
-              />
-            );
-          })}
+          {shown.map((entry) => (
+            <ConnectorCard
+              key={entry.id}
+              entry={entry}
+              category={category}
+              existing={existing(entry)}
+              status={status}
+              adding={adding === entry.id}
+              onAdd={() => add(entry)}
+              onSignIn={setSigningIn}
+            />
+          ))}
         </CardGrid>
+      ) : loading ? (
+        <DirectoryLoading
+          label="正在加载连接器市场"
+          hint={source === "directory" ? "正在读取 Claude 目录" : keyword ? "正在 MCP 注册表中查找连接器" : "正在读取推荐连接器"}
+        />
       ) : (
-        loading ? (
-          <DirectoryLoading label="正在加载连接器市场" hint={keyword ? "正在 MCP 注册表中查找连接器" : "正在读取推荐连接器"} />
-        ) : (
-          <div className="settings-empty">
-            {!entries ? "连接器市场加载失败" : keyword ? "注册表里没有匹配的连接器" : "没有推荐的连接器，搜索试试"}
-          </div>
-        )
+        <div className="settings-empty">
+          {!entries ? "连接器市场加载失败" : keyword || category ? "没有匹配的连接器" : source === "registry" ? "没有推荐的连接器，搜索试试" : "目录里没有连接器"}
+        </div>
       )}
-      {entries && entries.length > 0 && <Pager page={page} total={entries.length} pageSize={size} hasMore={nextCursor !== undefined} loading={loading} onPage={turn} />}
+      {entries && entries.length > 0 && (
+        <Pager
+          page={page}
+          total={source === "directory" ? total : entries.length}
+          pageSize={size}
+          hasMore={source === "registry" && nextCursor !== undefined}
+          loading={loading}
+          onPage={turn}
+        />
+      )}
       {filling && <ConnectorForm entry={filling} onAdded={added} onCancel={() => setFilling(null)} />}
       {signingIn && (
         <McpAuthDialog
@@ -157,6 +256,107 @@ export function ConnectorDirectory({ search, servers, onChanged }: { search: str
         />
       )}
     </>
+  );
+}
+
+/** 一张连接器卡片。Claude 目录的：信息行是作者、审核、工具数、地址，底部是分类；注册表的：标题下面是注册表名称，底部是地址 */
+function ConnectorCard({
+  entry,
+  category,
+  existing,
+  status,
+  adding,
+  onAdd,
+  onSignIn,
+}: {
+  entry: ConnectorEntry;
+  /** 正在按哪个分类筛：底部显示这个分类，没筛时显示它的第一个 */
+  category: string;
+  existing?: string;
+  status: (name: string) => string | undefined;
+  adding: boolean;
+  onAdd: () => void;
+  onSignIn: (name: string) => void;
+}) {
+  const directory = entry.source === "directory";
+  const tag = category && entry.categories?.includes(category) ? category : entry.categories?.[0];
+  const where = entry.urlOptions ? `${entry.urlOptions.length} 个地区可选` : entry.urlPattern ? "地址自己填" : hostOf(entry.url);
+  const meta = directory
+    ? [
+        entry.author,
+        entry.review && `${REVIEW_LABELS[entry.review]}审核`,
+        entry.toolCount ? `${entry.toolCount} 个工具` : undefined,
+        entry.authless && "不用登录",
+        where,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
+  const action = existing ? (
+    status(existing) === "needs-auth" ? (
+      <button className="market-card-action" title={`已添加为 ${existing}，需要登录`} onClick={() => onSignIn(existing)}>
+        登录
+      </button>
+    ) : (
+      <span className="connector-added" title={`已添加为 ${existing}`}>
+        <CheckIcon />
+        已添加
+      </span>
+    )
+  ) : entry.unsupported ? (
+    <button className="market-card-action" disabled title={entry.unsupported}>
+      不支持
+    </button>
+  ) : (
+    <button className="market-card-action" disabled={adding} onClick={onAdd}>
+      {adding ? "添加中…" : "+ 添加"}
+    </button>
+  );
+  return (
+    <Card
+      icon={<ConnectorIcon name={entry.title} icon={entry.icon} />}
+      title={entry.title}
+      subtitle={directory ? undefined : entry.id}
+      description={entry.description}
+      meta={
+        directory ? (
+          <>
+            <span className="market-card-meta-text" title={entry.url ? `${meta}\n${entry.url}` : meta}>
+              {meta}
+            </span>
+            {entry.directoryUrl && (
+              <span className="market-card-meta-link">
+                {" · "}
+                <a href={entry.directoryUrl} target="_blank" rel="noreferrer" title={entry.directoryUrl}>
+                  目录页
+                </a>
+              </span>
+            )}
+          </>
+        ) : undefined
+      }
+      foot={
+        <>
+          {directory ? (
+            <span className="connector-tags">
+              {tag && <span className="settings-tag">{categoryLabel(tag)}</span>}
+              {entry.claudeCode === false && (
+                <span className="settings-tag" title="Claude 目录列出的支持客户端里没有 Claude Code，登录时可能因为服务商不允许注册客户端而失败">
+                  未列出 Claude Code
+                </span>
+              )}
+            </span>
+          ) : (
+            <span className="market-card-host" title={entry.url}>
+              <LinkIcon />
+              <span>{hostOf(entry.url)}</span>
+              {entry.type === "sse" && <span className="settings-tag">SSE</span>}
+            </span>
+          )}
+          {action}
+        </>
+      }
+    />
   );
 }
 
@@ -196,6 +396,7 @@ export function ConnectorIcon({ name, icon }: { name: string; icon?: string }) {
 /** 要填请求头（API 密钥等）或地址变量的连接器：先填表再添加 */
 function ConnectorForm({ entry, onAdded, onCancel }: { entry: ConnectorEntry; onAdded: (name: string) => void; onCancel: () => void }) {
   const [name, setName] = useState(entry.suggestedName);
+  const [url, setUrl] = useState(entry.urlOptions?.[0]?.url ?? entry.url);
   const [variables, setVariables] = useState<Record<string, string>>(() => Object.fromEntries(entry.variables.map((v) => [v.name, v.default ?? ""])));
   const [headers, setHeaders] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -206,7 +407,7 @@ function ConnectorForm({ entry, onAdded, onCancel }: { entry: ConnectorEntry; on
     setSaving(true);
     setError(null);
     api
-      .addConnector({ id: entry.id, name: name.trim(), variables, headers })
+      .addConnector({ id: entry.id, source: entry.source, name: name.trim(), ...(entry.urlOptions || entry.urlPattern ? { url } : {}), variables, headers })
       .then(onAdded, (err: Error) => setError(err.message))
       .finally(() => setSaving(false));
   };
@@ -219,6 +420,27 @@ function ConnectorForm({ entry, onAdded, onCancel }: { entry: ConnectorEntry; on
           名称
           <input required value={name} onChange={(e) => setName(e.target.value)} pattern="[\w\-]+" title="字母、数字、下划线和连字符" />
         </label>
+        {entry.urlOptions && (
+          <label>
+            地址
+            <Select
+              value={url}
+              aria-label="地址"
+              onChange={setUrl}
+              options={entry.urlOptions.map((o) => ({ value: o.url, label: o.description ? `${o.label}（${o.description}）` : o.label }))}
+            />
+            <span className="mcp-hint mono">{url}</span>
+          </label>
+        )}
+        {entry.urlPattern && (
+          <label>
+            地址
+            <input className="mono" type="url" required value={url} placeholder="https://…" onChange={(e) => setUrl(e.target.value)} />
+            <span className="mcp-hint" title={entry.urlPattern}>
+              填你自己的实例或工作区的地址{entry.url ? "，上面是示例" : ""}，要符合格式：<span className="mono">{entry.urlPattern}</span>
+            </span>
+          </label>
+        )}
         {entry.variables.map((v) => (
           <label key={v.name}>
             {v.name}

@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SessionListItem, ShareFixResult, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo, WidgetReport } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, ConnectorPage, ConnectorSource, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SessionListItem, ShareFixResult, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo, WidgetReport } from "@gateway/shared/types";
 
-export type { MessagePriority, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, ShareFixResult, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
+export type { MessagePriority, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, ConnectorPage, ConnectorSource, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, ShareFixResult, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -304,10 +304,15 @@ export const api = {
   saveMcpServer: (name: string, input: Omit<McpServerInput, "name">) => request("PUT", `/mcp-servers/${encodeURIComponent(name)}`, input),
   setMcpServerEnabled: (name: string, enabled: boolean) => request("PATCH", `/mcp-servers/${encodeURIComponent(name)}`, { enabled }),
   deleteMcpServer: (name: string) => request("DELETE", `/mcp-servers/${encodeURIComponent(name)}`),
-  /** 连接器市场：不传 search 是推荐的，传了查整个 MCP 注册表，cursor 取下一页 */
-  connectors: (search?: string, cursor?: string) => {
-    const params = new URLSearchParams({ ...(search ? { search } : {}), ...(cursor ? { cursor } : {}) });
-    return request<{ connectors: ConnectorEntry[]; nextCursor?: string }>("GET", `/connectors?${params}`);
+  /**
+   * 连接器市场的一页。Claude 目录（source: "directory"）按 search、category 筛，offset、limit 分页，带总数和分类；
+   * MCP 注册表（source: "registry"）不传 search 是推荐的，传了查整个注册表，cursor 取下一页
+   */
+  connectors: (query: { source: ConnectorSource; search?: string; cursor?: string; category?: string; offset?: number; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (query.source === "directory") params.set("source", "directory");
+    for (const key of ["search", "cursor", "category", "offset", "limit"] as const) if (query[key]) params.set(key, String(query[key]));
+    return request<ConnectorPage>("GET", `/connectors?${params}`);
   },
   /** 添加连接器，返回存成的 MCP 服务器名称 */
   addConnector: (input: ConnectorInput) => request<{ name: string }>("POST", "/connectors", input).then((r) => r.name),
