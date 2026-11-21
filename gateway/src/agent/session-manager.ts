@@ -313,8 +313,12 @@ export class SessionManager {
     return forked.sessionId;
   }
 
-  /** 分叉出的会话的标题：和现有会话（列表里显示的标题）重名时从 2 开始编号 */
-  private async forkTitle(source: string | undefined): Promise<string> {
+  /**
+   * 分叉出的会话的标题：源标题末尾已经有「（分叉）」「（分叉 N）」的（从分叉出的会话再分叉）先去掉，不叠加；
+   * 和现有会话（列表里显示的标题）重名时从 2 开始编号
+   */
+  private async forkTitle(title: string | undefined): Promise<string> {
+    const source = title?.replace(/(（分叉(?: \d+)?）)+$/, "") || title;
     const infos = await listSessions().catch(() => []);
     const taken = new Set([...infos.map((i) => this.titles.get(i.sessionId) || i.customTitle || i.summary), ...this.titles.values()]);
     const name = (n: number) => {
