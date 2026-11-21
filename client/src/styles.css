@@ -270,7 +270,9 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 /* 时间至少和「…」一样宽：悬停时时间隐藏但照占位置，「…」盖在它上面，前面的分享图标、主机名不挪动 */
 .session-meta { flex: none; min-width: 24px; text-align: right; font-size: 11.5px; color: var(--muted); }
 .session-row.active, .session-item:hover .session-row.active, .session-item.menu-open .session-row.active { background: var(--bg); box-shadow: var(--raised-shadow); font-weight: 500; }
-.session-item:hover .session-meta, .session-item.menu-open .session-meta, .session-row.running .session-meta { visibility: hidden; }
+.session-item:hover .session-meta, .session-item.menu-open .session-meta { visibility: hidden; }
+/* 运行中不显示时间、也不占位：右边留给转圈的 32px 正好放下悬停时的「…」，分享图标、主机名紧挨着转圈 */
+.session-row.running .session-meta { display: none; }
 .session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-host { flex: none; display: inline-flex; align-items: center; gap: 3px; max-width: 35%; overflow: hidden; white-space: nowrap; color: var(--muted); font-size: 12px; font-weight: 400; }
 .session-host .host-icon { flex: none; }

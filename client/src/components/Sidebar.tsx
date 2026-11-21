@@ -454,6 +454,16 @@ function SessionRow({
         menu={menu}
         items={[
           { label: "重命名", onClick: () => setRenaming(true) },
+          // 「会话」里的会话：用系统的文件管理器打开它的工作目录（网关建的 scratch 文件夹）；桌面版、本机的会话才有（同项目的菜单）
+          ...(desktop && s.chat && s.cwd && !remote
+            ? [
+                {
+                  label: `在${fileManagerName}中打开`,
+                  onClick: () =>
+                    void desktop!.openFolder(s.cwd!).then((opened) => !opened && window.alert("这台电脑上没有这个文件夹（网关在别的机器上，或文件夹已被删除）")),
+                },
+              ]
+            : []),
           ...shareItems,
           { label: "删除", danger: true, onClick: () => onDelete(s) },
         ]}
