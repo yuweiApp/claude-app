@@ -157,17 +157,37 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 .nav-item { padding: 6px 10px; }
 .section-title { display: flex; align-items: center; gap: 4px; }
 .section-gap { margin-top: 14px; }
-.section-toggle { flex: 1; padding: 5px 10px; color: var(--muted); font-size: 12.5px; }
-.section-toggle:hover { color: var(--text); }
-.section-icon { display: inline-flex; }
-.section-label { font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
-.section-toggle:hover .section-label { color: var(--text); }
+/* 分区标题（项目、会话）：图标放在同色淡底的圆角小方块里（颜色由 SectionToggle 设在 .section-icon 上），名称用正文色，个数是灰色数字 */
+.section-toggle { flex: 1; gap: 9px; padding: 5px 10px 5px 6px; color: var(--muted); font-size: 13px; }
+.section-icon {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px;
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 14%, transparent);
+}
+.section-label { font-weight: 600; color: var(--text); letter-spacing: 0.02em; }
 .section-toggle .caret { opacity: 1; transition: transform 0.12s; }
 .section-spacer { flex: 1; }
-.section-count {
-  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
-  border-radius: 999px; font-size: 11px; color: var(--muted); background: var(--frame-hover);
+.section-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/*
+ * 展开的分区内容：整体缩进，左边一条细竖线对着分区图标的中线（6px 内边距 + 24px 方块的一半）。
+ * 缩进占掉的宽度从里面各行的左内边距里扣回来，项目名、会话标题和原来差不多宽
+ */
+.section-body { position: relative; margin-top: 2px; padding-left: 24px; }
+.section-body::before {
+  content: ""; position: absolute; left: 17.5px; top: 0; bottom: 6px; width: 1px;
+  background: color-mix(in srgb, var(--text) 13%, transparent); pointer-events: none;
 }
+.section-body .group-toggle { padding-left: 6px; }
+.section-body .session-row { padding-left: 8px; }
+.section-body .group-list .session-row { padding-left: 28px; }
+.section-body .session-title-input { padding-left: 7px; }
+.section-body .group-list .session-title-input { padding-left: 27px; }
+.section-body .group-empty { padding-left: 8px; }
+.section-body .list-toggle { padding-left: 2px; }
+.section-body .group-list > .list-toggle { padding-left: 22px; }
+.section-body .branch-row { margin-left: 18px; }
+.section-body .group-list .branch-row { margin-left: 38px; }
+.section-body .branch-row .session-row { padding-left: 12px; }
 .caret { flex-shrink: 0; transition: transform 0.12s; }
 .caret.open { transform: rotate(90deg); }
 .group-empty { color: var(--muted); font-size: 12px; padding: 4px 12px 8px 36px; }

@@ -217,11 +217,13 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
           },
         ]}
       >
-        <SectionToggle label="项目" icon={<ProjectsIcon />} count={projects.length} expanded={projectsOpen} onClick={() => toggle(SECTION_PROJECTS)} />
+        <SectionToggle label="项目" tone="project" icon={<ProjectsIcon />} count={projects.length} expanded={projectsOpen} onClick={() => toggle(SECTION_PROJECTS)} />
       </SectionHead>
-      {projectsOpen && projects.length === 0 && <div className="group-empty">暂无项目，新会话时选择文件夹</div>}
-      {projectsOpen &&
-        projects.map((g) => {
+      {/* 展开的分区内容整体缩进，左边一条细竖线对着分区图标的中线，看得出属于哪个分区 */}
+      {projectsOpen && (
+        <div className="section-body">
+          {projects.length === 0 && <div className="group-empty">暂无项目，新会话时选择文件夹</div>}
+          {projects.map((g) => {
           const open = !collapsed.has(g.cwd);
           return (
             <ProjectGroup
@@ -236,7 +238,9 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
               list={sessionList(g.cwd, g.sessions, "group-list")}
             />
           );
-        })}
+          })}
+        </div>
+      )}
 
       <SectionHead
         className="section-gap"
@@ -249,10 +253,14 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
           },
         ]}
       >
-        <SectionToggle label="会话" icon={<ChatIcon />} count={chats.length} expanded={chatsOpen} onClick={() => toggle(SECTION_CHATS)} />
+        <SectionToggle label="会话" tone="chat" icon={<ChatIcon />} count={chats.length} expanded={chatsOpen} onClick={() => toggle(SECTION_CHATS)} />
       </SectionHead>
-      {chatsOpen && chats.length === 0 && <div className="group-empty">暂无会话</div>}
-      {chatsOpen && sessionList(SECTION_CHATS, chats)}
+      {chatsOpen && (
+        <div className="section-body">
+          {chats.length === 0 && <div className="group-empty">暂无会话</div>}
+          {sessionList(SECTION_CHATS, chats)}
+        </div>
+      )}
     </aside>
   );
 }
@@ -583,10 +591,27 @@ function ProjectGroup({
   );
 }
 
-function SectionToggle({ label, icon, count, expanded, onClick }: { label: string; icon: ReactNode; count: number; expanded: boolean; onClick: () => void }) {
+/** 分区标题：图标放在同色的淡底圆角小方块里（tone 是图标颜色变量 --ic-<tone>），后面是名称、个数，最右边是展开箭头 */
+function SectionToggle({
+  label,
+  tone,
+  icon,
+  count,
+  expanded,
+  onClick,
+}: {
+  label: string;
+  tone: string;
+  icon: ReactNode;
+  count: number;
+  expanded: boolean;
+  onClick: () => void;
+}) {
   return (
     <button className="section-toggle" aria-expanded={expanded} onClick={onClick}>
-      <span className="section-icon">{icon}</span>
+      <span className="section-icon" style={{ color: `var(--ic-${tone})` }}>
+        {icon}
+      </span>
       <span className="section-label">{label}</span>
       <span className="section-count">{count}</span>
       <span className="section-spacer" />
