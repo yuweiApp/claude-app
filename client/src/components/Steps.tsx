@@ -46,6 +46,8 @@ function toolLabel(block: ToolUse, running: boolean): { icon: ReactNode; verb: s
       return { icon: terminal, verb: v("正在查看终端", "已查看终端"), target: "" };
     case "mcp__terminal__run_in_terminal":
       return { icon: terminal, verb: v("正在终端里运行", "已在终端里运行"), target: s("command") };
+    case "mcp__terminal__send_to_terminal":
+      return { icon: terminal, verb: v("正在向终端输入", "已向终端输入"), target: s("text") };
     case "mcp__terminal__stop_terminal_tab":
       return { icon: terminal, verb: i.close ? v("正在关闭终端", "已关闭终端") : v("正在停止终端", "已停止终端"), target: "" };
     // 桌面工具（网关的 desktop MCP 服务器，agent-desktop）

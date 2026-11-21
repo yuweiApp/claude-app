@@ -3,7 +3,7 @@ import { agentEnv, config } from "../config.js";
 import { attachmentsDir } from "./attachments.js";
 import { disabledAgents, importedPlugins } from "./extensions.js";
 import { enabledMcpServers } from "./mcp-config.js";
-import { TERMINAL_READ_TOOLS, TERMINAL_SERVER, terminalServer } from "../terminal/tool.js";
+import { TERMINAL_AUTO_TOOLS, TERMINAL_SERVER, terminalServer } from "../terminal/tool.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { BROWSER_SERVER, BROWSER_TOOLS, browserServer } from "../browser/tool.js";
 import type { BrowserHost } from "../browser/host.js";
@@ -55,7 +55,7 @@ export function buildOptions(launch: SessionLaunch): Options {
   // 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 里开了才挂，默认关
   const desktop = desktopEnabled ? desktopServer(launch.sessionId, launch.onDesktopTarget) : null;
   const allowedTools = [
-    ...(terminal ? TERMINAL_READ_TOOLS : []),
+    ...(terminal ? TERMINAL_AUTO_TOOLS : []),
     // 浏览器（browser_run_code）不弹权限卡片
     ...(browser ? BROWSER_TOOLS : []),
     ...externalTools(active),
@@ -128,7 +128,7 @@ function buildRemoteOptions(launch: SessionLaunch): Options {
   ]
     .filter(Boolean)
     .join("\n\n");
-  const allowedTools = [...(terminal ? TERMINAL_READ_TOOLS : []), ...(browser ? BROWSER_TOOLS : []), ...externalTools(active), ...VISUALIZE_TOOLS];
+  const allowedTools = [...(terminal ? TERMINAL_AUTO_TOOLS : []), ...(browser ? BROWSER_TOOLS : []), ...externalTools(active), ...VISUALIZE_TOOLS];
   return {
     cwd: remote.path,
     // 远端的附件目录（发消息时上传到这里）

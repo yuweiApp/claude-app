@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import os from "node:os";
 import { StringDecoder } from "node:string_decoder";
 import type { IPty } from "@lydell/node-pty";
+import xtermHeadless from "@xterm/headless";
 import type { TerminalEvent, TerminalInfo } from "../shared/types.js";
 import { nativePath, parseRemote } from "../ssh/location.js";
 import { applyProxyEnv } from "../net/proxy.js";
@@ -13,6 +15,8 @@ import { newNonce, powershellPromptScript, PromptMarkParser } from "./prompt-mar
 
 /** 每个终端保留的输出（字符数），面板重新打开、刷新页面时用来还原屏幕 */
 const SCROLLBACK_CHARS = 512 * 1024;
+/** 网关这边的终端模拟器（给模型读屏幕）保留的滚动历史行数，同面板的 xterm.js */
+const SCREEN_SCROLLBACK = 5000;
 const MAX_TERMINALS = 16;
 /** 新开的 PowerShell 终端等第一个提示符标记最多这么久（用户的 profile 慢）；等不到就当标记没生效 */
 const FIRST_PROMPT_MS = 10_000;
@@ -65,6 +69,12 @@ export interface TerminalState {
 
 interface Terminal extends TerminalInfo {
   proc: Proc;
+  /**
+   * 网关这边的终端模拟器（@xterm/headless，和面板同一套 xterm.js）：输出同样喂一份，模型读的屏幕文字从它的缓冲区取。
+   * 以前是从原始输出里去掉控制序列拼文字，不认光标定位：Windows 的 ConPTY 在改大小时把整屏从左上角重画一遍，
+   * 拼出来是重复的内容加一大片空行
+   */
+  screen: InstanceType<typeof xtermHeadless.Terminal>;
   chunks: string[];
   chars: number;
   listeners: Set<(event: TerminalEvent) => void>;
@@ -147,6 +157,7 @@ export class TerminalManager {
       createdAt: Date.now(),
       activeAt: Date.now(),
       proc,
+      screen: new xtermHeadless.Terminal({ ...size, scrollback: SCREEN_SCROLLBACK, allowProposedApi: true }),
       chunks: [],
       chars: 0,
       listeners: new Set(),
@@ -165,6 +176,7 @@ export class TerminalManager {
         term.promptWaiters.forEach((done) => done());
         if (term.watchedAt !== undefined) void this.checkRunning();
       }
+      term.screen.write(data);
       term.chunks.push(data);
       term.chars += data.length;
       while (term.chars > SCROLLBACK_CHARS && term.chunks.length > 1) term.chars -= term.chunks.shift()!.length;
@@ -380,11 +392,26 @@ export class TerminalManager {
     for (const id of new Set([...before, ...now])) if (before.has(id) !== now.has(id)) this.onAgentRunning?.(id, now.has(id));
   }
 
-  /** 屏幕上的文字（去掉颜色等控制序列、按回车覆盖处理），最后 lines 行 */
-  text(id: string, lines: number): { text: string; truncated: boolean } {
-    const all = plainText(this.get(id).chunks.join("")).split("\n");
-    while (all.length > 1 && all.at(-1) === "") all.pop();
-    return { text: all.slice(-lines).join("\n"), truncated: all.length > lines };
+  /**
+   * 屏幕上的文字（终端模拟器的缓冲区：滚动历史加屏幕，全屏程序在用备用屏幕时只有它的画面），最后 lines 行。
+   * 自动折行的接回一行，去掉行尾空白和屏幕下面没用到的空行
+   */
+  async text(id: string, lines: number): Promise<{ text: string; truncated: boolean }> {
+    const { screen } = this.get(id);
+    // write 是异步解析的：等前面喂进去的输出都处理完
+    await new Promise<void>((resolve) => screen.write("", resolve));
+    const buffer = screen.buffer.active;
+    const all: string[] = [];
+    for (let y = 0; y < buffer.length; y++) {
+      const line = buffer.getLine(y);
+      if (!line) continue;
+      const s = line.translateToString(false);
+      if (line.isWrapped && all.length) all[all.length - 1] += s;
+      else all.push(s);
+    }
+    const out = all.map((l) => l.trimEnd());
+    while (out.length > 1 && out.at(-1) === "") out.pop();
+    return { text: out.slice(-lines).join("\n"), truncated: out.length > lines };
   }
 
   /** 等到有新的输出、并且安静了 quietMs，或者到了 timeoutMs */
@@ -410,7 +437,11 @@ export class TerminalManager {
 
   resize(id: string, cols: number, rows: number): void {
     const term = this.get(id);
-    if (term.status === "running") term.proc.resize(clamp(cols, 20, 500, 80), clamp(rows, 5, 200, 24));
+    if (term.status !== "running") return;
+    const c = clamp(cols, 20, 500, 80);
+    const r = clamp(rows, 5, 200, 24);
+    term.proc.resize(c, r);
+    term.screen.resize(c, r);
   }
 
   /** 用户在面板里关的：模型开的终端记下来（关的时候里面还在不在跑），告诉开它的那个会话的模型 */
@@ -432,6 +463,7 @@ export class TerminalManager {
     term.listeners.clear();
     term.promptWaiters.forEach((done) => done());
     if (term.status === "running") term.proc.kill();
+    term.screen.dispose();
     this.publishRunning();
   }
 
@@ -473,39 +505,6 @@ function info(t: Terminal): TerminalInfo {
   };
 }
 
-/**
- * 终端输出转成纯文字（给模型读）：清屏之前的丢掉，去掉颜色、光标移动、窗口标题这些控制序列，
- * 行内的回车（进度条）和退格按覆盖处理。全屏程序（vim、top）画出来的不准
- */
-export function plainText(raw: string): string {
-  // 清屏（clear、Ctrl-L、ESC c）之后的才是屏幕上的
-  const clears = [...raw.matchAll(/\x1b\[[23]J|\x1bc/g)];
-  const last = clears.at(-1);
-  let s = last ? raw.slice(last.index + last[0].length) : raw;
-  s = s
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "") // OSC：窗口标题等
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "") // CSI：颜色、光标
-    .replace(/\x1b[PX^_][^\x1b]*\x1b\\/g, "") // DCS 等
-    .replace(/\x1b[()*+][0-9A-Za-z]/g, "")
-    .replace(/\x1b[@-Z\\-_=>]/g, "");
-  return s
-    .split("\n")
-    .map((line) => {
-      const cells: string[] = [];
-      let col = 0;
-      for (const ch of line) {
-        if (ch === "\r") col = 0;
-        else if (ch === "\b") col = Math.max(0, col - 1);
-        else if (ch === "\t") {
-          const next = (Math.floor(col / 8) + 1) * 8;
-          while (col < next) cells[col++] = " ";
-        } else if (ch >= " " || ch > "\x7f") cells[col++] = ch;
-      }
-      return Array.from(cells, (c) => c ?? " ").join("").trimEnd();
-    })
-    .join("\n");
-}
-
 /** marked：这个终端的 shell 带了提示符标记（PowerShell，nonce 见 prompt-marker.ts） */
 function localPty(cwd: string, size: { cols: number; rows: number }, nonce: string): { proc: Proc; shell: string; marked: boolean } {
   const windows = process.platform === "win32";
@@ -542,8 +541,9 @@ function localPty(cwd: string, size: { cols: number; rows: number }, nonce: stri
           // 已经退出了
         }
       },
-      // node-pty 在 Unix 上用 tcgetpgrp 取前台进程组的程序名（不准的是 Windows，那里靠提示符标记）；
-      // 和 shell 同名就算 shell 自己在前台（可能是完整路径 /bin/bash，登录 shell 前面带 -）
+      // 前台是不是 shell 自己：比 shell 的进程组和终端的前台进程组（tpgid），同远端 Unix 的 probeScript。
+      // 以前比程序名（node-pty 的 process，tcgetpgrp 取到的前台进程组的程序名），bash 里跑 bash 脚本、zsh 里跑 zsh 脚本
+      // 和 shell 同名，被当成回到了提示符。问不到进程组时还按程序名比（Windows 两样都不准，那里靠提示符标记）
       probe: async (children) => {
         if (windows) return undefined;
         let fg: string;
@@ -553,7 +553,9 @@ function localPty(cwd: string, size: { cols: number; rows: number }, nonce: stri
           return undefined;
         }
         const name = programName(fg);
-        if (name && name !== programName(shell)) return { atPrompt: false, running: name };
+        const groups = await processGroups(p.pid);
+        const atPrompt = groups ? groups.tpgid === groups.pgid : !name || name === programName(shell);
+        if (!atPrompt) return { atPrompt: false, running: name || null };
         if (!children) return { atPrompt: true, running: null };
         // pgrep -P：有子进程退出码 0，没有是 1；别的（没装 pgrep 等）是查不出来
         const code = await new Promise<unknown>((resolve) => execFile("pgrep", ["-P", String(p.pid)], { timeout: 3000 }, (err) => resolve(err ? (err as { code?: unknown }).code : 0)));
@@ -641,7 +643,7 @@ async function remotePty(cwd: string, size: { cols: number; rows: number }, star
   };
 }
 
-/** 远端 Unix 的 shell 启动前报出的进程号：OSC 633（VS Code 的 shell 集成用的那组，P 是设属性），xterm.js 不认识就忽略，plainText 也去掉 */
+/** 远端 Unix 的 shell 启动前报出的进程号：OSC 633（VS Code 的 shell 集成用的那组，P 是设属性），xterm.js（面板的、网关读屏幕的）不认识就忽略 */
 const SHELL_PID = /\x1b\]633;P;ShellPid=(\d+);aid=([0-9a-f]+)\x07/;
 /** 进程号应该在输出的最开头（登录 shell 的启动文件还没跑），开头这么多字符里没有就不再找 */
 const PID_SCAN_CHARS = 4096;
@@ -649,6 +651,31 @@ const PID_SCAN_CHARS = 4096;
 const PROBE_TIMEOUT_MS = 3000;
 
 /** 程序名：去掉路径，登录 shell 前面的 - 也去掉 */
+/**
+ * 本机 Unix 上进程（shell）的进程组和它的终端的前台进程组：Linux 读 /proc/<pid>/stat（第 5、8 个字段），
+ * macOS 等没有 /proc 的问 ps（BSD ps 和 procps 都有 pgid、tpgid）。问不到（进程没了、ps 不支持）是 null
+ */
+async function processGroups(pid: number): Promise<{ pgid: number; tpgid: number } | null> {
+  if (process.platform === "linux") {
+    try {
+      const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+      // 第 2 个字段是带括号的程序名，里面可能有空格、括号：从最后一个 ) 之后数
+      const f = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      const pgid = Number(f[2]);
+      const tpgid = Number(f[5]);
+      return Number.isInteger(pgid) && Number.isInteger(tpgid) && tpgid > 0 ? { pgid, tpgid } : null;
+    } catch {
+      return null;
+    }
+  }
+  return new Promise((resolve) =>
+    execFile("ps", ["-o", "pgid=,tpgid=", "-p", String(pid)], { timeout: 3000 }, (err, out) => {
+      const [pgid, tpgid] = (err ? "" : out).trim().split(/\s+/).map(Number);
+      resolve(Number.isInteger(pgid) && Number.isInteger(tpgid) && tpgid! > 0 ? { pgid: pgid!, tpgid: tpgid! } : null);
+    }),
+  );
+}
+
 function programName(path: string): string {
   return path.split(/[\\/]/).pop()?.replace(/^-/, "") ?? "";
 }

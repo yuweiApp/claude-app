@@ -827,6 +827,8 @@ export function toolBrief(name: string, input: unknown): string {
       return pick("description");
     case "mcp__terminal__run_in_terminal":
       return pick("command");
+    case "mcp__terminal__send_to_terminal":
+      return pick("text");
     case "mcp__desktop__run":
       return desktopCommandLine(i);
     case "mcp__desktop__run_code":
