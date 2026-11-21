@@ -9,6 +9,7 @@ import { HostKeyError, hostKeyOf, knownHostsHas, type HostKey } from "./host-key
 import { resolveTarget, sshBin, type RemoteForward, type ResolvedTarget } from "./ssh-config.js";
 import { prepareRemote, type RemoteEnv } from "./deploy.js";
 import { createModelProxy, type ModelProxy } from "./model-proxy.js";
+import { reapOrphanClaude } from "./remote-ops.js";
 
 /** 单引号转义，给远端的 sh 用 */
 export const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -272,6 +273,8 @@ export class SshHost {
     await this.syncForwards(target.remoteForwards);
     this.connectedAt = Date.now();
     this.setStatus("ready");
+    // Windows 的 OpenSSH 断开连接时不结束它拉起的进程：上次断线、网关重启前的 claude（有后台任务的）还在跑，结束掉
+    if (this.env.windows) void reapOrphanClaude(this, `${this.env.root}/bin`).catch(() => undefined);
   }
 
   /**

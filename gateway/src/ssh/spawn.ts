@@ -5,7 +5,7 @@ import type { SpawnedProcess, SpawnOptions } from "@anthropic-ai/claude-agent-sd
 import type { ClientChannel } from "ssh2";
 import { psQuote, shQuote, type SshHost } from "./host.js";
 import { nativePath } from "./location.js";
-import { sftpWrite } from "./remote-ops.js";
+import { killRemotePid, sftpWrite } from "./remote-ops.js";
 
 /**
  * SDK 的 spawnClaudeCodeProcess：claude 在远端跑，标准输入输出走 SSH 通道。进程内的 MCP 服务器（终端、浏览器）、
@@ -39,6 +39,9 @@ class RemoteProcess extends EventEmitter implements SpawnedProcess {
   signalCode: NodeJS.Signals | null = null;
   private channel: ClientChannel | null = null;
   private exited = false;
+  /** Windows：远端 claude 的进程号（启动脚本写在标准错误里），关的时候按它结束整个进程树 */
+  private remotePid: number | null = null;
+  private bin: string | null = null;
 
   constructor(private readonly host: SshHost, o: SpawnOptions, onStderr: (data: string) => void) {
     super();
@@ -92,7 +95,10 @@ class RemoteProcess extends EventEmitter implements SpawnedProcess {
       config ? `& ${psQuote(nativePath(true, env.launcher))} ${psQuote(nativePath(true, config))}` : `exec sh ${shQuote(env.launcher)}`,
     );
     this.channel = channel;
-    channel.stderr.on("data", (d: Buffer) => onStderr(d.toString("utf8")));
+    if (env.windows) {
+      this.bin = env.bin;
+      this.watchPid(channel, marker, onStderr);
+    } else channel.stderr.on("data", (d: Buffer) => onStderr(d.toString("utf8")));
     channel.on("exit", (code: number | null, signal?: string) => {
       this.exitCode = code;
       if (signal) this.signalCode = `SIG${signal}` as NodeJS.Signals;
@@ -104,6 +110,35 @@ class RemoteProcess extends EventEmitter implements SpawnedProcess {
     // SSH 断开时通道不一定发 close
     const off = this.host.onClose(() => this.finish(this.exitCode, this.signalCode ?? "SIGHUP"));
     this.once("exit", off);
+  }
+
+  /**
+   * Windows：从标准错误里取出启动脚本写的「<标记>:pid=<进程号>」这一行（不转给 onStderr）。取到之前的输出先攒着，
+   * 取到了、攒得太多了、通道关了时再转。取到时已经要关了的，马上结束
+   */
+  private watchPid(channel: ClientChannel, marker: string, onStderr: (data: string) => void): void {
+    const line = new RegExp(`${marker}:pid=(\\d+)\\r?\\n?`);
+    let pending = "";
+    const flush = () => {
+      if (pending) onStderr(pending);
+      pending = "";
+    };
+    channel.stderr.on("data", (d: Buffer) => {
+      if (this.remotePid !== null) return onStderr(d.toString("utf8"));
+      pending += d.toString("utf8");
+      const m = line.exec(pending);
+      if (m) {
+        this.remotePid = Number(m[1]);
+        pending = pending.replace(m[0], "");
+        flush();
+        if (this.killed) this.killTree();
+      } else if (pending.length > 64 * 1024) flush();
+    });
+    channel.on("close", flush);
+  }
+
+  private killTree(): void {
+    if (this.remotePid !== null && this.bin) void killRemotePid(this.host, this.bin, this.remotePid);
   }
 
   private finish(code: number | null, signal: NodeJS.Signals | null): void {
@@ -128,6 +163,8 @@ class RemoteProcess extends EventEmitter implements SpawnedProcess {
       ch.end();
       ch.close();
     }
+    // Windows 的 OpenSSH 不支持发信号，关通道也不结束远端的进程：claude 有后台任务时不退出，要另外结束（进程号还没取到的，取到时再结束）
+    if (!this.exited) this.killTree();
     return true;
   }
 }

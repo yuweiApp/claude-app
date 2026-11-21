@@ -54,6 +54,53 @@ export async function killRemoteClaude(host: SshHost, bin: string, sessionId: st
   await run(host, "true", script).catch(() => undefined);
 }
 
+/**
+ * Windows 远端：结束进程号是 pid 的 claude 连同它拉起的子进程（后台任务）。进程号已经换给了别的程序（可执行文件不是 bin）的不动。
+ * 连接没连着时不连，跳过（连上时 reapOrphanClaude 会清掉）
+ */
+export async function killRemotePid(host: SshHost, bin: string, pid: number): Promise<void> {
+  if (!host.windows || !host.isReady) return;
+  const script = [
+    `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue`,
+    `if ($p -and $p.Path -eq ${win(bin)}) { try { taskkill.exe /T /F /PID ${pid} 2>&1 | Out-Null } catch {} }`,
+    "exit 0",
+  ].join("\n");
+  await host.exec(script, { now: true, timeoutMs: 30_000 }).catch(() => undefined);
+}
+
+/**
+ * Windows 远端：结束没人管的 claude（binDir 下的 claude-*.exe）连同子进程，返回结束了的进程号。
+ * Windows 的 OpenSSH 断开连接时不结束它拉起的进程，网关重启、断线后原来的 claude 会一直跑着（有后台任务时）。
+ * 顺着父进程往上找不到 sshd 的就是没人管的：父进程不在了，或者进程号已经换给了比它晚启动的程序。
+ * 上面还有 sshd 的不动（别的网关、别的连接正在用的；连接断了但 sshd 还没退的，由启动脚本看着连接结束）
+ */
+export async function reapOrphanClaude(host: SshHost, binDir: string): Promise<number[]> {
+  if (!host.windows) return [];
+  const script = [
+    `$dir = ${win(binDir)} + '\\'`,
+    "$all = @(Get-CimInstance Win32_Process)",
+    "$byId = @{}",
+    "foreach ($p in $all) { $byId[[int]$p.ProcessId] = $p }",
+    "foreach ($c in $all) {",
+    "  if ($c.Name -notlike 'claude-*.exe' -or -not $c.ExecutablePath -or -not $c.ExecutablePath.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase)) { continue }",
+    "  $cur = $c; $owned = $false",
+    "  for ($i = 0; $i -lt 16; $i++) {",
+    "    $parent = $byId[[int]$cur.ParentProcessId]",
+    "    if (-not $parent -or $parent.CreationDate -gt $cur.CreationDate) { break }",
+    "    if ($parent.Name -like 'sshd*') { $owned = $true; break }",
+    "    $cur = $parent",
+    "  }",
+    "  if (-not $owned) { try { taskkill.exe /T /F /PID $c.ProcessId 2>&1 | Out-Null } catch {}; [string]$c.ProcessId }",
+    "}",
+    "exit 0",
+  ].join("\n");
+  const out = await run(host, "true", script);
+  return decodeText(out)
+    .split(/\r?\n/)
+    .map((l) => Number(l.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+}
+
 /** 删空目录，不空、不存在的跳过，不报错 */
 export async function rmdirQuiet(host: SshHost, ...paths: string[]): Promise<void> {
   await run(

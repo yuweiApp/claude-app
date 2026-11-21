@@ -15,7 +15,8 @@ import { sftpUpload, sftpWrite } from "./remote-ops.js";
 
 /**
  * 准备远端：远端用户目录下的 ~/.claude-app 放网关用的东西，和远端用户自己的 ~/.claude 分开（同本机的配置隔离）：
- * - bin/claude-<SDK 版本>：Claude Code，和网关的 SDK 同一个版本（不同版本的协议可能对不上），旧版本删掉
+ * - bin/claude-<SDK 版本>：Claude Code，和网关的 SDK 同一个版本（不同版本的协议可能对不上）。装新版本时别的版本只留最近装的一个
+ *   （同一台远端可能连着几个网关、SDK 版本不同，删掉对方的它下次连接要重新装），其余删掉；Windows 上正在跑的删不掉，留着
  * - bin/launch.sh：启动脚本，从标准输入读环境变量、参数和工作目录，再 exec claude（密钥不出现在命令行里）
  * - claude-home：远端 claude 的配置目录（会话记录在这里）
  * - workspace：远端的普通会话（scratch-…）和上传的附件
@@ -243,7 +244,7 @@ function testPackage(meta: PackageMeta): string {
   ].join("\n");
 }
 
-/** PowerShell：从 $t（校验过的平台包）解出 claude.exe 放到 env.bin，删掉包和旧版本 */
+/** PowerShell：从 $t（校验过的平台包）解出 claude.exe 放到 env.bin，删掉包；别的版本只留最近装的一个（正在跑的删不掉，跳过） */
 function extractWindows(env: RemoteEnv): string {
   const w = (p: string) => psQuote(nativePath(true, p));
   return [
@@ -254,7 +255,7 @@ function extractWindows(env: RemoteEnv): string {
     "if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('解压失败（远端要有 tar.exe，Windows 10 1803 起自带）'); exit 5 }",
     `Move-Item -LiteralPath (Join-Path $x 'package/claude.exe') -Destination ${w(env.bin)} -Force`,
     "Remove-Item -LiteralPath $x, $t -Recurse -Force",
-    `Get-ChildItem -LiteralPath ${w(`${env.root}/bin`)} -Filter 'claude-*.exe' | Where-Object { $_.FullName -ne ${w(env.bin)} } | Remove-Item -Force -ErrorAction SilentlyContinue`,
+    `Get-ChildItem -LiteralPath ${w(`${env.root}/bin`)} -Filter 'claude-*.exe' | Where-Object { $_.FullName -ne ${w(env.bin)} } | Sort-Object CreationTime -Descending | Select-Object -Skip 1 | Remove-Item -Force -ErrorAction SilentlyContinue`,
   ].join("\n");
 }
 
@@ -271,7 +272,10 @@ function localPlatform(): string {
 /** 上传 Claude Code：先传到临时文件，完整了再改名，传到一半断了不会留下坏的 */
 async function upload(host: SshHost, env: RemoteEnv, onProgress: (p: number) => void): Promise<void> {
   const tmp = `${env.bin}.part`;
-  const finish = `chmod 755 ${shQuote(tmp)} && mv -f ${shQuote(tmp)} ${shQuote(env.bin)} && for f in ${shQuote(`${env.root}/bin`)}/claude-*; do [ "$f" = ${shQuote(env.bin)} ] || rm -f -- "$f"; done`;
+  // 别的版本只留最近装的一个（按修改时间，装的时候写的）；.part、.part.tgz 是别的网关正在装的，不动。删旧版本失败不算装失败
+  const finish =
+    `chmod 755 ${shQuote(tmp)} && mv -f ${shQuote(tmp)} ${shQuote(env.bin)} && ` +
+    `{ ls -1t ${shQuote(`${env.root}/bin`)}/claude-* 2>/dev/null | grep -v '\\.part' | grep -vxF ${shQuote(env.bin)} | tail -n +2 | while IFS= read -r f; do rm -f -- "$f"; done; true; }`;
   // 先让远端自己从 npm 源（config.yml 的 ssh.registries）下载那个平台的包（按 npm 给的 sha512 校验）：比经 SSH 传快得多（传 150 MB 的包，慢的线路要十几分钟）
   const meta = await packageMeta(env.platform).catch(() => null);
   onProgress(0);
@@ -491,7 +495,22 @@ $m = [Text.Encoding]::UTF8.GetBytes($cfg.marker + "\`n")
 $out.Write($m, 0, $m.Length)
 $out.Flush()
 $proc = [Diagnostics.Process]::Start($psi)
-$proc.WaitForExit()
+# claude 的进程号告诉网关（标准错误，带上这次的标记）：Windows 的 OpenSSH 关通道、断连接都不结束这里的进程，网关关会话时按它结束整个进程树
+[Console]::Error.WriteLine($cfg.marker + ':pid=' + $proc.Id)
+[Console]::Error.Flush()
+# 连接断了（网关重启、崩溃、断网）这里也不会被结束，claude 有后台任务时会一直跑：每 10 秒看一次这条 SSH 连接（SSH_CONNECTION），
+# 连续两次不在了就结束 claude 和它的子进程。查不了（命令出错）不算断
+$conn = "$env:SSH_CONNECTION" -split ' '
+$gone = 0
+while (-not $proc.WaitForExit(10000)) {
+  if ($conn.Count -lt 4) { continue }
+  try {
+    $alive = @(Get-NetTCPConnection -LocalPort ([int]$conn[3]) -ErrorAction Stop | Where-Object { ($_.RemoteAddress -replace '^::ffff:', '') -eq $conn[0] -and $_.RemotePort -eq [int]$conn[1] -and $_.State -eq 'Established' }).Count -gt 0
+  } catch { $alive = $true }
+  if ($alive) { $gone = 0; continue }
+  $gone++
+  if ($gone -ge 2) { taskkill.exe /T /F /PID $proc.Id 2>&1 | Out-Null; $proc.WaitForExit(); break }
+}
 exit $proc.ExitCode
 `;
 
