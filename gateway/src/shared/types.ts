@@ -773,3 +773,24 @@ export interface ShareInfo {
   /** 普通会话（工作目录是网关建的 scratch 目录）：标题旁边不显示文件夹名 */
   chat: boolean;
 }
+
+/**
+ * 对话里的部件（show_widget）显示后，网页报给网关的结果（POST /sessions/:id/widgets/:toolUseId/report），
+ * 网关写进这次工具调用的结果交给模型，见 gateway/src/visualize/tool.ts
+ */
+export interface WidgetReport {
+  /** 部件页面的宽、内容高（像素） */
+  width: number;
+  height: number;
+  /** 报告时页面的 load 事件触发了没有（没有：还有脚本、样式、图片在加载） */
+  loaded: boolean;
+  /** 加载期间的问题，按发生顺序：脚本错误、未处理的 Promise 拒绝、资源加载失败、被内容安全策略拦下的地址、console.error */
+  errors: WidgetReportError[];
+}
+
+export interface WidgetReportError {
+  kind: "error" | "rejection" | "resource" | "csp" | "console";
+  message: string;
+  /** 出错位置在 widget_code 里的行号（从 1 开始），外部脚本里的错误没有 */
+  line?: number;
+}

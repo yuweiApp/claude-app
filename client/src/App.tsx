@@ -33,7 +33,8 @@ import { emptyView, reduce } from "./state/session";
 import { AnnotationEditor, AnnotationSelectionButton, AnnotationSessionContext, NotesChip } from "./components/ResponseAnnotations";
 import { ANNOTATION_SCOPE_ATTR, clearResponseAnnotations, restoreResponseAnnotations, useResponseAnnotations, withResponseAnnotations, type ResponseAnnotation } from "./state/responseAnnotations";
 import { moveComposerDraft, setComposerDraft, type ComposerDraft } from "./state/composerDrafts";
-import { WidgetPromptContext } from "./components/Widget";
+import { WidgetHostContext } from "./components/Widget";
+import type { WidgetReport } from "@gateway/shared/types";
 
 export function App() {
   const [config, setConfig] = useState<GatewayConfig | null>(null);
@@ -695,8 +696,20 @@ export function Chat({
     }
   };
 
-  // 部件里的 sendPrompt(text)：和在输入框里发一样（一轮进行中时排队）；出错时 send 已经提示过
-  const widgetPrompt = sessionId ? (text: string) => void send(text, []).catch(() => {}) : null;
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  // 部件里的 sendPrompt(text)：和在输入框里发一样（一轮进行中时排队）；出错时 send 已经提示过。
+  // 部件显示后的报告交给网关（正在等它的 show_widget 调用收下，没有在等的网关先留一会儿），报失败不提示：模型那边会等到超时
+  const widgetHost = useMemo(
+    () =>
+      sessionId
+        ? {
+            prompt: (text: string) => void sendRef.current(text, []).catch(() => {}),
+            report: (toolUseId: string, report: WidgetReport) => void api.reportWidget(sessionId, toolUseId, report).catch(() => {}),
+          }
+        : null,
+    [sessionId],
+  );
 
   // 以 next 排队的消息：立即发送（改成 now）、撤回到输入框编辑（还原发送时的草稿和标注）、删除
   const queuedAction = async (uuid: string, action: "send" | "edit" | "delete") => {
@@ -786,7 +799,7 @@ export function Chat({
           </div>
         )}
         <AnnotationSessionContext.Provider value={sessionId}>
-          <WidgetPromptContext.Provider value={widgetPrompt}>
+          <WidgetHostContext.Provider value={widgetHost}>
           {(!sessionId || view.historyLoaded) && <Messages
             view={view}
             onFork={
@@ -795,7 +808,7 @@ export function Chat({
                 : undefined
             }
           />}
-          </WidgetPromptContext.Provider>
+          </WidgetHostContext.Provider>
         </AnnotationSessionContext.Provider>
         {view.permissions.map((request) => (
           <PermissionCard

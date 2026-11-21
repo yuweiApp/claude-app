@@ -91,7 +91,7 @@ export function buildOptions(launch: SessionLaunch): Options {
       ...external,
       ...(desktop ? { [DESKTOP_SERVER]: desktop } : {}),
       // 在对话里显示 HTML / SVG 部件，网页按调用参数渲染（docs/README.md「对话里的部件」）
-      [VISUALIZE_SERVER]: visualizeServer(),
+      [VISUALIZE_SERVER]: visualizeServer(launch.sessionId),
     },
     plugins: importedPlugins(),
     ...(launch.skills ? { skills: launch.skills } : {}),
@@ -153,7 +153,7 @@ function buildRemoteOptions(launch: SessionLaunch): Options {
       ...(browser ? { [BROWSER_SERVER]: browser } : {}),
       ...external,
       // 对话里的部件在网页上显示，远程会话一样能用
-      [VISUALIZE_SERVER]: visualizeServer(),
+      [VISUALIZE_SERVER]: visualizeServer(launch.sessionId),
     },
     systemPrompt: {
       type: "preset",

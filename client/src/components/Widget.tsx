@@ -1,7 +1,12 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { WidgetReport, WidgetReportError } from "@gateway/shared/types";
 
-/** 部件里 sendPrompt(text) 发消息：Chat 提供（以用户的身份发一条消息），没提供时（不在会话里）忽略 */
-export const WidgetPromptContext = createContext<((text: string) => void) | null>(null);
+/**
+ * 部件和会话之间的事，Chat 提供，不在会话里时没有：
+ * - prompt：部件里 sendPrompt(text)，以用户的身份发一条消息
+ * - report：部件显示后把结果（大小、加载期间的错误）报给网关，交给正在等它的 show_widget 调用
+ */
+export const WidgetHostContext = createContext<{ prompt: (text: string) => void; report: (toolUseId: string, report: WidgetReport) => void } | null>(null);
 
 /** 部件能连的外部地址，和网关说明里列的一致（gateway/src/visualize/tool.ts 的 ORIGINS） */
 const WIDGET_ORIGINS = ["cdnjs.cloudflare.com", "cdn.jsdelivr.net", "unpkg.com", "esm.sh", "fonts.googleapis.com", "fonts.gstatic.com"].map((h) => `https://${h}`).join(" ");
@@ -38,6 +43,48 @@ const BRIDGE = `(function () {
   var post = function (m) { m.__widget = 1; parent.postMessage(m, "*"); };
   window.sendPrompt = function (text) { post({ type: "prompt", text: String(text) }); };
   window.openLink = function (url) { post({ type: "link", url: String(url) }); };
+  // 加载期间的问题，报告时一起交出去：脚本错误（srcdoc 里的带行号，外面换算成 widget_code 的行号）、Promise 拒绝、资源加载失败、CSP 拦截、console.error
+  var errors = [];
+  var push = function (kind, message, lineno, file) {
+    if (errors.length >= 20) return;
+    var e = { kind: kind, message: String(message).slice(0, 500) };
+    if (lineno && file === "about:srcdoc") e.lineno = lineno;
+    errors.push(e);
+  };
+  var text = function (a) {
+    if (a && a.message) return a.message;
+    if (typeof a === "object") { try { return JSON.stringify(a); } catch (x) { return String(a); } }
+    return String(a);
+  };
+  addEventListener("error", function (e) {
+    var t = e.target;
+    if (t && t !== window && t.tagName) { push("resource", t.tagName.toLowerCase() + " " + (t.src || t.href || "")); return; }
+    push("error", e.message || "未知错误", e.lineno, e.filename);
+  }, true);
+  addEventListener("unhandledrejection", function (e) { push("rejection", text(e.reason)); });
+  document.addEventListener("securitypolicyviolation", function (e) { push("csp", e.blockedURI + "（" + e.effectiveDirective + "）"); });
+  var consoleError = console.error;
+  console.error = function () {
+    try { push("console", Array.prototype.map.call(arguments, text).join(" ")); } catch (x) {}
+    return consoleError.apply(console, arguments);
+  };
+  // 报告一次：load 后约 1 秒，load 一直没触发时开始加载后约 6 秒；还没拿到宽度时等拿到再报。被 CSP 拦下的地址不再另算一次加载失败
+  var loaded = false, reported = false, due = false;
+  var report = function () {
+    if (reported) return;
+    if (!innerWidth || !document.body) { due = true; return; }
+    reported = true;
+    var blocked = errors.filter(function (e) { return e.kind === "csp"; }).map(function (e) { return e.message; }).join(" ");
+    post({
+      type: "report",
+      width: innerWidth,
+      height: last >= 0 ? last : contentHeight(),
+      loaded: loaded,
+      errors: errors.filter(function (e) { return e.kind !== "resource" || blocked.indexOf(e.message.slice(e.message.indexOf(" ") + 1)) < 0; }),
+    });
+  };
+  setTimeout(report, 6000);
+  addEventListener("load", function () { loaded = true; setTimeout(report, 1000); });
   var root = document.documentElement;
   var apply = function (t) {
     for (var k in t.vars) root.style.setProperty(k, t.vars[k]);
@@ -56,12 +103,31 @@ const BRIDGE = `(function () {
     if (/^https?:/i.test(url)) { e.preventDefault(); post({ type: "link", url: url }); }
     else if (a.getAttribute("href").charAt(0) !== "#") e.preventDefault();
   }, true);
-  var last = -1;
+  // 内容高：body 的高度，加上超出 body 的部分（height: 100vh 的容器里内容更高时）；position: fixed 的不算
+  var contentHeight = function () {
+    var b = document.body;
+    return Math.ceil(Math.max(b.getBoundingClientRect().height, b.scrollHeight));
+  };
+  // last：上次报的内容高；lastVh：那之后内容没变时页面的高（innerHeight），iframe 按报的高度变高后、内容没跟着变，就记下新的页面高。
+  // 内容高跟着页面高走（min-height: 100vh 再加内边距之类）时，报了 iframe 就变高、内容又变高，会一直长下去：
+  // 页面比 lastVh 高了多少、内容就跟着变高多少（差 1 像素以内），或者 3 秒内连着 8 次都是页面变高后内容也变高，就不再报更高的
+  var last = -1, lastVh = 0, chain = 0, chainStart = 0;
   // 还没拿到宽度（iframe 刚插进页面、尺寸还没传过来）时量出来是 0，不报：报了 iframe 变成 0 高，就一直拿不到尺寸了
   var measure = function () {
     if (!document.body || !innerWidth) return;
-    var h = Math.ceil(document.body.getBoundingClientRect().height);
-    if (h !== last) { last = h; post({ type: "height", height: h }); }
+    var h = contentHeight(), vh = innerHeight;
+    if (h === last) lastVh = vh;
+    else {
+      var dv = vh - lastVh, db = h - last;
+      var follows = last >= 0 && dv > 0 && db > 0;
+      if (follows) {
+        var now = Date.now();
+        if (!chain || now - chainStart > 3000) { chain = 0; chainStart = now; }
+        chain++;
+      } else chain = 0;
+      if (!(follows && (Math.abs(db - dv) <= 1 || chain > 8))) { last = h; lastVh = vh; post({ type: "height", height: h }); }
+    }
+    if (due) report();
   };
   document.addEventListener("DOMContentLoaded", function () {
     measure();
@@ -86,6 +152,11 @@ const ALIASES = `:root {
   --font-sans: var(--font-ui); --radius: 8px;
 }`;
 
+/** srcdoc 里 <body> 所在的行（从 1 开始）：部件代码从这一行开始，脚本错误的行号减掉它就是 widget_code 里的行号 */
+function bodyLine(doc: string): number {
+  return doc.slice(0, doc.indexOf("<body>")).split("\n").length;
+}
+
 function srcDoc(code: string, theme: Theme): string {
   const vars = Object.entries(theme.vars)
     .filter(([, v]) => v)
@@ -101,12 +172,15 @@ html { background: transparent; overflow: hidden; } body { display: flow-root; m
 }
 
 /** 对话里的一个部件：沙箱 iframe（不给 allow-same-origin，碰不到网关的令牌和页面），高度跟着内容变 */
-export function Widget({ code, title, loadingMessages }: { code: string; title?: string; loadingMessages?: string[] }) {
+export function Widget({ code, title, loadingMessages, reportId }: { code: string; title?: string; loadingMessages?: string[]; reportId?: string }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState<number | null>(null);
-  const onPrompt = useContext(WidgetPromptContext);
-  const promptRef = useRef(onPrompt);
-  promptRef.current = onPrompt;
+  const host = useContext(WidgetHostContext);
+  const hostRef = useRef(host);
+  hostRef.current = host;
+  // 要报告的 tool_use id 按第一次渲染时的为准：报告前工具结果可能已经到了（超时），之后不再报
+  const [toReport] = useState(reportId);
+  const reportedRef = useRef(false);
   // 主题只在第一次渲染时写进页面；之后切换主题经 postMessage 更新变量，部件不重新加载（重新加载会丢掉用户在部件里的操作）
   const initialTheme = useRef<Theme | null>(null);
   if (!initialTheme.current) initialTheme.current = readTheme(document.documentElement);
@@ -119,9 +193,18 @@ export function Widget({ code, title, loadingMessages }: { code: string; title?:
     const postTheme = () => frame.contentWindow?.postMessage({ __widget: 1, type: "theme", ...readTheme(frame) }, "*");
     const onMessage = (e: MessageEvent) => {
       if (e.source !== frame.contentWindow || !e.data || e.data.__widget !== 1) return;
-      const data = e.data as { type: string; height?: number; text?: string; url?: string };
+      const data = e.data as { type: string; height?: number; text?: string; url?: string; width?: number; loaded?: boolean; errors?: unknown };
       if (data.type === "height" && typeof data.height === "number") setHeight(Math.max(0, data.height));
-      else if (data.type === "prompt" && typeof data.text === "string" && data.text.trim()) promptRef.current?.(data.text);
+      else if (data.type === "prompt" && typeof data.text === "string" && data.text.trim()) hostRef.current?.prompt(data.text);
+      else if (data.type === "report" && toReport && !reportedRef.current && hostRef.current) {
+        reportedRef.current = true;
+        const offset = bodyLine(doc);
+        const errors: WidgetReportError[] = (Array.isArray(data.errors) ? data.errors : []).map((raw: { kind: WidgetReportError["kind"]; message: string; lineno?: number }) => {
+          const line = typeof raw.lineno === "number" ? raw.lineno - offset + 1 : 0;
+          return { kind: raw.kind, message: String(raw.message), ...(line > 0 ? { line } : {}) };
+        });
+        hostRef.current.report(toReport, { width: data.width ?? 0, height: data.height ?? 0, loaded: data.loaded === true, errors });
+      }
       else if (data.type === "link" && typeof data.url === "string" && /^https?:/i.test(data.url)) window.open(data.url, "_blank", "noopener,noreferrer");
     };
     window.addEventListener("message", onMessage);

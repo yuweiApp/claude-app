@@ -542,16 +542,22 @@ client/
 
 模型可以在对话里显示一段 HTML 或 SVG（部件），用户直接看、直接点，像 Claude 桌面版对话里的图和可点的卡片。
 
-- **工具**：网关自带的 MCP 服务器 `visualize`（`gateway/src/visualize/tool.ts`），只有一个工具 `mcp__visualize__show_widget`，参数是 `widget_code`（HTML 片段或 SVG），可选的 `title` 和 `loading_messages`（1–4 句，生成参数期间在部件的位置轮流显示）。工具本身什么都不做，只返回「已显示在对话里」；本机会话、远程会话都挂，在 `allowedTools` 里，不弹权限卡片。默认延迟加载，要常驻写进 `config.yml` 的 `tools.alwaysLoad`。
+- **工具**：网关自带的 MCP 服务器 `visualize`（`gateway/src/visualize/tool.ts`），只有一个工具 `mcp__visualize__show_widget`，参数是 `widget_code`（HTML 片段或 SVG），可选的 `title` 和 `loading_messages`（1–4 句，生成参数期间在部件的位置轮流显示）。工具等网页报告显示结果再返回（见下面「显示结果」）；本机会话、远程会话都挂，在 `allowedTools` 里，不弹权限卡片。默认延迟加载，要常驻写进 `config.yml` 的 `tools.alwaysLoad`。
 - **说明**：运行环境（沙箱、能连的地址、宽高、主题变量、`sendPrompt`、链接）都写在工具描述里，模型加载工具时一起看到；只写事实，不写设计建议（CLAUDE.md「约定」）。
 - **渲染**：网页按工具调用的参数渲染（`client/src/components/Widget.tsx`），不等工具结果；结果是错误时（参数是空的、被中断）退回成过程里的一步。部件不折叠进「已处理 / 用时」，按顺序显示在过程下面、最终回复上面。参数在会话记录里，刷新、恢复会话、分享页都能重新显示。
 - **沙箱**：`<iframe sandbox="allow-scripts" srcdoc>`，不给 `allow-same-origin`，部件是不透明的源，拿不到网关的令牌、cookie 和外面的页面。页面里放一条 CSP：脚本、样式、字体、图片、fetch 只能连 cdnjs、jsdelivr、unpkg、esm.sh 和 Google Fonts（网关说明里的列表和 `Widget.tsx` 的 `WIDGET_ORIGINS` 要一致）。
 - **桥**：部件页面开头注入一小段脚本，经 `postMessage` 和外面通信：
-  - 高度：`ResizeObserver` 量 body，报给外面设 iframe 的高度。
+  - 高度：`ResizeObserver` 量 body（加上超出 body 的部分，`height: 100vh` 的容器里内容更高时），报给外面设 iframe 的高度。内容高跟着 iframe 高走时（`min-height: 100vh` 再加内边距）会一直长下去：iframe 变高多少、内容就跟着变高多少（差 1 像素以内），或者 3 秒内连着 8 次都是 iframe 变高后内容也变高，就不再报更高的，超出的部分裁掉（实测过不加这条时 iframe 长到两万多像素还在长）。
   - `sendPrompt(text)`：外面按用户在输入框里发消息处理（一轮进行中时排队）。
   - 链接：点 http(s) 链接或调用 `openLink(url)`，由外面 `window.open`，桌面版用系统浏览器打开。
   - 主题：说明里列的 CSS 变量（`--bg`、`--text`、`--accent`…）和 `data-theme` 第一次写进页面；切换主题、皮肤、外观设置时外面再发一次新值，部件不重新加载。
   - 部件报上第一次高度之前 iframe 是透明的（不能隐藏：隐藏的跨源 iframe 不跑渲染，量不出高度），上面显示 `loading_messages`；部件拿到宽度之前不报高度（量出来是 0，报了 iframe 变成 0 高就一直拿不到尺寸）。
 - **和 Claude 桌面版对齐的部分**：服务器名、工具名、`widget_code` / `title` / `loading_messages` 三个参数、`sendPrompt`、`openLink`、能连的 CDN 一致；另外定义了一组和桌面版同名的 CSS 变量（`--surface-0~3`、`--text-primary`、`--text-secondary`、`--border-strong`、`--bg-accent`、`--radius`…），值取自本项目的主题变量，照桌面版习惯写的部件也能显示正常。不跟的：`read_me` 和里面的设计建议（说明只写事实）、色板 class（`c-blue`…）、Tabler 图标字体；`title`、`loading_messages` 在桌面版是必填，这里是选填。
+- **显示结果**：工具调用的结果还没到时，网页显示部件后把结果报给网关（`POST /sessions/:id/widgets/:toolUseId/report`，局域网分享的访客也能报），工具拿到后写成文字交给模型：
+  - 报什么：部件页面的宽、内容高，load 触发了没有，以及到那时为止的脚本错误（`error` 事件，srcdoc 里的行号减掉 `<body>` 所在行换算成 `widget_code` 的行号）、未处理的 Promise 拒绝、资源加载失败（和 CSP 拦截重复的不算）、被 CSP 拦下的地址、`console.error`，最多 20 条。
+  - 什么时候报：部件页面 load 后约 1 秒；load 一直不触发（CDN 卡住）时开始加载后约 6 秒；还没拿到宽度（iframe 没在渲染）时等拿到再报。只报一次，之后的错误不算。
+  - 工具最多等 10 秒（要比 MCP 调用自动转后台的 20 秒短，不然调用会被转到后台），没等到就说没有收到显示结果；工具调用被中止时不再等。tool_use id 取自 Claude Code 放在 `_meta["claudecode/toolUseId"]` 里的值。
+  - 网页渲染得比工具开始等更早时，报告在网关先留 60 秒；同一次调用只收第一份，同一个会话开着几个网页时用最先报的。
+  - 历史里已经有工具结果的部件不报。
 - **上下文**：`widget_code` 是模型输出的一部分，留在对话历史里，每轮都算输入 token，直到上下文被压缩。说明里不提这一点。
 - **生成期间**：模型写参数时（`stream_event` 里 show_widget 的 `content_block_start` 和 `input_json_delta`），会话状态记下到目前为止的参数（`view.streaming.widget`），部件的位置显示一行提示：从不完整的 JSON 里取已经完整的 `loading_messages`（只在 `"widget_code"` 之前找），每 2.5 秒换一句，还没有时显示「正在生成部件…」，不显示「思考中…」。参数完整（收到 assistant 消息）后换成部件；部件报上高度之前 iframe 和这行提示一样高（28px），换过去时不跳。不逐步渲染半截的 HTML。

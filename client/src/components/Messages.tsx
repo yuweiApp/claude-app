@@ -591,7 +591,9 @@ function UnitView({ unit, view }: { unit: Unit; view: SessionView }) {
       if (typeof input.widget_code !== "string" || !input.widget_code.trim() || view.toolResults[unit.block.id]?.isError)
         return <ToolStep block={unit.block} view={view} renderChildren={renderChildren} />;
       const loading = Array.isArray(input.loading_messages) ? input.loading_messages.filter((m): m is string => typeof m === "string") : undefined;
-      return <Widget code={input.widget_code} title={typeof input.title === "string" ? input.title : undefined} loadingMessages={loading} />;
+      // 工具结果还没到：网关在等这个部件的显示结果，显示后报告
+      const reportId = view.toolResults[unit.block.id] ? undefined : unit.block.id;
+      return <Widget code={input.widget_code} title={typeof input.title === "string" ? input.title : undefined} loadingMessages={loading} reportId={reportId} />;
     }
     case "steps":
       return unit.tools.length === 1 ? (

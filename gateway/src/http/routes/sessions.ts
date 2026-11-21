@@ -3,7 +3,8 @@ import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk
 import { listModels } from "../../agent/models.js";
 import { historyForDisplay, historyImage, sessionHistory } from "../../agent/history.js";
 import type { FastifyInstance } from "fastify";
-import type { ConnectorEntry, ConnectorInput, MarketPluginPage, McpAuthState, McpServerInput, MessagePriority } from "../../shared/types.js";
+import type { ConnectorEntry, ConnectorInput, MarketPluginPage, McpAuthState, McpServerInput, MessagePriority, WidgetReport, WidgetReportError } from "../../shared/types.js";
+import { reportWidget } from "../../visualize/tool.js";
 import { AttachmentError, type SelectedElementInput } from "../../agent/attachments.js";
 import { BadRequestError, NotFoundError, type SessionManager } from "../../agent/session-manager.js";
 import type { EventHub } from "../../events/event-hub.js";
@@ -322,6 +323,19 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
   app.post<{ Params: IdParams & { uuid: string } }>("/sessions/:id/queued/:uuid/send", async (req) => ({
     uuid: await activeOr404(sessions, req.params.id).sendNow(req.params.uuid),
   }));
+
+  // 对话里的部件显示后网页报告结果（大小、加载期间的错误），交给正在等它的 show_widget 调用；局域网分享的访客也能报（同一个会话）
+  app.post<{ Params: IdParams & { toolUseId: string }; Body: WidgetReport }>("/sessions/:id/widgets/:toolUseId/report", async (req) => {
+    const body = req.body as Partial<WidgetReport> | undefined;
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0);
+    const kinds: WidgetReportError["kind"][] = ["error", "rejection", "resource", "csp", "console"];
+    const errors = (Array.isArray(body?.errors) ? body.errors : [])
+      .filter((e): e is WidgetReportError => !!e && kinds.includes(e.kind) && typeof e.message === "string")
+      .slice(0, 20)
+      .map((e) => ({ kind: e.kind, message: e.message.slice(0, 500), ...(typeof e.line === "number" && e.line > 0 ? { line: Math.round(e.line) } : {}) }));
+    const report: WidgetReport = { width: num(body?.width), height: num(body?.height), loaded: body?.loaded === true, errors };
+    return { accepted: reportWidget(req.params.id, req.params.toolUseId, report) };
+  });
 
   app.post<{ Params: IdParams }>("/sessions/:id/interrupt", async (req) => {
     await activeOr404(sessions, req.params.id).interrupt();
