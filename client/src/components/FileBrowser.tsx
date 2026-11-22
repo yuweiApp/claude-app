@@ -204,6 +204,7 @@ const nameError = (name: string) => (name === "." || name === ".." || /[\\/\0]/.
 /**
  * 目录树（同 codex-app-server 的 FileTree）：顶部「筛选文件…」（在整个项目里按名字搜），没在筛选时是刷新按钮；
  * 单击文件预览打开，双击固定打开；单击文件夹只选中，点左边的箭头、双击、回车展开收起（→ 展开、← 收起），同系统的文件管理器；右边缘拖动调宽度。
+ * 多选：Ctrl/⌘ 单击加减一项，Shift 单击从上次单击的那一行连选到这一行（都不打开文件）；右键多选里的一项只有「删除 N 项」，Delete 键同样删选中的全部。
  * 右键：空白处和第一行（工作目录）新建文件、文件夹，文件夹还能在里面新建；复制绝对路径（文件、文件夹还能复制相对路径）；
  * 文件、文件夹能重命名（F2）、删除（Delete）；桌面版的本机会话还能用系统的文件管理器打开（文件夹打开它本身，文件是在所在的文件夹里选中它）。
  * 拖动文件、文件夹到别的文件夹（拖到文件上是放进它所在的文件夹，拖到空白处或第一行是放到根目录），悬停在收起的文件夹上一会儿自动展开
@@ -308,10 +309,35 @@ function FileTree({
     }
   });
   const revealedPath = activePath === null ? revealed.get(cwd) : undefined;
-  /** 单击选中的文件夹（"" 是第一行的工作目录）；选中文件夹时打开的文件不再标成选中，换了打开的文件就清掉 */
-  const [pickedDir, setPickedDir] = useState<string | null>(null);
-  useEffect(() => setPickedDir(null), [activePath]);
-  const selectedPath = pickedDir ?? activePath ?? revealedPath;
+  /**
+   * 另外选中的（"" 是第一行的工作目录，文件夹以 / 结尾）：单击文件夹选它一个，Ctrl/⌘ 单击加减、Shift 单击连选；
+   * null 是没另外选，打开的文件（或定位到的文件夹）算选中。换了打开的文件就清掉
+   */
+  const [picked, setPicked] = useState<string[] | null>(null);
+  /** Shift 连选从哪一行起：上一次单击（不带 Shift）的那一行 */
+  const anchor = useRef<string | null>(null);
+  useEffect(() => setPicked(null), [activePath]);
+  const defaultPick = activePath ?? revealedPath;
+  const selection = picked ?? (defaultPick ? [defaultPick] : []);
+  const selected = new Set(selection);
+  /** 画出来的行（不含第一行）从上到下的路径，Shift 连选用；每次画的时候重新收集 */
+  const order: string[] = [];
+  const pickMore = (path: string, range: boolean) => {
+    const base = selection.filter((p) => p !== "");
+    if (range) {
+      // 还没单击过的话从打开的文件起
+      const from = anchor.current ?? defaultPick;
+      const i = from == null ? -1 : order.indexOf(from);
+      const j = order.indexOf(path);
+      if (i < 0 || j < 0) {
+        anchor.current = path;
+        return setPicked([path]);
+      }
+      return setPicked(order.slice(Math.min(i, j), Math.max(i, j) + 1));
+    }
+    anchor.current = path;
+    setPicked(base.includes(path) ? base.filter((p) => p !== path) : [...base, path]);
+  };
 
   const toggle = (dir: string) => {
     if (cache.expanded.has(dir)) cache.expanded.delete(dir);
@@ -361,7 +387,8 @@ function FileTree({
       }
       cache.expanded.add("");
       revealed.delete(cwd);
-      setPickedDir(hit.path);
+      anchor.current = hit.path;
+      setPicked([hit.path]);
       setQuery("");
       requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-path="${CSS.escape(hit.path)}"]`)?.scrollIntoView({ block: "nearest" }));
     } else onSelect(hit.path, pin);
@@ -393,7 +420,8 @@ function FileTree({
     Promise.all([...new Set(dirs)].map(load)).then(() => window.dispatchEvent(new CustomEvent(TREE_CHANGED, { detail: cwd })));
   const [editing, setEditing] = useState<Editing | null>(null);
   const [opError, setOpError] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<ProjectEntry | null>(null);
+  /** 要删的路径（文件夹以 / 结尾），一个或多选的几个 */
+  const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const fail = (e: unknown) => setOpError((e as Error).message);
   // 上传、下载（见 FileTransfers.tsx）：上传完刷新那个文件夹
   const transfers = useFileTransfers(cwd, (dir) => void reload([dir]));
@@ -481,20 +509,34 @@ function FileTree({
     }
     void move(entry.path, parentOf(entry.path) + name + (entry.dir ? "/" : ""));
   };
-  const remove = async (entry: ProjectEntry) => {
+  /** 删除（文件夹以 / 结尾）：一个一个删，有一个失败就停下，已经删掉的照常刷新 */
+  const remove = async (paths: string[]) => {
     setConfirmDelete(null);
     setOpError(null);
-    try {
-      await api.deleteFile(cwd, trimSlash(entry.path));
-    } catch (e) {
-      return fail(e);
+    // 选中的文件夹里面的不用另外删
+    const top = paths.filter((p) => !paths.some((q) => q !== p && q.endsWith("/") && p.startsWith(q)));
+    const done: string[] = [];
+    let error: string | null = null;
+    for (const path of top) {
+      try {
+        await api.deleteFile(cwd, trimSlash(path));
+      } catch (e) {
+        error = top.length > 1 ? `「${basename(path)}」没有删除：${(e as Error).message}` : (e as Error).message;
+        break;
+      }
+      done.push(path);
+      if (path.endsWith("/")) {
+        for (const k of [...cache.expanded]) if (k.startsWith(path)) cache.expanded.delete(k);
+        for (const k of Object.keys(cache.dirs)) if (k.startsWith(path)) delete cache.dirs[k];
+      }
+      onDeleted(path);
     }
-    if (entry.dir) {
-      for (const k of [...cache.expanded]) if (k.startsWith(entry.path)) cache.expanded.delete(k);
-      for (const k of Object.keys(cache.dirs)) if (k.startsWith(entry.path)) delete cache.dirs[k];
+    if (done.length) {
+      const gone = (p: string) => done.some((d) => p === d || (d.endsWith("/") && p.startsWith(d)));
+      setPicked((s) => s && s.filter((p) => !gone(p)));
+      await reload(done.map(parentOf));
     }
-    onDeleted(entry.path);
-    await reload([parentOf(entry.path)]);
+    if (error) setOpError(error);
   };
 
   /** 上传到文件夹 dir（"" 是根）：有同名的文件先问要不要覆盖，同名的是文件夹不传 */
@@ -533,8 +575,8 @@ function FileTree({
     transfers.download(entry.path).catch(fail);
   };
 
-  // 右键菜单：entry 为 null 是空白处或第一行（工作目录）
-  const [menu, setMenu] = useState<{ x: number; y: number; entry: ProjectEntry | null } | null>(null);
+  // 右键菜单：entry 为 null 是空白处或第一行（工作目录）；右键的是多选里的一项时 many 是选中的全部
+  const [menu, setMenu] = useState<{ x: number; y: number; entry: ProjectEntry | null; many?: string[] } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   useDismiss(menuRef, menu !== null, closeMenu);
@@ -552,9 +594,15 @@ function FileTree({
     e.stopPropagation();
     // 筛选结果里没有目录结构，新建的输入框没地方放
     if (hits !== null || editing) return;
-    setMenu({ x: e.clientX, y: e.clientY, entry });
+    setMenu({ x: e.clientX, y: e.clientY, entry, many: entry ? manyWith(entry.path) : undefined });
   };
-  const menuItems = (entry: ProjectEntry | null) => {
+  /** path 在多选（两项以上）里：选中的全部（不含第一行的工作目录） */
+  const manyWith = (path: string) => {
+    const many = selection.filter((p) => p !== "");
+    return selected.has(path) && many.length > 1 ? many : undefined;
+  };
+  const menuItems = (entry: ProjectEntry | null, many?: string[]) => {
+    if (many) return [[{ label: `删除 ${many.length} 项`, danger: true, onClick: () => setConfirmDelete(many) }]];
     const dir = entry ? (entry.dir ? entry.path : null) : "";
     const groups: { label: string; danger?: boolean; onClick: () => void }[][] = [];
     if (dir !== null)
@@ -591,7 +639,7 @@ function FileTree({
     if (entry)
       groups.push([
         { label: "重命名", onClick: () => startRename(entry) },
-        { label: "删除", danger: true, onClick: () => setConfirmDelete(entry) },
+        { label: "删除", danger: true, onClick: () => setConfirmDelete([entry.path]) },
       ]);
     return groups;
   };
@@ -601,7 +649,7 @@ function FileTree({
       startRename(entry);
     } else if (e.key === "Delete") {
       e.preventDefault();
-      setConfirmDelete(entry);
+      setConfirmDelete(manyWith(entry.path) ?? [entry.path]);
     } else if (entry.dir) onDirKey(e, entry.path);
   };
   /** 文件夹：回车展开收起，→ 展开，← 收起（回车不再当单击，免得只是选中） */
@@ -778,7 +826,8 @@ function FileTree({
         continue;
       }
       const classes = ["files-row"];
-      if (entry.path === selectedPath) classes.push("selected");
+      order.push(entry.path);
+      if (selected.has(entry.path)) classes.push("selected");
       if (entry.dir && dropDir === entry.path) classes.push("drop-target");
       if (menu?.entry?.path === entry.path) classes.push("menu-open");
       rows.push(
@@ -789,10 +838,12 @@ function FileTree({
           style={{ paddingLeft: pad }}
           title={entry.path}
           draggable
-          onClick={() => {
+          onClick={(e) => {
             revealed.delete(cwd);
-            if (entry.dir) return setPickedDir(entry.path);
-            setPickedDir(null);
+            if (e.ctrlKey || e.metaKey || e.shiftKey) return pickMore(entry.path, e.shiftKey);
+            anchor.current = entry.path;
+            if (entry.dir) return setPicked([entry.path]);
+            setPicked(null);
             // 换了文件树会重建，焦点要还回来
             if (entry.path !== activePath) refocus = { cwd, path: entry.path, at: Date.now() };
             onSelect(entry.path, false);
@@ -826,14 +877,15 @@ function FileTree({
     rows.push(
       <button
         key=":root"
-        className={`files-row files-root${pickedDir === "" ? " selected" : ""}${dropDir === "" ? " drop-target" : ""}${menu && !menu.entry ? " menu-open" : ""}`}
+        className={`files-row files-root${picked?.includes("") ? " selected" : ""}${dropDir === "" ? " drop-target" : ""}${menu && !menu.entry ? " menu-open" : ""}`}
         style={{ paddingLeft: 10 }}
         title={cwd}
         draggable
         onDragStart={(e) => onDragStartRef(e, "")}
         onClick={() => {
           revealed.delete(cwd);
-          setPickedDir("");
+          anchor.current = null;
+          setPicked([""]);
         }}
         onDoubleClick={() => toggle("")}
         onKeyDown={(e) => onDirKey(e, "")}
@@ -851,6 +903,8 @@ function FileTree({
     if (rootOpen) renderDir("", 1);
   }
 
+  // 只删一项时的路径
+  const deleteOne = confirmDelete?.[0] ?? "";
   return (
     <div className="file-tree" ref={treeRef} style={width ? { flexBasis: width } : undefined}>
       <div
@@ -925,7 +979,7 @@ function FileTree({
       </div>
       {menu && (
         <div ref={menuRef} className="menu context-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
-          {menuItems(menu.entry).map((group, i) => (
+          {menuItems(menu.entry, menu.many).map((group, i) => (
             <div key={i}>
               {i > 0 && <div className="menu-divider" />}
               {group.map((item) => (
@@ -960,11 +1014,13 @@ function FileTree({
       )}
       {confirmDelete && (
         <ConfirmDialog
-          title={confirmDelete.dir ? "删除文件夹？" : "删除文件？"}
+          title={confirmDelete.length > 1 ? `删除 ${confirmDelete.length} 项？` : deleteOne.endsWith("/") ? "删除文件夹？" : "删除文件？"}
           message={
-            confirmDelete.dir
-              ? `将永久删除文件夹「${basename(confirmDelete.path)}」及其中的所有内容，无法恢复。`
-              : `将永久删除「${basename(confirmDelete.path)}」，无法恢复。`
+            confirmDelete.length > 1
+              ? `将永久删除「${confirmDelete.slice(0, 3).map(basename).join("」「")}」${confirmDelete.length > 3 ? ` 等 ${confirmDelete.length} 项` : ""}${confirmDelete.some((p) => p.endsWith("/")) ? "，文件夹连同其中的所有内容" : ""}，无法恢复。`
+              : deleteOne.endsWith("/")
+                ? `将永久删除文件夹「${basename(deleteOne)}」及其中的所有内容，无法恢复。`
+                : `将永久删除「${basename(deleteOne)}」，无法恢复。`
           }
           confirmLabel="删除"
           onConfirm={() => void remove(confirmDelete)}
