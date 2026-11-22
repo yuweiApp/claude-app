@@ -144,8 +144,7 @@ export async function importCookies(partition: string, cookies: ImportedCookie[]
     wc.debugger.attach("1.3");
     for (const c of cookies) {
       try {
-        const reply = (await wc.debugger.sendCommand("Network.setCookie", toSetCookieParams(c))) as { success?: boolean };
-        if (reply.success === false) throw new Error("浏览器没有接受这条 cookie");
+        await wc.debugger.sendCommand("Network.setCookie", toSetCookieParams(c));
         result.imported++;
       } catch (err) {
         result.failed.push({ domain: c.domain, name: c.name, error: err instanceof Error ? err.message : String(err) });

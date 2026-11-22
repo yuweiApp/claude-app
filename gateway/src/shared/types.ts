@@ -209,7 +209,6 @@ export interface CookieSite {
 /** POST /browsers/:id/cookies：这个浏览器（连接用的那个配置）里有 cookie 的站点，按站点名排序；只给站点和条数，不给 cookie 的值 */
 export interface CookieSitesView {
   sites: CookieSite[];
-  total: number;
 }
 
 /** POST /browsers/:id/cookies/import：写进内置浏览器的条数，写不进去的每条的域名、名字和原因 */

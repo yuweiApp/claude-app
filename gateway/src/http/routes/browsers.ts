@@ -53,9 +53,7 @@ export function browserRoutes(app: FastifyInstance, host: BrowserHost): void {
   const importing = async <T>(reply: FastifyReply, fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
     if (!host.connected) throw new BadRequestError("内置浏览器只在桌面版里有：桌面版没有运行，或者还没连上网关");
     const abort = new AbortController();
-    const onClose = () => {
-      if (!reply.raw.writableFinished) abort.abort();
-    };
+    const onClose = () => abort.abort();
     reply.raw.once("close", onClose);
     try {
       return await fn(abort.signal);

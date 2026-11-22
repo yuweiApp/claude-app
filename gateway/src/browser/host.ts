@@ -232,22 +232,21 @@ export class BrowserHost {
 
   /**
    * 设置页「浏览器」的导入登录状态：把外部浏览器的 cookie 写进内置浏览器本机会话的分区（desktop/src/browser/cookies.ts 的 importCookies）。
-   * 桌面版没在运行、没回复（旧版本的桌面版）、写入出错时报错
+   * 桌面版有没有连上由调用方（routes/browsers.ts）先查；没回复（旧版本的桌面版）、写入出错时报错
    */
   async importCookies(cookies: object[]): Promise<CookieImportResult> {
-    if (!this.socket) throw new Error("内置浏览器只在桌面版里有：桌面版没有运行");
-    const reply = await this.request<CookieImportResult | { error: string }>("importCookies", null, 60_000, { cookies });
+    const reply = await this.request<CookieImportResult | { error: string }>("importCookies", undefined, 60_000, { cookies });
     if (!reply) throw new Error("桌面版没有回复导入结果");
     if ("error" in reply) throw new Error(`写入内置浏览器失败：${reply.error}`);
     return reply;
   }
 
   /** 发一个要外壳回复的请求，timeoutMs 内没回复是 null */
-  private request<T>(type: string, sessionId: string | null, timeoutMs: number, extra: object = {}): Promise<T | null> {
+  private request<T>(type: string, sessionId: string | undefined, timeoutMs: number, extra: object = {}): Promise<T | null> {
     const id = this.nextId++;
     return new Promise((resolve) => {
       this.waiting.set(id, (reply) => resolve((reply as T | null) ?? null));
-      this.post({ ...extra, type, ...(sessionId ? { session: sessionId } : {}), id });
+      this.post({ ...extra, type, session: sessionId, id });
       setTimeout(() => {
         if (this.waiting.delete(id)) resolve(null);
       }, timeoutMs);

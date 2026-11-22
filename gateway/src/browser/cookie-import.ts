@@ -25,7 +25,7 @@ export async function cookieSites(id: string, signal?: AbortSignal): Promise<Coo
     counts.set(site, (counts.get(site) ?? 0) + 1);
   }
   const sites = [...counts].map(([site, count]) => ({ site, count })).sort((a, b) => a.site.localeCompare(b.site));
-  return { sites, total: cookies.length };
+  return { sites };
 }
 
 export async function importCookieSites(id: string, sites: string[], host: BrowserHost, signal?: AbortSignal): Promise<CookieImportResult> {
