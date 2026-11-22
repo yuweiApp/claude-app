@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react";
 
 interface Props {
   title: string;
-  message: string;
+  /** 不传就只有标题 */
+  message?: string;
   confirmLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
@@ -22,7 +23,7 @@ export function ConfirmDialog({ title, message, confirmLabel, onConfirm, onCance
     <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
       <div className="dialog confirm-dialog" role="alertdialog" aria-label={title}>
         <h3>{title}</h3>
-        <p className="confirm-message">{message}</p>
+        {message && <p className="confirm-message">{message}</p>}
         <div className="dialog-actions">
           <button ref={cancelRef} onClick={onCancel}>
             取消

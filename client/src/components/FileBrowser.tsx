@@ -204,7 +204,7 @@ const nameError = (name: string) => (name === "." || name === ".." || /[\\/\0]/.
 /**
  * 目录树（同 codex-app-server 的 FileTree）：顶部「筛选文件…」（在整个项目里按名字搜），没在筛选时是刷新按钮；
  * 单击文件预览打开，双击固定打开；单击文件夹只选中，点左边的箭头、双击、回车展开收起（→ 展开、← 收起），同系统的文件管理器；右边缘拖动调宽度。
- * 多选：Ctrl/⌘ 单击加减一项，Shift 单击从上次单击的那一行连选到这一行（都不打开文件）；右键多选里的一项只有「删除 N 项」，Delete 键同样删选中的全部。
+ * 多选：Ctrl/⌘ 单击加减一项，Shift 单击从上次单击的那一行连选到这一行（都不打开文件）；右键多选里的一项只有「删除 N 项」，Delete 键同样删选中的全部；删除前问一句（只有标题，没有说明文字）。
  * 右键：空白处和第一行（工作目录）新建文件、文件夹，文件夹还能在里面新建；复制绝对路径（文件、文件夹还能复制相对路径）；
  * 文件、文件夹能重命名（F2）、删除（Delete）；桌面版的本机会话还能用系统的文件管理器打开（文件夹打开它本身，文件是在所在的文件夹里选中它）。
  * 拖动文件、文件夹到别的文件夹（拖到文件上是放进它所在的文件夹，拖到空白处或第一行是放到根目录），悬停在收起的文件夹上一会儿自动展开
@@ -420,11 +420,11 @@ function FileTree({
     Promise.all([...new Set(dirs)].map(load)).then(() => window.dispatchEvent(new CustomEvent(TREE_CHANGED, { detail: cwd })));
   const [editing, setEditing] = useState<Editing | null>(null);
   const [opError, setOpError] = useState<string | null>(null);
-  /** 要删的路径（文件夹以 / 结尾），一个或多选的几个 */
-  const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const fail = (e: unknown) => setOpError((e as Error).message);
   // 上传、下载（见 FileTransfers.tsx）：上传完刷新那个文件夹
   const transfers = useFileTransfers(cwd, (dir) => void reload([dir]));
+  /** 等确认要删的路径（文件夹以 / 结尾），一个或多选的几个 */
+  const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const [confirmUpload, setConfirmUpload] = useState<{ dir: string; items: UploadItem[]; names: string[] } | null>(null);
 
   /** 展开到这个文件夹（新建时输入框要看得见） */
@@ -903,8 +903,6 @@ function FileTree({
     if (rootOpen) renderDir("", 1);
   }
 
-  // 只删一项时的路径
-  const deleteOne = confirmDelete?.[0] ?? "";
   return (
     <div className="file-tree" ref={treeRef} style={width ? { flexBasis: width } : undefined}>
       <div
@@ -999,6 +997,14 @@ function FileTree({
           ))}
         </div>
       )}
+      {confirmDelete && (
+        <ConfirmDialog
+          title={confirmDelete.length > 1 ? `删除选中的 ${confirmDelete.length} 项？` : `删除「${basename(confirmDelete[0] ?? "")}」？`}
+          confirmLabel="删除"
+          onConfirm={() => void remove(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
       {confirmUpload && (
         <ConfirmDialog
           title="覆盖同名文件？"
@@ -1010,21 +1016,6 @@ function FileTree({
           confirmLabel="覆盖"
           onConfirm={() => void startUpload(confirmUpload.dir, confirmUpload.items, true)}
           onCancel={() => setConfirmUpload(null)}
-        />
-      )}
-      {confirmDelete && (
-        <ConfirmDialog
-          title={confirmDelete.length > 1 ? `删除 ${confirmDelete.length} 项？` : deleteOne.endsWith("/") ? "删除文件夹？" : "删除文件？"}
-          message={
-            confirmDelete.length > 1
-              ? `将永久删除「${confirmDelete.slice(0, 3).map(basename).join("」「")}」${confirmDelete.length > 3 ? ` 等 ${confirmDelete.length} 项` : ""}${confirmDelete.some((p) => p.endsWith("/")) ? "，文件夹连同其中的所有内容" : ""}，无法恢复。`
-              : deleteOne.endsWith("/")
-                ? `将永久删除文件夹「${basename(deleteOne)}」及其中的所有内容，无法恢复。`
-                : `将永久删除「${basename(deleteOne)}」，无法恢复。`
-          }
-          confirmLabel="删除"
-          onConfirm={() => void remove(confirmDelete)}
-          onCancel={() => setConfirmDelete(null)}
         />
       )}
     </div>
