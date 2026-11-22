@@ -200,6 +200,24 @@ export interface BrowserSettingsView {
   browsers: BrowserEntry[];
 }
 
+/** 外部浏览器里有 cookie 的一个站点：按可注册域名（eTLD+1，如 google.com、foo.github.io）归在一起，IP、localhost 是主机本身 */
+export interface CookieSite {
+  site: string;
+  count: number;
+}
+
+/** POST /browsers/:id/cookies：这个浏览器（连接用的那个配置）里有 cookie 的站点，按站点名排序；只给站点和条数，不给 cookie 的值 */
+export interface CookieSitesView {
+  sites: CookieSite[];
+  total: number;
+}
+
+/** POST /browsers/:id/cookies/import：写进内置浏览器的条数，写不进去的每条的域名、名字和原因 */
+export interface CookieImportResult {
+  imported: number;
+  failed: { domain: string; name: string; error: string }[];
+}
+
 /** 会话的后台任务（Bash 后台命令、后台子代理等），见 gateway/src/agent/tasks.ts */
 export interface BackgroundTask {
   taskId: string;

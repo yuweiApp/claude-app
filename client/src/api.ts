@@ -1,7 +1,7 @@
 import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
-import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, ConnectorPage, ConnectorSource, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SessionListItem, ShareFixResult, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo, WidgetReport } from "@gateway/shared/types";
+import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, ConnectorPage, ConnectorSource, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, CookieImportResult, CookieSite, CookieSitesView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SessionListItem, ShareFixResult, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo, WidgetReport } from "@gateway/shared/types";
 
-export type { MessagePriority, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, ConnectorPage, ConnectorSource, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, ShareFixResult, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
+export type { MessagePriority, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, ConnectorPage, ConnectorSource, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, CookieImportResult, CookieSite, CookieSitesView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, ShareFixResult, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
 
 const BASE = "/api";
 
@@ -58,7 +58,7 @@ export function withToken(path: string): string {
 
 const q = (params: Record<string, string>) => new URLSearchParams(params).toString();
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const headers = authHeaders();
   const isForm = body instanceof FormData;
   if (body !== undefined && !isForm) headers["content-type"] = "application/json";
@@ -66,6 +66,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     method,
     headers,
     body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
+    signal,
   });
   const data = (await res.json().catch(() => ({}))) as T & { error?: string };
   if (!res.ok) throw new RequestError(data.error || `${res.status} ${res.statusText}`, res.status);
@@ -122,6 +123,11 @@ export const api = {
   addBrowser: (input: { name: string; executablePath: string; userDataDir?: string }) =>
     request<{ id: string; chromium: boolean; view: BrowserSettingsView }>("POST", "/browsers", input),
   removeBrowser: (id: string) => request<BrowserSettingsView>("DELETE", `/browsers/${encodeURIComponent(id)}`),
+  /** 导入登录状态：这个浏览器里有 cookie 的站点（没连上时网关要等用户在浏览器里点允许，signal 取消就不等了） */
+  cookieSites: (id: string, signal?: AbortSignal) => request<CookieSitesView>("POST", `/browsers/${encodeURIComponent(id)}/cookies`, undefined, signal),
+  /** 把选定站点的 cookie 写进内置浏览器 */
+  importCookies: (id: string, sites: string[], signal?: AbortSignal) =>
+    request<CookieImportResult>("POST", `/browsers/${encodeURIComponent(id)}/cookies/import`, { sites }, signal),
   /** 设置页「网络代理」（见 docs/proxy.md）：password 不传是不改，空字符串是清掉 */
   proxySettings: () => request<ProxySettingsView>("GET", "/proxy"),
   saveProxySettings: (input: ProxySettingsInput) => request<ProxySettingsView>("PUT", "/proxy", input),

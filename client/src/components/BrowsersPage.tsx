@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { api, BROWSERS_CHANGED, type BrowserEntry, type BrowserSettingsView } from "../api";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { api, BROWSERS_CHANGED, type BrowserEntry, type BrowserSettingsView, type CookieImportResult, type CookieSite } from "../api";
 import { BrowserIcon } from "./BrowserTab";
 import { Select } from "./Select";
 
@@ -136,8 +136,11 @@ function extractToken(value: string): string {
 
 function BrowserRow({ browser: b, installUrl, apply }: { browser: BrowserEntry; installUrl: string; apply: (action: Promise<BrowserSettingsView>) => Promise<void> }) {
   const [open, setOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [token, setToken] = useState("");
   const withExtension = b.profiles.filter((p) => p.extension);
+  /** 能连上才能导入：装了扩展，或者手动添加时没填用户数据目录（查不了扩展，连接时才知道） */
+  const canImport = b.installed && (b.extension || (b.custom && !b.userDataDir));
 
   /** 扩展装在哪、用哪个配置 */
   const status = (() => {
@@ -187,7 +190,16 @@ function BrowserRow({ browser: b, installUrl, apply }: { browser: BrowserEntry; 
           <button className="settings-link" onClick={() => setOpen((o) => !o)}>
             {open ? "收起" : "设置"}
           </button>
+          {canImport && (
+            <>
+              {" · "}
+              <button className="settings-link" onClick={() => setImporting(true)}>
+                导入登录状态
+              </button>
+            </>
+          )}
         </div>
+        {importing && <ImportCookiesDialog browser={b} onClose={() => setImporting(false)} />}
         {open && (
           <div className="browsers-detail">
             {b.profiles.length > 0 && (
@@ -301,6 +313,153 @@ function AddBrowserDialog({ onClose, onAdded }: { onClose: () => void; onAdded: 
             {saving ? "添加中…" : "添加"}
           </button>
         </div>
+      </form>
+    </div>
+  );
+}
+
+/**
+ * 导入登录状态：把这个浏览器里选定站点的 cookie 写进内置浏览器（本机会话共用的那一份），见 gateway/src/browser/cookie-import.ts。
+ * 打开就去读站点列表；没连上时网关要等用户在浏览器的连接页上点允许，关掉对话框就不等了。cookie 的值不经过网页
+ */
+function ImportCookiesDialog({ browser: b, onClose }: { browser: BrowserEntry; onClose: () => void }) {
+  const [sites, setSites] = useState<CookieSite[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<CookieImportResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const abort = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    abort.current = ctrl;
+    api.cookieSites(b.id, ctrl.signal).then(
+      (v) => setSites(v.sites),
+      (e: Error) => !ctrl.signal.aborted && setError(e.message),
+    );
+    return () => ctrl.abort();
+  }, [b.id]);
+
+  const shown = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    return (sites ?? []).filter((s) => !q || s.site.includes(q));
+  }, [sites, filter]);
+  const count = (sites ?? []).filter((s) => selected.has(s.site)).reduce((n, s) => n + s.count, 0);
+  const allShown = shown.length > 0 && shown.every((s) => selected.has(s.site));
+
+  const toggle = (site: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(site)) next.delete(site);
+      else next.add(site);
+      return next;
+    });
+  const toggleShown = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const s of shown) {
+        if (allShown) next.delete(s.site);
+        else next.add(s.site);
+      }
+      return next;
+    });
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const ctrl = new AbortController();
+    abort.current = ctrl;
+    setBusy(true);
+    setError(null);
+    api
+      .importCookies(b.id, [...selected], ctrl.signal)
+      .then(setResult, (err: Error) => !ctrl.signal.aborted && setError(err.message))
+      .finally(() => setBusy(false));
+  };
+
+  const close = () => {
+    abort.current?.abort();
+    onClose();
+  };
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <form className="dialog settings-form mcp-dialog cookie-import" aria-label="导入登录状态" onSubmit={submit}>
+        <h3>从 {b.name} 导入登录状态</h3>
+        {result ? (
+          <>
+            <p className="mcp-auth-text">
+              已把 {result.imported} 条 cookie 写进内置浏览器{result.failed.length ? `，${result.failed.length} 条没写进去` : ""}。已经打开的网页刷新后生效。
+            </p>
+            {result.failed.length > 0 && (
+              <ul className="cookie-import-failed">
+                {result.failed.map((f, i) => (
+                  <li key={i}>
+                    <span className="mono">
+                      {f.domain} · {f.name}
+                    </span>
+                    ：{f.error}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="dialog-actions">
+              <button type="button" className="primary" onClick={close}>
+                完成
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="mcp-hint">
+              选中站点的 cookie 会写进内置浏览器（本机的会话共用，AI 操作内置浏览器时也带着这些登录状态），已有的同名 cookie 会被替换。只带过去
+              cookie，有的网站把登录信息存在别处，导入后可能还要重新登录。
+            </p>
+            {!sites ? (
+              !error && (
+                <div className="cookie-import-wait">
+                  正在读取 {b.name} 的 cookie…
+                  {!b.hasToken && <span>没填扩展 token 时，{b.name} 里会打开 Playwright 扩展的连接页，在那里点允许后继续。</span>}
+                </div>
+              )
+            ) : sites.length ? (
+              <>
+                <div className="cookie-import-bar">
+                  <input autoFocus value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={`筛选 ${sites.length} 个站点`} />
+                  <button type="button" onClick={toggleShown} disabled={!shown.length}>
+                    {allShown ? "全不选" : "全选"}
+                  </button>
+                </div>
+                <div className="cookie-import-list">
+                  {shown.map((s) => (
+                    <label key={s.site} className="cookie-import-site">
+                      <input type="checkbox" checked={selected.has(s.site)} onChange={() => toggle(s.site)} />
+                      <span className="cookie-import-name">{s.site}</span>
+                      <span className="cookie-import-count">{s.count} 条</span>
+                    </label>
+                  ))}
+                  {!shown.length && <div className="folder-empty">没有匹配的站点</div>}
+                </div>
+              </>
+            ) : (
+              <div className="cookie-import-wait">{b.name} 里没有 cookie</div>
+            )}
+            {error && <div className="settings-error">{error}</div>}
+            <div className="dialog-actions">
+              {selected.size > 0 && (
+                <span className="cookie-import-summary">
+                  已选 {selected.size} 个站点、{count} 条
+                </span>
+              )}
+              <button type="button" onClick={close}>
+                取消
+              </button>
+              <button type="submit" className="primary" disabled={!selected.size || busy}>
+                {busy ? "导入中…" : "导入"}
+              </button>
+            </div>
+          </>
+        )}
       </form>
     </div>
   );

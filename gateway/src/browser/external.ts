@@ -214,6 +214,18 @@ function bridgeOf(b: ExternalBrowserInfo): ExternalBridge {
   return bridge;
 }
 
+/**
+ * 设置页「浏览器」的导入登录状态（cookie-import.ts）：经这个浏览器的连接读它整个配置的 cookie（Playwright 的 context.cookies()，
+ * 浏览器自己解密好的，Windows 的 App-Bound 加密也不影响）。和 AI 共用同一条连接，没连上就连（没设 token 时拉起连接页等用户允许）；
+ * 设置里停用着的也能读。signal 取消时只是这次不等了
+ */
+export async function externalCookies(id: string, signal?: AbortSignal): Promise<Awaited<ReturnType<BrowserContext["cookies"]>>> {
+  const entry = listBrowsers().find((b) => b.id === id);
+  if (!entry) throw new Error("没有这个浏览器：已经从设置里移除，或者这台电脑上找不到它了");
+  const context = await bridgeOf(entry).context(signal);
+  return context.cookies();
+}
+
 /** 启用着的外部浏览器（设置页「浏览器」里开着、可执行文件还在的），每次调用都重新检测 */
 export function activeBrowsers(): ResolvedBrowser[] {
   return listBrowsers().filter((b) => b.enabled);

@@ -378,6 +378,20 @@ main {
 .browsers-field button.danger { border-color: var(--err); color: var(--err); background: none; }
 .browsers-hint { margin: 0 0 0 92px; color: var(--muted); font-size: 12px; }
 .browsers-notice { margin-bottom: 12px; color: var(--warn); font-size: 13px; }
+/* 导入登录状态（BrowsersPage 的 ImportCookiesDialog）：站点列表可滚动，每行复选框、站点、条数 */
+.cookie-import-wait { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; font-size: 14px; }
+.cookie-import-wait span { color: var(--muted); font-size: 13px; }
+.cookie-import-bar { display: flex; gap: 8px; }
+.cookie-import-bar input { flex: 1; min-width: 0; }
+.cookie-import-list { height: min(320px, 40vh); overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
+.settings-form label.cookie-import-site { flex-direction: row; align-items: center; gap: 10px; padding: 5px 8px; border-radius: 6px; color: var(--text); font-size: 14px; cursor: pointer; }
+.settings-form label.cookie-import-site:hover { background: var(--frame-hover); }
+.cookie-import-site input { flex: none; margin: 0; accent-color: var(--accent); }
+.cookie-import-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cookie-import-count { flex: none; color: var(--muted); font-size: 12.5px; }
+.cookie-import-summary { margin-right: auto; align-self: center; color: var(--muted); font-size: 13px; }
+.cookie-import-failed { margin: 0; padding-left: 18px; max-height: 200px; overflow-y: auto; color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.cookie-import-failed .mono { font-family: var(--font-mono); color: var(--text); }
 /* 设置里的「网络代理」（ProxyPage）：手动模式的字段一行一个（用户名、密码并排），标签在上、输入框在下 */
 .proxy-field-row { align-items: flex-start; flex-wrap: wrap; }
 .proxy-field { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 6px; }

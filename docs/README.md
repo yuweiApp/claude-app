@@ -333,6 +333,8 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | GET（WebSocket） | `/browser/host` | 桌面版外壳连上来，转发各会话 Playwright 的 CDP 消息（见第 12 节） |
 | GET | `/external/tabs` | 启用着的外部浏览器（用户的 Chrome、Edge 等）和交给 Playwright 的标签页，输入框 @ 引用用（见第 13 节） |
 | GET / PATCH / POST / DELETE | `/browsers`、`/browsers/:id` | 设置页「浏览器」：检测到的和手动添加的外部浏览器、启用开关、配置、扩展 token、建不建标签页组（见第 13 节） |
+| POST | `/browsers/:id/cookies` | 导入登录状态第一步：这个浏览器里有 cookie 的站点和条数（不给值；没连上时等用户在连接页点允许，请求断开就不等了；桌面版没在运行时 400，见第 13 节） |
+| POST | `/browsers/:id/cookies/import` | `{ sites }` 把选定站点的 cookie 写进内置浏览器 → `{ imported, failed }` |
 | POST | `/sessions/:id/interrupt` | 打断当前一轮 |
 | POST | `/sessions/:id/permission-mode` | `{ mode }` |
 | POST | `/sessions/:id/model` | `{ model?, effort? }` 切换模型（`Query.setModel`）和推理强度（`Query.applyFlagSettings({ effortLevel })`）；子进程回收了的会话先 resume |
@@ -494,6 +496,12 @@ client/
 - **下载**：经扩展连接时 Playwright 的 `download` 事件不会触发：中转把 `Browser.setDownloadBehavior` 当空操作直接回 `{}`（扩展只能用 `chrome.debugger` 挂在标签页上，管不了整个浏览器的下载），浏览器不发 `Browser.downloadWillBegin` 这些事件，`page.waitForEvent('download')` 一直等到超时；文件其实照常按浏览器自己的设置存进了它的下载位置（实测模型点了下载、等 30 秒超时以为失败，又换个办法下一次，「下载」文件夹里多了一份 (1)）。说明里写明这一点。外部浏览器的 REPL 另有全局函数 `saveFile(name, data)`（`external.ts` 的 `fileSaver`）：把数据写进会话的工作目录（工具说明里写了是哪个目录），`name` 是相对路径、不能跑到外面，子目录自动建，同名时加 (1)、(2)（`wx` 打开，不覆盖），`data` 是 Buffer、TypedArray、ArrayBuffer 或字符串（UTF-8），返回绝对路径；vm 里建的对象不是网关这边的 `Uint8Array`，按 `ArrayBuffer.isView`、`Object.prototype.toString` 认。模型用 `context.request.get()`（带着浏览器的 Cookie）或 `page.evaluate` 里 `fetch` 拿到数据后自己存，文件归会话、位置确定。
 - **引用标签页**：`GET /external/tabs` 列出启用着的外部浏览器（名字、图标）和连上了的各自的标签页（不会为了列标签页去拉起连接页；后台冻结的标签页标题最多等 1 秒）。输入框上面的「浏览器」里每个外部浏览器一组（每次打开时取一次）：第一行是浏览器本身，插入 `@名字`（`@Chrome`、`@Chrome Beta`，名字可以带空格，按现在启用着的浏览器的名字识别，长的先匹配）；选中标签页插入 `@id[标题](网址)`（`@chrome[…]`、`@brave[…]`），消息里显示成「名字 · 标题」，会话标题里只留标题；引用的浏览器现在不在列表里时，按 id 猜名字（chrome、edge 开头的用它们的标志，其他的显示 id）。模型用 `mcp__<id>__browser_tabs` 按网址找到它切过去。图标：Chrome 系列是 CSS 画的三色圆（`.chrome-logo`），Edge 系列是 [alrra/browser-logos](https://github.com/alrra/browser-logos) 里的 Edge 标志 SVG，放在 data: 地址里（`.edge-logo`，多个图标不会撞渐变的 id），其他的是网关给的颜色的圆里写名字的首字母（`.letter-logo`）。
 - **注意**：网关是从桌面版里起的（带 `no_new_privs`，见 CLAUDE.md）、浏览器又没开着时，由网关拉起的浏览器也会带上这个标志，沙箱可能起不来；先把浏览器开着，或者用 `systemd-run --user` 单独起网关。浏览器顶部会显示扩展正在调试浏览器的提示条。
+- **导入登录状态**（`gateway/src/browser/cookie-import.ts`、`desktop/src/browser/cookies.ts` 的 `importCookies`、设置页 `BrowsersPage.tsx` 的 `ImportCookiesDialog`，2026-11-22 加）：设置页每个装了扩展的浏览器有「导入登录状态」，把选定站点的 cookie 写进内置浏览器（第 12 节，本机会话共用的分区 `persist:claude-browser`；远程会话按主机分的分区不导入），用户在自己浏览器里登录好的网站（比如 Google 拦着嵌入式浏览器不让登录的）在内置浏览器里也是登录状态。
+  - **读**：经上面「连接」的那一条（和 AI 共用，没连上就连，没设 token 时拉起连接页等用户允许；设置里停用着的也能读），调 Playwright 的 `context.cookies()`（底层是 `Storage.getCookies`），读到的是这个配置的全部 cookie，浏览器自己解密好的。不直接读 cookie 数据库：Windows 上 Chrome 127 起是 App-Bound 加密，普通进程解不开（`sweet-cookie`、`chrome-cookies-secure` 都不行，`rookie` 要管理员权限），浏览器开着时文件还锁着；macOS 要钥匙串授权。实测（Linux 的 Chrome）读到 213 条，和 cookie 数据库里没过期的 219 条基本对上（差的是数据库落后于内存），httpOnly、分区 cookie 都有、值都不为空。扩展不让在标签页上另开 CDP 会话（`newCDPSession` 报 `Target.attachToBrowserTarget: Not allowed`），只能用 `context.cookies()`。
+  - **两步，值不过网页**：`POST /browsers/:id/cookies` 只回站点和条数（按可注册域名归组，`tldts` 的公共后缀表，含 github.io 这类私有后缀；IP、localhost 是主机本身）；`POST /browsers/:id/cookies/import { sites }` 再读一次、挑出选定站点的，经 `/browser/host` 发 `{ type: "importCookies", id, cookies }` 给桌面版，桌面版回 `cookiesImported`（写进去的条数和写不进去的每条原因）。网页不等了（关掉对话框）就取消等连接；桌面版没在运行时直接报错，免得白点一次允许。
+  - **写**：不用 `session.cookies.set`：它没有 `partitionKey`，分区 cookie 会写成普通的（实测）。在分区里开一个不显示的 `WebContentsView`，经它的 `webContents.debugger` 逐条发 `Network.setCookie`，写完关掉：domain 带点的给 domain，不带点的（host-only）给 url 不给 domain，分区的带上 `partitionKey: { topLevelSite, hasCrossSiteAncestor }`，读回来分区信息都在。
+  - **损失**：Playwright 把 Chrome 里 sameSite「未指定」的报成 `Lax`（Chrome 对未指定的本来也按 Lax 处理）；只带 cookie，localStorage、IndexedDB 里的登录信息带不过去。
+  - **顺带修的**：CDP 代理的 `Storage.setCookies`（`cookies.ts` 的 `fromCdp`，Playwright 的 `context.addCookies()`、`storageState` 恢复、`page.request` 写回 `Set-Cookie` 都走它）以前总把 domain 交给 `session.cookies.set`，Electron 一律补上前导点，host-only 的被扩大到子域名，`__Host-` 开头的直接被拒（`EXCLUDE_INVALID_PREFIX`）。改成 domain 不带点时不传、由 url 定主机，实测这两种都对了。
 - **没做的**：多会话各自隔离标签页、@ 引用用户全部的标签页（官方扩展做不到，要自己写扩展，复用第 12 节的 CDP 代理）。
 
 ## 14. SSH 远程开发

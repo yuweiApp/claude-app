@@ -1,6 +1,7 @@
 import type { WebSocket } from "ws";
 import { setOwnPids } from "../desktop/guard.js";
 import { browserProxyConfig, onProxySaved, setSystemProxy } from "../net/proxy.js";
+import type { CookieImportResult } from "../shared/types.js";
 
 /** playwright-core 的 ConnectOverCDPTransport：send / close 由这里实现，onmessage / onclose 由 Playwright 连接时挂上 */
 export interface CdpTransport {
@@ -115,6 +116,7 @@ export class BrowserHost {
         event?: TabEvent;
         pids?: number[];
         route?: string;
+        result?: unknown;
       };
       try {
         msg = JSON.parse(String(data));
@@ -142,6 +144,10 @@ export class BrowserHost {
           .then(({ dir, remote }) => {
             if (this.socket === socket) this.post({ type: "sessionDir", session, dir, remote });
           });
+      }
+      else if (msg.type === "cookiesImported" && typeof msg.id === "number") {
+        this.waiting.get(msg.id)?.(msg.result ?? null);
+        this.waiting.delete(msg.id);
       }
       else if ((msg.type === "kept" || msg.type === "temporary" || msg.type === "downloads") && typeof msg.id === "number") {
         this.waiting.get(msg.id)?.(msg.type === "kept" ? (msg.tab ?? null) : msg.type === "temporary" ? (msg.tabs ?? null) : (msg.downloads ?? null));
@@ -224,12 +230,24 @@ export class BrowserHost {
     return list;
   }
 
+  /**
+   * 设置页「浏览器」的导入登录状态：把外部浏览器的 cookie 写进内置浏览器本机会话的分区（desktop/src/browser/cookies.ts 的 importCookies）。
+   * 桌面版没在运行、没回复（旧版本的桌面版）、写入出错时报错
+   */
+  async importCookies(cookies: object[]): Promise<CookieImportResult> {
+    if (!this.socket) throw new Error("内置浏览器只在桌面版里有：桌面版没有运行");
+    const reply = await this.request<CookieImportResult | { error: string }>("importCookies", null, 60_000, { cookies });
+    if (!reply) throw new Error("桌面版没有回复导入结果");
+    if ("error" in reply) throw new Error(`写入内置浏览器失败：${reply.error}`);
+    return reply;
+  }
+
   /** 发一个要外壳回复的请求，timeoutMs 内没回复是 null */
-  private request<T>(type: string, sessionId: string, timeoutMs: number): Promise<T | null> {
+  private request<T>(type: string, sessionId: string | null, timeoutMs: number, extra: object = {}): Promise<T | null> {
     const id = this.nextId++;
     return new Promise((resolve) => {
       this.waiting.set(id, (reply) => resolve((reply as T | null) ?? null));
-      this.post({ type, session: sessionId, id });
+      this.post({ ...extra, type, ...(sessionId ? { session: sessionId } : {}), id });
       setTimeout(() => {
         if (this.waiting.delete(id)) resolve(null);
       }, timeoutMs);

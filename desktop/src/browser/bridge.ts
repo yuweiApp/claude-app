@@ -1,8 +1,9 @@
 import { app } from "electron";
 import { CdpProxy } from "./cdp-proxy.js";
+import { importCookies, type ImportedCookie } from "./cookies.js";
 import type { NetworkProxy } from "./network-proxy.js";
 import { ShareStream } from "./share-stream.js";
-import type { BrowserViews } from "./views.js";
+import { PARTITION, type BrowserViews } from "./views.js";
 
 /**
  * 外壳和网关之间的连接（WebSocket，外壳连网关的 /browser/host）。AI 的浏览器工具（Playwright MCP）在网关里，
@@ -12,11 +13,13 @@ import type { BrowserViews } from "./views.js";
  *   { type: "closeSession", session }（会话删除了，关掉它的所有标签页）、
  *   { type: "temporary", session, id }（问这个会话现在有哪些临时标签页）、
  *   { type: "sessionDir", session, dir, remote }（会话的工作目录和远程会话的 SSH 连接 id，回答下面的问题；网关不知道这个会话、远程会话时 dir 是 null，本机会话 remote 是 null）、
- *   { type: "downloads", session, id }（问这个会话的下载和进度，REPL 的 downloads()）
+ *   { type: "downloads", session, id }（问这个会话的下载和进度，REPL 的 downloads()）、
+ *   { type: "importCookies", id, cookies }（设置页「浏览器」的导入登录状态：把外部浏览器的 cookie 写进本机会话的分区，见 cookies.ts 的 importCookies）
  * - 外壳 → 网关：{ type: "hello", pids }（连上时发，外壳的进程号：网关的桌面工具不能读取、操作这些进程的窗口，见 docs/agent-desktop.md 6.1）、
  *   { type: "cdp", session, message }、{ type: "kept", id, tab }（tab 是留下的标签页的标题和网址，没有可留的是 null）、
  *   { type: "temporary", id, tabs }（还没留下的临时标签页的标题、网址，latest 标出 AI 最近操作过的那个）、
  *   { type: "downloads", id, downloads }（这个会话的下载，见 views.ts 的 DownloadInfo）、
+ *   { type: "cookiesImported", id, result }（导入结果，见 cookies.ts 的 ImportCookiesResult；出错时 result 是 { error }）、
  *   { type: "tabEvent", session, event }（标签页新开、关闭、用户跳转，带上是谁做的，见 views.ts 的 TabEvent）、
  *   { type: "sessionDir", session }（问会话的工作目录：下载存到那里；和是不是远程会话：远程会话的标签页开在那台主机的分区里。连上时问有标签页的会话，之后新开标签页前问）
  * - 局域网分享的访客操作内置浏览器：share 开头的消息，见 share-stream.ts
@@ -99,7 +102,7 @@ export class GatewayBridge {
   }
 
   private onMessage(data: string): void {
-    let msg: { type?: string; session?: string; message?: object; id?: number; dir?: string | null; remote?: string | null; config?: unknown };
+    let msg: { type?: string; session?: string; message?: object; id?: number; dir?: string | null; remote?: string | null; config?: unknown; cookies?: ImportedCookie[] };
     try {
       msg = JSON.parse(data);
     } catch {
@@ -109,6 +112,15 @@ export class GatewayBridge {
     if (msg.type?.startsWith("share")) return void this.share.handle(msg as Parameters<ShareStream["handle"]>[0]);
     // 设置页「网络代理」：连上时和每次保存后网关推过来
     if (msg.type === "proxy") return void this.network.update(msg.config).catch((err: Error) => this.log(`设置内置浏览器的代理失败：${err.message}`));
+    // 导入登录状态：只写本机会话的分区（远程会话的标签页在各自主机的分区里，不导入）
+    if (msg.type === "importCookies" && typeof msg.id === "number") {
+      const id = msg.id;
+      void importCookies(PARTITION, Array.isArray(msg.cookies) ? msg.cookies : []).then(
+        (result) => this.post({ type: "cookiesImported", id, result }),
+        (err: Error) => this.post({ type: "cookiesImported", id, result: { error: err.message } }),
+      );
+      return;
+    }
     const session = msg.session;
     if (!session) return;
     if (msg.type === "open") {
