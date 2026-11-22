@@ -785,7 +785,7 @@ function logTaskMessage(log: FastifyBaseLogger, sessionId: string, message: SDKM
 }
 
 /**
- * durable 的定时任务（CronCreate 带 durable: true）：Claude Code 写在工作目录的 .claude/scheduled_tasks.json，不在 Stop hook 的 session_crons 里。
+ * durable 的定时任务（CronCreate 带 durable: true）：Claude Code 写在工作目录的 .claude/scheduled_tasks.json，不在 Stop hook 的 session_crons 里（0.3.327；实测 0.3.330 不再写盘，和普通的一样在 session_crons 里）。
  * 子进程关着时不触发，resume 后接着触发；只有建它的会话会触发（createdBySessionId），同一目录下的别的会话不会（实测 0.3.327）。
  * 这是 Claude Code 内部的文件，读不到、格式不对按没有算；远程会话的在远端，不读（只看 session_crons）
  */
