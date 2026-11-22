@@ -138,13 +138,15 @@ export class ElementInspector extends EventEmitter<{ picked: [PickedElement]; en
       y = mouse.globalY - content.y - view.y;
     }
     try {
-      // getNodeForLocation 的坐标是整个文档里的（CSS 像素），不是视口里的：加上页面滚过的距离，不然滚动后选中的元素偏上
+      // getNodeForLocation 的坐标是整个文档里的（CSS 像素），不是视口里的：加上页面滚过的距离，不然滚动后选中的元素偏上。
+      // pointer-events: none 的元素跳过，和悬停高亮（检查器自己的命中判断）一致：不少网页盖着一层铺满整页、
+      // pointer-events: none 的透明层（提示框的容器等），算上它的话悬停高亮的是下面的元素、点下去选中的却是整页
       const { cssVisualViewport } = (await wc.debugger.sendCommand("Page.getLayoutMetrics")) as { cssVisualViewport: { pageX: number; pageY: number } };
       const { backendNodeId } = (await wc.debugger.sendCommand("DOM.getNodeForLocation", {
         x: Math.round(x / zoom + cssVisualViewport.pageX),
         y: Math.round(y / zoom + cssVisualViewport.pageY),
         includeUserAgentShadowDOM: false,
-        ignorePointerEventsNone: true,
+        ignorePointerEventsNone: false,
       })) as { backendNodeId?: number };
       if (backendNodeId) await this.pick(tab, backendNodeId);
     } catch {
