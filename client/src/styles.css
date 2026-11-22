@@ -1725,6 +1725,9 @@ span.connector-added { color: var(--ok); font-weight: 500; }
 .files-root .files-name { font-weight: 600; }
 .files-caret { width: 12px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
 .files-caret svg { transition: transform 0.1s; }
+/* 文件夹的箭头单独可点（展开收起），点击范围比图标大一圈、占满行高，不改变排版 */
+.files-caret.toggle { align-self: stretch; width: 20px; margin: -3px -4px; border-radius: 4px; cursor: pointer; }
+.files-caret.toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
 .files-icon { display: inline-flex; flex-shrink: 0; color: var(--muted); }
 .files-name { overflow: hidden; text-overflow: ellipsis; }
 /* 图片文件的缩略图：和文件图标一样大，裁成方形 */

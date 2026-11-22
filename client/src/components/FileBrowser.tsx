@@ -203,7 +203,7 @@ const nameError = (name: string) => (name === "." || name === ".." || /[\\/\0]/.
 
 /**
  * 目录树（同 codex-app-server 的 FileTree）：顶部「筛选文件…」（在整个项目里按名字搜），没在筛选时是刷新按钮；
- * 单击文件预览打开，双击固定打开，点文件夹展开、收起；右边缘拖动调宽度。
+ * 单击文件预览打开，双击固定打开；单击文件夹只选中，点左边的箭头、双击、回车展开收起（→ 展开、← 收起），同系统的文件管理器；右边缘拖动调宽度。
  * 右键：空白处和第一行（工作目录）新建文件、文件夹，文件夹还能在里面新建；复制绝对路径（文件、文件夹还能复制相对路径）；
  * 文件、文件夹能重命名（F2）、删除（Delete）；桌面版的本机会话还能用系统的文件管理器打开（文件夹打开它本身，文件是在所在的文件夹里选中它）。
  * 拖动文件、文件夹到别的文件夹（拖到文件上是放进它所在的文件夹，拖到空白处或第一行是放到根目录），悬停在收起的文件夹上一会儿自动展开
@@ -308,6 +308,10 @@ function FileTree({
     }
   });
   const revealedPath = activePath === null ? revealed.get(cwd) : undefined;
+  /** 单击选中的文件夹（"" 是第一行的工作目录）；选中文件夹时打开的文件不再标成选中，换了打开的文件就清掉 */
+  const [pickedDir, setPickedDir] = useState<string | null>(null);
+  useEffect(() => setPickedDir(null), [activePath]);
+  const selectedPath = pickedDir ?? activePath ?? revealedPath;
 
   const toggle = (dir: string) => {
     if (cache.expanded.has(dir)) cache.expanded.delete(dir);
@@ -350,12 +354,14 @@ function FileTree({
   }, [query, cwd]);
   const pickHit = (hit: ProjectEntry, pin: boolean) => {
     if (hit.dir) {
-      // 文件夹：清掉筛选，在目录树里展开到它
+      // 文件夹：清掉筛选，在目录树里展开到它并选中
       for (let dir = hit.path; dir; dir = parentOf(dir)) {
         cache.expanded.add(dir);
         if (!cache.dirs[dir]) void load(dir);
       }
       cache.expanded.add("");
+      revealed.delete(cwd);
+      setPickedDir(hit.path);
       setQuery("");
       requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-path="${CSS.escape(hit.path)}"]`)?.scrollIntoView({ block: "nearest" }));
     } else onSelect(hit.path, pin);
@@ -596,8 +602,25 @@ function FileTree({
     } else if (e.key === "Delete") {
       e.preventDefault();
       setConfirmDelete(entry);
+    } else if (entry.dir) onDirKey(e, entry.path);
+  };
+  /** 文件夹：回车展开收起，→ 展开，← 收起（回车不再当单击，免得只是选中） */
+  const onDirKey = (e: KeyboardEvent<HTMLButtonElement>, dir: string) => {
+    const open = cache.expanded.has(dir);
+    if (e.key === "Enter" || (e.key === "ArrowRight" && !open) || (e.key === "ArrowLeft" && open)) {
+      e.preventDefault();
+      toggle(dir);
     }
   };
+  /** 文件夹行左边的箭头：单击展开收起，不选中；双击箭头不算双击这一行 */
+  const caretProps = (dir: string) => ({
+    className: "files-caret toggle",
+    onClick: (e: MouseEvent) => {
+      e.stopPropagation();
+      toggle(dir);
+    },
+    onDoubleClick: (e: MouseEvent) => e.stopPropagation(),
+  });
 
   // 拖动：dir 是放进去的文件夹（"" 是根目录）；不能放回原来的文件夹，文件夹不能放进自己里面
   const dragging = useRef<string | null>(null);
@@ -755,7 +778,7 @@ function FileTree({
         continue;
       }
       const classes = ["files-row"];
-      if (entry.path === activePath || entry.path === revealedPath) classes.push("selected");
+      if (entry.path === selectedPath) classes.push("selected");
       if (entry.dir && dropDir === entry.path) classes.push("drop-target");
       if (menu?.entry?.path === entry.path) classes.push("menu-open");
       rows.push(
@@ -768,12 +791,13 @@ function FileTree({
           draggable
           onClick={() => {
             revealed.delete(cwd);
-            if (entry.dir) return toggle(entry.path);
+            if (entry.dir) return setPickedDir(entry.path);
+            setPickedDir(null);
             // 换了文件树会重建，焦点要还回来
             if (entry.path !== activePath) refocus = { cwd, path: entry.path, at: Date.now() };
             onSelect(entry.path, false);
           }}
-          onDoubleClick={() => !entry.dir && onSelect(entry.path, true)}
+          onDoubleClick={() => (entry.dir ? toggle(entry.path) : onSelect(entry.path, true))}
           onContextMenu={(e) => openMenu(e, entry)}
           onKeyDown={(e) => onRowKey(e, entry)}
           onDragStart={(e) => onDragStart(e, entry)}
@@ -781,7 +805,13 @@ function FileTree({
           onDragOver={(e) => onDragOver(e, target)}
           onDrop={(e) => onDrop(e, target)}
         >
-          <span className="files-caret">{entry.dir && <Chevron open={open} />}</span>
+          {entry.dir ? (
+            <span {...caretProps(entry.path)}>
+              <Chevron open={open} />
+            </span>
+          ) : (
+            <span className="files-caret" />
+          )}
           <span className="files-icon">{entry.dir ? <FolderTypeIcon open={open} name={name} /> : <TreeFileIcon key={entry.mtimeMs} cwd={cwd} entry={entry} />}</span>
           <span className="files-name">{name}</span>
         </button>,
@@ -789,24 +819,31 @@ function FileTree({
       if (open) renderDir(entry.path, depth + 1);
     }
   };
-  // 第一行是工作目录本身（项目文件夹，或者普通会话的 scratch-… 目录），点了收起、展开，悬停看完整路径
+  // 第一行是工作目录本身（项目文件夹，或者普通会话的 scratch-… 目录），同别的文件夹：单击选中，箭头、双击、回车收起展开，悬停看完整路径
   if (hits === null) {
     const rootName = basename(cwd);
     const rootOpen = cache.expanded.has("");
     rows.push(
       <button
         key=":root"
-        className={`files-row files-root${dropDir === "" ? " drop-target" : ""}${menu && !menu.entry ? " menu-open" : ""}`}
+        className={`files-row files-root${pickedDir === "" ? " selected" : ""}${dropDir === "" ? " drop-target" : ""}${menu && !menu.entry ? " menu-open" : ""}`}
         style={{ paddingLeft: 10 }}
         title={cwd}
         draggable
         onDragStart={(e) => onDragStartRef(e, "")}
-        onClick={() => toggle("")}
+        onClick={() => {
+          revealed.delete(cwd);
+          setPickedDir("");
+        }}
+        onDoubleClick={() => toggle("")}
+        onKeyDown={(e) => onDirKey(e, "")}
         onContextMenu={(e) => openMenu(e, null)}
         onDragOver={(e) => onDragOver(e, "")}
         onDrop={(e) => onDrop(e, "")}
       >
-        <span className="files-caret"><Chevron open={rootOpen} /></span>
+        <span {...caretProps("")}>
+          <Chevron open={rootOpen} />
+        </span>
         <span className="files-icon"><FolderTypeIcon open={rootOpen} name={rootName} /></span>
         <span className="files-name">{rootName}</span>
       </button>,
