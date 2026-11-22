@@ -43,6 +43,9 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
 - **消费循环**：`for await (const msg of query)`，每条 `SDKMessage` 都包成事件发到这个会话的事件频道。
 - **状态**：`starting` → `idle` / `running` → `closed`。收到用户消息置 `running`，收到 `result` 置 `idle`。
 - **空闲回收**：`idle` 超过 `SESSION_IDLE_MS`（默认 30 分钟）就 `close()`，子进程退出。有后台任务在跑（后台命令、子代理、转到后台的工具调用）或者有完成通知还没交给模型的不回收（`reclaimable()`）：子进程关了它拉起的后台任务也跟着结束，不然用户让它起的服务会在 30 分钟后自己停掉；代价是忘了停的后台服务一直占着一个子进程和一个活跃会话名额（`MAX_ACTIVE_SESSIONS` 腾位置时也不关它）。下次再发消息时用 `resume` 重新拉起，对话历史从 jsonl 读回，用户无感。resume 时传上回收前用着的模型和推理强度（不传的话 Claude Code 用默认模型，切换过的模型就丢了）；网关重启过、没记着的，模型按记录文件里最后一条主线程 `assistant` 行的 `message.model`，网页在会话没有 `state` 事件时也按历史推出的这个模型显示。
+  - 有定时任务排着的也不回收：`CronCreate`、`ScheduleWakeup`、`/loop` 建的定时任务只在子进程的内存里（实测 0.3.327：流式输入的会话到点会自己开始新的一轮，开头是 `wakeup_source: "schedule_wakeup"` 的 `command_lifecycle`，没有用户消息），子进程关了就没了，resume 也不恢复。网关在每轮结束时从 `Stop` hook 的 `session_crons` 记下还排着的（实测建、删、一次性任务都对得上），有的话 `reclaimable()` 为否（`options.ts` 的 `withHooks`、`AgentSession.cronsScheduled`）。只管回收：侧栏转圈、清空会话的判断（`backgroundBusy`）不看它。
+  - durable 的定时任务（`CronCreate` 带 `durable: true`，GPT 类模型有时自己填上）不在 `session_crons` 里：Claude Code 写在工作目录的 `.claude/scheduled_tasks.json`（项目会话就写在用户的项目里），子进程关着时不触发，resume 后接着触发，只有建它的会话会触发（`createdBySessionId`，同一目录下的新会话不会）。网关回收前读这个文件，有这个会话建的也不回收（`session.ts` 的 `durableCrons`，读不到按没有）；远程会话的在远端，不读。
+  - 管不到的：清空会话（换新的会话 id、重启子进程）、网关重启时不是 durable 的定时任务照样没了（durable 的要等用户再发消息 resume 才接着触发），也不提示；被中断、出错结束的一轮没有 `Stop` hook，那一轮里建的定时任务网关不知道，到下一轮正常结束才记上。一直有定时任务的会话一直占着一个活跃会话名额。
 
 新会话由 gateway 生成 UUID 作为 `options.sessionId` 传给 SDK，所以创建接口能马上返回会话 id，不用等 `system/init`。
 
@@ -75,6 +78,8 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
   - 列表用 `plugin list --available --json`，只留配置里的市场。git 市场从 `marketplace.json` 补分类、作者、主页，有安装次数；内置目录从上面的缓存文件补显示名称、发布者、文档链接、审核情况（Claude Code 内部的文件，读不到就只显示命令行给的），没有安装次数和分类。两个市场有两百多个同名插件，同名的只留一个（已经装了的那个，都没装用配置里排在前面的市场的），两个同名插件不能同时装。按配置里市场的顺序排，同一个市场里有安装次数的按次数，内置目录保持 Claude Code 给的顺序。完整列表在网关里缓存 10 分钟（Claude Code 一次给出全部，取一次要几秒），设置页「刷新」先 `marketplace update`（git 拉取，内置目录重新取）。接口按搜索词、来源、分类筛过后只返回一页（`offset`、`limit`，最多 100 条），带总数、来源和分类的选项；网页按卡片网格显示（从左往右排、放不下换行），底部是页码分页（`client/src/components/Pager.tsx`，连接器市场共用）。每页的个数在第一次显示时按设置页的可见区域算：先渲染一批卡片，绘制前量出列数和最高的卡片，取列数 × 不出滚动条能放下的行数（至少一行，最多 60），之后固定不变（`useFitPageSize`），翻页、换条件时再取，搜索词停 300ms 再查。每项显示来源市场、审核情况和代码仓库链接。
   - 安装、卸载、更新是 `plugin install / uninstall / update <插件名@市场名> --json`（不加 `-y`：要执行市场声明的命令的插件会失败并报原因）。插件按来源（市场仓库里的目录、别的 git 仓库或其中的子目录）拉到 `plugins/cache/` 下，记进 `settings.json` 的 `enabledPlugins`，会话按 `settingSources` 的 `user` 加载，对新会话和子进程重启后的会话生效。插件来源是 git 仓库的要有 git（Windows 上 Claude Code 本来就要 Git for Windows）。
   - 能力列表里插件的 source 是 `插件名@市场名` 的算从市场装的（`marketplace` 字段），列表和详情里「删除」换成「卸载」，详情多一个「检查更新」，显示 Claude Code 的说明。已经手动导入了同名插件的不让装（两个同名插件的技能、MCP 服务器名称冲突），目录里显示「已导入」。
+  - 模型搜插件（`gateway/src/agent/plugin-tool.ts`）：网关自带的 MCP 服务器 `plugins`，一个工具 `mcp__plugins__search_plugins`，搜的就是上面这份缓存的列表（`searchMarketPlugins`）。参数是 1–8 个关键词，可选的 `marketplace`、`offset`、`limit`（默认 10，最多 50）；每个关键词不分大小写，在名称、显示名称、简介、分类、作者里按子串匹配，命中任意一个就算，命中个数多的在前，个数一样的保持列表的顺序。返回 JSON：总数和一页插件（id、简介截到 500 字、来源市场、审核情况、安装次数、主页或仓库、装没装）。只读，在 `allowedTools` 里不弹权限卡片；不能装，说明里写明安装在设置页「插件市场」由用户操作、装上的对之后的会话生效。只挂本机会话（远程会话不加载插件）。默认延迟加载，要常驻写进 `config.yml` 的 `tools.alwaysLoad`。
+    - Claude Code 内置的 `SearchPlugins` 搜的是 claude.ai 账号（组织）的插件目录：查 SDK 自带的 Claude Code（2.1.327）里的判断，只在组织策略允许、并且是 claude.ai 远程会话或桌面版这类入口（登录了 claude.ai、灰度开关打开）时才启用，网关的会话本来就没有。为了不和网关的工具混在一起，`DISALLOWED_TOOLS` 的默认值里带上了它（见第 6 节）。
 - 停用技能：停用的名称存在 `$CLAUDE_CONFIG_DIR/gateway-disabled-skills.json`。有停用的技能时，网关把其余技能作为 `options.skills` 白名单传给 SDK，模型看不到停用的技能，调 Skill 工具也会被拒绝；这个白名单管不到用户自己输入的 `/技能名`，所以网关在新建和发送时再拦一次，返回 400。白名单在拉起 claude 进程时确定，已经活跃的会话要等进程重启才更新，`/技能名` 的拦截立即生效。内置技能只能停用；删除只针对导入的技能，是删文件，SDK 没有对应接口。
 - 子代理（**先隐藏**：`SettingsPage.tsx` 的 `SHOW_AGENTS` 为 false，导航里没有「子代理」，插件列表和详情里也不列插件带的子代理；网关的列表、启停接口和停用名单照常生效）：设置页「子代理」列出会话里模型能用 Agent 工具调起的子代理，分「个人」「内置」两个标签，卡片上显示它用的模型（`inherit` 显示成「同主会话」），点开看定义文件，菜单里启用、停用。网关不另外定义子代理（不传 `options.agents`）：Claude Code 按 `settingSources` 自己加载用户的 `$CLAUDE_CONFIG_DIR/agents/`、项目的 `.claude/agents/` 和插件 `agents/` 下的 `.md`，要加就放文件。不做新建、编辑的表单（字段多且还在加，工具列表不发消息拿不到，第三方接口下 opus / sonnet / haiku 都映射到默认模型）：「个人」标签下写明用户的子代理文件夹（能力列表的 `agentsDir`，列表时没有就建上）和文件的写法，附一个可复制的示例；桌面版右上角「打开文件夹」用系统的文件管理器打开它（`shell.openPath`，网关在别的机器上时提示没有这个文件夹）。
   - 列表用临时 query 的 `supportedAgents()`，只有名字、描述和模型，不带来源和路径。定义文件由网关按名字自己找（`agentFiles`），对的是 Claude Code 的命名（实测 2.1.322）：用户和项目的名字是文件开头的 `name`（没有时取文件名），子文件夹不算进名字；插件里的是 `插件名:子文件夹:名字`；同名时项目的优先。找不到文件、名字里也没有插件名的算内置的（Claude Code 自带的 Explore、Plan、general-purpose 等），内置插件带的也算内置。
@@ -275,7 +280,12 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
   - 一轮进行中、有后台任务在跑或通知没交给模型时不能清空（409，菜单项置灰、说明换成原因）：`/clear` 会把后台任务一起结束。新会话页没有这一项。
   - 清空出来的会话和原会话用同一个工作目录（分叉也是）：删其中一个时，这个目录里还有别的会话的记录就不删 scratch 目录（`removeScratchDirIfEmpty`，远程的看 `gateway-ssh-sessions.json` 里同一个目录的会话）。
   - 网页：历史里 `/clear` 命令本身的记录不显示；清空出来的会话还没有消息时对话区显示「会话已清空」。
-- `WebSearch` 是 Anthropic 服务端工具，第三方模型用不了，默认放进 `disallowedTools`。
+- 默认禁用的内置工具（`DISALLOWED_TOOLS` 的默认值，本机和远程会话都放进 `disallowedTools`；设了这个变量就整个替换默认值）：
+  - `WebSearch`：Anthropic 服务端工具，第三方模型用不了。
+  - `SearchPlugins`：换成了网关的 `search_plugins`（第 2.2 节「插件市场」）。
+  - `SuggestPluginInstall`：把 `SearchPlugins` 搜到的插件显示成安装卡片（装到 claude.ai 账号，卡片由 Claude 桌面版画）。插件 id 要在 claude.ai 的目录里核对得上，`search_plugins` 返回的 `插件名@市场名` 用不了，网页也没有这张卡片。
+  - `SuggestSkills`：按关键词搜 claude.ai 上还没启用的技能（组织的、别人分享的、Anthropic 的），显示成添加卡片（加到 claude.ai 账号，卡片由 Claude 桌面版画）。网关的技能在设置页「技能」里导入、启停，和 claude.ai 账号的不是一套，网页也没有这张卡片。
+  - `ReportFindings`：代码审查（`/code-review`）把结果交给宿主界面画成列表用的，网页没有这个界面。Claude Code 2.1.327 里只有设了 `CLAUDE_CODE_REPORT_FINDINGS` 或者是 Claude 桌面版、claude.ai 网页的会话才会走这条路；工具列表里没有它时，审查结果写在回复里。
 - `WebFetch` 每次抓网页前会先请求 `api.anthropic.com/api/web/domain_info?domain=<域名>` 查域名黑名单，Anthropic 不支持的地区（如中国）这个接口一律返回 403，所有网址都报 "Unable to verify if domain … is safe to fetch"，网页本身其实能连上。网关在 SDK 的 `settings` 选项里设 `skipWebFetchPreflight: true` 跳过这一步。
 - Windows 上命令输出的编码：Claude Code 的 Bash 工具跑的是 Git Bash，模型在里面调 `powershell.exe`、`ipconfig` 等原生程序时，它们按控制台代码页输出（中文系统是 936，GBK），Claude Code 按 UTF-8 读，中文全是乱码。`agentEnv()` 在 Windows 上给子进程设 `CLAUDE_ENV_FILE`，指向网关写在 `$CLAUDE_CONFIG_DIR/claude-app-env.sh` 的脚本，Claude Code 每条 Bash 命令前在同一个 shell 里先执行它（`chcp.com 65001`）；环境里原来有 `CLAUDE_ENV_FILE` 的放进 `CLAUDE_APP_USER_ENV_FILE`，脚本最后接着 source 它。以前用的是 `BASH_ENV`，Claude Code 起 bash 时把它当不安全的变量去掉了，不生效（SSH 远程会话里在中文 Windows 上实测，见第 14 节）。Claude Code 自己的 PowerShell 工具（`CLAUDE_CODE_USE_POWERSHELL_TOOL=1`，预览）也是先 `chcp 65001` 再起 PowerShell。
 - `NODE_OPTIONS`：Claude Code 启动时发现里面有 `--inspect`、`--debug` 开头的参数（它自己按 `/--inspect(-brk)?|--debug(-brk)?/` 查）就以退出码 1 结束、什么也不输出，只有 `--version` 正常。网关从 VS Code 的终端里起时，调试器给终端设了 `--require …/bootloader.js --inspect-publish-uid=http`，会话就起不来，模型在 Bash 里跑 `claude …` 也一样。`agentEnv()` 只去掉这两类参数（`config.ts` 的 `nodeOptionsForClaude`；`--inspect-port`、`--debug-port`、`--inspect-publish-uid` 的值隔一个空格写的连值一起去掉），其余原样留着：模型跑的命令、Node 写的 MCP 服务也继承这个变量，用户设的 `--max-old-space-size`、`--use-openssl-ca`、`--dns-result-order` 还要生效。实测（Windows，2.1.322 和 npm 装的 2.1.92）：单独的 `--require`、`--max-old-space-size`、`--dns-result-order`、`--use-openssl-ca` 都不影响，只有 `--inspect-publish-uid=http` 会。代价是模型起的 Node 进程不会被 VS Code 调试器自动附加。SSH 远端的 `launch.sh`、`launch.ps1` 是同一条规则（见第 14 节）。
@@ -378,6 +388,7 @@ gateway/
       session.ts          单个活跃会话：query、消费循环、状态、权限挂起
       session-manager.ts  活跃会话表、创建 / resume / 空闲回收、历史读取
       options.ts          拼 SDK Options（env、模型、系统提示、工具白名单）
+      plugin-tool.ts      模型搜插件市场：search_plugins 工具（第 2.2 节「插件市场」）
       attachments.ts      附件保存、按 id 找回、拼用户消息
     shared/types.ts       网关和网页共用的类型
     events/event-hub.ts   按会话分频道的环形缓冲 + 订阅

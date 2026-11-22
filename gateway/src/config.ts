@@ -91,8 +91,15 @@ export const config = {
   defaultPermissionMode: permissionMode("DEFAULT_PERMISSION_MODE", "bypassPermissions"),
   /** 新会话和续接会话的推理强度，同 Claude 桌面版启动参数里的 --effort=high */
   defaultEffort: effortLevel("DEFAULT_EFFORT", "high"),
-  /** 禁用的内置工具。WebSearch 是 Anthropic 服务端工具，第三方模型用不了 */
-  disallowedTools: list("DISALLOWED_TOOLS", ["WebSearch"]),
+  /**
+   * 禁用的内置工具，设了就整个替换默认值：
+   * - WebSearch：Anthropic 服务端工具，第三方模型用不了
+   * - SearchPlugins：搜 claude.ai 账号的插件目录，换成了网关的 search_plugins（agent/plugin-tool.ts）
+   * - SuggestPluginInstall：按 SearchPlugins 的结果显示安装卡片（装到 claude.ai 账号），id 只认 claude.ai 目录里的，网页也没有这张卡片
+   * - SuggestSkills：搜 claude.ai 上还没启用的技能，显示成添加卡片（加到 claude.ai 账号），网页没有这张卡片
+   * - ReportFindings：代码审查把结果交给宿主界面画成列表，网页没有这个界面；没有它时审查结果写在回复里
+   */
+  disallowedTools: list("DISALLOWED_TOOLS", ["WebSearch", "SearchPlugins", "SuggestPluginInstall", "SuggestSkills", "ReportFindings"]),
   /** 追加到 Claude Code 系统提示后面的说明，不设或设成空串就不追加（为什么要加见 .env.example） */
   appendSystemPrompt: env.APPEND_SYSTEM_PROMPT?.trim() || undefined,
 

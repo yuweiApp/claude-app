@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   query,
   type CanUseTool,
@@ -9,6 +11,7 @@ import {
   type Query,
   type SDKMessage,
   type SDKUserMessage,
+  type SessionCronSummary,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
@@ -135,6 +138,8 @@ export class AgentSession {
    * 模型又回复了就清掉（下一次停下又会检查）
    */
   private goalBlocked = false;
+  /** 上一轮结束时排着的定时任务（Stop hook 的 session_crons，见 options.ts 的 withHooks），子进程关了就没了 */
+  private crons: SessionCronSummary[] = [];
   /** 正在清空（见 clear）：/clear 交出去了，等 Claude Code 换到新的会话 id */
   private clearing?: { resolve: (sessionId: string) => void; reject: (err: Error) => void };
   /** /clear 生效了（收到 conversation_reset）：子进程之后的消息是新会话的，不再当成这个会话的发给网页 */
@@ -183,6 +188,12 @@ export class AgentSession {
         terminals: this.terminals,
         browser,
         onDesktopTarget: (target) => this.publish({ type: "desktop_target", target }),
+        onCrons: (crons) => {
+          if (crons.length !== this.crons.length || crons.some((c, i) => c.id !== this.crons[i]?.id)) {
+            this.log.info({ sessionId: id, crons: crons.map(({ id, schedule, recurring }) => ({ id, schedule, recurring })) }, "定时任务变了");
+          }
+          this.crons = crons;
+        },
         abortController: this.abortController,
         stderr: (data) => this.log.debug({ sessionId: id, stderr: data.trimEnd() }, "claude stderr"),
       }),
@@ -420,6 +431,11 @@ export class AgentSession {
    */
   get backgroundBusy(): boolean {
     return this.tasksRunning || this.noticePending;
+  }
+
+  /** 有定时任务排着：子进程关着时它们不会触发（空闲回收看它，见 session-manager.ts 的 reclaimable） */
+  get cronsScheduled(): boolean {
+    return this.crons.length > 0 || durableCrons(this.cwd, this.id) > 0;
   }
 
   /** 有后台任务在跑 */
@@ -765,5 +781,20 @@ function logTaskMessage(log: FastifyBaseLogger, sessionId: string, message: SDKM
     case "background_tasks_changed":
       log.info({ sessionId, live: message.tasks.map((t) => `${t.task_id}${t.ambient ? "(ambient)" : ""}`) }, "后台任务：background_tasks_changed");
       break;
+  }
+}
+
+/**
+ * durable 的定时任务（CronCreate 带 durable: true）：Claude Code 写在工作目录的 .claude/scheduled_tasks.json，不在 Stop hook 的 session_crons 里。
+ * 子进程关着时不触发，resume 后接着触发；只有建它的会话会触发（createdBySessionId），同一目录下的别的会话不会（实测 0.3.327）。
+ * 这是 Claude Code 内部的文件，读不到、格式不对按没有算；远程会话的在远端，不读（只看 session_crons）
+ */
+function durableCrons(cwd: string, sessionId: string): number {
+  if (parseRemote(cwd)) return 0;
+  try {
+    const file = JSON.parse(readFileSync(path.join(cwd, ".claude", "scheduled_tasks.json"), "utf8")) as { tasks?: { createdBySessionId?: string }[] };
+    return (file.tasks ?? []).filter((t) => t.createdBySessionId === sessionId).length;
+  } catch {
+    return 0;
   }
 }

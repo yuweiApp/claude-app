@@ -309,6 +309,21 @@ export async function queryMarketPlugins(query: MarketQuery): Promise<MarketPlug
   };
 }
 
+/** 模型的插件搜索（plugin-tool.ts）：命中任意一个关键词就算，命中的关键词多的在前，一样多的保持列表的顺序 */
+export async function searchMarketPlugins(query: { keywords: string[]; marketplace?: string; offset: number; limit: number }): Promise<{ plugins: MarketPlugin[]; total: number }> {
+  const all = await listMarketPlugins(false);
+  const keywords = [...new Set(query.keywords.map((k) => k.trim().toLowerCase()).filter(Boolean))];
+  const matched = all
+    .filter((p) => !query.marketplace || p.marketplace === query.marketplace)
+    .map((plugin, index) => {
+      const text = [plugin.name, plugin.title, plugin.description, plugin.category, plugin.author].join(" ").toLowerCase();
+      return { plugin, index, hits: keywords.filter((k) => text.includes(k)).length };
+    })
+    .filter((m) => m.hits > 0)
+    .sort((a, b) => b.hits - a.hits || a.index - b.index);
+  return { plugins: matched.slice(query.offset, query.offset + query.limit).map((m) => m.plugin), total: matched.length };
+}
+
 /**
  * 装上、卸载、更新之后，能力列表要重新读；插件列表先在缓存里改好这一个的安装状态，下次查询时后台重新取，
  * 正在取的那一次是改之前开始的，结果不要

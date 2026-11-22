@@ -1,4 +1,4 @@
-import type { CanUseTool, EffortLevel, Options, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, EffortLevel, HookCallbackMatcher, HookEvent, Options, PermissionMode, SessionCronSummary } from "@anthropic-ai/claude-agent-sdk";
 import { agentEnv, config } from "../config.js";
 import { attachmentsDir } from "./attachments.js";
 import { disabledAgents, importedPlugins } from "./extensions.js";
@@ -8,9 +8,10 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { BROWSER_SERVER, BROWSER_TOOLS, browserServer } from "../browser/tool.js";
 import type { BrowserHost } from "../browser/host.js";
 import { activeBrowsers, externalNote, externalServers, externalTools, fileReader, fileSaver, filesFact } from "../browser/external.js";
-import { desktopEnabled } from "../config-file.js";
+import { desktopEnabled, pluginMarketplaces } from "../config-file.js";
 import { DESKTOP_SERVER, DESKTOP_TOOLS, desktopServer } from "../desktop/tool.js";
 import { VISUALIZE_SERVER, VISUALIZE_TOOLS, visualizeServer } from "../visualize/tool.js";
+import { PLUGINS_SERVER, PLUGINS_TOOLS, pluginsServer } from "./plugin-tool.js";
 import type { DesktopTarget } from "../shared/types.js";
 import { nativePath, parseRemote } from "../ssh/location.js";
 import { sshHost } from "../ssh/hosts.js";
@@ -36,6 +37,8 @@ export interface SessionLaunch {
   browser?: BrowserHost;
   /** 桌面工具操作的窗口变了（发 desktop_target 事件） */
   onDesktopTarget?: (target: DesktopTarget | null) => void;
+  /** 一轮结束时会话里的定时任务（CronCreate、ScheduleWakeup、/loop 建的，到点唤起这个会话），见 withHooks */
+  onCrons?: (crons: SessionCronSummary[]) => void;
   abortController: AbortController;
   stderr: (data: string) => void;
 }
@@ -63,6 +66,8 @@ export function buildOptions(launch: SessionLaunch): Options {
     ...(desktop ? DESKTOP_TOOLS : []),
     // 对话里的部件（show_widget）只是显示，不弹权限卡片
     ...VISUALIZE_TOOLS,
+    // 搜索插件市场（search_plugins）只读，不弹权限卡片
+    ...PLUGINS_TOOLS,
   ];
   return {
     cwd: launch.cwd,
@@ -77,7 +82,7 @@ export function buildOptions(launch: SessionLaunch): Options {
     allowDangerouslySkipPermissions: true,
     canUseTool: launch.canUseTool,
     // 子代理跟着会话选的模型走（只在接第三方接口时），见 subagent-model.ts
-    ...withHooks(),
+    ...withHooks(launch),
     ...(allowedTools.length ? { allowedTools } : {}),
     disallowedTools: [...config.disallowedTools, ...disabledAgents().map((name) => `Agent(${name})`)],
     settingSources: ["user", "project", "local"],
@@ -92,6 +97,8 @@ export function buildOptions(launch: SessionLaunch): Options {
       ...(desktop ? { [DESKTOP_SERVER]: desktop } : {}),
       // 在对话里显示 HTML / SVG 部件，网页按调用参数渲染（docs/README.md「对话里的部件」）
       [VISUALIZE_SERVER]: visualizeServer(launch.sessionId),
+      // 搜索插件市场，和设置页「插件市场」同一份列表（docs/README.md「插件市场」）
+      [PLUGINS_SERVER]: pluginsServer(pluginMarketplaces),
     },
     plugins: importedPlugins(),
     ...(launch.skills ? { skills: launch.skills } : {}),
@@ -143,7 +150,7 @@ function buildRemoteOptions(launch: SessionLaunch): Options {
     allowDangerouslySkipPermissions: true,
     canUseTool: launch.canUseTool,
     // 子代理跟着会话选的模型走（只在接第三方接口时），见 subagent-model.ts
-    ...withHooks(),
+    ...withHooks(launch),
     ...(allowedTools.length ? { allowedTools } : {}),
     disallowedTools: config.disallowedTools,
     settingSources: ["user", "project", "local"],
@@ -166,7 +173,25 @@ function buildRemoteOptions(launch: SessionLaunch): Options {
   };
 }
 
-function withHooks(): Pick<Options, "hooks"> {
-  const hooks = subagentModelHooks();
-  return hooks ? { hooks } : {};
+/**
+ * 子代理的模型（subagent-model.ts），和定时任务：Claude Code 的定时任务只在子进程的内存里，子进程关了就没了。
+ * Stop hook 的 session_crons 是一轮结束时还排着的（建、删、一次性的触发后自动删、7 天到期都发生在一轮里，结束时就是最新的），
+ * 交给 onCrons，有定时任务的会话不回收子进程（session-manager.ts 的 reclaimable）
+ */
+function withHooks(launch: SessionLaunch): Pick<Options, "hooks"> {
+  const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = { ...subagentModelHooks() };
+  const onCrons = launch.onCrons;
+  if (onCrons) {
+    hooks.Stop = [
+      {
+        hooks: [
+          async (input) => {
+            if (input.hook_event_name === "Stop") onCrons(input.session_crons ?? []);
+            return {};
+          },
+        ],
+      },
+    ];
+  }
+  return Object.keys(hooks).length ? { hooks } : {};
 }

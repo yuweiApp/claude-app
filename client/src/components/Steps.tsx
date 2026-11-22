@@ -58,6 +58,9 @@ function toolLabel(block: ToolUse, running: boolean): { icon: ReactNode; verb: s
     // 对话里的部件（网关的 visualize MCP 服务器）：正常显示时不走这里，出错的调用才显示成一步
     case "mcp__visualize__show_widget":
       return { icon: <WidgetIcon />, verb: v("正在显示部件", "显示部件"), target: s("title") };
+    // 搜索插件市场（网关的 plugins MCP 服务器）
+    case "mcp__plugins__search_plugins":
+      return { icon: <SearchIcon />, verb: v("正在搜索插件", "已搜索插件"), target: Array.isArray(i.keywords) ? i.keywords.filter((k) => typeof k === "string").join("、") : "" };
     default:
       // 浏览器工具（内置浏览器 inapp、外部浏览器 chrome / edge…，旧记录里的 web）：工具名都是 mcp__<服务器>__browser_…，
       // 图标用面板里浏览器标签页的那个地球
