@@ -6,6 +6,7 @@ import { config } from "../config.js";
 import type { ExternalBrowserInfo, ExternalBrowserTabs } from "../shared/types.js";
 import { listBrowsers, tabGroupEnabled, type ResolvedBrowser } from "./browser-settings.js";
 import { INSTALL_URL } from "./catalog.js";
+import { bringToFrontBeforeActions } from "./foreground.js";
 import { BrowserRepl, closeAutomatically, MAX_URL_CHARS } from "./repl.js";
 import { browserMcpServer, replFor, RUN_CODE_TOOL, RUNTIME_FACTS } from "./tool.js";
 
@@ -115,7 +116,10 @@ class ExternalBridge {
         this.attempt = null;
         this.browser = browser;
         const context = browser.contexts()[0];
-        if (context) dropConnectPage(context);
+        if (context) {
+          dropConnectPage(context);
+          bringToFrontBeforeActions(context);
+        }
         browser.once("disconnected", () => {
           if (this.browser === browser) this.browser = null;
         });
@@ -322,7 +326,8 @@ function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[], cwd
       "交出来的标签页全部关闭时连接断开，下一次调用重新连接（重新打开连接页）。",
     RUNTIME_FACTS,
     "标签页：通过这里开的标签页不会自动关闭。标签页被新开、关闭时，下一次工具结果里会列出变化，只能分出是不是你做的（扩展不提供是用户还是网页）。" +
-      `这些说明里的网址超过 ${MAX_URL_CHARS} 个字符时只显示开头和总长度，完整的网址是那个标签页的 page.url()。`,
+      `这些说明里的网址超过 ${MAX_URL_CHARS} 个字符时只显示开头和总长度，完整的网址是那个标签页的 page.url()。` +
+      `${b.name} 窗口里不是当前显示的标签页，document.visibilityState 是 hidden；Playwright 的 click、dblclick、hover、tap、check、uncheck、setChecked、拖放、scrollIntoViewIfNeeded 和截图执行前，标签页是 hidden 时会自动切到前台（用户在 ${b.name} 里看着的标签页随之切换）。`,
     `下载：网页里的下载（包括脚本触发的）由 ${b.name} 自己处理，按用户在浏览器里的设置保存（默认是系统的「下载」文件夹，设了下载前询问时会弹出另存为对话框），同名时浏览器自己在文件名后加 (1)；` +
       "Playwright 的 download 事件不会触发，page.waitForEvent('download') 一直等到超时，也拿不到文件存在哪。",
     filesFact(cwd),
