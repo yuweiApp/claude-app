@@ -124,8 +124,8 @@ function editAnnotation(sessionId: string, id: string) {
 // ---------------------------------------------------------------------------
 // 选中文字后浮出的「回复」
 
-const BUTTON_H = 32;
-const BUTTON_W = 80;
+const BUTTON_H = 28;
+const BUTTON_W = 76;
 const GAP = 6;
 
 /**

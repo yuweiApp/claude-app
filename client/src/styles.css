@@ -2005,15 +2005,15 @@ svg.ic-mcp { color: var(--ic-mcp); }
 
 /* 回复 Claude 的某段话（参照 codex-app-server）：选中文字后浮出的「回复」 */
 .annotation-toolbar {
-  position: fixed; z-index: 900; display: flex; align-items: center; height: 32px; padding: 0 3px;
-  border: 1px solid var(--border); border-radius: 10px; background: var(--bg);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 0.14);
+  position: fixed; z-index: 900; display: flex; align-items: center; height: 28px;
+  border-radius: 999px; box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 35%, transparent), 0 1px 3px rgb(0 0 0 / 0.18);
 }
 .annotation-toolbar button {
-  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px;
-  border: none; border-radius: 7px; background: none; color: var(--text); font-size: 13px; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px;
+  border: none; border-radius: 999px; background: var(--accent); color: var(--accent-text);
+  font-size: 13px; font-weight: 500; white-space: nowrap;
 }
-.annotation-toolbar button:hover { background: var(--panel); }
+.annotation-toolbar button:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
 .annotation-toolbar svg { flex: none; }
 /* 写回复的小框：新的一条是一行输入加 ✓，改已有的下面是删除、取消、保存 */
 .annotation-editor {
