@@ -148,6 +148,8 @@ interface TreeCache {
   expanded: Set<string>;
   dirs: Record<string, ProjectEntry[] | { error: string }>;
   scrollTop: number;
+  /** 正在删除：确认框（标题）留着，显示删到第几项；放在这里是因为删掉打开着的文件时标签页会换掉，树跟着重新挂载 */
+  deleting?: { title: string; done: number; total: number };
 }
 const treeCaches = new Map<string, TreeCache>();
 const treeCache = (cwd: string) => {
@@ -164,6 +166,10 @@ const parentOf = (p: string) => {
   return i < 0 ? "" : trimmed.slice(0, i + 1);
 };
 
+/** 删除确认框的标题（paths 是要删的，文件夹以 / 结尾） */
+const deleteTitle = (paths: string[]) => (paths.length > 1 ? `删除选中的 ${paths.length} 项？` : `删除「${basename(paths[0] ?? "")}」？`);
+/** 删除中确认按钮上的字：多项带上删到第几项 */
+const busyLabel = (d: TreeCache["deleting"]) => d && (d.total > 1 ? `删除中 ${Math.min(d.done + 1, d.total)}/${d.total}` : "删除中");
 const trimSlash = (p: string) => (p.endsWith("/") ? p.slice(0, -1) : p);
 /** 同一个项目开着好几个文件标签时各有一棵树（共用 treeCache），一棵改了文件，通知别的也重画 */
 const TREE_CHANGED = "files-tree-changed";
@@ -509,12 +515,17 @@ function FileTree({
     }
     void move(entry.path, parentOf(entry.path) + name + (entry.dir ? "/" : ""));
   };
-  /** 删除（文件夹以 / 结尾）：一个一个删，有一个失败就停下，已经删掉的照常刷新 */
+  /** 删除（文件夹以 / 结尾）：一个一个删，有一个失败就停下，已经删掉的照常刷新；删完（含刷新）才关确认框 */
   const remove = async (paths: string[]) => {
-    setConfirmDelete(null);
+    if (cache.deleting) return;
     setOpError(null);
     // 选中的文件夹里面的不用另外删
     const top = paths.filter((p) => !paths.some((q) => q !== p && q.endsWith("/") && p.startsWith(q)));
+    const progress = (done: number) => {
+      cache.deleting = { title: deleteTitle(paths), done, total: top.length };
+      window.dispatchEvent(new CustomEvent(TREE_CHANGED, { detail: cwd }));
+    };
+    progress(0);
     const done: string[] = [];
     let error: string | null = null;
     for (const path of top) {
@@ -525,6 +536,7 @@ function FileTree({
         break;
       }
       done.push(path);
+      progress(done.length);
       if (path.endsWith("/")) {
         for (const k of [...cache.expanded]) if (k.startsWith(path)) cache.expanded.delete(k);
         for (const k of Object.keys(cache.dirs)) if (k.startsWith(path)) delete cache.dirs[k];
@@ -536,6 +548,9 @@ function FileTree({
       setPicked((s) => s && s.filter((p) => !gone(p)));
       await reload(done.map(parentOf));
     }
+    cache.deleting = undefined;
+    setConfirmDelete(null);
+    window.dispatchEvent(new CustomEvent(TREE_CHANGED, { detail: cwd }));
     if (error) setOpError(error);
   };
 
@@ -649,7 +664,7 @@ function FileTree({
       startRename(entry);
     } else if (e.key === "Delete") {
       e.preventDefault();
-      setConfirmDelete(manyWith(entry.path) ?? [entry.path]);
+      if (!cache.deleting) setConfirmDelete(manyWith(entry.path) ?? [entry.path]);
     } else if (entry.dir) onDirKey(e, entry.path);
   };
   /** 文件夹：回车展开收起，→ 展开，← 收起（回车不再当单击，免得只是选中） */
@@ -997,11 +1012,12 @@ function FileTree({
           ))}
         </div>
       )}
-      {confirmDelete && (
+      {(confirmDelete || cache.deleting) && (
         <ConfirmDialog
-          title={confirmDelete.length > 1 ? `删除选中的 ${confirmDelete.length} 项？` : `删除「${basename(confirmDelete[0] ?? "")}」？`}
+          title={cache.deleting?.title ?? deleteTitle(confirmDelete ?? [])}
           confirmLabel="删除"
-          onConfirm={() => void remove(confirmDelete)}
+          busy={busyLabel(cache.deleting)}
+          onConfirm={() => confirmDelete && void remove(confirmDelete)}
           onCancel={() => setConfirmDelete(null)}
         />
       )}
