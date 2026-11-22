@@ -150,6 +150,12 @@ export const desktop: DesktopApi | undefined = (window as Window & { desktop?: D
 export const fileManagerName = desktop?.platform === "darwin" ? "访达" : desktop?.platform === "win32" ? "资源管理器" : "文件管理器";
 
 let localGatewayCheck: Promise<boolean> | undefined;
+/** 同 useLocalGateway，给不在组件里的地方用（回复里文件链接的下载）；网页版是 false */
+export function localGateway(): Promise<boolean> {
+  if (!desktop?.files) return Promise.resolve(false);
+  localGatewayCheck ??= desktop.files.localGateway().catch(() => false);
+  return localGatewayCheck;
+}
 /**
  * 桌面版连的网关在这台机器上（网关存的文件、上传的附件就在本机，能按路径直接读写）；网页版是 false，还不知道时 null。
  * 只问一次外壳，各处共用结果
@@ -158,9 +164,8 @@ export function useLocalGateway(): boolean | null {
   const [local, setLocal] = useState<boolean | null>(desktop?.files ? null : false);
   useEffect(() => {
     if (!desktop?.files) return;
-    localGatewayCheck ??= desktop.files.localGateway().catch(() => false);
     let alive = true;
-    void localGatewayCheck.then((d) => alive && setLocal(d));
+    void localGateway().then((d) => alive && setLocal(d));
     return () => {
       alive = false;
     };

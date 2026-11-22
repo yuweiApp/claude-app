@@ -10,6 +10,8 @@ import { useFileExists } from "../state/fileExists";
 import { MermaidBlock } from "./MermaidBlock";
 import { CopyAction } from "./MessageActions";
 import { ContextMenu } from "./ContextMenu";
+import { downloadFile, TRANSFERS_CHANGED } from "./FileTransfers";
+import { localGateway } from "../desktop";
 
 /**
  * Claude 回复里的链接指向本地文件时，在右侧面板打开：cwd 是会话的工作目录，open 打开相对它的路径的文件，
@@ -123,23 +125,46 @@ export function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTML
   const path = files ? projectPath(files.cwd, href) : null;
   // 工作目录外的：面板里以它所在的文件夹（是文件夹时是它自己）为根打开
   const outside = files && path === null ? absolutePath(files.cwd, href) : null;
-  const openFile = () => {
-    if (!files || (path === null && !outside)) return;
+  // 链接看不出是文件还是文件夹：当文件是 root 下的 rel，当文件夹是 dirRoot 下的 dirRel
+  const target = () => {
+    if (!files || (path === null && !outside)) return null;
     const { cwd, open, openFolder } = files;
     const line = linkLine(href);
     // 工作目录外的远端路径：面板、接口要的是 ssh://<id><路径>
     const remote = parseRemote(cwd);
     const at = (p: string) => (remote ? remoteUri(remote.host, p) : p);
-    // 链接看不出是文件还是文件夹：是文件就打开；能列出内容的是文件夹，在目录树里定位；都不是也当文件打开（面板里显示原因）
-    // 文件：root 下的 rel；文件夹：dirRoot 下的 dirRel
-    const t =
-      path !== null
-        ? { root: cwd, rel: path, dirRoot: cwd, dirRel: path, file: () => open(path, undefined, line), folder: () => openFolder(path) }
-        : { root: at(outside!.parent), rel: outside!.name, dirRoot: at(outside!.abs), dirRel: "", file: () => open(outside!.name, at(outside!.parent), line), folder: () => openFolder("", at(outside!.abs)) };
+    return path !== null
+      ? { root: cwd, rel: path, dirRoot: cwd, dirRel: path, file: () => open(path, undefined, line), folder: () => openFolder(path) }
+      : { root: at(outside!.parent), rel: outside!.name, dirRoot: at(outside!.abs), dirRel: "", file: () => open(outside!.name, at(outside!.parent), line), folder: () => openFolder("", at(outside!.abs)) };
+  };
+  // 是文件就打开；能列出内容的是文件夹，在目录树里定位；都不是也当文件打开（面板里显示原因）
+  const openFile = () => {
+    const t = target();
+    if (!t) return;
     void api
       .filesExist(t.root, [t.rel])
       .catch(() => [t.rel])
       .then((exists) => (exists.includes(t.rel) ? t.file() : api.listDir(t.dirRoot, t.dirRel).then(t.folder, t.file)));
+  };
+  // 下载：同文件树的「下载…」；不是文件时说原因
+  const downloadLink = async () => {
+    const t = target();
+    if (!t) return;
+    try {
+      const exists = await api.filesExist(t.root, [t.rel]);
+      if (!exists.includes(t.rel)) {
+        const folder = await api.listDir(t.dirRoot, t.dirRel).then(
+          () => true,
+          () => false,
+        );
+        window.alert(folder ? "这是文件夹，只能下载文件" : `文件不存在：${localPath(href) ?? href}`);
+        return;
+      }
+      const started = await downloadFile(t.root, t.rel, await localGateway());
+      if (started?.length) watchDownload(t.root, started[0]!.id);
+    } catch (err) {
+      window.alert(`下载失败：${(err as Error).message}`);
+    }
   };
   const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
     // file:// 和相对路径在网页里打不开，不让它跳
@@ -154,12 +179,13 @@ export function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTML
       </span>
     );
   }
-  // 右键：在右侧面板打开（同单击）、复制绝对路径（相对路径按工作目录算，去掉行号）
+  // 右键：在右侧面板打开（同单击）、下载（同文件树）、复制绝对路径（相对路径按工作目录算，去掉行号）
   const absolute = absolutePath(files!.cwd, href);
   return (
     <ContextMenu
       items={[
         { label: "在右侧面板打开", run: openFile },
+        { label: "下载…", run: () => void downloadLink() },
         ...(absolute ? [{ label: "复制路径", run: () => void navigator.clipboard.writeText(nativePath(absolute.abs)).catch(() => undefined) }] : []),
       ]}
     >
@@ -171,6 +197,26 @@ export function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTML
     </ContextMenu>
   );
 }
+
+/**
+ * 回复里的链接开始的直传下载：告诉同一个 cwd 的文件树（开着的话传输列表里有这一行），
+ * 网关在后台复制，跟着进度到结束，失败时提示（文件树没开着时界面上没有别的地方显示）
+ */
+function watchDownload(cwd: string, id: string) {
+  window.dispatchEvent(new CustomEvent(TRANSFERS_CHANGED, { detail: cwd }));
+  const timer = window.setInterval(() => {
+    void api.transfers(cwd).then(
+      (list) => {
+        const t = list.find((x) => x.id === id);
+        if (t && (t.state === "queued" || t.state === "running")) return;
+        window.clearInterval(timer);
+        if (t?.state === "error") window.alert(`下载失败：${t.error || t.name}`);
+      },
+      () => window.clearInterval(timer),
+    );
+  }, WATCH_MS);
+}
+const WATCH_MS = 500;
 
 /** 复制给用户的绝对路径：Windows 的（盘符、//server 开头）换回反斜杠，其余照旧用 / */
 function nativePath(abs: string): string {

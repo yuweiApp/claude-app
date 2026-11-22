@@ -18,6 +18,30 @@ const POLL_MS = 500;
 /** 上传完的行留一会儿再自动关掉（文件已经出现在树里了）；下载完的留着，可以点「在…中显示」 */
 const UPLOADED_SHOWN_MS = 3000;
 
+/** 别处（回复里的文件链接）开始了直传下载时在 window 上发这个事件，detail 是 cwd；同一个 cwd 的文件树马上取一次进度，传输列表里就有这一行 */
+export const TRANSFERS_CHANGED = "claude-app:transfers-changed";
+
+/**
+ * 下载 cwd 下的文件 path（文件树的「下载…」、回复里文件链接的「下载…」共用）。
+ * direct（桌面版连着本机网关）：先弹系统的保存对话框，取消了返回 null，否则网关在后台复制，返回开始的传输；
+ * 否则交给浏览器按 /files/download 下载，返回 []
+ */
+export async function downloadFile(cwd: string, path: string, direct: boolean): Promise<FileTransfer[] | null> {
+  const name = baseName(path);
+  if (direct && desktop?.files) {
+    const local = await desktop.files.pickSavePath(name);
+    if (!local) return null;
+    return api.startDownload(cwd, path, local);
+  }
+  const a = document.createElement("a");
+  a.href = api.downloadUrl(cwd, path);
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  return [];
+}
+
 const baseName = (p: string) => p.slice(Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\")) + 1);
 const parentDir = (rel: string) => (rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/") + 1) : "");
 
@@ -49,6 +73,15 @@ export function useFileTransfers(cwd: string, onUploaded: (dir: string) => void)
   useEffect(() => {
     if (direct) void poll();
   }, [direct, poll]);
+  // 回复里的文件链接开始了这个 cwd 的直传下载
+  useEffect(() => {
+    if (!direct) return;
+    const onChanged = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === cwd) void poll();
+    };
+    window.addEventListener(TRANSFERS_CHANGED, onChanged);
+    return () => window.removeEventListener(TRANSFERS_CHANGED, onChanged);
+  }, [direct, cwd, poll]);
   const active = gateway.some((t) => t.state === "queued" || t.state === "running");
   useEffect(() => {
     if (!active) return;
@@ -123,20 +156,8 @@ export function useFileTransfers(cwd: string, onUploaded: (dir: string) => void)
     },
     /** 下载项目里的文件：直传先弹保存对话框，取消了什么都不做；HTTP 交给浏览器 */
     async download(path: string): Promise<void> {
-      const name = baseName(path);
-      if (direct && desktop?.files) {
-        const local = await desktop.files.pickSavePath(name);
-        if (!local) return;
-        await api.startDownload(cwd, path, local);
-        await poll();
-        return;
-      }
-      const a = document.createElement("a");
-      a.href = api.downloadUrl(cwd, path);
-      a.download = name;
-      document.body.append(a);
-      a.click();
-      a.remove();
+      const started = await downloadFile(cwd, path, !!direct);
+      if (started?.length) await poll();
     },
     /** 取消进行中的，或者关掉结束了的 */
     dismiss(row: Row) {
