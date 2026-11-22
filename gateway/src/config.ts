@@ -100,8 +100,9 @@ export const config = {
    * - ReportFindings：代码审查把结果交给宿主界面画成列表，网页没有这个界面；没有它时审查结果写在回复里
    * - ScheduleWakeup：给不带间隔的 /loop 定下次唤醒的，网页不用 /loop；每轮都带完整说明（约 3400 字）
    * - Workflow：写脚本编排多个子代理的，网页没有对应的显示；每轮都带完整说明（约 3500 字）
+   * - Monitor：command 和 ws 只能填一个，GPT 类模型（gpt-6-luna）两个都填，参数校验不过，会一直重试
    */
-  disallowedTools: list("DISALLOWED_TOOLS", ["WebSearch", "SearchPlugins", "SuggestPluginInstall", "SuggestSkills", "ReportFindings", "ScheduleWakeup", "Workflow"]),
+  disallowedTools: list("DISALLOWED_TOOLS", ["WebSearch", "SearchPlugins", "SuggestPluginInstall", "SuggestSkills", "ReportFindings", "ScheduleWakeup", "Workflow", "Monitor"]),
   /** 追加到 Claude Code 系统提示后面的说明，不设或设成空串就不追加（为什么要加见 .env.example） */
   appendSystemPrompt: env.APPEND_SYSTEM_PROMPT?.trim() || undefined,
 
