@@ -137,6 +137,8 @@ export const config = {
     maxTotalBytes: int("LOG_MAX_TOTAL_MB", 500) * 1024 * 1024,
     retentionDays: int("LOG_RETENTION_DAYS", 14),
     maxEntryBytes: int("LOG_MAX_ENTRY_KB", 512) * 1024,
+    /** HTTP 请求从收到到结束超过这么久（毫秒）的也记一条，0 不记 */
+    slowRequestMs: int("LOG_SLOW_REQUEST_MS", 2000),
   },
 };
 

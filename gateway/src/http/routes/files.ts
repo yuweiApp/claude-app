@@ -12,6 +12,12 @@ import { uploadDir, uploadInto } from "../../files/upload.js";
 
 /** 右侧面板直接显示的文本文件上限 */
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
+/** 二进制的文档：PDF 和 Office（含老的 .doc、.xls、.ppt），扩展名同网页的 officeKind */
+const BINARY_DOCUMENTS = new Set(
+  [".pdf", ".doc", ".xls", ".ppt"].concat(
+    ["docx", "docm", "dotx", "dotm", "xlsx", "xlsm", "xltx", "xltm", "pptx", "pptm", "potx", "potm", "ppsx", "ppsm"].map((e) => `.${e}`),
+  ),
+);
 /** 右侧面板保存 Office 文档（/files/write-bytes）的上限 */
 const MAX_BINARY_WRITE_BYTES = 200 * 1024 * 1024;
 
@@ -82,6 +88,8 @@ export function fileRoutes(app: FastifyInstance): void {
     if (IMAGE_TYPES[ext]) return { ...meta, kind: "image" };
     if (VIDEO_TYPES[ext]) return { ...meta, kind: "video" };
     if (AUDIO_TYPES[ext]) return { ...meta, kind: "audio" };
+    // PDF、Office 文档网页按扩展名另外取（PDF 用预览地址，Office 用 /files/download），这里不读内容：远程项目整份读一遍要好几秒，读出来也只是被当成乱码文本
+    if (BINARY_DOCUMENTS.has(ext)) return { ...meta, kind: "binary" };
     if (info.size > MAX_TEXT_BYTES) return { ...meta, kind: "too-large" };
     const buf = await fs.readFile(abs).catch((err: NodeJS.ErrnoException) => {
       throw new BadRequestError(fsError(err, "文件"));

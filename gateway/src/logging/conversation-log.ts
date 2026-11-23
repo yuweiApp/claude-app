@@ -15,6 +15,8 @@ export interface ConversationLogOptions {
   retentionDays: number;
   /** 单条记录的上限，超过只留开头一段 */
   maxEntryBytes: number;
+  /** HTTP 请求超过这么久（毫秒）的记一条（app.ts），0 不记 */
+  slowRequestMs: number;
 }
 
 const FILE_NAME = /^conversation-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.jsonl$/;
@@ -110,6 +112,14 @@ export class ConversationLog {
     this.enqueue(() => this.write(line));
   }
 
+  /** 慢的 HTTP 请求（app.ts）：每行 { time, sessionId, request }，地址不是某个会话的时 sessionId 为空 */
+  recordRequest(entry: { session?: string } & Record<string, unknown>): void {
+    if (!this.options.enabled) return;
+    const { session, ...request } = entry;
+    const line = this.format(session ?? "", { request }, new Map());
+    this.enqueue(() => this.write(line));
+  }
+
   /** 等排队的写入完成（关闭网关时） */
   async close(): Promise<void> {
     if (this.sweeper) clearInterval(this.sweeper);
@@ -121,7 +131,7 @@ export class ConversationLog {
   }
 
   /** 序列化一条记录：base64 内容换成文件路径，要写的文件放进 images */
-  private format(sessionId: string, body: { event: GatewayEvent } | { desktop: Record<string, unknown> }, images: Map<string, Buffer>): string {
+  private format(sessionId: string, body: { event: GatewayEvent } | { desktop: Record<string, unknown> } | { request: Record<string, unknown> }, images: Map<string, Buffer>): string {
     const time = new Date().toISOString();
     const text = JSON.stringify({ time, sessionId, ...body }, (key, value: unknown) => {
       if (isBase64Source(value)) {
@@ -138,7 +148,7 @@ export class ConversationLog {
     const bytes = Buffer.byteLength(text);
     if (bytes <= this.options.maxEntryBytes) return `${text}\n`;
     const preview = Buffer.from(text).subarray(0, Math.floor(this.options.maxEntryBytes * 0.8)).toString();
-    const type = "event" in body ? body.event.type : `desktop:${String(body.desktop.kind)}`;
+    const type = "event" in body ? body.event.type : "desktop" in body ? `desktop:${String(body.desktop.kind)}` : "request";
     return `${JSON.stringify({ time, sessionId, type, truncated: true, originalBytes: bytes, preview })}\n`;
   }
 

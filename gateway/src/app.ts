@@ -73,6 +73,29 @@ export function buildApp(): App {
   const lan = new LanServer(shares, app.log);
   const relay = new ShareBrowserRelay(browser, shares);
 
+  // 慢请求写进对话日志，排查「打开文件、发消息要等很久」：方法、地址（去掉令牌）、状态码、耗时，以及它进来时网关上同时在处理的请求数（含它自己）。
+  // 请求还没结束浏览器就断开的（关掉了预览、刷新了页面）标 aborted。事件流和 WebSocket 本来就一直连着，不算
+  let inflight = 0;
+  app.addHook("onRequest", async (req, reply) => {
+    if (req.headers.upgrade || req.headers.accept?.includes("text/event-stream")) return;
+    const start = performance.now();
+    const concurrent = ++inflight;
+    reply.raw.once("close", () => {
+      inflight--;
+      const ms = Math.round(performance.now() - start);
+      if (!config.conversationLog.slowRequestMs || ms < config.conversationLog.slowRequestMs) return;
+      conversationLog.recordRequest({
+        session: /^\/sessions\/([0-9a-f-]{36})(?:[/?]|$)/i.exec(req.url)?.[1],
+        method: req.method,
+        url: req.url.replace(/([?&](?:token|share)=)[^&]*/g, "$1…"),
+        status: reply.raw.statusCode,
+        ms,
+        inflight: concurrent,
+        ...(!reply.raw.writableFinished && { aborted: true }),
+      });
+    });
+  });
+
   if (config.apiToken) {
     app.addHook("onRequest", async (req, reply) => {
       // 网页预览靠地址里的随机 id，见 http/routes/files.ts
