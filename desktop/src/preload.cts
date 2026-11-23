@@ -18,8 +18,8 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.on("window:maximized", listener);
     return () => void ipcRenderer.removeListener("window:maximized", listener);
   },
-  // 桌面工具正在操作的窗口：按标题找采集源（见 capture.ts），网页拿 id 调 getUserMedia
-  findCaptureSource: (title: string): Promise<unknown> => ipcRenderer.invoke("capture:find", title),
+  // 桌面工具正在操作的窗口：按窗口 id、标题找采集源（见 capture.ts），网页拿采集源的 id 调 getUserMedia
+  findCaptureSource: (title: string, windowId?: string): Promise<unknown> => ipcRenderer.invoke("capture:find", title, windowId),
   // 界面上一块区域的截图（PNG base64），右侧面板 HTML 预览里选中的元素用
   captureRect: (rect: { x: number; y: number; width: number; height: number }): Promise<string | null> => ipcRenderer.invoke("window:capture", rect),
   // 文件树的上传、下载：文件在这台机器上的路径，网关在这台机器上时直接按路径复制（见 main.ts 的 files:*）

@@ -199,11 +199,12 @@ desktop:
 - 引用窗口：输入框上面的「Computer Use」（`client/src/components/DesktopPicker.tsx`，窗口来自网关的 `GET /desktop/windows`，本应用自己的去掉）第一行插入 `@桌面`，选中窗口插入 `@desktop[标题](window:窗口 id "应用名")`：和浏览器标签页的引用同一个结构（Markdown 链接前面加 @），应用名（`list-windows` 的 `app_name`）放在 Markdown 的链接标题里。窗口标题常重名、看不出是哪个程序（两个「桌面 - 文件资源管理器」），窗口关掉重开后 id 也会变，带上应用名模型对不上 id 时还能按应用找回。以前的引用没有链接标题，照样解析。输入框和消息里显示成显示器图标加「桌面 · 标题」，悬停显示应用名；桌面工具的说明里写了这两种写法指什么。
 - 不做右侧面板的桌面视图；改成对话区右上角的浮窗（`client/src/components/DesktopTargetFloat.tsx`）：
   - 显示这个会话最近操作的软件（应用图标、应用名、窗口标题），这一轮进行中带一个闪烁的点。目标由网关从手上有的东西算，不为它另外读窗口列表：参数（`--window-id`、`--app`、`launch` / `close-app` 的应用名、ref 所属快照的应用和窗口）、调用结果（`snapshot` 的 `data.app`、`data.window`）、见过的 `list-windows` 结果（按窗口 id 查标题）；只知道应用名时，和上次报的是同一个应用就沿用上次的窗口，否则只显示应用名。变了才发 `desktop_target` 事件。调用一开始按参数发，结束后按结果再发（`launch` 只在结束后发）。
-  - 点开是那个窗口的实时画面，只看不能点：桌面版用 `desktopCapturer` 按窗口标题找采集源（`desktop/src/capture.ts`；agent-desktop 的窗口 id 和采集源的 id 对不上，所以按标题），网页用 `getUserMedia`（`chromeMediaSource: desktop`）取视频流。不用 agent-desktop 的 `screenshot` 轮询：每张起一个进程，而且上游拒绝截被挡住的窗口，看预览时本应用正好挡在上面。
+  - 点开是那个窗口的实时画面，只看不能点：桌面版在 `desktopCapturer` 的窗口列表里找采集源（`desktop/src/capture.ts`）：Windows 上 agent-desktop 的窗口 id 是 `w-<HWND 十进制>`、采集源的 id 是 `window:<HWND>:0`（2026-11-23 company 上对照实测，如 `w-9579314` 对 `window:9579314:0`），有窗口 id 时只按 id 找，同名、改了标题的窗口也找得对，找不到不退回按标题；没有窗口 id（只知道应用）和 macOS（没对照过两边的 id）按标题，网页用 `getUserMedia`（`chromeMediaSource: desktop`）取视频流。不用 agent-desktop 的 `screenshot` 轮询：每张起一个进程，而且上游拒绝截被挡住的窗口，看预览时本应用正好挡在上面。
   - 放大：铺满对话消息区（`.scroll-area`，标题行下面、输入框上面，四周留 8px），画面 `object-fit: contain` 按比例缩放、不拉伸，多出来的地方留底色；按 Esc 缩回。
   - 画面缩放（同图片查看器，复用 `ImageThumb.tsx` 的 `useZoomPan`，它改成图片、视频都能用，视频按 `videoWidth` 算相对原始像素的百分比）：滚轮以鼠标处为中心缩放，双指捏合，放大后拖动平移，双击在适应大小和 2 倍之间切换，右下角工具条缩小、放大、点百分比还原；换了窗口、放大缩小浮窗时还原。采集分辨率平时上限 1920×1200，放大到超过画面原始像素（100%）时重新取一路上限 4096×2560 的流，新的就绪了才停旧的（不闪），回到适应大小再换回来；换成高分辨率后百分比变小，所以用「还在放大」判断要不要换回，免得来回切。
   - Windows 10 1903+（Windows Graphics Capture）和 macOS（ScreenCaptureKit）上被挡住的窗口也有画面，最小化的没有；macOS 要给本应用开「屏幕录制」。网页版没有窗口采集，只显示名字。
-  - 待实测：Windows、macOS 上两边的窗口标题是否一致（标题前后加了应用名时按包含匹配，只有一个匹配才用）。
+  - 最小化的窗口不在 `desktopCapturer` 的窗口列表里，按 id、按标题都找不到。2026-11-23 company（Windows）上实测：Antigravity 的窗口标题和 `list-windows` 报的一字不差，但 `IsIconic` 为真，列表里没有它（Notepad++、Everything 等最小化的窗口也都没有），浮窗显示「没找到这个窗口」，窗口还原后窗口、标题都没变，也不会重新找。所以浮窗展开着又没找到时每 3 秒再找一次，还原后自动出画面；目标带 `minimized`（来自见过的 `list-windows`）时提示写明是最小化了。找到后才最小化的，流还在，画面停在最小化之前（右上角提示）。
+  - 待实测：macOS 上两边的窗口标题是否一致（标题前后加了应用名时按包含匹配，只有一个匹配才用），agent-desktop 的窗口 id 和采集源的 id 能不能对上。
 
 ## 11. 实测清单（Windows、macOS 各一遍）
 

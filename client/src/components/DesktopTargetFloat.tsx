@@ -8,7 +8,7 @@ const capture = typeof desktop?.findCaptureSource === "function" ? desktop : und
 
 /**
  * 对话区右上角的浮窗：桌面工具（agent-desktop）正在操作哪个软件。平时是一个小条（应用图标、应用名、窗口标题），
- * 点开显示那个窗口的实时画面（桌面版按标题找到窗口，getUserMedia 取视频流，见 desktop/src/capture.ts）。
+ * 点开显示那个窗口的实时画面（桌面版找到窗口——Windows 上按窗口 id，否则按标题——getUserMedia 取视频流，见 desktop/src/capture.ts）。
  * 只看不能点：画面上的点击不转给那个窗口。放大时铺满对话消息区，画面按比例缩放、不拉伸，Esc 缩回。网页版没有窗口采集，只显示名字
  */
 export function DesktopTargetFloat({ target, running }: { target: DesktopTarget; running: boolean }) {
@@ -33,19 +33,40 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
     return () => window.removeEventListener("keydown", onKey);
   }, [open, large]);
 
-  // 按标题找窗口：标题变了（记事本保存后标题变成文件名）重新找
+  // 找窗口（Windows 上按窗口 id，否则按标题）：窗口、标题变了（记事本保存后标题变成文件名）重新找
   useEffect(() => {
     setSource(undefined);
-    if (!capture || !target.title) return;
+    if (!capture || (!target.title && !target.windowId)) return;
     let cancelled = false;
     capture
-      .findCaptureSource(target.title)
+      .findCaptureSource(target.title ?? "", target.windowId)
       .then((s) => !cancelled && setSource(s))
       .catch(() => !cancelled && setSource(null));
     return () => {
       cancelled = true;
     };
   }, [target.title, target.windowId]);
+
+  // 展开着又没找到时隔一会儿再找：最小化的窗口不在采集源列表里（Windows、macOS 都是），还原后才找得到，这时标题、窗口 id 都没变，上面不会重新找
+  useEffect(() => {
+    if (!open || source !== null || !capture || (!target.title && !target.windowId)) return;
+    const { title = "", windowId } = target;
+    let cancelled = false;
+    let busy = false;
+    const timer = setInterval(() => {
+      if (busy) return;
+      busy = true;
+      capture
+        .findCaptureSource(title, windowId)
+        .then((s) => !cancelled && s && setSource(s))
+        .catch(() => {})
+        .finally(() => (busy = false));
+    }, RETRY_FIND_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [open, source, target.title, target.windowId]);
 
   if (hidden === key) return null;
 
@@ -100,6 +121,9 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
     </div>
   );
 }
+
+/** 浮窗展开着、没找到窗口时，隔多久重新找一次 */
+const RETRY_FIND_MS = 3000;
 
 /** 采集分辨率的上限：平时用 NORMAL；放大到超过画面原始像素（100%）时换 HIGH，小字也清楚，回到适应大小再换回来，平时不多占 CPU */
 const NORMAL_MAX = { width: 1920, height: 1200 };
@@ -188,9 +212,12 @@ function LiveView({ target, source, large }: { target: DesktopTarget; source: Ca
   let message: string | null = null;
   if (!desktop) message = "网页版看不到实时画面，在桌面版里打开可以看";
   else if (!capture) message = "桌面版重启后才能看实时画面";
-  else if (!target.title) message = "还没找到这个软件的窗口";
+  else if (!target.title && !target.windowId) message = "还没找到这个软件的窗口";
   else if (source === undefined) message = "正在找窗口…";
-  else if (source === null) message = "没找到这个窗口：可能已经关了或改了标题（macOS 上还要给本应用开「屏幕录制」权限）";
+  else if (source === null)
+    message = target.minimized
+      ? "窗口最小化了，最小化的窗口取不到画面，还原后自动显示"
+      : "没找到这个窗口：可能最小化了（还原后自动显示）、已经关了或改了标题（macOS 上还要给本应用开「屏幕录制」权限）";
   else if (error) message = `取不到画面：${error}`;
   else if (ended) message = "窗口已经关闭";
   const live = !!source && !error && !ended;

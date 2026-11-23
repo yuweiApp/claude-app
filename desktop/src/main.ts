@@ -258,8 +258,10 @@ ipcMain.handle("browser:suggest", (e, query: unknown) => (fromUi(e.sender) && ty
 // 灵宠：设置里开着就在屏幕角落待着，会话完成时告诉用户（见 pet.ts）
 const pet = new Pet(path.join(root, "desktop", "assets"));
 
-// 桌面工具正在操作的窗口的实时画面（网页右上角的浮窗）：按标题找采集源，见 capture.ts
-ipcMain.handle("capture:find", (e, title: unknown) => (fromUi(e.sender) && typeof title === "string" ? findCaptureSource(title) : null));
+// 桌面工具正在操作的窗口的实时画面（网页右上角的浮窗）：按窗口 id、标题找采集源，见 capture.ts
+ipcMain.handle("capture:find", (e, title: unknown, windowId: unknown) =>
+  fromUi(e.sender) && typeof title === "string" ? findCaptureSource(title, typeof windowId === "string" ? windowId : undefined) : null,
+);
 
 // 新会话的「选择文件夹…」：系统的文件夹对话框（Windows 上是资源管理器），取消时返回 null
 ipcMain.handle("dialog:pick-folder", async (e, defaultPath: unknown) => {

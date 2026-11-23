@@ -15,8 +15,11 @@ export interface DesktopApi {
   openFolder(path: string): Promise<boolean>;
   /** 返回取消订阅的函数 */
   onMaximizedChange(callback: (maximized: boolean) => void): () => void;
-  /** 按标题找桌面上的窗口（桌面工具正在操作的那个），返回采集源，getUserMedia 用它的 id 取实时画面；找不到时 null。见 desktop/src/capture.ts */
-  findCaptureSource(title: string): Promise<CaptureSource | null>;
+  /**
+   * 找桌面上的窗口（桌面工具正在操作的那个）：Windows 上有 agent-desktop 的窗口 id 时按 id，否则按标题；返回采集源，getUserMedia 用它的 id 取实时画面；
+   * 找不到时 null。见 desktop/src/capture.ts
+   */
+  findCaptureSource(title: string, windowId?: string): Promise<CaptureSource | null>;
   /** 界面上一块区域（界面的 CSS 像素）的截图，PNG 的 base64，最长边不超过 1200px；拍不到时 null */
   captureRect(rect: { x: number; y: number; width: number; height: number }): Promise<string | null>;
   /** 文件树的上传、下载：本机路径，见 desktop/src/main.ts 的 files:* */
