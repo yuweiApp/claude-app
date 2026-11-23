@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useZoomPan, ZoomButtons } from "./ImageThumb";
-import type { DesktopTarget } from "../api";
+import { api, type DesktopTarget } from "../api";
 import { desktop, type CaptureSource } from "../desktop";
 
 /** 桌面版的窗口采集接口；网页版、还没重启过的旧版桌面外壳没有 */
@@ -18,6 +18,7 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
   const [hidden, setHidden] = useState<string | null>(null);
   const key = `${target.app}\n${target.windowId ?? ""}`;
   const [source, setSource] = useState<CaptureSource | null | undefined>(undefined);
+  const [windowState, setWindowState] = useState<WindowState | undefined>(undefined);
 
   useEffect(() => {
     if (running) setHidden(null);
@@ -47,21 +48,34 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
     };
   }, [target.title, target.windowId]);
 
-  // 展开着又没找到时隔一会儿再找：最小化的窗口不在采集源列表里（Windows、macOS 都是），还原后才找得到，这时标题、窗口 id 都没变，上面不会重新找
+  // 展开着又没找到时：马上、之后隔一会儿再找一次，最小化的窗口不在采集源列表里（Windows、macOS 都是），还原后才找得到，这时标题、窗口 id 都没变，上面不会重新找。
+  // 还是没找到时按窗口 id 在网关的窗口列表（agent-desktop 的 list-windows）里查这个窗口的状态，提示里明确说是最小化了、关了，还是在但取不到画面
   useEffect(() => {
+    setWindowState(undefined);
     if (!open || source !== null || !capture || (!target.title && !target.windowId)) return;
     const { title = "", windowId } = target;
     let cancelled = false;
     let busy = false;
-    const timer = setInterval(() => {
+    const check = async () => {
       if (busy) return;
       busy = true;
-      capture
-        .findCaptureSource(title, windowId)
-        .then((s) => !cancelled && s && setSource(s))
-        .catch(() => {})
-        .finally(() => (busy = false));
-    }, RETRY_FIND_MS);
+      try {
+        const found = await capture.findCaptureSource(title, windowId).catch(() => null);
+        if (cancelled) return;
+        if (found) return setSource(found);
+        if (!windowId) return;
+        const { windows } = await api.desktopWindows();
+        if (cancelled) return;
+        const w = windows.find((x) => x.id === windowId);
+        setWindowState(!w ? "gone" : w.minimized ? "minimized" : "shown");
+      } catch {
+        // 查不了状态（网关没开桌面工具、请求失败）：提示按不知道状态写
+      } finally {
+        busy = false;
+      }
+    };
+    void check();
+    const timer = setInterval(() => void check(), RETRY_FIND_MS);
     return () => {
       cancelled = true;
       clearInterval(timer);
@@ -115,12 +129,23 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
           </span>
         </div>
         <div className="dt-body">
-          <LiveView target={target} source={source} large={large} />
+          <LiveView target={target} source={source} windowState={windowState} large={large} />
         </div>
       </div>
     </div>
   );
 }
+
+/** 没找到窗口的画面时，网关的窗口列表里这个窗口的状态：最小化了、不在了（关了）、在而且没最小化 */
+type WindowState = "minimized" | "gone" | "shown";
+
+/** 没找到窗口的画面时的提示，按窗口的状态；unknown 是没有窗口 id（只知道标题）或查不了状态 */
+const NOT_FOUND: Record<WindowState | "unknown", string> = {
+  minimized: "窗口最小化了，最小化的窗口取不到画面，还原后自动显示",
+  gone: "这个窗口已经关了",
+  shown: "取不到这个窗口的画面（macOS 上要给本应用开「屏幕录制」权限）",
+  unknown: "没找到这个窗口：可能最小化了（还原后自动显示）、已经关了或改了标题（macOS 上还要给本应用开「屏幕录制」权限）",
+};
 
 /** 浮窗展开着、没找到窗口时，隔多久重新找一次 */
 const RETRY_FIND_MS = 3000;
@@ -142,7 +167,17 @@ function captureWindow(sourceId: string, max: { width: number; height: number })
  * 实时画面，或者为什么没有画面。画面可以缩放、平移（同图片查看器的 useZoomPan）：滚轮以鼠标处为中心缩放，双指捏合，
  * 放大后拖动平移，双击在适应大小和 2 倍之间切换，右下角的工具条缩小、放大、点百分比还原。换了窗口、放大缩小浮窗时还原
  */
-function LiveView({ target, source, large }: { target: DesktopTarget; source: CaptureSource | null | undefined; large: boolean }) {
+function LiveView({
+  target,
+  source,
+  windowState,
+  large,
+}: {
+  target: DesktopTarget;
+  source: CaptureSource | null | undefined;
+  windowState: WindowState | undefined;
+  large: boolean;
+}) {
   const z = useZoomPan();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const setVideo = useCallback(
@@ -214,10 +249,7 @@ function LiveView({ target, source, large }: { target: DesktopTarget; source: Ca
   else if (!capture) message = "桌面版重启后才能看实时画面";
   else if (!target.title && !target.windowId) message = "还没找到这个软件的窗口";
   else if (source === undefined) message = "正在找窗口…";
-  else if (source === null)
-    message = target.minimized
-      ? "窗口最小化了，最小化的窗口取不到画面，还原后自动显示"
-      : "没找到这个窗口：可能最小化了（还原后自动显示）、已经关了或改了标题（macOS 上还要给本应用开「屏幕录制」权限）";
+  else if (source === null) message = NOT_FOUND[windowState ?? "unknown"];
   else if (error) message = `取不到画面：${error}`;
   else if (ended) message = "窗口已经关闭";
   const live = !!source && !error && !ended;

@@ -116,7 +116,7 @@ export const api = {
   /** 项目里的文件和文件夹，输入框 @ 引用用；q 为空是第一层 */
   files: (cwd: string, q: string) =>
     request<{ entries: ProjectEntry[] }>("GET", `/files?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(q)}`).then((r) => r.entries),
-  desktopWindows: () => request<{ enabled: boolean; windows: { id: string; app: string; title: string }[] }>("GET", "/desktop/windows"),
+  desktopWindows: () => request<{ enabled: boolean; windows: { id: string; app: string; title: string; minimized: boolean }[] }>("GET", "/desktop/windows"),
   /** 启用着的外部浏览器（用户的 Chrome、Edge 等）和交给 Playwright 的标签页，输入框 @ 引用用；没有启用的时是空数组 */
   externalTabs: () => request<{ browsers: ExternalBrowserTabs[] }>("GET", "/external/tabs").then((r) => r.browsers),
   /** 设置页「浏览器」：每次都重新检测网关那台电脑上的浏览器 */

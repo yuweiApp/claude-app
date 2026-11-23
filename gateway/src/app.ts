@@ -144,11 +144,11 @@ export function buildApp(): App {
   browserRoutes(app, browser);
   proxyRoutes(app);
 
-  // 桌面工具（agent-desktop）能看到的窗口，输入框上面「Computer Use」引用用；本应用自己的窗口去掉
+  // 桌面工具（agent-desktop）能看到的窗口，输入框上面「Computer Use」引用用，对话区右上角的浮窗找不到画面时查窗口是不是最小化了；本应用自己的窗口去掉
   app.get("/desktop/windows", async () => {
     if (!desktopEnabled) return { enabled: false, windows: [] };
     const windows = stripOwn(await listWindows().catch(() => [])) as Awaited<ReturnType<typeof listWindows>>;
-    return { enabled: true, windows: windows.map((w) => ({ id: w.id, app: w.app_name ?? "", title: w.title ?? "" })) };
+    return { enabled: true, windows: windows.map((w) => ({ id: w.id, app: w.app_name ?? "", title: w.title ?? "", minimized: w.minimized === true })) };
   });
 
   // 桌面版外壳连上来（内置浏览器），见 browser/host.ts 和 desktop/src/browser/bridge.ts
