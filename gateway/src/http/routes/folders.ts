@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { remoteFs } from "../../ssh/host-fs.js";
-import { sshHost } from "../../ssh/hosts.js";
+import { readyHost } from "../../ssh/hosts.js";
 import { fromWindowsPath, nativePath, parseRemote, remoteUri } from "../../ssh/location.js";
 import { BadRequestError } from "../../errors.js";
 
@@ -44,12 +44,7 @@ function parseRemoteOrThrow(p: string | undefined) {
 }
 
 async function remoteFolders(hostId: string, requested: string) {
-  const host = sshHost(hostId);
-  try {
-    await host.ensureReady();
-  } catch (err) {
-    throw new BadRequestError(`连接远程主机「${host.connection.name}」失败：${err instanceof Error ? err.message : String(err)}`);
-  }
+  const host = await readyHost(hostId);
   const fs = remoteFs(host);
   const home = await fs.home();
   // 默认目录是用户在设置页填的，Windows 远端可能是 C:\… 的写法

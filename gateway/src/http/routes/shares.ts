@@ -69,21 +69,16 @@ export function shareRoutes(app: FastifyInstance, sessions: SessionManager, shar
     return view();
   });
 
-  // 设置页「公网分享」：服务器的地址、账号、端口。改了以后有公网分享时按新设置重新连（LanServer 里），清空了就停掉所有公网分享
+  // 设置页「公网分享」：用哪个 SSH 连接、公网端口、链接里的地址。改了以后有公网分享时按新设置重新连（LanServer 里），清空了就停掉所有公网分享
   const settingsView = (): ShareSettingsView => {
     const { server } = shareSettings();
     return {
       configured: shareConfigured(),
       server: {
         connectionId: server.connectionId ?? "",
-        host: server.host,
-        sshPort: server.sshPort,
-        username: server.username,
         hasPassword: Boolean(server.password),
-        identityFile: server.identityFile ?? "",
         remotePort: server.remotePort,
         publicHost: server.publicHost ?? "",
-        fingerprint: server.fingerprint ?? null,
       },
       tunnel: lan.tunnel.view,
     };
@@ -104,15 +99,10 @@ export function shareRoutes(app: FastifyInstance, sessions: SessionManager, shar
   app.post<{ Body: ShareSettingsInput }>("/share/settings/test", async (req): Promise<ShareTestResult> => {
     const next = settingsFrom(req.body, true);
     const live = shareSettings();
-    const same = (["connectionId", "host", "sshPort", "username", "remotePort", "publicHost"] as const).every((k) => (live.server[k] ?? "") === (next.server[k] ?? ""));
+    const same = (["connectionId", "remotePort", "publicHost"] as const).every((k) => (live.server[k] ?? "") === (next.server[k] ?? ""));
     // 测的就是现在公网分享在用的服务器和端口：另开一条会和它抢端口，直接用（没连着就连）它，结果也就是公网分享的状态
-    if (same && (shares.list().some((s) => s.public) || lan.tunnel.view.status === "ready")) {
-      const state = await lan.tunnel.ensure();
-      if (state.status === "ready") return { ok: true, url: state.url ?? "", fingerprint: live.server.fingerprint ?? "" };
-      return { ok: false, error: state.error ?? "连接超时", ...(state.fix ? { fix: state.fix } : {}) };
-    }
-    const { state, fingerprint } = await probeServer(next.server, app.log);
-    if (state.status === "ready") return { ok: true, url: state.url ?? "", fingerprint: fingerprint ?? "" };
+    const state = same && (shares.list().some((s) => s.public) || lan.tunnel.view.status === "ready") ? await lan.tunnel.ensure() : await probeServer(next.server, app.log);
+    if (state.status === "ready") return { ok: true, url: state.url ?? "" };
     return { ok: false, error: state.error ?? "连接超时", ...(state.fix ? { fix: state.fix } : {}) };
   });
 

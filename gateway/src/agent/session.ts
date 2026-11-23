@@ -17,13 +17,12 @@ import { ConflictError } from "../errors.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
 import type { Attachment, ContextUsage, GatewayEvent, GoalState, MessagePriority, SessionState } from "../shared/types.js";
-import { buildUserContent, imageType, type SelectedElementContent } from "./attachments.js";
+import { buildUserContent, type SelectedElementContent } from "./attachments.js";
 import { goalFeedback, goalOutput, recordedGoal } from "./goal.js";
 import { parseRemote } from "../ssh/location.js";
 import { getConnection } from "../ssh/connections.js";
-import { existingHost, sshHost } from "../ssh/hosts.js";
-import { uploadAttachments } from "../ssh/remote-attachments.js";
-import { syncSession } from "../ssh/transcripts.js";
+import { existingHost } from "../ssh/hosts.js";
+import { sessionHome } from "./session-home.js";
 import { InputQueue } from "./input-queue.js";
 import { listModels } from "./models.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -210,9 +209,8 @@ export class AgentSession {
    * 有待确认的权限时一律 next。空闲时不用，消息立刻开始新的一轮。draft：网页输入框的草稿，以 next 排队时记下，撤回编辑时原样还回去
    */
   async send(text: string, attachments: Attachment[] = [], elements: SelectedElementContent[] = [], priority?: MessagePriority, draft?: unknown): Promise<string> {
-    // 远程会话：图片照旧放进消息，其他文件先传到远端
-    const remote = parseRemote(this.cwd);
-    const remotePaths = remote ? await uploadAttachments(sshHost(remote.host), attachments.filter((a) => !imageType(a))) : undefined;
+    // 远程会话的附件先传到远端
+    const remotePaths = await sessionHome(this.id, this.cwd).uploadAttachments(attachments);
     const content = await buildUserContent(text, attachments, elements, remotePaths);
     return this.push(content, priority, draft);
   }
@@ -356,10 +354,8 @@ export class AgentSession {
   }
 
   /** 远程会话的记录在远端：读之前同步到本机（连着时） */
-  private async syncRecord(): Promise<void> {
-    const remote = parseRemote(this.cwd);
-    const host = remote ? existingHost(remote.host) : undefined;
-    if (host?.isReady) await syncSession(host, this.id).catch(() => undefined);
+  private syncRecord(): Promise<void> {
+    return sessionHome(this.id, this.cwd).refresh();
   }
 
   private updateGoal(goal: GoalState | null): void {

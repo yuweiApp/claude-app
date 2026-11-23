@@ -5,46 +5,30 @@ import { refreshSshConnections, useSshConnections } from "../state/sshConnection
 import { Select } from "./Select";
 
 interface Draft {
-  /** 设置「SSH 连接」里的连接；空是手动填 */
+  /** 设置「SSH 连接」里的连接；空是不用公网分享 */
   connectionId: string;
-  host: string;
-  sshPort: string;
-  username: string;
   /** 新填的密码；空是不改 */
   password: string;
   /** 点了「清除」，保存时清掉已存的密码 */
   clearPassword: boolean;
-  identityFile: string;
   remotePort: string;
   publicHost: string;
-  /** 点了「重新记录」，保存时忘掉记下的主机密钥指纹 */
-  forgetFingerprint: boolean;
 }
 
 const draftOf = (v: ShareSettingsView): Draft => ({
   connectionId: v.server.connectionId,
-  host: v.server.host,
-  sshPort: String(v.server.sshPort),
-  username: v.server.username,
   password: "",
   clearPassword: false,
-  identityFile: v.server.identityFile,
   remotePort: String(v.server.remotePort),
   publicHost: v.server.publicHost,
-  forgetFingerprint: false,
 });
 
 function inputOf(d: Draft): ShareSettingsInput {
   return {
     connectionId: d.connectionId,
-    host: d.host.trim(),
-    sshPort: Number(d.sshPort),
-    username: d.username.trim(),
     ...(d.clearPassword ? { password: "" } : d.password ? { password: d.password } : {}),
-    identityFile: d.identityFile.trim(),
     remotePort: Number(d.remotePort),
     publicHost: d.publicHost.trim(),
-    ...(d.forgetFingerprint ? { forgetFingerprint: true } : {}),
   };
 }
 
@@ -52,15 +36,10 @@ function dirtyOf(d: Draft, v: ShareSettingsView): boolean {
   const saved = draftOf(v);
   return (
     d.connectionId !== saved.connectionId ||
-    d.host.trim() !== saved.host ||
-    d.sshPort.trim() !== saved.sshPort ||
-    d.username.trim() !== saved.username ||
     Boolean(d.password) ||
     d.clearPassword ||
-    d.identityFile.trim() !== saved.identityFile ||
     d.remotePort.trim() !== saved.remotePort ||
-    d.publicHost.trim() !== saved.publicHost ||
-    d.forgetFingerprint
+    d.publicHost.trim() !== saved.publicHost
   );
 }
 
@@ -94,7 +73,7 @@ export function SharePage() {
   useEffect(() => {
     if (status !== "starting") return;
     const timer = setInterval(() => {
-      api.shareSettings().then((v) => setView((prev) => (prev ? { ...prev, tunnel: v.tunnel, server: { ...prev.server, fingerprint: v.server.fingerprint } } : v)), () => undefined);
+      api.shareSettings().then((v) => setView((prev) => (prev ? { ...prev, tunnel: v.tunnel } : v)), () => undefined);
     }, 2000);
     return () => clearInterval(timer);
   }, [status]);
@@ -137,8 +116,8 @@ export function SharePage() {
       .then(
         (r) => {
           setResult(r);
-          // 第一次连上时网关记下了主机密钥指纹；测的是公网分享在用的服务器时，下面「当前」的状态也跟着变了
-          void api.shareSettings().then((v) => setView((prev) => (prev ? { ...prev, tunnel: v.tunnel, server: { ...prev.server, fingerprint: v.server.fingerprint } } : v)), () => undefined);
+          // 测的是公网分享在用的服务器时，下面「当前」的状态也跟着变了
+          void api.shareSettings().then((v) => setView((prev) => (prev ? { ...prev, tunnel: v.tunnel } : v)), () => undefined);
         },
         (err: Error) => setResult({ ok: false, error: err.message }),
       )
@@ -171,8 +150,7 @@ export function SharePage() {
   useEffect(() => {
     void refreshSshConnections();
   }, []);
-  const manual = !draft?.connectionId;
-  const filled = Boolean(draft && (draft.connectionId || draft.host.trim() || draft.username.trim()));
+  const filled = Boolean(draft?.connectionId);
   const picked = connections.find((c) => c.id === draft?.connectionId);
   const passwordInput = draft && view && (
     <span className="proxy-password">
@@ -191,9 +169,9 @@ export function SharePage() {
     </span>
   );
   const connectionOptions = [
-    { value: "", label: "手动填写" },
+    { value: "", label: "不用公网分享" },
     ...connections.map((c) => ({ value: c.id, label: c.name })),
-    // 选的连接被删了：留着这一项，免得显示成手动填写
+    // 选的连接被删了：留着这一项，免得显示成不用公网分享
     ...(draft?.connectionId && !picked ? [{ value: draft.connectionId, label: "（已删除的连接）" }] : []),
   ];
 
@@ -203,7 +181,7 @@ export function SharePage() {
         <div className="settings-title">
           <h1>公网分享</h1>
           <p>
-            配置一台有公网地址的服务器后，会话菜单里才有「分享到公网」。可以直接用「SSH 连接」里的连接，也可以手动填。分享时网关 SSH 登录服务器，在服务器上开一个端口转到本机（同 ssh -R），访客打开 http://&lt;服务器&gt;:&lt;公网端口&gt;/share/… 进来。选「手动填写」、地址和用户名都清空后保存，就是不用公网分享。
+            选一台有公网地址的服务器（在「SSH 连接」里添加）后，会话菜单里才有「分享到公网」。分享时网关 SSH 登录服务器，在服务器上开一个端口转到本机（同 ssh -R），访客打开 http://&lt;服务器&gt;:&lt;公网端口&gt;/share/… 进来。选「不用公网分享」后保存，就停掉所有公网分享。
           </p>
         </div>
       </header>
@@ -222,42 +200,12 @@ export function SharePage() {
                       ? picked
                         ? `${picked.address ?? picked.host}：地址、账号、密钥、跳板都按这个连接的配置；主机密钥要在「SSH 连接」里信任过`
                         : "这个连接已经在「SSH 连接」里删掉了，重新选一个"
-                      : "用设置「SSH 连接」里的连接，或者在下面手动填服务器"}
+                      : "用设置「SSH 连接」里的哪个连接；服务器要先在那里添加、连上一次确认主机密钥"}
                   </span>
                 </span>
                 <Select aria-label="用哪个 SSH 连接" value={draft.connectionId} options={connectionOptions} onChange={(v) => update({ connectionId: v })} />
               </div>
-              {manual ? (
-                <>
-                  <div className="appearance-row proxy-field-row">
-                    <label className="proxy-field">
-                      <span className="appearance-row-label">服务器地址</span>
-                      <input className="mono" required={filled} value={draft.host} placeholder="203.0.113.10 或 example.com" spellCheck={false} autoComplete="off" onChange={(e) => update({ host: e.target.value })} />
-                    </label>
-                    <label className="proxy-field share-port-field">
-                      <span className="appearance-row-label">SSH 端口</span>
-                      <input className="mono" required inputMode="numeric" value={draft.sshPort} onChange={(e) => update({ sshPort: e.target.value })} />
-                    </label>
-                  </div>
-                  <div className="appearance-row proxy-field-row">
-                    <label className="proxy-field">
-                      <span className="appearance-row-label">用户名</span>
-                      <input required={filled} value={draft.username} placeholder="root" autoComplete="off" spellCheck={false} onChange={(e) => update({ username: e.target.value })} />
-                    </label>
-                    <label className="proxy-field">
-                      <span className="appearance-row-label">密码</span>
-                      {passwordInput}
-                    </label>
-                  </div>
-                  <div className="appearance-row proxy-field-row">
-                    <label className="proxy-field">
-                      <span className="appearance-row-label">私钥文件</span>
-                      <span className="appearance-row-desc">选填，网关这台电脑上的路径；也会试 ssh-agent 里的密钥</span>
-                      <input className="mono" value={draft.identityFile} placeholder="~/.ssh/id_ed25519" spellCheck={false} autoComplete="off" onChange={(e) => update({ identityFile: e.target.value })} />
-                    </label>
-                  </div>
-                </>
-              ) : (
+              {filled && (
                 <div className="appearance-row proxy-field-row">
                   <label className="proxy-field">
                     <span className="appearance-row-label">密码</span>
@@ -275,24 +223,9 @@ export function SharePage() {
                 <label className="proxy-field">
                   <span className="appearance-row-label">链接里的地址</span>
                   <span className="appearance-row-desc">选填，有域名时填；不填用服务器地址</span>
-                  <input className="mono" value={draft.publicHost} placeholder={(manual ? draft.host : picked?.address?.replace(/^.*@/, "").replace(/:\d+$/, "")) || "share.example.com"} spellCheck={false} autoComplete="off" onChange={(e) => update({ publicHost: e.target.value })} />
+                  <input className="mono" value={draft.publicHost} placeholder={picked?.address?.replace(/^.*@/, "").replace(/:\d+$/, "") || "share.example.com"} spellCheck={false} autoComplete="off" onChange={(e) => update({ publicHost: e.target.value })} />
                 </label>
               </div>
-              {manual && (
-                <div className="appearance-row">
-                  <span className="appearance-row-text">
-                    <span className="appearance-row-label">主机密钥</span>
-                    <span className="appearance-row-desc mono">
-                      {draft.forgetFingerprint ? "保存后重新记录（下次连上时）" : (view.server.fingerprint ?? "还没连过，第一次连上时记下；之后服务器的密钥变了就不连")}
-                    </span>
-                  </span>
-                  {view.server.fingerprint && !draft.forgetFingerprint && (
-                    <button type="button" className="btn-small" onClick={() => update({ forgetFingerprint: true })}>
-                      重新记录
-                    </button>
-                  )}
-                </div>
-              )}
               <div className="appearance-row">
                 <span className="appearance-row-text">
                   <span className="appearance-row-desc">

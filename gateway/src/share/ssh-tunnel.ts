@@ -1,18 +1,15 @@
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
-import os from "node:os";
-import path from "node:path";
 import type { FastifyBaseLogger } from "fastify";
-import ssh2, { type AnyAuthMethod, type AuthHandlerMiddleware, type ConnectConfig } from "ssh2";
+import ssh2, { type ConnectConfig } from "ssh2";
 import { getConnection } from "../ssh/connections.js";
 import { collect, connectOptions, type ExecResult } from "../ssh/host.js";
 import { hostKeyOf, knownHostsHas } from "../ssh/host-key.js";
 import { existingHost } from "../ssh/hosts.js";
 import { resolveTarget } from "../ssh/ssh-config.js";
 import type { ShareFixResult, ShareTunnelState } from "../shared/types.js";
-import { rememberFingerprint, type ShareServer } from "./share-settings.js";
+import type { ShareServer } from "./share-settings.js";
 
 /** 入口自检用的路径：分享入口直接回 ENTRY_ID，网关从外面访问公网地址，拿到的一样才算真的通了 */
 export const ENTRY_CHECK_PATH = "/.well-known/claude-app-share";
@@ -21,19 +18,16 @@ export const ENTRY_ID = randomBytes(12).toString("hex");
 
 /** 等连上、开端口、自检最多等多久 */
 const READY_TIMEOUT_MS = 25_000;
-const CONNECT_TIMEOUT_MS = 15_000;
 const CHECK_TIMEOUT_MS = 8_000;
-const KEEPALIVE_INTERVAL_MS = 15_000;
-const KEEPALIVE_COUNT_MAX = 3;
 /** 连上过又断了：隔多久重连，逐次加长，一直重试到没有公网分享 */
 const RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 30_000, 60_000];
 /** 服务器上的端口开不了时（上一条连接服务器还没发现断了、测试连接刚好占着）：隔多久再试、最多再试几次，期间状态一直是 starting */
 const BIND_RETRY_MS = 2_000;
 const BIND_RETRIES = 4;
 
-/** 链接里的主机：IPv6 加方括号 */
-export function publicUrlOf(server: ShareServer): string {
-  const host = server.publicHost || server.host;
+/** 访客打开的地址：设置里的「链接里的地址」，没填用连接解析出的主机；IPv6 加方括号 */
+export function publicUrlOf(server: ShareServer, sshHost: string): string {
+  const host = server.publicHost || sshHost;
   const bare = host.includes(":") && !host.startsWith("[") && !/^[^:]+:\d+$/.test(host) ? `[${host}]` : host;
   // 对外地址里自己写了端口（经 nginx 等转过的）就不再拼
   return /:\d+$/.test(bare) ? `http://${bare}` : `http://${bare}:${server.remotePort}`;
@@ -53,9 +47,6 @@ export class SshShareTunnel {
   private retries = 0;
   /** 这一轮开端口失败后已经重试了几次 */
   private bindRetries = 0;
-  /** 这次连接记下的主机密钥指纹（测试连接时回给设置页） */
-  fingerprint: string | null = null;
-
   constructor(
     private readonly localPort: () => number,
     private readonly server: () => ShareServer,
@@ -133,14 +124,14 @@ export class SshShareTunnel {
 
   private start(retrying = false): void {
     const server = this.server();
-    if (!server.connectionId && (!server.host || !server.username)) {
-      this.set({ status: "error", url: null, error: "设置里「公网分享」还没配置服务器" });
+    if (!server.connectionId) {
+      this.set({ status: "error", url: null, error: "设置里「公网分享」还没选 SSH 连接" });
       return;
     }
     this.set({ status: "starting", url: null, error: null });
     const client = new ssh2.Client();
     this.client = client;
-    // 用 SSH 连接时要先按 ~/.ssh/config 解析出地址、账号、密钥、跳板
+    // 先按 ~/.ssh/config 解析出连接的地址、账号、密钥、跳板
     void dialOf(server).then(
       (dial) => {
         if (this.client === client) this.connect(client, server, dial, retrying);
@@ -150,7 +141,7 @@ export class SshShareTunnel {
   }
 
   private connect(client: ssh2.Client, server: ShareServer, dial: Dial, retrying: boolean): void {
-    const url = publicUrlOf({ ...server, host: dial.host });
+    const url = publicUrlOf(server, dial.host);
     const where = dial.where;
     this.log.info({ server: where, remotePort: server.remotePort }, "正在连服务器（公网分享）");
     let ready = false;
@@ -220,7 +211,6 @@ export class SshShareTunnel {
     });
 
     const hostVerifier = (blob: Buffer, verify: (ok: boolean) => void) => {
-      this.fingerprint = hostKeyOf(blob).fingerprint;
       void dial.verify(blob).then((problem) => {
         hostKeyError = problem;
         verify(!problem);
@@ -234,7 +224,7 @@ export class SshShareTunnel {
   }
 }
 
-/** 怎么连服务器：手动填的，或者设置「SSH 连接」里的连接 */
+/** 怎么连服务器（设置「SSH 连接」里的连接） */
 interface Dial {
   /** 报错、日志里的「哪台」 */
   where: string;
@@ -247,41 +237,14 @@ interface Dial {
   config(hostVerifier: (blob: Buffer, verify: (ok: boolean) => void) => void): ConnectConfig;
 }
 
-async function dialOf(server: ShareServer): Promise<Dial> {
-  if (server.connectionId) return connectionDial(server, server.connectionId);
-  return {
-    where: `${server.username}@${server.host}:${server.sshPort}`,
-    host: server.host,
-    authHint: "用户名、密码（或私钥）不对，或者服务器不接受这种登录方式",
-    // 第一次连上时记下指纹，之后不一样就不连
-    verify: async (blob) => {
-      const { fingerprint } = hostKeyOf(blob);
-      if (server.fingerprint && server.fingerprint !== fingerprint) {
-        return `${server.host} 的主机密钥和第一次连接时记下的不一样（原来 ${server.fingerprint}，现在 ${fingerprint}），没有连接；确认是同一台服务器后在设置里点「重新记录」`;
-      }
-      if (!server.fingerprint) rememberFingerprint(server.host, server.sshPort, fingerprint);
-      return null;
-    },
-    config: (hostVerifier) => ({
-      host: server.host,
-      port: server.sshPort,
-      username: server.username,
-      readyTimeout: CONNECT_TIMEOUT_MS,
-      keepaliveInterval: KEEPALIVE_INTERVAL_MS,
-      keepaliveCountMax: KEEPALIVE_COUNT_MAX,
-      hostVerifier,
-      authHandler: authMethods(server),
-    }),
-  };
-}
-
 /**
- * 用「SSH 连接」里的连接：地址、账号、密钥、ProxyJump 都按 ~/.ssh/config 和那边的配置（同 SshHost 的连接参数）；
+ * 地址、账号、密钥、ProxyJump 都按 ~/.ssh/config 和那边的配置（同 SshHost 的连接参数）；
  * 主机密钥要是那边信任过的，或者本机 known_hosts 里记着的。密码先用「公网分享」里填的，没填用这次在「SSH 连接」里输入的
  */
-async function connectionDial(server: ShareServer, id: string): Promise<Dial> {
-  const conn = getConnection(id);
-  if (!conn) throw new Error("「公网分享」选的 SSH 连接不存在了（可能已经在设置里删掉了），重新选一个");
+async function dialOf(server: ShareServer): Promise<Dial> {
+  const id = server.connectionId;
+  const conn = id ? getConnection(id) : undefined;
+  if (!id || !conn) throw new Error("「公网分享」选的 SSH 连接不存在了（可能已经在设置里删掉了），重新选一个");
   const target = await resolveTarget(conn);
   const password = server.password || existingHost(id)?.sessionPassword;
   return {
@@ -455,43 +418,11 @@ export async function fixGatewayPorts(server: ShareServer, log: FastifyBaseLogge
   }
 }
 
-/** 认证顺序：设置里的私钥 → ssh-agent → 密码（密码登录和键盘交互都用它） */
-function authMethods(server: ShareServer): AuthHandlerMiddleware {
-  const username = server.username;
-  const methods: AnyAuthMethod[] = [];
-  if (server.identityFile) {
-    try {
-      // 设置页里可以写 ~/.ssh/…
-      const file = server.identityFile.replace(/^~(?=$|[\\/])/, os.homedir());
-      const key = readFileSync(path.resolve(file));
-      if (!(ssh2.utils.parseKey(key) instanceof Error)) methods.push({ type: "publickey", username, key });
-    } catch {
-      // 读不了的跳过，靠后面的方式
-    }
-  }
-  const agent = process.env.SSH_AUTH_SOCK || (process.platform === "win32" ? "\\\\.\\pipe\\openssh-ssh-agent" : undefined);
-  if (agent) methods.push({ type: "agent", username, agent });
-  const password = server.password;
-  if (password) {
-    methods.push({ type: "password", username, password });
-    methods.push({ type: "keyboard-interactive", username, prompt: (_n, _i, _l, prompts, finish) => finish(prompts.map(() => password)) });
-  }
-  let i = 0;
-  return (left, _partial, next) => {
-    while (i < methods.length) {
-      const m = methods[i++]!;
-      const kind = m.type === "agent" ? "publickey" : m.type;
-      if (!left || left.includes(kind)) return next(m);
-    }
-    next(false as unknown as AnyAuthMethod);
-  };
-}
-
 /**
  * 设置页「测试连接」：用填的配置连一次、开端口、自检，然后断开。本机的分享入口可能没在监听，
  * 进来的连接接到一个临时的本机服务上，它只回自检
  */
-export async function probeServer(server: ShareServer, log: FastifyBaseLogger): Promise<{ state: ShareTunnelState; fingerprint: string | null }> {
+export async function probeServer(server: ShareServer, log: FastifyBaseLogger): Promise<ShareTunnelState> {
   const stub = http.createServer((req, res) => {
     res.writeHead(req.url === ENTRY_CHECK_PATH ? 200 : 404, { "content-type": "application/json" });
     res.end(JSON.stringify(req.url === ENTRY_CHECK_PATH ? { id: ENTRY_ID } : { error: "not found" }));
@@ -500,8 +431,7 @@ export async function probeServer(server: ShareServer, log: FastifyBaseLogger): 
   const port = (stub.address() as net.AddressInfo).port;
   const tunnel = new SshShareTunnel(() => port, () => server, log);
   try {
-    const state = await tunnel.ensure();
-    return { state, fingerprint: tunnel.fingerprint };
+    return await tunnel.ensure();
   } finally {
     tunnel.stop();
     stub.closeAllConnections();

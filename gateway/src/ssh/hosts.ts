@@ -16,6 +16,17 @@ export function sshHost(id: string): SshHost {
   return host;
 }
 
+/** 连上、准备好（第一次要在远端装 Claude Code）；连不上时报 400，带上原因 */
+export async function readyHost(id: string): Promise<SshHost> {
+  const host = sshHost(id);
+  try {
+    await host.ensureReady();
+  } catch (err) {
+    throw new BadRequestError(`连接远程主机「${host.connection.name}」失败：${err instanceof Error ? err.message : String(err)}`);
+  }
+  return host;
+}
+
 /** 已经建过的（不新建） */
 export function existingHost(id: string): SshHost | undefined {
   return hosts.get(id);

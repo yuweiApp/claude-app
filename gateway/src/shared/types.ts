@@ -766,24 +766,17 @@ export interface ShareTunnelState {
 
 /** 设置页「公网分享」：GET /share/settings（密码不回给网页，只说有没有） */
 export interface ShareSettingsView {
-  /** 选了 SSH 连接，或者填了服务器地址和用户名：会话菜单里才有「分享到公网」 */
+  /** 选了 SSH 连接：会话菜单里才有「分享到公网」 */
   configured: boolean;
   server: {
-    /** 用设置「SSH 连接」里的哪个连接（地址、账号、密钥、跳板都按它的）；空是下面手动填的 */
+    /** 用设置「SSH 连接」里的哪个连接（地址、账号、密钥、跳板、主机密钥都按它的）；空是不用公网分享 */
     connectionId: string;
-    /** 服务器地址（IP 或域名），SSH 连它 */
-    host: string;
-    sshPort: number;
-    username: string;
+    /** 存了这个连接登录用的密码 */
     hasPassword: boolean;
-    /** 私钥文件的路径（选填，只存路径） */
-    identityFile: string;
     /** 服务器上对外开的端口，访客连它 */
     remotePort: number;
-    /** 拼链接用的地址（有域名时填），空时用 host */
+    /** 拼链接用的地址（有域名时填），空时用连接的主机 */
     publicHost: string;
-    /** 第一次连上时记下的主机密钥指纹（SHA256:…），之后不一样就不连 */
-    fingerprint: string | null;
   };
   /** 现在的公网隧道 */
   tunnel: ShareTunnelState;
@@ -791,21 +784,16 @@ export interface ShareSettingsView {
 
 /** PUT /share/settings、POST /share/settings/test 的请求体；password 不传是沿用已存的，传空串是清除。没选连接、地址和用户名都空是不用公网分享 */
 export interface ShareSettingsInput {
-  /** 设置「SSH 连接」里的连接 id；空串是手动填 */
-  connectionId?: string;
-  host: string;
-  sshPort: number;
-  username: string;
+  /** 设置「SSH 连接」里的连接 id；空串是不用公网分享 */
+  connectionId: string;
+  /** 不传是不改，空串是清掉 */
   password?: string;
-  identityFile: string;
   remotePort: number;
   publicHost: string;
-  /** true：忘掉记下的主机密钥指纹，下次连上时重新记 */
-  forgetFingerprint?: boolean;
 }
 
 /** POST /share/settings/test：连上服务器、开端口、从外面访问一次，然后断开 */
-export type ShareTestResult = { ok: true; url: string; fingerprint: string } | { ok: false; error: string; fix?: ShareTunnelState["fix"] };
+export type ShareTestResult = { ok: true; url: string } | { ok: false; error: string; fix?: ShareTunnelState["fix"] };
 
 /** POST /share/settings/fix-gateway-ports：在服务器上开启 GatewayPorts；自动开不了时 manual 是手动执行的命令 */
 export type ShareFixResult = { ok: true; message: string } | { ok: false; error: string; manual?: string };
