@@ -1,4 +1,4 @@
-import type { DownloadInfo, TabEvent } from "./host.js";
+import type { TabEvent } from "./host.js";
 import type { RunResult } from "./repl.js";
 
 /**
@@ -17,38 +17,34 @@ export type ToWorker =
   | ({ type: "call"; id: number } & ReplCall)
   /** 取消这次调用（模型那边取消了工具调用） */
   | { type: "abort"; id: number }
-  /** 回复 cdpOpen：开好了给连接编号，没开成给原因（比如桌面版没在运行） */
-  | { type: "cdpOpened"; req: number; conn?: number; error?: string }
+  /** 回复 request：做成了给 value（见 WorkerRequest），没做成给原因 */
+  | { type: "reply"; req: number; value?: unknown; error?: string }
   /** 桌面版发来的 CDP 消息 */
   | { type: "cdp"; conn: number; message: object }
   /** 这条通道断了（桌面版断开、同一个会话又开了新的） */
   | { type: "cdpClosed"; conn: number; reason?: string }
   /** 桌面版发来的标签页变化 */
-  | { type: "tabEvent"; event: TabEvent }
-  /** 回复 downloads：这个会话的下载，或者没取到的原因 */
-  | { type: "downloads"; req: number; downloads?: DownloadInfo[]; error?: string }
-  /** 回复 keep：留下的标签页（没有 AI 操作过的标签页时是 null），或者没留成的原因 */
-  | { type: "kept"; req: number; tab?: { title: string; url: string } | null; error?: string }
-  /** 回复 save：写入的路径，或者没写成的原因 */
-  | { type: "saved"; req: number; path?: string; error?: string }
-  /** 回复 read：文件内容，或者没读到的原因 */
-  | { type: "fileData"; req: number; data?: Uint8Array; error?: string };
+  | { type: "tabEvent"; event: TabEvent };
+
+/** worker 要主线程做的事，主线程做完回 reply，value 是注释里写的 */
+export type WorkerRequest =
+  /** 开一条到内置浏览器的 CDP 通道：value 是连接编号（没开成的原因比如桌面版没在运行） */
+  | { method: "cdpOpen" }
+  /** REPL 的 downloads()：value 是这个会话的下载和进度（DownloadInfo[]） */
+  | { method: "downloads" }
+  /** REPL 的 keepTab()：把这个会话里 AI 最近操作的标签页留给用户，value 是它（没有 AI 操作过的标签页时是 null） */
+  | { method: "keep" }
+  /** REPL 的 saveFile(name, data)：写进会话的工作目录（data 已在 worker 里转成 Uint8Array 或字符串），value 是写入的路径 */
+  | { method: "save"; name: string; data: Uint8Array | string }
+  /** REPL 的 readFile(name)：读会话工作目录里的文件，value 是内容（Uint8Array） */
+  | { method: "read"; name: string };
 
 /** worker 发给主线程的 */
 export type ToMain =
   | { type: "result"; id: number; output: RunResult }
   | { type: "error"; id: number; message: string }
-  /** 要开一条到内置浏览器的 CDP 通道 */
-  | { type: "cdpOpen"; req: number }
+  | ({ type: "request"; req: number } & WorkerRequest)
   /** 发给桌面版的 CDP 消息 */
   | { type: "cdp"; conn: number; message: object }
   /** 关掉这条通道 */
-  | { type: "cdpClose"; conn: number }
-  /** REPL 的 downloads()：问这个会话的下载和进度 */
-  | { type: "downloads"; req: number }
-  /** REPL 的 keepTab()：把这个会话里 AI 最近操作的标签页留给用户 */
-  | { type: "keep"; req: number }
-  /** REPL 的 saveFile(name, data)：主线程把数据写进会话的工作目录（data 已在 worker 里转成 Uint8Array 或字符串） */
-  | { type: "save"; req: number; name: string; data: Uint8Array | string }
-  /** REPL 的 readFile(name)：主线程读会话工作目录里的文件 */
-  | { type: "read"; req: number; name: string };
+  | { type: "cdpClose"; conn: number };

@@ -3,7 +3,7 @@
  * 这是对 loop-guard.ts（在循环里插检查）的另一种思路，网关里目前没有用，这里只演示原理和它的副作用。
  *
  * 运行（在 gateway 目录下）：
- *   npx tsx src/example/watchdog-inspector.ts
+ *   npx tsx examples/watchdog-inspector.ts
  *
  * 背景：
  * - 主线程被同步代码占住时，主线程上的任何 JS（计时器、事件回调）都没机会执行，所以「自己检查自己」只能靠插进代码里的检查。

@@ -7,6 +7,7 @@ import { pluginMarketplaces } from "../config-file.js";
 import type { MarketPlugin, MarketPluginPage } from "../shared/types.js";
 import { clearCapabilitiesCache } from "./capabilities.js";
 import { importedPluginNames } from "./extensions.js";
+import { BadRequestError } from "../errors.js";
 
 /**
  * 插件市场：交给 SDK 自带的 Claude Code 命令行（claude plugin …）做，CLAUDE_CONFIG_DIR 是网关的配置目录。
@@ -18,8 +19,6 @@ import { importedPluginNames } from "./extensions.js";
 /** 克隆市场、拉取插件可能比较久 */
 const CLI_TIMEOUT_MS = 5 * 60_000;
 const LIST_TTL_MS = 10 * 60_000;
-
-export class PluginMarketError extends Error {}
 
 /** SDK 自带的 claude 可执行文件：和 SDK 一样按平台包名找，Linux 先 glibc 再 musl */
 function claudeExecutable(): string {
@@ -35,7 +34,7 @@ function claudeExecutable(): string {
       // 没装这个平台包，试下一个
     }
   }
-  throw new PluginMarketError(`找不到 Claude Code 可执行文件（${candidates.join("、")}）`);
+  throw new BadRequestError(`找不到 Claude Code 可执行文件（${candidates.join("、")}）`);
 }
 
 /** 跑 claude plugin …，返回 stdout；退出码非 0 时 reject，带上 stdout、stderr */
@@ -72,12 +71,12 @@ async function cliJson(args: string[]): Promise<CliResult> {
     result = parse(await cli([...args, "--json"]));
   } catch (err) {
     const e = err as Error & { stdout?: string; stderr?: string; killed?: boolean };
-    if (e.killed) throw new PluginMarketError("Claude Code 超过 5 分钟没有完成");
+    if (e.killed) throw new BadRequestError("Claude Code 超过 5 分钟没有完成");
     result = parse(e.stdout);
-    if (!result) throw new PluginMarketError(e.stderr?.trim() || e.message);
+    if (!result) throw new BadRequestError(e.stderr?.trim() || e.message);
   }
-  if (!result) throw new PluginMarketError("Claude Code 没有返回结果");
-  if (result.outcome !== "ok") throw new PluginMarketError(result.message ?? `失败（${result.outcome}）`);
+  if (!result) throw new BadRequestError("Claude Code 没有返回结果");
+  if (result.outcome !== "ok") throw new BadRequestError(result.message ?? `失败（${result.outcome}）`);
   return result;
 }
 
@@ -94,14 +93,12 @@ const sameRepo = (a: string, b: string) => {
   return normalize(a) === normalize(b);
 };
 
-/** 配置里写的是地址（git 仓库）还是 Claude Code 内置市场的名称 */
+/**
+ * 配置里写的是地址（git 仓库）还是 Claude Code 内置市场的名称（anthropic-plugin-directory：不在 marketplace list 里，不用 add，
+ * 列表、安装、更新照常用名称；不用登录，数据由 Claude Code 从网上取，缓存在配置目录的 plugins/ 下）
+ */
 const isUrl = (source: string) => source.includes("://");
 
-/**
- * Claude Code 内置的插件目录：不在 marketplace list 里，不用 add，列表、安装、更新照常用名称。
- * 不用登录（没有任何凭据时也能列出、安装），数据由 Claude Code 从网上取，缓存在配置目录的 plugins/ 下
- */
-const BUILTIN_DIRECTORY = "anthropic-plugin-directory";
 
 /** 配置里的 git 市场没加过的先加（git 克隆）；返回配置里这些市场，顺序同配置 */
 async function marketplaces(): Promise<Marketplace[]> {
@@ -337,14 +334,14 @@ function changed(id: string, installed?: boolean): void {
 const VALID_ID = /^[\w.-]+@[\w.-]+$/;
 
 function checkId(id: string): void {
-  if (!VALID_ID.test(id)) throw new PluginMarketError(`插件不合法：${id}`);
+  if (!VALID_ID.test(id)) throw new BadRequestError(`插件不合法：${id}`);
 }
 
 /** 安装（插件名@市场名）。导入了同名插件的不装，两个同名插件的技能、MCP 服务器名称会冲突 */
 export async function installMarketPlugin(id: string): Promise<void> {
   checkId(id);
   const name = id.split("@")[0]!;
-  if (importedPluginNames().includes(name)) throw new PluginMarketError(`已经导入了同名插件「${name}」，请先删除`);
+  if (importedPluginNames().includes(name)) throw new BadRequestError(`已经导入了同名插件「${name}」，请先删除`);
   let done = false;
   try {
     await cliJson(["install", id]);

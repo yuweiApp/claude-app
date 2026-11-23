@@ -5,7 +5,8 @@ import path from "node:path";
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import sharp from "sharp";
 import { z } from "zod";
-import { MCP_AUTO_BACKGROUND_MS } from "../config.js";
+import { MCP_AUTO_BACKGROUND_SECONDS } from "../config.js";
+import { withNotice } from "../tool-result.js";
 import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
 import { rememberResult } from "../browser/tool.js";
 import { runCli, type CliResult, type Envelope } from "./cli.js";
@@ -33,7 +34,6 @@ const WAIT_MARGIN_MS = 5_000;
 const MAX_IMAGE_BYTES = 3_750_000;
 /** 缩小后仍超过上限时改成 JPEG 的质量 */
 const JPEG_QUALITY = 80;
-const BACKGROUND_SECONDS = (Number(process.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS) || MCP_AUTO_BACKGROUND_MS) / 1000;
 
 const version = (() => {
   try {
@@ -67,12 +67,11 @@ const INSTRUCTIONS = [
   "- agent-desktop 这个版本的已知问题：应用弹出窗口层级不是 0 的模态对话框时，对话框不在窗口列表里，和系统报的前台窗口对不上。这期间读全局窗口列表的命令（不带 --app 的 list-windows、按 --window-id 的 snapshot 等、screenshot）一直重试到超时，返回 TIMEOUT，details.kind 为 global_window_inventory_unstable、last_kind 为 frontmost_window_join（结果里的 suggestion 说应用可能忙或没有响应，这个错误出现时应用不一定没有响应）；对话框关掉后恢复。list-windows --app <应用名> 和 snapshot --app <应用名> --surface focused 不受影响，后者读到的就是这个对话框，里面的 ref 可以操作。",
   "- 本应用（claude-app）自己的窗口：list-apps、list-windows 的结果里没有它；--app 是本应用、--window-id 是本应用的窗口时不执行。ref 只认这个会话经 desktop() 拿到的。",
   `- desktop() 一条命令的进程期限 timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}、最大 ${MAX_TIMEOUT_MS}；命令自己的等待时限（wait 的 [MS] 和 --timeout，launch 的 --timeout，snapshot 的 --timeout-ms，--wait-for 的 --wait-timeout）加 ${WAIT_MARGIN_MS / 1000} 秒超过 timeout_ms 时，按前者计（同样不超过 ${MAX_TIMEOUT_MS}）。`,
-  `- 调用超过约 ${BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，结束后结果作为通知送达。屏幕上的变化不会通知你。`,
+  `- 调用超过约 ${MCP_AUTO_BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，结束后结果作为通知送达。屏幕上的变化不会通知你。`,
   "- 别的会话也可能在操作这个桌面：自你上次调用以来它们执行过的操作，列在下一次结果的开头。",
   '- 用户消息里的 @桌面 指这个桌面，@desktop[标题](window:<id> "应用名") 指这里的一个窗口：<id> 是用户引用时 list-windows 里它的窗口 id，引号里是它的 app_name（没有应用名时不带引号这部分）。',
 ].join("\n");
 
-const prefixed = (notice: string | null, body: string) => (notice ? `${notice}\n\n${body}` : body);
 
 /** 没有拿到 agent-desktop 的 JSON 结果时的说明（被终止、输出不是 JSON），有 JSON 结果返回 null */
 function failure(result: CliResult, timeoutMs: number): string | null {
@@ -233,7 +232,7 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
     async ({ code, timeout_ms }, extra) => {
       const notice = othersSince(sessionId);
       const result = await replFor().run(code, timeout_ms ?? DEFAULT_TIMEOUT_MS, signalOf(extra));
-      const out = prefixed(notice, result.text);
+      const out = withNotice(notice, result.text);
       rememberResult(extra, out, result.isError);
       return {
         content: [{ type: "text" as const, text: out }, ...result.images.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }))],

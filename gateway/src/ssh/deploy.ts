@@ -9,9 +9,10 @@ import { createGzip } from "node:zlib";
 import { config } from "../config.js";
 import { sshRegistries } from "../config-file.js";
 import type { SshHost } from "./host.js";
-import { collect, decodeText, psQuote, shQuote, SshError } from "./host.js";
+import { collect, decodeText, psQuote, shQuote } from "./host.js";
 import { fromWindowsPath, nativePath } from "./location.js";
 import { sftpUpload, sftpWrite } from "./remote-ops.js";
+import { BadRequestError } from "../errors.js";
 
 /**
  * 准备远端：远端用户目录下的 ~/.claude-app 放网关用的东西，和远端用户自己的 ~/.claude 分开（同本机的配置隔离）：
@@ -66,7 +67,7 @@ export async function prepareRemote(host: SshHost, onProgress: (p: number) => vo
     return prepareWindows(host, onProgress);
   }
   const remotePath = lines.find((l) => l.startsWith(PATH_MARK))?.slice(PATH_MARK.length) || "/usr/local/bin:/usr/bin:/bin";
-  if (!home?.startsWith("/")) throw new SshError(`读不到远端的用户目录：${probe.slice(0, 200)}`);
+  if (!home?.startsWith("/")) throw new BadRequestError(`读不到远端的用户目录：${probe.slice(0, 200)}`);
   const platform = platformOf(sys ?? "", machine ?? "", libc === "musl");
   const root = `${home}/.claude-app`;
   const env: RemoteEnv = {
@@ -109,15 +110,15 @@ async function probeRemote(host: SshHost): Promise<string | null> {
   throw commandError(r);
 }
 
-function commandError(r: { code: number | null; stdout: Buffer; stderr: string }): SshError {
-  return new SshError(`远端命令失败：${(r.stderr || decodeText(r.stdout)).trim().slice(0, 500) || `退出码 ${r.code}`}`);
+function commandError(r: { code: number | null; stdout: Buffer; stderr: string }): BadRequestError {
+  return new BadRequestError(`远端命令失败：${(r.stderr || decodeText(r.stdout)).trim().slice(0, 500) || `退出码 ${r.code}`}`);
 }
 
 function platformOf(sys: string, machine: string, musl: boolean): string {
   const arch = /^(x86_64|amd64)$/i.test(machine) ? "x64" : /^(arm64|aarch64)$/i.test(machine) ? "arm64" : null;
   if (sys === "Darwin" && arch) return `darwin-${arch}`;
   if (sys === "Linux" && arch) return `linux-${arch}${musl ? "-musl" : ""}`;
-  throw new SshError(`远端系统不支持：${sys} ${machine}（只支持 macOS、Linux、Windows 的 x64、arm64）`);
+  throw new BadRequestError(`远端系统不支持：${sys} ${machine}（只支持 macOS、Linux、Windows 的 x64、arm64）`);
 }
 
 async function prepareWindows(host: SshHost, onProgress: (p: number) => void): Promise<RemoteEnv> {
@@ -138,12 +139,12 @@ async function prepareWindows(host: SshHost, onProgress: (p: number) => void): P
   );
   const [profile, machine, remotePath, gitBash] = probe.split(/\r?\n/);
   const home = fromWindowsPath(profile?.trim() ?? "");
-  if (!home.startsWith("/")) throw new SshError(`读不到远端的用户目录：${probe.slice(0, 200)}`);
+  if (!home.startsWith("/")) throw new BadRequestError(`读不到远端的用户目录：${probe.slice(0, 200)}`);
   const arch = /^amd64$/i.test(machine ?? "") ? "x64" : /^arm64$/i.test(machine ?? "") ? "arm64" : null;
-  if (!arch) throw new SshError(`远端系统不支持：Windows ${machine}（只支持 x64、arm64）`);
+  if (!arch) throw new BadRequestError(`远端系统不支持：Windows ${machine}（只支持 x64、arm64）`);
   // Claude Code 在 Windows 上用 Git 自带的 bash 执行命令，没有它一启动就退出
   if (!gitBash?.trim()) {
-    throw new SshError(
+    throw new BadRequestError(
       "远端没有 Git for Windows：Claude Code 在 Windows 上要用 Git 自带的 bash 执行命令。在远端装好 Git（https://git-scm.com/downloads/win）后重新连接；" +
         "装在别处的，在远端给用户设环境变量 CLAUDE_CODE_GIT_BASH_PATH，指向 bash.exe",
     );
@@ -215,13 +216,13 @@ async function uploadWindows(host: SshHost, env: RemoteEnv, onProgress: (p: numb
     ].join("\n");
     const r = await runRaw(host, script, (meta.tarballs.length * 30 + 5) * 60_000);
     if (r.code === 0) return;
-    if (r.code !== 3) throw new SshError(`安装 Claude Code 失败：${r.stderr.trim() || `退出码 ${r.code}`}`);
+    if (r.code !== 3) throw new BadRequestError(`安装 Claude Code 失败：${r.stderr.trim() || `退出码 ${r.code}`}`);
   }
   const m = meta ?? (await packageMeta(env.platform));
   const file = await downloadPackage(env.platform, m, (p) => onProgress(p * 0.3));
   const size = (await stat(file)).size;
   await sftpUpload(await host.sftpNow(), tgz, createReadStream(file).pipe(progress(size, (p) => onProgress(0.3 + p * 0.7)))).catch((err: Error) => {
-    throw new SshError(`上传 Claude Code 失败：${err.message}`);
+    throw new BadRequestError(`上传 Claude Code 失败：${err.message}`);
   });
   const script = [
     `$t = ${w(tgz)}`,
@@ -230,7 +231,7 @@ async function uploadWindows(host: SshHost, env: RemoteEnv, onProgress: (p: numb
     extractWindows(env),
   ].join("\n");
   const r = await runRaw(host, script, 10 * 60_000);
-  if (r.code !== 0) throw new SshError(`上传 Claude Code 失败：${r.stderr.trim() || `退出码 ${r.code}`}`);
+  if (r.code !== 0) throw new BadRequestError(`上传 Claude Code 失败：${r.stderr.trim() || `退出码 ${r.code}`}`);
 }
 
 /** PowerShell 函数 Test-Package：$t（平台包）的 sha512 和 npm 给的一样 */
@@ -292,7 +293,7 @@ async function upload(host: SshHost, env: RemoteEnv, onProgress: (p: number) => 
     const size = (await stat(localBin)).size;
     const source = createReadStream(localBin).pipe(progress(size, onProgress)).pipe(createGzip({ level: 6 }));
     const r = await runRaw(host, `gzip -dc > ${shQuote(tmp)} && ${finish}`, 60 * 60_000, source);
-    if (r.code !== 0) throw new SshError(`上传 Claude Code 失败：${r.stderr.trim() || `退出码 ${r.code}`}`);
+    if (r.code !== 0) throw new BadRequestError(`上传 Claude Code 失败：${r.stderr.trim() || `退出码 ${r.code}`}`);
     return;
   }
   // 前面取信息失败时再取一次，这次把原因报出来
@@ -300,7 +301,7 @@ async function upload(host: SshHost, env: RemoteEnv, onProgress: (p: number) => 
   const size = (await stat(tgz)).size;
   const source = createReadStream(tgz).pipe(progress(size, (p) => onProgress(0.3 + p * 0.7)));
   const r = await runRaw(host, `tar -xzOf - package/claude > ${shQuote(tmp)} && ${finish}`, 60 * 60_000, source);
-  if (r.code !== 0) throw new SshError(`上传 Claude Code 失败：${r.stderr.trim() || `退出码 ${r.code}`}`);
+  if (r.code !== 0) throw new BadRequestError(`上传 Claude Code 失败：${r.stderr.trim() || `退出码 ${r.code}`}`);
 }
 
 interface PackageMeta {
@@ -331,7 +332,7 @@ async function packageMeta(platform: string): Promise<PackageMeta> {
       errors.push(`${r}：${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  throw new SshError(`取不到 ${name}@${SDK_VERSION} 的信息（config.yml 的 ssh.registries）：${errors.join("；")}`);
+  throw new BadRequestError(`取不到 ${name}@${SDK_VERSION} 的信息（config.yml 的 ssh.registries）：${errors.join("；")}`);
 }
 
 /** 远端用 curl / wget 按顺序从各个源下载，openssl 校验 sha512；远端缺工具、各个源都下不了或校验不通过都返回 false，改由网关上传 */
@@ -391,7 +392,7 @@ async function downloadPackage(platform: string, meta: PackageMeta, onProgress: 
       errors.push(`${url}：${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  throw new SshError(`下载 ${meta.name}@${SDK_VERSION} 失败（平台 ${platform}）：${errors.join("；")}`);
+  throw new BadRequestError(`下载 ${meta.name}@${SDK_VERSION} 失败（平台 ${platform}）：${errors.join("；")}`);
 }
 
 function progress(total: number, onProgress: (p: number) => void): Transform {

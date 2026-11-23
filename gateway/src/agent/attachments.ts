@@ -7,6 +7,7 @@ import { pipeline } from "node:stream/promises";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { config } from "../config.js";
 import type { Attachment } from "../shared/types.js";
+import { BadRequestError } from "../errors.js";
 
 type UserContent = SDKUserMessage["message"]["content"];
 type ContentBlock = Exclude<UserContent, string>[number];
@@ -25,8 +26,6 @@ const IMAGE_TYPES: Record<string, "image/png" | "image/jpeg" | "image/gif" | "im
   ".webp": "image/webp",
 };
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-
-export class AttachmentError extends Error {}
 
 /** 引用会话导出成的附件（见 session-export.ts）：消息里和上传的文件分开列，带上是哪个会话 */
 export interface SessionExport extends Attachment {
@@ -72,7 +71,7 @@ export async function saveUpload(filename: string, stream: Readable & { truncate
   await ensureDir(dir);
   try {
     await pipeline(stream, createWriteStream(file));
-    if (stream.truncated) throw new AttachmentError(`文件超过 ${config.maxUploadMb} MB：${name}`);
+    if (stream.truncated) throw new BadRequestError(`文件超过 ${config.maxUploadMb} MB：${name}`);
   } catch (err) {
     await rm(dir, { recursive: true, force: true });
     throw err;
@@ -94,10 +93,10 @@ export async function saveTextAttachment(filename: string, text: string): Promis
 export async function loadAttachments(ids: string[]): Promise<Attachment[]> {
   return Promise.all(
     ids.map(async (id) => {
-      if (!ID_RE.test(id)) throw new AttachmentError(`附件 id 无效：${id}`);
+      if (!ID_RE.test(id)) throw new BadRequestError(`附件 id 无效：${id}`);
       const dir = path.join(attachmentsDir, id);
       const name = (await readdir(dir).catch(() => []))[0];
-      if (!name) throw new AttachmentError(`附件不存在：${id}`);
+      if (!name) throw new BadRequestError(`附件不存在：${id}`);
       const file = path.join(dir, name);
       return { id, name, path: file, size: (await stat(file)).size };
     }),

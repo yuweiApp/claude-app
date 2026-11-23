@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import type { BrowserHost, CdpTransport } from "./host.js";
 import type { Repl, RunResult, ToolOutput } from "./repl.js";
-import type { ReplCall, ToMain, ToWorker } from "./worker-protocol.js";
+import type { ReplCall, ToMain, ToWorker, WorkerRequest } from "./worker-protocol.js";
 
 /** 开发时（tsx 直接跑源码）本文件是 .ts，构建后是 .js；worker 的入口跟着用同一个扩展名 */
 const EXT = extname(fileURLToPath(import.meta.url));
@@ -146,57 +146,16 @@ export class WorkerRepl implements Repl {
       case "error":
         this.settle(msg.id, (call) => call.reject(new Error(msg.message)));
         break;
-      case "cdpOpen": {
-        let transport: CdpTransport;
-        try {
-          transport = this.host.transport(this.sessionId);
-        } catch (err) {
-          this.send(worker, { type: "cdpOpened", req: msg.req, error: err instanceof Error ? err.message : String(err) });
-          break;
-        }
-        const conn = this.nextConn++;
-        transport.onmessage = (message) => this.send(worker, { type: "cdp", conn, message });
-        transport.onclose = (reason) => {
-          if (this.transports.delete(conn)) this.send(worker, { type: "cdpClosed", conn, reason });
-        };
-        this.transports.set(conn, transport);
-        this.send(worker, { type: "cdpOpened", req: msg.req, conn });
+      case "request": {
+        const { type: _type, req, ...request } = msg;
+        this.serve(worker, request).then(
+          (value) => this.send(worker, { type: "reply", req, value }),
+          (err: unknown) => this.send(worker, { type: "reply", req, error: err instanceof Error ? err.message : String(err) }),
+        );
         break;
       }
       case "cdp":
         this.transports.get(msg.conn)?.send(msg.message);
-        break;
-      case "downloads":
-        this.host.downloads(this.sessionId).then(
-          (downloads) => this.send(worker, { type: "downloads", req: msg.req, downloads }),
-          (err: unknown) => this.send(worker, { type: "downloads", req: msg.req, error: err instanceof Error ? err.message : String(err) }),
-        );
-        break;
-      case "save":
-        if (!this.saveFile) {
-          this.send(worker, { type: "saved", req: msg.req, error: "这个会话没有工作目录，saveFile 写不了文件" });
-          break;
-        }
-        this.saveFile(msg.name, msg.data).then(
-          (path) => this.send(worker, { type: "saved", req: msg.req, path }),
-          (err: unknown) => this.send(worker, { type: "saved", req: msg.req, error: err instanceof Error ? err.message : String(err) }),
-        );
-        break;
-      case "read":
-        if (!this.readFile) {
-          this.send(worker, { type: "fileData", req: msg.req, error: "这个会话没有工作目录，readFile 读不了文件" });
-          break;
-        }
-        this.readFile(msg.name).then(
-          (data) => this.send(worker, { type: "fileData", req: msg.req, data }),
-          (err: unknown) => this.send(worker, { type: "fileData", req: msg.req, error: err instanceof Error ? err.message : String(err) }),
-        );
-        break;
-      case "keep":
-        this.host.keep(this.sessionId).then(
-          (tab) => this.send(worker, { type: "kept", req: msg.req, tab }),
-          (err: unknown) => this.send(worker, { type: "kept", req: msg.req, error: err instanceof Error ? err.message : String(err) }),
-        );
         break;
       case "cdpClose": {
         const transport = this.transports.get(msg.conn);
@@ -204,6 +163,32 @@ export class WorkerRepl implements Repl {
         transport?.close();
         break;
       }
+    }
+  }
+
+  /** worker 要主线程做的事（WorkerRequest），返回 reply 的 value */
+  private async serve(worker: Worker, request: WorkerRequest): Promise<unknown> {
+    switch (request.method) {
+      case "cdpOpen": {
+        const transport = this.host.transport(this.sessionId);
+        const conn = this.nextConn++;
+        transport.onmessage = (message) => this.send(worker, { type: "cdp", conn, message });
+        transport.onclose = (reason) => {
+          if (this.transports.delete(conn)) this.send(worker, { type: "cdpClosed", conn, reason });
+        };
+        this.transports.set(conn, transport);
+        return conn;
+      }
+      case "downloads":
+        return this.host.downloads(this.sessionId);
+      case "keep":
+        return this.host.keep(this.sessionId);
+      case "save":
+        if (!this.saveFile) throw new Error("这个会话没有工作目录，saveFile 写不了文件");
+        return this.saveFile(request.name, request.data);
+      case "read":
+        if (!this.readFile) throw new Error("这个会话没有工作目录，readFile 读不了文件");
+        return this.readFile(request.name);
     }
   }
 }

@@ -3,6 +3,7 @@ import path from "node:path";
 import type { GoalState, GoalStatusRecord } from "../shared/types.js";
 import { sessionRecordDir } from "./scratch.js";
 import { scanBackwards } from "./session-records.js";
+import { BadRequestError } from "../errors.js";
 
 /**
  * 会话的目标（Claude Code 的 /goal，见 docs/README.md「目标」）。
@@ -21,10 +22,9 @@ const CLEAR_WORDS = new Set(["clear", "stop", "off", "reset", "none", "cancel"])
  */
 export function goalCondition(text: string): string {
   const condition = text.replace(/\s+/g, " ").trim();
-  const bad = (message: string) => Object.assign(new Error(message), { statusCode: 400 });
-  if (!condition) throw bad("目标条件不能为空");
-  if (condition.length > GOAL_MAX_LENGTH) throw bad(`目标条件最多 ${GOAL_MAX_LENGTH} 个字（现在 ${condition.length} 个）`);
-  if (CLEAR_WORDS.has(condition.toLowerCase())) throw bad(`「${condition}」是取消目标用的词，不能当条件`);
+  if (!condition) throw new BadRequestError("目标条件不能为空");
+  if (condition.length > GOAL_MAX_LENGTH) throw new BadRequestError(`目标条件最多 ${GOAL_MAX_LENGTH} 个字（现在 ${condition.length} 个）`);
+  if (CLEAR_WORDS.has(condition.toLowerCase())) throw new BadRequestError(`「${condition}」是取消目标用的词，不能当条件`);
   return condition;
 }
 

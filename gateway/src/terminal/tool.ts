@@ -7,6 +7,7 @@ import { fromWindowsPath, parseRemote } from "../ssh/location.js";
 import { fsFor, machinePathOf } from "../ssh/host-fs.js";
 import { sshHost } from "../ssh/hosts.js";
 import { rememberResult } from "../browser/tool.js";
+import { errorResult, textResult } from "../tool-result.js";
 
 /** MCP 服务器名：工具全名是 mcp__terminal__read_terminal 这样 */
 export const TERMINAL_SERVER = "terminal";
@@ -20,8 +21,6 @@ export const TERMINAL_AUTO_TOOLS = [
   `mcp__${TERMINAL_SERVER}__send_to_terminal`,
 ];
 
-const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
-const error = (t: string) => ({ ...text(t), isError: true });
 
 /**
  * 给模型用的终端工具（参照 Claude 桌面版的 read_terminal / run_in_terminal / list_terminal_tabs / stop_terminal_tab）：
@@ -132,10 +131,10 @@ export function terminalTools(terminals: TerminalManager, cwd: string, sessionId
         {},
         async () => {
           const list = mine().filter((t) => t.status === "running");
-          if (!list.length) return text("没有开着的终端。");
+          if (!list.length) return textResult("没有开着的终端。");
           // 远端的终端要经 SSH 问一次，一起问
           const states = await Promise.all(list.map((t) => terminals.state(t.id)));
-          return text(
+          return textResult(
             JSON.stringify(
               list.map((t, i) => ({
                 tab_id: t.id,
@@ -170,7 +169,7 @@ export function terminalTools(terminals: TerminalManager, cwd: string, sessionId
         async ({ tab_id, lines = 200, wait_for_output_ms }) => {
           const list = mine();
           const term = tab_id ? find(tab_id) : list.toSorted((a, b) => a.createdAt - b.createdAt)[0];
-          if (!term) return tab_id ? error(`没有这个终端：${tab_id}`) : text("这个会话没有开着的终端。");
+          if (!term) return tab_id ? errorResult(`没有这个终端：${tab_id}`) : textResult("这个会话没有开着的终端。");
           if (wait_for_output_ms) await terminals.waitForOutput(term.id, wait_for_output_ms);
           const now = terminals.info(term.id);
           const screen = await terminals.text(term.id, lines);
@@ -180,7 +179,7 @@ export function terminalTools(terminals: TerminalManager, cwd: string, sessionId
             `状态: ${describe(now, await terminals.state(term.id))}`,
             screen.truncated ? `（只显示最后 ${lines} 行）` : "",
           ].filter(Boolean);
-          return text(`${head.join("\n")}\n-----\n${screen.text || "（屏幕是空的）"}`);
+          return textResult(`${head.join("\n")}\n-----\n${screen.text || "（屏幕是空的）"}`);
         },
         { annotations: { readOnlyHint: true } },
       ),
@@ -200,18 +199,18 @@ export function terminalTools(terminals: TerminalManager, cwd: string, sessionId
           // 空的、只有空白的当成没传（有的模型把可选参数都填上：cwd: ""、tab_id: " "）
           const dir = given?.trim() ? given : undefined;
           const tab_id = givenTab?.trim() || undefined;
-          if (/[\r\n]/.test(command)) return error("command 只能是一行，包含换行时不执行。");
+          if (/[\r\n]/.test(command)) return errorResult("command 只能是一行，包含换行时不执行。");
           let term: TerminalInfo;
           if (tab_id) {
             // 先看终端在不在（被自动关掉的、编出来的 tab_id），再看 cwd：模型常把开终端时的 cwd 原样带上，
             // 和这个终端起始的目录相同就不算冲突（resolveDir 是工作目录本身时 dir 为空，终端的 dir 也是空）
             const t = find(tab_id);
             // 编出来的占位值（"."）：说清楚怎样是开新终端，不然模型原样重试（实测连着 15 次）
-            if (!t) return error(`没有这个终端：${tab_id}。tab_id 不传或为空时开一个新终端。`);
+            if (!t) return errorResult(`没有这个终端：${tab_id}。tab_id 不传或为空时开一个新终端。`);
             if (dir !== undefined) {
               const start = await resolveDir(cwd, dir);
               if ("error" in start || !samePath(start.dir, t.dir)) {
-                return error(`cwd 和 tab_id 不能一起指定不同的目录：这个终端的 shell 起始于 ${startDir(t)}，cwd 只用于新开的终端。`);
+                return errorResult(`cwd 和 tab_id 不能一起指定不同的目录：这个终端的 shell 起始于 ${startDir(t)}，cwd 只用于新开的终端。`);
               }
             }
             const st = await terminals.state(t.id);
@@ -226,12 +225,12 @@ export function terminalTools(terminals: TerminalManager, cwd: string, sessionId
                         : st.idle === false
                           ? "里面还有命令在跑"
                           : "判断不出里面的命令结束没有";
-              return error(`不能在这个终端里跑：${why}；不传 tab_id 会开一个新终端。`);
+              return errorResult(`不能在这个终端里跑：${why}；不传 tab_id 会开一个新终端。`);
             }
             term = t;
           } else {
             const start = dir === undefined ? null : await resolveDir(cwd, dir);
-            if (start && "error" in start) return error(start.error);
+            if (start && "error" in start) return errorResult(start.error);
             term = await terminals.create(cwd, 120, 30, { title: title?.trim() || command.slice(0, 30), openedBy: "agent", sessionId, ...(start?.dir ? { dir: start.dir } : {}) });
             // 等 shell 的启动文件跑完、出了提示符再敲
             await terminals.waitReady(term.id);
@@ -239,7 +238,7 @@ export function terminalTools(terminals: TerminalManager, cwd: string, sessionId
           terminals.write(term.id, `${command}\r`, "agent");
           // 等命令起来（前台换成它），接着再调时 reusable 才准
           await terminals.waitForOutput(term.id, 600, 150);
-          return text(`已在终端「${label(term)}」里敲下命令，tab_id: ${term.id}。命令结束时不会通知你，输出用 read_terminal 读。`);
+          return textResult(`已在终端「${label(term)}」里敲下命令，tab_id: ${term.id}。命令结束时不会通知你，输出用 read_terminal 读。`);
         },
       ),
       tool(
@@ -256,11 +255,11 @@ export function terminalTools(terminals: TerminalManager, cwd: string, sessionId
         },
         async ({ tab_id, text: input, enter = true, wait_for_output_ms = 2000 }) => {
           const t = find(tab_id);
-          if (!t) return error(`没有这个终端：${tab_id}`);
-          if (t.status !== "running") return error(`终端已经退出（代码 ${t.exitCode}），没有送入。`);
-          if ((await terminals.state(t.id)).idle === true) return error("终端在提示符，前台没有程序在跑，没有送入。");
+          if (!t) return errorResult(`没有这个终端：${tab_id}`);
+          if (t.status !== "running") return errorResult(`终端已经退出（代码 ${t.exitCode}），没有送入。`);
+          if ((await terminals.state(t.id)).idle === true) return errorResult("终端在提示符，前台没有程序在跑，没有送入。");
           const data = input.replace(/\r?\n/g, "\r") + (enter ? "\r" : "");
-          if (!data) return error("text 是空的，enter 是 false，没有可送的。");
+          if (!data) return errorResult("text 是空的，enter 是 false，没有可送的。");
           const waited = wait_for_output_ms ? terminals.waitForOutput(t.id, wait_for_output_ms) : null;
           terminals.write(t.id, data, "agent");
           await waited;
@@ -271,7 +270,7 @@ export function terminalTools(terminals: TerminalManager, cwd: string, sessionId
             `状态: ${describe(now, await terminals.state(t.id))}`,
             screen.truncated ? "（只显示最后 40 行）" : "",
           ].filter(Boolean);
-          return text(`${head.join("\n")}\n-----\n${screen.text || "（屏幕是空的）"}`);
+          return textResult(`${head.join("\n")}\n-----\n${screen.text || "（屏幕是空的）"}`);
         },
       ),
       tool(
@@ -283,11 +282,11 @@ export function terminalTools(terminals: TerminalManager, cwd: string, sessionId
         },
         async ({ tab_id, close }) => {
           const t = find(tab_id);
-          if (!t) return error(`没有这个终端：${tab_id}`);
-          if (!own(t) || t.userTyped) return error("只能停止、关闭你在这个会话里开的、用户没在里面敲过东西的终端。");
+          if (!t) return errorResult(`没有这个终端：${tab_id}`);
+          if (!own(t) || t.userTyped) return errorResult("只能停止、关闭你在这个会话里开的、用户没在里面敲过东西的终端。");
           if (close) {
             terminals.close(t.id);
-            return text(`已关闭终端「${label(t)}」。`);
+            return textResult(`已关闭终端「${label(t)}」。`);
           }
           terminals.write(t.id, "\x03", "agent");
           await terminals.waitForOutput(t.id, 1500, 200);
@@ -301,7 +300,7 @@ export function terminalTools(terminals: TerminalManager, cwd: string, sessionId
                 : st.idle === false
                   ? `还在运行 ${st.running || "命令"}（可以再调一次，或 close: true）`
                   : "判断不出里面的命令结束没有";
-          return text(`${after}\n-----\n${(await terminals.text(t.id, 15)).text}`);
+          return textResult(`${after}\n-----\n${(await terminals.text(t.id, 15)).text}`);
         },
       ),
   ];

@@ -2,6 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import type { McpAuthState } from "../shared/types.js";
 import { clearCapabilitiesCache, inspectQuery, settledMcpStatus } from "./capabilities.js";
+import { BadRequestError, HttpError } from "../errors.js";
 
 /**
  * MCP 服务器的 OAuth 登录，由 Claude Code 自己完成：注册客户端、PKCE、在本机 localhost 的随机端口上等回调、换令牌、
@@ -30,12 +31,10 @@ interface Flow extends McpAuthState {
 
 const flows = new Map<string, Flow>();
 
-export class McpAuthError extends Error {}
-
 function authQuery(q: Query): AuthQuery {
   const candidate = q as unknown as Partial<AuthQuery>;
   if (typeof candidate.mcpAuthenticate !== "function" || typeof candidate.mcpSubmitOAuthCallbackUrl !== "function") {
-    throw new McpAuthError("当前版本的 Claude Agent SDK 不支持 MCP 登录");
+    throw new BadRequestError("当前版本的 Claude Agent SDK 不支持 MCP 登录");
   }
   return candidate as AuthQuery;
 }
@@ -78,21 +77,21 @@ export async function startMcpAuth(name: string, cwd: string, onDone: () => void
   try {
     const servers = await settledMcpStatus(q, await q.mcpServerStatus());
     const server = servers.find((s) => s.name === name);
-    if (!server) throw new McpAuthError(`找不到 MCP 服务器「${name}」`);
+    if (!server) throw new BadRequestError(`找不到 MCP 服务器「${name}」`);
     if (server.status === "connected") {
       finish(name, flow, { state: "done" }, () => {});
       return view(flow);
     }
     const { authUrl } = await authQuery(q).mcpAuthenticate(name);
-    if (!authUrl) throw new McpAuthError("服务器没有给出登录地址");
+    if (!authUrl) throw new BadRequestError("服务器没有给出登录地址");
     flow.authUrl = authUrl;
     void watch(name, flow, q, onDone);
     return view(flow);
   } catch (err) {
     if (flows.get(name) === flow) flows.delete(name);
     q.close();
-    if (err instanceof McpAuthError) throw err;
-    throw new McpAuthError((err as Error).message);
+    if (err instanceof HttpError) throw err;
+    throw new BadRequestError((err as Error).message);
   }
 }
 
@@ -104,10 +103,10 @@ export function getMcpAuth(name: string): McpAuthState | undefined {
 /** 浏览器跳到的回调网址（地址栏里带 code 的那个）交给 Claude Code，等它换完令牌 */
 export async function submitMcpAuthCallback(name: string, url: string): Promise<McpAuthState> {
   const flow = flows.get(name);
-  if (!flow?.q || flow.state !== "waiting") throw new McpAuthError("这次登录已经结束，请重新登录");
+  if (!flow?.q || flow.state !== "waiting") throw new BadRequestError("这次登录已经结束，请重新登录");
   const q = flow.q;
   await authQuery(q).mcpSubmitOAuthCallbackUrl(name, url).catch((err: Error) => {
-    throw new McpAuthError(err.message);
+    throw new BadRequestError(err.message);
   });
   // 令牌换好了。贴回来的回调 Claude Code 不会自己重连服务器（localhost 上收到的会），这里重连，结果由 watch 记下
   await q.reconnectMcpServer(name).catch(() => {});
@@ -124,11 +123,11 @@ export async function clearMcpAuth(name: string, cwd: string): Promise<string> {
   const q = inspectQuery(cwd);
   try {
     const servers = await settledMcpStatus(q, await q.mcpServerStatus());
-    if (!servers.some((s) => s.name === name)) throw new McpAuthError(`找不到 MCP 服务器「${name}」`);
+    if (!servers.some((s) => s.name === name)) throw new BadRequestError(`找不到 MCP 服务器「${name}」`);
     const clear = (q as unknown as { mcpClearAuth?: (serverName: string) => Promise<unknown> }).mcpClearAuth;
-    if (typeof clear !== "function") throw new McpAuthError("当前版本的 Claude Agent SDK 不支持清除 MCP 登录");
+    if (typeof clear !== "function") throw new BadRequestError("当前版本的 Claude Agent SDK 不支持清除 MCP 登录");
     await clear.call(q, name).catch((err: Error) => {
-      throw new McpAuthError(err.message);
+      throw new BadRequestError(err.message);
     });
     await q.reconnectMcpServer(name).catch(() => {});
     const after = await settledMcpStatus(q, await q.mcpServerStatus());

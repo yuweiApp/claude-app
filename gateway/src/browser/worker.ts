@@ -2,7 +2,7 @@ import { parentPort } from "node:worker_threads";
 import { chromium, type Browser, type BrowserContext } from "playwright-core";
 import type { CdpTransport, DownloadInfo, TabEvent } from "./host.js";
 import { BrowserRepl, type RunResult } from "./repl.js";
-import type { ReplCall, ToMain, ToWorker } from "./worker-protocol.js";
+import type { ReplCall, ToMain, ToWorker, WorkerRequest } from "./worker-protocol.js";
 
 /**
  * 内置浏览器的 worker 线程，一个会话一个（主线程那边是 worker-repl.ts 的 WorkerRepl）。
@@ -19,30 +19,35 @@ const post = (msg: ToMain) => port.postMessage(msg);
 const MAX_TAB_EVENTS = 50;
 const tabEvents: TabEvent[] = [];
 
+// ───────────── 经主线程做的事（连浏览器、问下载、留标签页、读写文件） ─────────────
+
+const replies = new Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void }>();
+let nextReq = 1;
+
+/** 发 request 给主线程，等它的 reply；value 的类型见 WorkerRequest */
+function request<T>(r: WorkerRequest): Promise<T> {
+  const req = nextReq++;
+  return new Promise<T>((resolve, reject) => {
+    replies.set(req, { resolve: resolve as (value: unknown) => void, reject });
+    post({ type: "request", req, ...r });
+  });
+}
+
 // ───────────── 到内置浏览器的 CDP 通道（经主线程转发） ─────────────
 
-/** 等主线程回复的 cdpOpen */
-const opening = new Map<number, (reply: { conn?: number; error?: string }) => void>();
-let nextReq = 1;
 /** 开着的通道（同一时间一般只有一条；换新的时，旧的由主线程发 cdpClosed 关掉） */
 const transports = new Map<number, CdpTransport>();
 
-function openTransport(): Promise<CdpTransport> {
-  const req = nextReq++;
-  return new Promise((resolve, reject) => {
-    opening.set(req, ({ conn, error }) => {
-      if (conn === undefined) return reject(new Error(error ?? "内置浏览器连接失败"));
-      const transport: CdpTransport = {
-        send: (message) => post({ type: "cdp", conn, message }),
-        close: () => {
-          if (transports.delete(conn)) post({ type: "cdpClose", conn });
-        },
-      };
-      transports.set(conn, transport);
-      resolve(transport);
-    });
-    post({ type: "cdpOpen", req });
-  });
+async function openTransport(): Promise<CdpTransport> {
+  const conn = await request<number>({ method: "cdpOpen" });
+  const transport: CdpTransport = {
+    send: (message) => post({ type: "cdp", conn, message }),
+    close: () => {
+      if (transports.delete(conn)) post({ type: "cdpClose", conn });
+    },
+  };
+  transports.set(conn, transport);
+  return transport;
 }
 
 /**
@@ -74,35 +79,10 @@ async function getContext(): Promise<BrowserContext> {
   return context;
 }
 
-// ───────────── REPL 和主线程发来的调用 ─────────────
+// ───────────── REPL 的 downloads()、keepTab()、saveFile()、readFile() ─────────────
 
-// ───────────── 下载列表（REPL 的 downloads()，经主线程问桌面版） ─────────────
-
-const downloadReplies = new Map<number, (reply: { downloads?: DownloadInfo[]; error?: string }) => void>();
-
-function listDownloads(): Promise<DownloadInfo[]> {
-  const req = nextReq++;
-  return new Promise((resolve, reject) => {
-    downloadReplies.set(req, ({ downloads, error }) => (downloads ? resolve(downloads) : reject(new Error(error ?? "没有取到下载列表"))));
-    post({ type: "downloads", req });
-  });
-}
-
-// ───────────── 留下标签页（REPL 的 keepTab()，经主线程问桌面版） ─────────────
-
-const keepReplies = new Map<number, (reply: { tab?: { title: string; url: string } | null; error?: string }) => void>();
-
-function keepTab(): Promise<{ title: string; url: string } | null> {
-  const req = nextReq++;
-  return new Promise((resolve, reject) => {
-    keepReplies.set(req, ({ tab, error }) => (error ? reject(new Error(error)) : resolve(tab ?? null)));
-    post({ type: "keep", req });
-  });
-}
-
-// ───────────── 写文件（REPL 的 saveFile()，主线程写进会话的工作目录） ─────────────
-
-const saveReplies = new Map<number, (reply: { path?: string; error?: string }) => void>();
+const listDownloads = () => request<DownloadInfo[]>({ method: "downloads" });
+const keepTab = () => request<{ title: string; url: string } | null>({ method: "keep" });
 
 /** 同外部浏览器的 saveFile（external.ts 的 fileSaver）：vm 里建的 TypedArray 不是这边的类型，按 ArrayBuffer.isView 认，复制一份再发 */
 function saveFile(name: string, data: unknown): Promise<string> {
@@ -111,25 +91,16 @@ function saveFile(name: string, data: unknown): Promise<string> {
   else if (ArrayBuffer.isView(data)) payload = new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice();
   else if (Object.prototype.toString.call(data) === "[object ArrayBuffer]") payload = new Uint8Array(data as ArrayBuffer).slice();
   else return Promise.reject(new Error("saveFile 的数据要是 Buffer、Uint8Array、ArrayBuffer 或字符串"));
-  const req = nextReq++;
-  return new Promise((resolve, reject) => {
-    saveReplies.set(req, ({ path, error }) => (path ? resolve(path) : reject(new Error(error ?? "没有写入文件"))));
-    post({ type: "save", req, name, data: payload });
-  });
+  return request<string>({ method: "save", name, data: payload });
 }
-
-// ───────────── 读文件（REPL 的 readFile()，主线程读会话工作目录里的文件） ─────────────
-
-const readReplies = new Map<number, (reply: { data?: Uint8Array; error?: string }) => void>();
 
 /** 主线程发回来的是 Uint8Array（Buffer 过了 postMessage 就不是 Buffer 了），包回 Buffer */
-function readFile(name: string): Promise<Buffer> {
-  const req = nextReq++;
-  return new Promise((resolve, reject) => {
-    readReplies.set(req, ({ data, error }) => (data ? resolve(Buffer.from(data.buffer, data.byteOffset, data.byteLength)) : reject(new Error(error ?? "没有读到文件"))));
-    post({ type: "read", req, name });
-  });
+async function readFile(name: string): Promise<Buffer> {
+  const data = await request<Uint8Array>({ method: "read", name });
+  return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
 }
+
+// ───────────── REPL 和主线程发来的调用 ─────────────
 
 const repl = new BrowserRepl(getContext, () => tabEvents.splice(0), listDownloads, saveFile, keepTab, readFile);
 /** 还在跑的调用，取消时用 */
@@ -161,10 +132,13 @@ port.on("message", (msg: ToWorker) => {
     case "abort":
       running.get(msg.id)?.abort();
       break;
-    case "cdpOpened":
-      opening.get(msg.req)?.(msg);
-      opening.delete(msg.req);
+    case "reply": {
+      const reply = replies.get(msg.req);
+      replies.delete(msg.req);
+      if (msg.error !== undefined) reply?.reject(new Error(msg.error));
+      else reply?.resolve(msg.value);
       break;
+    }
     case "cdp":
       transports.get(msg.conn)?.onmessage?.(msg.message);
       break;
@@ -176,22 +150,6 @@ port.on("message", (msg: ToWorker) => {
     }
     case "tabEvent":
       if (tabEvents.length < MAX_TAB_EVENTS) tabEvents.push(msg.event);
-      break;
-    case "downloads":
-      downloadReplies.get(msg.req)?.(msg);
-      downloadReplies.delete(msg.req);
-      break;
-    case "kept":
-      keepReplies.get(msg.req)?.(msg);
-      keepReplies.delete(msg.req);
-      break;
-    case "saved":
-      saveReplies.get(msg.req)?.(msg);
-      saveReplies.delete(msg.req);
-      break;
-    case "fileData":
-      readReplies.get(msg.req)?.(msg);
-      readReplies.delete(msg.req);
       break;
   }
 });

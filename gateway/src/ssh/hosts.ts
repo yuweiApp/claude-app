@@ -1,6 +1,7 @@
 import type { SshConnectionInfo } from "../shared/types.js";
 import { getConnection, listConnections } from "./connections.js";
-import { SshError, SshHost } from "./host.js";
+import { SshHost } from "./host.js";
+import { BadRequestError } from "../errors.js";
 
 /** 每个 SSH 连接一个 SshHost，用到时才建 */
 const hosts = new Map<string, SshHost>();
@@ -8,7 +9,7 @@ const hosts = new Map<string, SshHost>();
 export function sshHost(id: string): SshHost {
   let host = hosts.get(id);
   if (!host) {
-    if (!getConnection(id)) throw new SshError("SSH 连接不存在（可能已经在设置里删掉了）");
+    if (!getConnection(id)) throw new BadRequestError("SSH 连接不存在（可能已经在设置里删掉了）");
     host = new SshHost(id);
     hosts.set(id, host);
   }

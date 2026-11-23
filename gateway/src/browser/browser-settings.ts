@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { config } from "../config.js";
 import type { BrowserEntry, BrowserLogo, BrowserSettingsView } from "../shared/types.js";
 import { INSTALL_URL, KNOWN_BROWSERS, listProfiles, locateKnown, looksChromium, resolveExecutable } from "./catalog.js";
+import { BadRequestError } from "../errors.js";
 
 /**
  * 设置页「浏览器」的设置：哪些外部浏览器启用、用哪个配置、扩展 token、连接时建不建标签页组，还有手动添加的浏览器。
@@ -30,8 +31,6 @@ interface Stored {
   browsers?: Record<string, StoredBrowser>;
   custom?: CustomBrowser[];
 }
-
-export class BrowserSettingsError extends Error {}
 
 function read(): Stored {
   if (!existsSync(file())) return {};
@@ -74,20 +73,14 @@ const LETTER_COLORS = ["#4c8bf5", "#9b59b6", "#16a085", "#e67e22", "#e84393", "#
 export function listBrowsers(): ResolvedBrowser[] {
   const stored = read();
   const result: ResolvedBrowser[] = [];
-  const add = (
-    base: { id: string; name: string; logo: BrowserLogo; custom: boolean; executablePath: string; userDataDir?: string; installed: boolean; chromium: boolean },
-    legacy?: { token: string; profile: string },
-  ) => {
+  const add = (base: { id: string; name: string; logo: BrowserLogo; custom: boolean; executablePath: string; userDataDir?: string; installed: boolean; chromium: boolean }) => {
     const s = stored.browsers?.[base.id] ?? {};
     const profiles = listProfiles(base.userDataDir);
     const extension = profiles.some((p) => p.extension);
-    const legacyProfile = legacy ? process.env[legacy.profile] : undefined;
-    const profile = s.profile ?? legacyProfile;
     // 选了的配置不在了（被删了）就当没选
-    const chosen = profile !== undefined && (profiles.some((p) => p.dir === profile) || !profiles.length) ? profile : undefined;
-    const fallback = profiles.find((p) => p.extension) ?? undefined;
-    const profileDir = chosen ?? (fallback ? fallback.dir : undefined);
-    const token = s.token || (legacy ? process.env[legacy.token] : undefined) || undefined;
+    const chosen = s.profile !== undefined && (profiles.some((p) => p.dir === s.profile) || !profiles.length) ? s.profile : undefined;
+    const profileDir = chosen ?? profiles.find((p) => p.extension)?.dir;
+    const token = s.token || undefined;
     result.push({
       ...base,
       profiles,
@@ -103,7 +96,7 @@ export function listBrowsers(): ResolvedBrowser[] {
   for (const known of KNOWN_BROWSERS) {
     const found = locateKnown(known, findChannel);
     if (!found) continue;
-    add({ id: known.id, name: known.name, logo: known.logo, custom: false, ...found, installed: true, chromium: true }, known.legacyEnv);
+    add({ id: known.id, name: known.name, logo: known.logo, custom: false, ...found, installed: true, chromium: true });
   }
   (stored.custom ?? []).forEach((c, i) => {
     const exe = resolveExecutable(c.executablePath);
@@ -141,7 +134,7 @@ export function setTabGroup(enabled: boolean): void {
 
 /** 改一个浏览器的设置；token 传空字符串或 null 是清掉 */
 export function updateBrowser(id: string, patch: { enabled?: boolean; profile?: string | null; token?: string | null }): void {
-  if (!listBrowsers().some((b) => b.id === id)) throw new BrowserSettingsError("没有这个浏览器");
+  if (!listBrowsers().some((b) => b.id === id)) throw new BadRequestError("没有这个浏览器");
   const stored = read();
   const current = { ...stored.browsers?.[id] };
   if (patch.enabled !== undefined) current.enabled = patch.enabled;
@@ -160,16 +153,16 @@ export function updateBrowser(id: string, patch: { enabled?: boolean; profile?: 
 /** 手动添加浏览器，返回它的 id 和是不是看着像 Chromium 内核 */
 export function addCustomBrowser(input: { name: string; executablePath: string; userDataDir?: string }): { id: string; chromium: boolean } {
   const name = input.name.trim();
-  if (!name) throw new BrowserSettingsError("请填写名字");
-  if (/[[\]()@\n]/.test(name)) throw new BrowserSettingsError("名字里不能有 @、方括号和圆括号");
+  if (!name) throw new BadRequestError("请填写名字");
+  if (/[[\]()@\n]/.test(name)) throw new BadRequestError("名字里不能有 @、方括号和圆括号");
   const exe = resolveExecutable(input.executablePath);
-  if (!exe) throw new BrowserSettingsError("找不到这个可执行文件（路径是网关这台电脑上的）");
+  if (!exe) throw new BadRequestError("找不到这个可执行文件（路径是网关这台电脑上的）");
   const userDataDir = input.userDataDir?.trim() || undefined;
-  if (userDataDir && !existsSync(userDataDir)) throw new BrowserSettingsError("找不到这个用户数据目录");
+  if (userDataDir && !existsSync(userDataDir)) throw new BadRequestError("找不到这个用户数据目录");
   const stored = read();
   const custom = stored.custom ?? [];
   const taken = new Set([...KNOWN_BROWSERS.map((b) => b.id), ...custom.map((c) => c.id)]);
-  if ([...KNOWN_BROWSERS, ...custom].some((b) => b.name.toLowerCase() === name.toLowerCase())) throw new BrowserSettingsError("已经有同名的浏览器");
+  if ([...KNOWN_BROWSERS, ...custom].some((b) => b.name.toLowerCase() === name.toLowerCase())) throw new BadRequestError("已经有同名的浏览器");
   let n = 1;
   while (taken.has(`custom${n}`)) n++;
   const id = `custom${n}`;
@@ -179,7 +172,7 @@ export function addCustomBrowser(input: { name: string; executablePath: string; 
 
 export function removeCustomBrowser(id: string): void {
   const stored = read();
-  if (!stored.custom?.some((c) => c.id === id)) throw new BrowserSettingsError("没有这个手动添加的浏览器");
+  if (!stored.custom?.some((c) => c.id === id)) throw new BadRequestError("没有这个手动添加的浏览器");
   const { [id]: _removed, ...browsers } = stored.browsers ?? {};
   write({ ...stored, custom: stored.custom.filter((c) => c.id !== id), browsers });
 }

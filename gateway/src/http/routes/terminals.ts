@@ -1,9 +1,9 @@
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
-import { BadRequestError } from "../../agent/session-manager.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { isRemote } from "../../ssh/location.js";
 import type { TerminalClientMessage, TerminalEvent } from "../../shared/types.js";
+import { BadRequestError } from "../../errors.js";
 
 const HEARTBEAT_MS = 15_000;
 type IdParams = { id: string };
@@ -14,9 +14,9 @@ export function terminalRoutes(app: FastifyInstance, terminals: TerminalManager)
   app.get<{ Querystring: { cwd?: string; sessionId?: string } }>("/terminals", async (req) => ({ terminals: terminals.list(req.query.cwd, req.query.sessionId || undefined) }));
 
   app.post<{ Body: { cwd: string; cols?: number; rows?: number; sessionId?: string } }>("/terminals", async (req) => {
-    const { cwd, cols = 80, rows = 24, sessionId } = req.body ?? {};
+    const { cwd, cols = 80, rows = 24, sessionId } = req.body;
     if (!cwd || !(path.isAbsolute(cwd) || isRemote(cwd))) throw new BadRequestError("缺少项目文件夹");
-    return { terminal: await terminals.create(cwd, cols, rows, typeof sessionId === "string" && sessionId ? { sessionId } : {}) };
+    return { terminal: await terminals.create(cwd, cols, rows, sessionId ? { sessionId } : {}) };
   });
 
   // 输出、输入、改大小走一条 WebSocket：SSE 每个终端占一个 HTTP 连接，浏览器对同一个源最多 6 个，
@@ -41,9 +41,9 @@ export function terminalRoutes(app: FastifyInstance, terminals: TerminalManager)
           return;
         }
         try {
-          if (msg.type === "input" && typeof msg.data === "string") terminals.write(req.params.id, msg.data, msg.typed === true ? "user" : "emulator");
-          else if (msg.type === "resize") terminals.resize(req.params.id, Number(msg.cols), Number(msg.rows));
-          else if (msg.type === "viewing") terminals.setViewing(req.params.id, socket, msg.on === true);
+          if (msg.type === "input") terminals.write(req.params.id, msg.data, msg.typed ? "user" : "emulator");
+          else if (msg.type === "resize") terminals.resize(req.params.id, msg.cols, msg.rows);
+          else if (msg.type === "viewing") terminals.setViewing(req.params.id, socket, msg.on);
         } catch {
           // 终端已经关了
         }

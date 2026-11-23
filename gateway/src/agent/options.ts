@@ -71,8 +71,8 @@ export function buildOptions(launch: SessionLaunch): Options {
   ];
   return {
     cwd: launch.cwd,
-    // 附件存在 workspace/.attachments，工作目录不是 workspace 本身的会话（项目会话、普通会话的 scratch 目录）也要能不经确认读到
-    ...(launch.cwd !== config.workspaceDir ? { additionalDirectories: [attachmentsDir] } : {}),
+    // 附件存在 workspace/.attachments，不在会话的工作目录（项目文件夹、普通会话的 scratch 目录）里，也要能不经确认读到
+    additionalDirectories: [attachmentsDir],
     env: agentEnv(),
     ...(launch.resume ? { resume: launch.sessionId } : { sessionId: launch.sessionId }),
     model: launch.model ?? config.model,

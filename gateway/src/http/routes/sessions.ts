@@ -3,24 +3,23 @@ import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk
 import { listModels } from "../../agent/models.js";
 import { historyForDisplay, historyImage, sessionHistory } from "../../agent/history.js";
 import type { FastifyInstance } from "fastify";
-import type { ConnectorInput, ConnectorPage, MarketPluginPage, McpAuthState, McpServerInput, MessagePriority, WidgetReport, WidgetReportError } from "../../shared/types.js";
+import type { ConnectorInput, ConnectorPage, MarketPluginPage, McpAuthState, McpServerInput, MessagePriority, WidgetReport } from "../../shared/types.js";
 import { reportWidget } from "../../visualize/tool.js";
-import { AttachmentError, type SelectedElementInput } from "../../agent/attachments.js";
-import { BadRequestError, NotFoundError, type SessionManager } from "../../agent/session-manager.js";
+import type { SelectedElementInput } from "../../agent/attachments.js";
+import type { SessionManager } from "../../agent/session-manager.js";
 import type { EventHub } from "../../events/event-hub.js";
 import { streamSession } from "../sse.js";
 import { clearCapabilitiesCache, listCapabilities } from "../../agent/capabilities.js";
-import { ExtensionError, importPlugin, importSkill, readSkill, removePlugin, removeSkill, setAgentEnabled, setSkillEnabled } from "../../agent/extensions.js";
+import { importPlugin, importSkill, readSkill, removePlugin, removeSkill, setAgentEnabled, setSkillEnabled } from "../../agent/extensions.js";
 import { removeMcpServer, saveMcpServer, setMcpServerEnabled } from "../../agent/mcp-config.js";
-import { addConnector, ConnectorError, listConnectors } from "../../agent/connectors.js";
-import { cancelMcpAuth, clearMcpAuth, getMcpAuth, McpAuthError, startMcpAuth, submitMcpAuthCallback } from "../../agent/mcp-auth.js";
-import { installMarketPlugin, PluginMarketError, queryMarketPlugins, uninstallMarketPlugin, updateMarketPlugin } from "../../agent/plugin-market.js";
-import { config } from "../../config.js";
+import { addConnector, listConnectors } from "../../agent/connectors.js";
+import { cancelMcpAuth, clearMcpAuth, getMcpAuth, startMcpAuth, submitMcpAuthCallback } from "../../agent/mcp-auth.js";
+import { installMarketPlugin, queryMarketPlugins, uninstallMarketPlugin, updateMarketPlugin } from "../../agent/plugin-market.js";
+import { config, EFFORT_LEVELS, PERMISSION_MODES } from "../../config.js";
 import { isRemote } from "../../ssh/location.js";
 import type { ShareStore } from "../../share/store.js";
+import { NotFoundError, BadRequestError } from "../../errors.js";
 
-const permissionModes = ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"];
-const effortLevels = ["low", "medium", "high", "xhigh", "max"];
 
 const attachmentsSchema = { type: "array", items: { type: "string" }, maxItems: 20 };
 /** 网页上选中的元素：网页拼好的 <selected-element> 一段文字，和截图的附件 id */
@@ -45,7 +44,7 @@ interface TaskParams extends IdParams {
 
 /** 文字、附件、网页元素至少要有一样 */
 function requireContent(body: { text: string; attachments?: string[]; elements?: SelectedElementInput[] }): void {
-  if (!body.text.trim() && !body.attachments?.length && !body.elements?.length) throw new AttachmentError("消息不能为空");
+  if (!body.text.trim() && !body.attachments?.length && !body.elements?.length) throw new BadRequestError("消息不能为空");
 }
 
 export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hub: EventHub, shares: ShareStore): void {
@@ -89,12 +88,12 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
 
   /** 导入技能、插件：path 是网关机器上的文件夹，复制到 Claude Code 配置目录 */
   app.post<{ Body: { path: string } }>("/skills/import", async (req) => {
-    const name = await importing(() => importSkill(String(req.body?.path ?? "")));
+    const name = await importing(() => importSkill(req.body.path));
     return { name };
   });
 
   app.post<{ Body: { path: string } }>("/plugins/import", async (req) => {
-    const name = await importing(() => importPlugin(String(req.body?.path ?? "")));
+    const name = await importing(() => importPlugin(req.body.path));
     return { name };
   });
 
@@ -120,32 +119,30 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     "/plugin-market",
     async (req): Promise<MarketPluginPage> => {
       const { refresh, search, marketplace, category, offset, limit } = req.query;
-      return market(() =>
-        queryMarketPlugins({
-          refresh: refresh === "1",
-          search,
-          marketplace,
-          category,
-          offset: offset ? Number(offset) || 0 : undefined,
-          limit: limit ? Number(limit) || undefined : undefined,
-        }),
-      );
+      return queryMarketPlugins({
+        refresh: refresh === "1",
+        search,
+        marketplace,
+        category,
+        offset: offset ? Number(offset) || 0 : undefined,
+        limit: limit ? Number(limit) || undefined : undefined,
+      });
     },
   );
 
   /** 安装、卸载、更新市场里的插件：id 是「插件名@市场名」。对新会话和子进程重启后的会话生效 */
   app.post<{ Body: { id: string } }>("/plugin-market/install", async (req) => {
-    await market(() => installMarketPlugin(String(req.body?.id ?? "")));
+    await installMarketPlugin(req.body.id);
     return { ok: true };
   });
 
   app.post<{ Body: { id: string } }>("/plugin-market/uninstall", async (req) => {
-    await market(() => uninstallMarketPlugin(String(req.body?.id ?? "")));
+    await uninstallMarketPlugin(req.body.id);
     return { ok: true };
   });
 
   app.post<{ Body: { id: string } }>("/plugin-market/update", async (req) => {
-    return { message: await market(() => updateMarketPlugin(String(req.body?.id ?? ""))) };
+    return { message: await updateMarketPlugin(req.body.id) };
   });
 
   /** 添加 MCP 服务器，同名时覆盖。对新会话和子进程重启后的会话生效 */
@@ -179,23 +176,21 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     "/connectors",
     async (req): Promise<ConnectorPage> => {
       const { source, search, cursor, category, offset, limit } = req.query;
-      return connectorCall(() =>
-        listConnectors({
-          source: source === "directory" ? "directory" : "registry",
-          search,
-          cursor,
-          category: category || undefined,
-          offset: offset ? Number(offset) || 0 : undefined,
-          limit: limit ? Number(limit) || undefined : undefined,
-        }),
-      );
+      return listConnectors({
+        source: source === "directory" ? "directory" : "registry",
+        search,
+        cursor,
+        category: category || undefined,
+        offset: offset ? Number(offset) || 0 : undefined,
+        limit: limit ? Number(limit) || undefined : undefined,
+      });
     },
   );
 
   /** 添加连接器：存成 MCP 服务器，返回它的名称；之后要登录的照常走 /mcp-servers/:name/auth */
   app.post<{ Body: ConnectorInput }>("/connectors", async (req) => {
     if (!req.body?.id) throw new BadRequestError("缺少连接器");
-    const name = await connectorCall(() => addConnector(req.body));
+    const name = await addConnector(req.body);
     clearCapabilitiesCache();
     return { name };
   });
@@ -206,7 +201,7 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
    */
   app.post<{ Params: { name: string }; Body: { cwd?: string } | undefined }>("/mcp-servers/:name/auth", async (req): Promise<McpAuthState> => {
     const { name } = req.params;
-    return mcpAuth(() => startMcpAuth(name, req.body?.cwd || config.workspaceDir, () => sessions.reconnectMcpServer(name)));
+    return startMcpAuth(name, req.body?.cwd || config.workspaceDir, () => sessions.reconnectMcpServer(name));
   });
 
   app.get<{ Params: { name: string } }>("/mcp-servers/:name/auth", async (req): Promise<McpAuthState> => {
@@ -218,7 +213,7 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
   /** 浏览器和网关不在同一台电脑上时，登录后跳到打不开的 localhost 页面：把地址栏里的网址交上来 */
   app.post<{ Params: { name: string }; Body: { url: string } }>("/mcp-servers/:name/auth/callback", async (req): Promise<McpAuthState> => {
     if (!/^https?:\/\//.test(req.body?.url ?? "")) throw new BadRequestError("请粘贴完整的网址");
-    return mcpAuth(() => submitMcpAuthCallback(req.params.name, req.body.url.trim()));
+    return submitMcpAuthCallback(req.params.name, req.body.url.trim());
   });
 
   app.delete<{ Params: { name: string } }>("/mcp-servers/:name/auth", async (req) => {
@@ -229,7 +224,7 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
   /** 断开：清除保存的登录令牌，返回清除后的状态；开着的会话重连这个服务器 */
   app.post<{ Params: { name: string }; Body: { cwd?: string } | undefined }>("/mcp-servers/:name/logout", async (req): Promise<{ status: string }> => {
     const { name } = req.params;
-    const status = await mcpAuth(() => clearMcpAuth(name, req.body?.cwd || config.workspaceDir));
+    const status = await clearMcpAuth(name, req.body?.cwd || config.workspaceDir);
     sessions.reconnectMcpServer(name);
     return { status };
   });
@@ -247,8 +242,8 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
             text: { type: "string" },
             cwd: { type: "string" },
             model: { type: "string" },
-            effort: { type: "string", enum: effortLevels },
-            permissionMode: { type: "string", enum: permissionModes },
+            effort: { type: "string", enum: EFFORT_LEVELS },
+            permissionMode: { type: "string", enum: PERMISSION_MODES },
             attachments: attachmentsSchema,
             // 不发消息，一开始就设定这个目标（text 不用）
             goal: { type: "string" },
@@ -308,7 +303,7 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     "/sessions/:id",
     {
       schema: {
-        body: { type: "object", required: ["title"], properties: { title: { type: "string", minLength: 1 } } },
+        body: { type: "object", required: ["title"], properties: { title: { type: "string" } } },
       },
     },
     async (req) => {
@@ -342,15 +337,7 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
 
   // 对话里的部件显示后网页报告结果（大小、加载期间的错误），交给正在等它的 show_widget 调用；局域网分享的访客也能报（同一个会话）
   app.post<{ Params: IdParams & { toolUseId: string }; Body: WidgetReport }>("/sessions/:id/widgets/:toolUseId/report", async (req) => {
-    const body = req.body as Partial<WidgetReport> | undefined;
-    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0);
-    const kinds: WidgetReportError["kind"][] = ["error", "rejection", "resource", "csp", "console"];
-    const errors = (Array.isArray(body?.errors) ? body.errors : [])
-      .filter((e): e is WidgetReportError => !!e && kinds.includes(e.kind) && typeof e.message === "string")
-      .slice(0, 20)
-      .map((e) => ({ kind: e.kind, message: e.message.slice(0, 500), ...(typeof e.line === "number" && e.line > 0 ? { line: Math.round(e.line) } : {}) }));
-    const report: WidgetReport = { width: num(body?.width), height: num(body?.height), loaded: body?.loaded === true, errors };
-    return { accepted: reportWidget(req.params.id, req.params.toolUseId, report) };
+    return { accepted: reportWidget(req.params.id, req.params.toolUseId, req.body) };
   });
 
   app.post<{ Params: IdParams }>("/sessions/:id/interrupt", async (req) => {
@@ -362,7 +349,7 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     "/sessions/:id/permission-mode",
     {
       schema: {
-        body: { type: "object", required: ["mode"], properties: { mode: { type: "string", enum: permissionModes } } },
+        body: { type: "object", required: ["mode"], properties: { mode: { type: "string", enum: PERMISSION_MODES } } },
       },
     },
     async (req) => {
@@ -379,7 +366,7 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
       schema: {
         body: {
           type: "object",
-          properties: { model: { type: "string" }, effort: { type: ["string", "null"], enum: [...effortLevels, null] } },
+          properties: { model: { type: "string" }, effort: { type: ["string", "null"], enum: [...EFFORT_LEVELS, null] } },
         },
       },
     },
@@ -459,11 +446,6 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     streamSession(req, reply, hub, req.params.id);
   });
 
-  app.delete<{ Params: IdParams }>("/sessions/:id/process", async (req) => {
-    await sessions.closeSession(req.params.id);
-    return { ok: true };
-  });
-
   app.get<{ Params: IdParams }>("/sessions/:id/tasks", async (req) => ({ tasks: sessions.listTasks(req.params.id) }));
 
   app.get<{ Params: TaskParams }>("/sessions/:id/tasks/:taskId/output", async (req) =>
@@ -489,50 +471,15 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
   });
 }
 
-/** 导入、删除后列表要重新读；校验不通过时返回 400 */
+/** 导入、删除后列表要重新读 */
 async function importing<T>(action: () => Promise<T>): Promise<T> {
-  try {
-    const result = await action();
-    clearCapabilitiesCache();
-    return result;
-  } catch (err) {
-    if (err instanceof ExtensionError) throw new BadRequestError(err.message);
-    throw err;
-  }
+  const result = await action();
+  clearCapabilitiesCache();
+  return result;
 }
 
 function activeOr404(sessions: SessionManager, id: string) {
   const session = sessions.get(id);
   if (!session) throw new NotFoundError("会话不在运行");
   return session;
-}
-
-/** 插件市场失败（克隆不了、插件不存在、同名冲突等）是 400，带着 Claude Code 给的原因 */
-async function market<T>(run: () => Promise<T>): Promise<T> {
-  try {
-    return await run();
-  } catch (err) {
-    if (err instanceof PluginMarketError) throw new BadRequestError(err.message);
-    throw err;
-  }
-}
-
-/** 登录、断开失败（服务器不支持注册客户端、回调网址不对等）是 400，带着 Claude Code 给的原因 */
-async function mcpAuth<T>(run: () => Promise<T>): Promise<T> {
-  try {
-    return await run();
-  } catch (err) {
-    if (err instanceof McpAuthError) throw new BadRequestError(err.message);
-    throw err;
-  }
-}
-
-/** 注册表连不上、要填的没填是 400，带着原因 */
-async function connectorCall<T>(run: () => Promise<T>): Promise<T> {
-  try {
-    return await run();
-  } catch (err) {
-    if (err instanceof ConnectorError) throw new BadRequestError(err.message);
-    throw err;
-  }
 }

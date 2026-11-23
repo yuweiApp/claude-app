@@ -1,8 +1,8 @@
 /**
- * 简易 demo：browser_run_code 是怎么让变量在多次调用之间保留的（真正的实现见 ../browser/repl.ts）。
+ * 简易 demo：browser_run_code 是怎么让变量在多次调用之间保留的（真正的实现见 ../src/browser/repl.ts）。
  *
  * 运行（在 gateway 目录下）：
- *   npx tsx src/example/repl-variables.ts
+ *   npx tsx examples/repl-variables.ts
  *
  * 不需要浏览器：这里用一个假的 page 对象代替 Playwright 的 Page，只演示变量共享的原理。
  *
@@ -145,7 +145,7 @@ function createFakePage() {
 
 /**
  * 一个会话的 REPL：构造时建一个 vm 上下文，之后每次 run 都用它。
- * 真正的实现里，网关按「浏览器:会话 id」把它存在一个 Map 里（见 ../browser/tool.ts 的 replFor），
+ * 真正的实现里，网关按「浏览器:会话 id」把它存在一个 Map 里（见 ../src/browser/tool.ts 的 replFor），
  * 所以同一个会话的多次调用拿到的是同一个 REPL、同一个上下文
  */
 class MiniRepl {
@@ -161,7 +161,7 @@ class MiniRepl {
       console: { log: (...args: unknown[]) => this.output.push(args.map(String).join(" ")) },
       // 新建的 vm 上下文里只有 JS 语言自带的东西（Object、Promise、JSON……），
       // URL、setTimeout、fetch、Buffer 这些是 Node 提供的，要从网关这边复制进去，不然会报「URL is not defined」。
-      // 真正的实现里复制了一整个列表，见 ../browser/repl.ts 的 EXPOSED_GLOBALS
+      // 真正的实现里复制了一整个列表，见 ../src/browser/repl.ts 的 EXPOSED_GLOBALS
       URL,
     });
   }

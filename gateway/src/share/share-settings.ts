@@ -3,6 +3,7 @@ import path from "node:path";
 import { config } from "../config.js";
 import { getConnection } from "../ssh/connections.js";
 import type { ShareSettingsInput } from "../shared/types.js";
+import { BadRequestError } from "../errors.js";
 
 /**
  * 设置页「公网分享」（见 docs/lan-share.md「公网分享」）：用「SSH 连接」里的哪个连接，或者手动填的服务器地址、账号；公网端口。
@@ -27,8 +28,6 @@ export interface ShareServer {
 export interface ShareSettings {
   server: ShareServer;
 }
-
-export class ShareSettingsError extends Error {}
 
 const DEFAULTS: ShareSettings = { server: { host: "", sshPort: 22, username: "", remotePort: 8790 } };
 
@@ -56,21 +55,21 @@ export function onShareSettingsChange(listener: () => void): () => void {
  */
 export function settingsFrom(input: ShareSettingsInput, requireServer = false): ShareSettings {
   const prev = current.server;
-  const connectionId = String(input.connectionId ?? "").trim();
-  if (connectionId && !getConnection(connectionId)) throw new ShareSettingsError("选的 SSH 连接不存在（可能已经在设置里删掉了）");
-  const host = connectionId ? "" : String(input.host ?? "").trim();
-  const username = connectionId ? "" : String(input.username ?? "").trim();
+  const connectionId = (input.connectionId ?? "").trim();
+  if (connectionId && !getConnection(connectionId)) throw new BadRequestError("选的 SSH 连接不存在（可能已经在设置里删掉了）");
+  const host = connectionId ? "" : input.host.trim();
+  const username = connectionId ? "" : input.username.trim();
   const sshPort = connectionId ? 22 : port(input.sshPort, "SSH 端口");
   const remotePort = port(input.remotePort, "公网端口");
   const off = !connectionId && !host && !username;
   if (!connectionId && (!off || requireServer)) {
-    if (!host) throw new ShareSettingsError("请填服务器地址");
-    if (/[\s/@]/.test(host)) throw new ShareSettingsError("服务器地址只填 IP 或域名，用户名、端口填在各自的框里");
-    if (!username) throw new ShareSettingsError("请填用户名");
+    if (!host) throw new BadRequestError("请填服务器地址");
+    if (/[\s/@]/.test(host)) throw new BadRequestError("服务器地址只填 IP 或域名，用户名、端口填在各自的框里");
+    if (!username) throw new BadRequestError("请填用户名");
   }
   const password = off ? "" : (input.password ?? prev.password ?? "");
-  const identityFile = String(input.identityFile ?? "").trim();
-  const publicHost = String(input.publicHost ?? "")
+  const identityFile = input.identityFile.trim();
+  const publicHost = input.publicHost
     .trim()
     .replace(/^https?:\/\//, "")
     .replace(/\/+$/, "");
@@ -108,28 +107,13 @@ export function rememberFingerprint(host: string, sshPort: number, fingerprint: 
 
 function port(value: unknown, name: string): number {
   const n = Number(value);
-  if (!Number.isInteger(n) || n < 1 || n > 65535) throw new ShareSettingsError(`${name}要是 1–65535 的整数`);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) throw new BadRequestError(`${name}要是 1–65535 的整数`);
   return n;
 }
 
 function load(): ShareSettings {
   try {
-    if (!existsSync(FILE)) return DEFAULTS;
-    const raw = JSON.parse(readFileSync(FILE, "utf8")) as Partial<ShareSettings>;
-    const s = (raw.server ?? {}) as Partial<ShareServer>;
-    return {
-      server: {
-        ...(typeof s.connectionId === "string" && s.connectionId ? { connectionId: s.connectionId } : {}),
-        host: typeof s.host === "string" ? s.host : "",
-        sshPort: Number.isInteger(s.sshPort) ? s.sshPort! : 22,
-        username: typeof s.username === "string" ? s.username : "",
-        remotePort: Number.isInteger(s.remotePort) ? s.remotePort! : 8790,
-        ...(typeof s.password === "string" && s.password ? { password: s.password } : {}),
-        ...(typeof s.identityFile === "string" && s.identityFile ? { identityFile: s.identityFile } : {}),
-        ...(typeof s.publicHost === "string" && s.publicHost ? { publicHost: s.publicHost } : {}),
-        ...(typeof s.fingerprint === "string" && s.fingerprint ? { fingerprint: s.fingerprint } : {}),
-      },
-    };
+    return existsSync(FILE) ? (JSON.parse(readFileSync(FILE, "utf8")) as ShareSettings) : DEFAULTS;
   } catch {
     return DEFAULTS;
   }

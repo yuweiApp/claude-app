@@ -29,8 +29,6 @@ export interface KnownBrowser {
   /** Playwright 认识的通道（chrome、msedge 这些），找可执行文件时作为后备 */
   channel?: string;
   paths: Partial<Record<Platform, Paths>>;
-  /** 环境变量里的旧配置（以前写在 .env.local），设置页没填时用 */
-  legacyEnv?: { token: string; profile: string };
 }
 
 const home = os.homedir();
@@ -61,7 +59,6 @@ export const KNOWN_BROWSERS: KnownBrowser[] = [
     name: "Chrome",
     logo: CHROME,
     channel: "chrome",
-    legacyEnv: { token: "PLAYWRIGHT_MCP_EXTENSION_TOKEN", profile: "PLAYWRIGHT_MCP_PROFILE_DIR_NAME" },
     paths: {
       win32: win([pf, pf86, local], "Google\\Chrome\\Application\\chrome.exe", path.join(local, "Google", "Chrome", "User Data")),
       darwin: mac("Google Chrome", "Google Chrome", "Google/Chrome"),
@@ -105,7 +102,6 @@ export const KNOWN_BROWSERS: KnownBrowser[] = [
     name: "Edge",
     logo: EDGE,
     channel: "msedge",
-    legacyEnv: { token: "PLAYWRIGHT_MCP_EDGE_EXTENSION_TOKEN", profile: "PLAYWRIGHT_MCP_EDGE_PROFILE_DIR_NAME" },
     paths: {
       win32: win([pf86, pf, local], "Microsoft\\Edge\\Application\\msedge.exe", path.join(local, "Microsoft", "Edge", "User Data")),
       darwin: mac("Microsoft Edge", "Microsoft Edge", "Microsoft Edge"),

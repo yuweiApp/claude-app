@@ -504,7 +504,7 @@ export interface HistoryImageSource {
  * GET /sessions 的列表项：SDK 的 SDKSessionInfo 原样返回，只加上网关里活跃会话的运行状态（不活跃时没有 state）。
  * cwd 是会话的工作目录，Claude Code 按它区分项目（会话存在 $CLAUDE_CONFIG_DIR/projects/<编码后的目录>/ 下）
  */
-/** chat：普通会话（没选文件夹，工作目录是网关建的 workspace/scratch-…，或者旧会话的 workspace 本身），列在侧边栏「会话」里；否则是项目会话 */
+/** chat：普通会话（没选文件夹，工作目录是网关建的 workspace/scratch-…），列在侧边栏「会话」里；否则是项目会话 */
 export type SessionListItem = SDKSessionInfo & {
   chat: boolean;
   /** Fork 源会话；侧栏据此把分支显示在源会话下 */

@@ -2,9 +2,9 @@ import { randomBytes } from "node:crypto";
 import { stat, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
-import { BadRequestError } from "../../agent/session-manager.js";
 import type { FileTransfer } from "../../shared/types.js";
 import { fsError, resolveInProject, uploadDir, uploadInto, type InProject } from "./files.js";
+import { BadRequestError } from "../../errors.js";
 
 /**
  * 文件树的上传、下载（桌面版连着本机的网关时）：界面给出文件在这台机器上的路径（拖进来的文件、系统的打开/保存对话框），
@@ -36,8 +36,8 @@ function prune(): void {
 }
 
 /** 网关这台机器上的路径：要是绝对路径 */
-function localPath(value: unknown): string {
-  if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\0")) throw new BadRequestError("缺少本机路径");
+function localPath(value: string): string {
+  if (!path.isAbsolute(value)) throw new BadRequestError("缺少本机路径");
   return path.resolve(value);
 }
 
@@ -92,16 +92,15 @@ export function transferRoutes(app: FastifyInstance): void {
   // 上传 { cwd, kind: "upload", dir, locals, overwrite? }：locals 是这台机器上的文件，传进项目里的文件夹 dir（空是根）；不能是文件夹。
   // 下载 { cwd, kind: "download", path, local }：项目里的文件 path 存到这台机器上的 local（已经有的覆盖）。
   // 先返回记录，在后台传，GET 查进度
-  app.post<{ Body: { cwd?: string; kind?: string; dir?: string; locals?: unknown; path?: string; local?: unknown; overwrite?: boolean } }>("/files/transfers", async (req) => {
+  app.post<{ Body: { cwd: string; kind: "upload" | "download"; dir?: string; locals?: string[]; path?: string; local?: string; overwrite?: boolean } }>("/files/transfers", async (req) => {
     prune();
-    const body = req.body ?? {};
-    const cwd = body.cwd ?? "";
-    const base = { cwd, state: "queued" as const, done: 0, speed: 0, abort: new AbortController() };
+    const body = req.body;
+    const base = { cwd: body.cwd, state: "queued" as const, done: 0, speed: 0, abort: new AbortController() };
     const created: Entry[] = [];
     if (body.kind === "upload") {
       const at = resolveInProject(body.cwd, body.dir);
       await uploadDir(at);
-      const locals = Array.isArray(body.locals) ? body.locals.map(localPath) : [];
+      const locals = (body.locals ?? []).map(localPath);
       if (!locals.length) throw new BadRequestError("没有要上传的文件");
       const sizes = await Promise.all(
         locals.map(async (local) => {
@@ -122,7 +121,7 @@ export function transferRoutes(app: FastifyInstance): void {
       });
     } else if (body.kind === "download") {
       const at = resolveInProject(body.cwd, body.path);
-      const local = localPath(body.local);
+      const local = localPath(body.local ?? "");
       const info = await at.fs.stat(at.abs).catch((err: NodeJS.ErrnoException) => {
         throw new BadRequestError(fsError(err, "文件"));
       });

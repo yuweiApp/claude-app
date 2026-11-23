@@ -1,6 +1,7 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { MCP_AUTO_BACKGROUND_MS } from "../config.js";
+import { MCP_AUTO_BACKGROUND_SECONDS } from "../config.js";
+import { errorResult, withNotice } from "../tool-result.js";
 import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
 import type { BrowserHost, TemporaryTab } from "./host.js";
 import { DATA_URL_KEEP_CHARS, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, MAX_URL_CHARS, shortUrl, type Repl, type ToolOutput } from "./repl.js";
@@ -21,8 +22,6 @@ export const RUN_CODE_TOOL = "browser_run_code";
 
 export const BROWSER_TOOLS = [`mcp__${BROWSER_SERVER}__${RUN_CODE_TOOL}`];
 
-/** MCP 调用跑多久后自动转到后台（config.ts 的 agentEnv 传给子进程的 CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS） */
-const BACKGROUND_SECONDS = (Number(process.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS) || MCP_AUTO_BACKGROUND_MS) / 1000;
 
 /**
  * browser_run_code 的运行环境，每个浏览器的说明都带上（各自独立：外部浏览器可能没开，内置浏览器可能不在桌面版里）。
@@ -39,7 +38,7 @@ export const RUNTIME_FACTS = [
   `- 返回的文字里，数据部分超过 ${DATA_URL_KEEP_CHARS} 个字符的 data: 地址只保留类型（如 data:image/jpeg;base64,），数据换成「…（省略了 N 个字符）」；代码里拿到的值是完整的。`,
   "- 给 page 赋另一个标签页时，那个标签页切到前台。",
   `- timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}；Playwright 单个动作默认 30 秒超时。`,
-  `- 调用超过约 ${BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，代码继续跑，结束后结果作为通知送达；会话空闲时，这个通知会开始新的一轮。多次调用可以同时在跑，操作的是同一批标签页。`,
+  `- 调用超过约 ${MCP_AUTO_BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，代码继续跑，结束后结果作为通知送达；会话空闲时，这个通知会开始新的一轮。多次调用可以同时在跑，操作的是同一批标签页。`,
   "- 网页本身的变化不会通知你；一轮结束后，只有后台任务结束会再唤起你。",
   "- 连续同步执行（中间没有 await）超过 2 秒的代码会被中止。",
   "- page.ariaSnapshot({ mode: 'ai' }) 返回页面的无障碍树（YAML 文本），元素带 [ref=e12]；之后 page.locator('aria-ref=e12') 指向同一个元素，页面变了要重新取。",
@@ -89,8 +88,6 @@ export function temporaryNote(tabs: TemporaryTab[], pages: string[]): string {
   ].join("\n");
 }
 
-const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
-const error = (t: string) => ({ ...text(t), isError: true });
 
 /**
  * 每个会话在每个浏览器里一个 REPL，放在模块里而不是跟着 query() 走：
@@ -125,8 +122,7 @@ function takeRestartNotice(repl: Repl): string | undefined {
 }
 
 /** 文字前面加上提示 */
-const prefixed = (notice: string | undefined, body: string) => (notice ? (body ? `${notice}\n\n${body}` : notice) : body);
-const withRestartNotice = <T extends ToolOutput>(notice: string | undefined, output: T): T => (notice ? { ...output, text: prefixed(notice, output.text) } : output);
+const withRestartNotice = <T extends ToolOutput>(notice: string | undefined, output: T): T => (notice ? { ...output, text: withNotice(notice, output.text) } : output);
 
 /**
  * 这个会话在内置浏览器里还有代码在跑（转到后台的 browser_run_code）：一轮结束时先不关临时标签页，
@@ -215,7 +211,7 @@ export function browserMcpServer({ name, instructions, repl, readFile, temporary
       "在常驻的 REPL 里执行 JavaScript（Playwright API），支持顶层 await。全局有 page（当前标签页）、context（BrowserContext），顶层变量在之后的调用里保留；" +
         "返回最后一个表达式的值和 console.log 的输出，emitImage(buffer) 把图片加进结果。" +
         "code 和 file 传其中一个：file 是会话工作目录里的脚本文件，内容和写在 code 里一样执行。" +
-        `timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}、最大 ${MAX_TIMEOUT_MS}；超过约 ${BACKGROUND_SECONDS} 秒转为后台任务，结束后结果作为通知送达。`,
+        `timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}、最大 ${MAX_TIMEOUT_MS}；超过约 ${MCP_AUTO_BACKGROUND_SECONDS} 秒转为后台任务，结束后结果作为通知送达。`,
       {
         code: z.string().nullish().describe("要执行的 JavaScript；和 file 传其中一个"),
         file: z.string().nullish().describe("要执行的脚本文件，相对会话工作目录的路径；和 code 传其中一个"),
@@ -238,8 +234,8 @@ export function browserMcpServer({ name, instructions, repl, readFile, temporary
           const temporary = temporaryTabs && result.opened && !result.isError ? await temporaryTabs().catch(() => null) : null;
           return toResult(temporary?.length ? { ...result, text: `${result.text}\n\n${temporaryNote(temporary, result.tabs)}` } : result);
         } catch (err) {
-          rememberResult(extra, prefixed(notice, errorMessage(err)), true);
-          return error(prefixed(notice, errorMessage(err)));
+          rememberResult(extra, withNotice(notice, errorMessage(err)), true);
+          return errorResult(withNotice(notice, errorMessage(err)));
         }
       },
       { annotations: { title: "Run browser code", readOnlyHint: false, destructiveHint: true, openWorldHint: true } },

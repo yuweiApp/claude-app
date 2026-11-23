@@ -1,6 +1,6 @@
 import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import type { FastifyInstance } from "fastify";
-import { BadRequestError, NotFoundError, type SessionManager } from "../../agent/session-manager.js";
+import type { SessionManager } from "../../agent/session-manager.js";
 import { config } from "../../config.js";
 import { isChatCwd, sessionRecordDir } from "../../agent/scratch.js";
 import { lastCustomTitle } from "../../agent/session-records.js";
@@ -8,9 +8,10 @@ import path from "node:path";
 import type { ShareBrowserRelay } from "../../share/browser-relay.js";
 import type { LanServer } from "../../share/lan-server.js";
 import { lanAddresses, type ShareStore } from "../../share/store.js";
-import { saveShareSettings, settingsFrom, shareConfigured, ShareSettingsError, shareSettings, type ShareSettings } from "../../share/share-settings.js";
+import { saveShareSettings, settingsFrom, shareConfigured, shareSettings } from "../../share/share-settings.js";
 import { fixGatewayPorts, probeServer } from "../../share/ssh-tunnel.js";
 import type { ShareFixResult, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult } from "../../shared/types.js";
+import { NotFoundError, BadRequestError } from "../../errors.js";
 
 interface IdParams {
   id: string;
@@ -88,19 +89,11 @@ export function shareRoutes(app: FastifyInstance, sessions: SessionManager, shar
       tunnel: lan.tunnel.view,
     };
   };
-  const parse = (body: ShareSettingsInput | undefined, requireServer = false): ShareSettings => {
-    try {
-      return settingsFrom(body ?? ({} as ShareSettingsInput), requireServer);
-    } catch (err) {
-      if (err instanceof ShareSettingsError) throw new BadRequestError(err.message);
-      throw err;
-    }
-  };
 
   app.get("/share/settings", async () => settingsView());
 
   app.put<{ Body: ShareSettingsInput }>("/share/settings", async (req) => {
-    saveShareSettings(parse(req.body));
+    saveShareSettings(settingsFrom(req.body));
     if (!shareConfigured()) {
       for (const s of shares.list()) if (s.public) shares.removeScope(s.sessionId, "public");
       await lan.sync();
@@ -110,7 +103,7 @@ export function shareRoutes(app: FastifyInstance, sessions: SessionManager, shar
 
   /** 按请求体里的服务器配置连一次、开端口、从外面访问一次，不保存 */
   app.post<{ Body: ShareSettingsInput }>("/share/settings/test", async (req): Promise<ShareTestResult> => {
-    const next = parse(req.body, true);
+    const next = settingsFrom(req.body, true);
     const live = shareSettings();
     const same = (["connectionId", "host", "sshPort", "username", "remotePort", "publicHost"] as const).every((k) => (live.server[k] ?? "") === (next.server[k] ?? ""));
     // 测的就是现在公网分享在用的服务器和端口：另开一条会和它抢端口，直接用（没连着就连）它，结果也就是公网分享的状态
@@ -126,7 +119,7 @@ export function shareRoutes(app: FastifyInstance, sessions: SessionManager, shar
 
   /** 按请求体里的服务器配置登录服务器，开启 sshd 的 GatewayPorts（设置页自检报端口只开在 127.0.0.1 上时的按钮）；成功后有公网分享就重新连 */
   app.post<{ Body: ShareSettingsInput }>("/share/settings/fix-gateway-ports", async (req): Promise<ShareFixResult> => {
-    const result = await fixGatewayPorts(parse(req.body, true).server, app.log);
+    const result = await fixGatewayPorts(settingsFrom(req.body, true).server, app.log);
     // 现在的转发是改之前连的，GatewayPorts 对它不生效：断开，有公网分享就按设置重新连，等连好再返回（设置页接着测试时直接用它）
     if (result.ok) {
       lan.tunnel.stop();

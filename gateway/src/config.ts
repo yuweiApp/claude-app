@@ -48,23 +48,23 @@ function list(name: string, fallback: string[] = []): string[] {
   return raw.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
-const permissionModes: PermissionMode[] = ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"];
+export const PERMISSION_MODES: PermissionMode[] = ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"];
 
 function permissionMode(name: string, fallback: PermissionMode): PermissionMode {
   const raw = env[name]?.trim();
   if (!raw) return fallback;
-  if (!permissionModes.includes(raw as PermissionMode)) {
-    throw new Error(`环境变量 ${name} 只能是 ${permissionModes.join(" / ")}，当前为 "${raw}"`);
+  if (!PERMISSION_MODES.includes(raw as PermissionMode)) {
+    throw new Error(`环境变量 ${name} 只能是 ${PERMISSION_MODES.join(" / ")}，当前为 "${raw}"`);
   }
   return raw as PermissionMode;
 }
 
-const effortLevels: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+export const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
 function effortLevel(name: string, fallback: EffortLevel): EffortLevel {
   const raw = env[name]?.trim();
   if (!raw) return fallback;
-  if (!effortLevels.includes(raw as EffortLevel)) throw new Error(`环境变量 ${name} 只能是 ${effortLevels.join(" / ")}，当前为 "${raw}"`);
+  if (!EFFORT_LEVELS.includes(raw as EffortLevel)) throw new Error(`环境变量 ${name} 只能是 ${EFFORT_LEVELS.join(" / ")}，当前为 "${raw}"`);
   return raw as EffortLevel;
 }
 
@@ -143,8 +143,18 @@ export const config = {
 // listSessions() / getSessionMessages() 在网关进程里读会话文件，也按 CLAUDE_CONFIG_DIR 找目录
 process.env.CLAUDE_CONFIG_DIR = config.claudeConfigDir;
 
+/** 网关自己请求模型接口（生成标题、列模型、远程会话的模型请求转发）的鉴权头：同 Claude Code，ANTHROPIC_AUTH_TOKEN 优先，其次 ANTHROPIC_API_KEY */
+export function modelAuthHeaders(): Record<string, string> {
+  if (env.ANTHROPIC_AUTH_TOKEN) return { authorization: `Bearer ${env.ANTHROPIC_AUTH_TOKEN}` };
+  if (env.ANTHROPIC_API_KEY) return { "x-api-key": env.ANTHROPIC_API_KEY };
+  return {};
+}
+
 /** MCP 工具调用跑多久后自动转到后台（见 agentEnv），浏览器工具的说明里也用到 */
 export const MCP_AUTO_BACKGROUND_MS = 20_000;
+
+/** 实际生效的转后台时间（秒）：环境里自己设了 CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS 的按它 */
+export const MCP_AUTO_BACKGROUND_SECONDS = (Number(env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS) || MCP_AUTO_BACKGROUND_MS) / 1000;
 
 /**
  * 传给 claude 子进程的环境变量：继承网关的环境（ANTHROPIC_BASE_URL、ANTHROPIC_AUTH_TOKEN 等原样透传），
@@ -159,9 +169,9 @@ export function agentEnv(): Record<string, string | undefined> {
           ["ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"].map((k) => [k, env[k] || config.model]),
         )
       : {};
-  // 外部浏览器的扩展 token（以前写在 .env.local 的 Chrome、Edge 的，现在在设置页填，见 browser/browser-settings.ts）只给网关自己连浏览器用：模型拿到它就能在 Bash 里另起 Playwright
-  // 不经提示操作用户的浏览器，绕过外部浏览器工具的权限卡片
-  const { PLAYWRIGHT_MCP_EXTENSION_TOKEN: _token, PLAYWRIGHT_MCP_EDGE_EXTENSION_TOKEN: _edgeToken, ...inherited } = process.env;
+  // 外部浏览器的扩展 token（设置页填的，见 browser/browser-settings.ts）只给网关自己连浏览器用：环境里有的话不传给子进程，
+  // 模型拿到它就能在 Bash 里另起 Playwright 不经提示操作用户的浏览器，绕过外部浏览器工具的权限卡片
+  const { PLAYWRIGHT_MCP_EXTENSION_TOKEN: _token, ...inherited } = process.env;
   // 设置页「网络代理」：HTTPS_PROXY、NO_PROXY 等，Claude Code 和它拉起的 Bash、MCP、git 都按这些走（见 net/proxy.ts）
   applyProxyEnv(inherited);
   // Windows 的环境变量名不分大小写，展开出来的是它原来的写法

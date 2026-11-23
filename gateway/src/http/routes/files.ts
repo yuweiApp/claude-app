@@ -3,10 +3,10 @@ import { once } from "node:events";
 import { pipeline } from "node:stream/promises";
 import type { FastifyInstance } from "fastify";
 import iconv from "iconv-lite";
-import { BadRequestError } from "../../agent/session-manager.js";
 import type { FileContent, FileEncoding, ProjectEntry } from "../../shared/types.js";
 import { fsFor, type HostFs } from "../../ssh/host-fs.js";
 import { PAGE_PICKER_SCRIPT } from "../../shared/page-picker.js";
+import { BadRequestError } from "../../errors.js";
 
 /** 本机是 path，远程会话（cwd 是 ssh://…，见 ssh/host-fs.ts）是 path.posix */
 type PathLib = HostFs["path"];
@@ -287,12 +287,12 @@ export function fileRoutes(app: FastifyInstance): void {
   });
 
   // Claude 回复里的行内代码像文件路径时，网页来问是不是工作目录里存在的文件（是就显示成文件链接）；paths 相对项目文件夹
-  app.post<{ Body: { cwd?: string; paths?: unknown } }>("/files/exists", async (req) => {
-    const paths = Array.isArray(req.body?.paths) ? req.body.paths.filter((p): p is string => typeof p === "string").slice(0, 200) : [];
+  app.post<{ Body: { cwd: string; paths: string[] } }>("/files/exists", async (req) => {
+    const paths = req.body.paths.slice(0, 200);
     const checked = await Promise.all(
       paths.map(async (rel) => {
         try {
-          const { fs, abs } = resolveInProject(req.body?.cwd, rel);
+          const { fs, abs } = resolveInProject(req.body.cwd, rel);
           return (await fs.stat(abs)).isFile ? rel : null;
         } catch {
           return null;
@@ -472,9 +472,9 @@ export function fsError(err: NodeJS.ErrnoException, what: string): string {
   }
 }
 
-/** 同 resolveInProject，但不能是项目文件夹本身（新建、删除、改名用），名字里不能有 \0 */
+/** 同 resolveInProject，但不能是项目文件夹本身（新建、删除、改名用） */
 function resolveChild(cwd: string | undefined, rel: string | undefined): InProject {
-  if (!rel || rel.includes("\0")) throw new BadRequestError("缺少路径");
+  if (!rel) throw new BadRequestError("缺少路径");
   const resolved = resolveInProject(cwd, rel);
   if (resolved.abs === resolved.root) throw new BadRequestError("不能操作项目文件夹本身");
   return resolved;

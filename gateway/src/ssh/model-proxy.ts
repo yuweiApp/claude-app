@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { type Duplex, pipeline } from "node:stream";
 import { type Dispatcher, request } from "undici";
-import { config } from "../config.js";
+import { config, modelAuthHeaders } from "../config.js";
 import { describeNetError } from "../net/proxy.js";
 
 /**
@@ -51,11 +51,9 @@ async function forward(req: IncomingMessage, res: ServerResponse, token: string)
   const headers: http.OutgoingHttpHeaders = {};
   for (const [k, v] of Object.entries(req.headers)) if (!DROP_HEADERS.has(k) && v !== undefined) headers[k] = v;
   headers.host = target.host;
-  const env = process.env;
-  if (env.ANTHROPIC_AUTH_TOKEN) headers.authorization = `Bearer ${env.ANTHROPIC_AUTH_TOKEN}`;
-  else if (env.ANTHROPIC_API_KEY) headers["x-api-key"] = env.ANTHROPIC_API_KEY;
+  Object.assign(headers, modelAuthHeaders());
   // ANTHROPIC_CUSTOM_HEADERS：一行一个「名称: 值」，Claude Code 本来会自己加，远端没有它，这里补上
-  for (const line of (env.ANTHROPIC_CUSTOM_HEADERS ?? "").split(/\r?\n/)) {
+  for (const line of (process.env.ANTHROPIC_CUSTOM_HEADERS ?? "").split(/\r?\n/)) {
     const i = line.indexOf(":");
     if (i > 0) headers[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
   }

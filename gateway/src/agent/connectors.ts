@@ -1,6 +1,7 @@
 import { connectorDirectory, connectorRegistry, featuredConnectors } from "../config-file.js";
 import type { ConnectorEntry, ConnectorField, ConnectorInput, ConnectorPage, ConnectorSource } from "../shared/types.js";
 import { readMcpServers, saveMcpServer } from "./mcp-config.js";
+import { BadRequestError } from "../errors.js";
 
 /**
  * 连接器市场，两个来源，都只列有远程地址的服务器：
@@ -45,8 +46,6 @@ const ENTRY_TTL_MS = 60 * 60_000;
 const SEARCH_TTL_MS = 5 * 60_000;
 const cache = new Map<string, { at: number; value: Promise<unknown> }>();
 
-export class ConnectorError extends Error {}
-
 function cached<T>(key: string, ttl: number, load: () => Promise<T>): Promise<T> {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < ttl) return hit.value as Promise<T>;
@@ -65,10 +64,10 @@ async function getJson<T>(url: string, label: string): Promise<T | null> {
     res = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(TIMEOUT_MS) });
   } catch (err) {
     const e = err as Error;
-    throw new ConnectorError(`连接器市场加载失败：${e.name === "TimeoutError" ? `${label}超过 15 秒没有响应` : ((e.cause as Error | undefined)?.message ?? e.message)}`);
+    throw new BadRequestError(`连接器市场加载失败：${e.name === "TimeoutError" ? `${label}超过 15 秒没有响应` : ((e.cause as Error | undefined)?.message ?? e.message)}`);
   }
   if (res.status === 404) return null;
-  if (!res.ok) throw new ConnectorError(`连接器市场加载失败：${label}返回 ${res.status}`);
+  if (!res.ok) throw new BadRequestError(`连接器市场加载失败：${label}返回 ${res.status}`);
   return (await res.json()) as T;
 }
 
@@ -199,12 +198,12 @@ async function listRegistry(search?: string, cursor?: string): Promise<Connector
 export async function addConnector(input: ConnectorInput): Promise<string> {
   if (input.source === "directory") return addDirectoryConnector(input);
   const entry = await connectorById(input.id);
-  if (!entry) throw new ConnectorError(`注册表里没有「${input.id}」`);
+  if (!entry) throw new BadRequestError(`注册表里没有「${input.id}」`);
 
   const url = entry.url.replace(/\{([^}]+)\}/g, (_m, name: string) => {
     const variable = entry.variables.find((v) => v.name === name);
     const value = input.variables?.[name]?.trim() || variable?.default;
-    if (!value) throw new ConnectorError(`请填写地址里的「${name}」`);
+    if (!value) throw new BadRequestError(`请填写地址里的「${name}」`);
     return encodeURIComponent(value).replace(/%2F/gi, "/");
   });
   const headers: Record<string, string> = {};
@@ -212,7 +211,7 @@ export async function addConnector(input: ConnectorInput): Promise<string> {
     // 可选的请求头没填就不带，默认值由服务器自己定（如 Neon 的 x-read-only）
     const value = input.headers?.[header.name]?.trim() || (header.required ? header.default : undefined);
     if (value) headers[header.name] = value;
-    else if (header.required) throw new ConnectorError(`请填写请求头「${header.name}」`);
+    else if (header.required) throw new BadRequestError(`请填写请求头「${header.name}」`);
   }
 
   const name = serverName(input.name, entry);
@@ -226,7 +225,7 @@ export async function addConnector(input: ConnectorInput): Promise<string> {
 /** 存成的服务器名称：不填用建议的。同一个连接器再添加一次是覆盖（改了请求头之类的），别的服务器占着这个名字就加 -2、-3 */
 function serverName(requested: string | undefined, entry: ConnectorEntry): string {
   const wanted = requested?.trim();
-  if (wanted && !/^[\w-]+$/.test(wanted)) throw new ConnectorError("名称只能用字母、数字、下划线和连字符");
+  if (wanted && !/^[\w-]+$/.test(wanted)) throw new BadRequestError("名称只能用字母、数字、下划线和连字符");
   const servers = readMcpServers();
   const base = wanted || entry.suggestedName;
   let name = base;
@@ -389,24 +388,24 @@ async function listDirectory(query: ConnectorQuery): Promise<ConnectorPage> {
 /** 添加 Claude 目录里的连接器：地址是固定的、几个里选的或自己填的（要匹配目录给的格式） */
 async function addDirectoryConnector(input: ConnectorInput): Promise<string> {
   const entry = (await loadDirectory()).entries.find((e) => e.id === input.id);
-  if (!entry) throw new ConnectorError("Claude 目录里没有这个连接器");
-  if (entry.unsupported) throw new ConnectorError(`${entry.title}：${entry.unsupported}`);
+  if (!entry) throw new BadRequestError("Claude 目录里没有这个连接器");
+  if (entry.unsupported) throw new BadRequestError(`${entry.title}：${entry.unsupported}`);
   const given = input.url?.trim();
   let url = entry.url;
   if (entry.urlOptions) {
-    if (!given || !entry.urlOptions.some((o) => o.url === given)) throw new ConnectorError("请选择地址");
+    if (!given || !entry.urlOptions.some((o) => o.url === given)) throw new BadRequestError("请选择地址");
     url = given;
   } else if (entry.urlPattern) {
     url = given || entry.url;
-    if (!url) throw new ConnectorError("请填写地址");
-    if (!isHttps(url)) throw new ConnectorError("地址要以 https:// 开头");
+    if (!url) throw new BadRequestError("请填写地址");
+    if (!isHttps(url)) throw new BadRequestError("地址要以 https:// 开头");
     let pattern: RegExp | undefined;
     try {
       pattern = new RegExp(entry.urlPattern);
     } catch {
       // 目录给的正则 JavaScript 解析不了时不检查格式
     }
-    if (pattern && !pattern.test(url)) throw new ConnectorError(`地址不符合 ${entry.title} 的格式`);
+    if (pattern && !pattern.test(url)) throw new BadRequestError(`地址不符合 ${entry.title} 的格式`);
   }
   const name = serverName(input.name, entry);
   saveMcpServer({ name, type: entry.type, url }, { id: entry.id, title: entry.title, source: "directory", ...(entry.icon ? { icon: entry.icon } : {}) });

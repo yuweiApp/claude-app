@@ -6,6 +6,7 @@ import { config } from "../config.js";
 import type { ProxyMode, ProxySettingsInput, ProxySettingsView, ProxyTestResult } from "../shared/types.js";
 import { proxyCore } from "./core.js";
 import { SocksBridge, socksConnect, type SocksUpstream } from "./socks-bridge.js";
+import { BadRequestError } from "../errors.js";
 
 /**
  * 设置页「网络代理」（见 docs/proxy.md）。管两处：
@@ -33,8 +34,6 @@ interface Stored {
 const DEFAULT_SUBSCRIPTION_INTERVAL = 12;
 /** 订阅模式下「实际用的代理」显示成什么（内核的地址带令牌，不给人看） */
 const SUBSCRIPTION_DISPLAY = "订阅";
-
-export class ProxySettingsError extends Error {}
 
 /**
  * 总是不走代理的本机地址：浏览器工具、桌面工具、Playwright MCP、本地开发服务都连本机。
@@ -88,19 +87,19 @@ function displayUrl(raw: string): string {
 /** 手动模式填的地址：只收 http、https、socks5，不能带用户名、密码（填在单独的输入框），去掉路径；SOCKS5 没写端口是 1080 */
 function normalizeUrl(raw: string): string {
   const text = raw.trim();
-  if (!text) throw new ProxySettingsError("请填写代理地址");
+  if (!text) throw new BadRequestError("请填写代理地址");
   let u: URL;
   try {
     u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `http://${text}`);
   } catch {
-    throw new ProxySettingsError(`代理地址格式不对：${text}`);
+    throw new BadRequestError(`代理地址格式不对：${text}`);
   }
   const socks = u.protocol === "socks5:" || u.protocol === "socks5h:";
   if (u.protocol !== "http:" && u.protocol !== "https:" && !socks) {
-    throw new ProxySettingsError(`只支持 HTTP、HTTPS、SOCKS5 代理（http://、https://、socks5:// 开头），不支持 ${u.protocol.replace(/:$/, "")}`);
+    throw new BadRequestError(`只支持 HTTP、HTTPS、SOCKS5 代理（http://、https://、socks5:// 开头），不支持 ${u.protocol.replace(/:$/, "")}`);
   }
-  if (u.username || u.password) throw new ProxySettingsError("用户名、密码请填在下面的输入框里，不要写在地址里");
-  if (!u.hostname) throw new ProxySettingsError(`代理地址里没有主机：${text}`);
+  if (u.username || u.password) throw new BadRequestError("用户名、密码请填在下面的输入框里，不要写在地址里");
+  if (!u.hostname) throw new BadRequestError(`代理地址里没有主机：${text}`);
   return socks ? `socks5://${u.hostname}:${u.port || 1080}` : `${u.protocol}//${u.host}`;
 }
 
@@ -108,7 +107,7 @@ function normalizeNoProxy(list: string[]): string[] {
   const out: string[] = [];
   for (const raw of list) {
     for (const entry of splitList(raw)) {
-      if (/[/\\@]/.test(entry)) throw new ProxySettingsError(`不走代理的地址只能是域名或 IP（可以带端口）：${entry}`);
+      if (/[/\\@]/.test(entry)) throw new BadRequestError(`不走代理的地址只能是域名或 IP（可以带端口）：${entry}`);
       const lower = entry.toLowerCase();
       if (!FIXED_NO_PROXY.includes(lower) && !out.includes(lower)) out.push(lower);
     }
@@ -265,7 +264,7 @@ export function proxySettingsView(): ProxySettingsView {
 function resolveInput(input: ProxySettingsInput): Stored {
   const current = settings();
   const mode = input.mode;
-  if (mode !== "system" && mode !== "off" && mode !== "manual" && mode !== "subscription") throw new ProxySettingsError(`不认识的代理模式：${String(mode)}`);
+  if (mode !== "system" && mode !== "off" && mode !== "manual" && mode !== "subscription") throw new BadRequestError(`不认识的代理模式：${String(mode)}`);
   const username = (input.username ?? current.username ?? "").trim();
   const password = input.password ?? current.password ?? "";
   const next: Stored = { mode };
@@ -279,10 +278,10 @@ function resolveInput(input: ProxySettingsInput): Stored {
   // 订阅：不传是不改，空字符串是清掉；别的模式下也留着，切回来不用重填
   const subscriptionUrl = input.subscriptionUrl === undefined ? current.subscriptionUrl : normalizeSubscriptionUrl(input.subscriptionUrl);
   if (subscriptionUrl) next.subscriptionUrl = subscriptionUrl;
-  if (mode === "subscription" && !subscriptionUrl) throw new ProxySettingsError("请填写订阅地址");
+  if (mode === "subscription" && !subscriptionUrl) throw new BadRequestError("请填写订阅地址");
   const interval = input.subscriptionInterval ?? current.subscriptionInterval;
   if (interval !== undefined) {
-    if (!Number.isFinite(interval) || interval < 1 || interval > 168) throw new ProxySettingsError("自动更新订阅的间隔要在 1 到 168 小时之间");
+    if (!Number.isFinite(interval) || interval < 1 || interval > 168) throw new BadRequestError("自动更新订阅的间隔要在 1 到 168 小时之间");
     next.subscriptionInterval = interval;
   }
   return next;
@@ -296,9 +295,9 @@ function normalizeSubscriptionUrl(raw: string): string | undefined {
   try {
     u = new URL(text);
   } catch {
-    throw new ProxySettingsError("订阅地址格式不对，要是 http:// 或 https:// 开头的网址");
+    throw new BadRequestError("订阅地址格式不对，要是 http:// 或 https:// 开头的网址");
   }
-  if (u.protocol !== "http:" && u.protocol !== "https:") throw new ProxySettingsError("订阅地址要是 http:// 或 https:// 开头的网址");
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new BadRequestError("订阅地址要是 http:// 或 https:// 开头的网址");
   return u.toString();
 }
 
@@ -309,7 +308,7 @@ export function saveProxySettings(input: ProxySettingsInput): ProxySettingsView 
   // 正在下载时可以存，下好了自动拉起
   if (next.mode === "subscription") {
     const core = proxyCore.status();
-    if (core.state === "missing") throw new ProxySettingsError(core.error ?? "没有找到代理内核");
+    if (core.state === "missing") throw new BadRequestError(core.error ?? "没有找到代理内核");
   }
   write(next);
   stored = next;

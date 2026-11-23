@@ -12,6 +12,7 @@ import { applyProxyEnv } from "../net/proxy.js";
 import { psEncoded, psQuote, shQuote } from "../ssh/host.js";
 import { sshHost } from "../ssh/hosts.js";
 import { newNonce, powershellPromptScript, PromptMarkParser } from "./prompt-marker.js";
+import { BadRequestError } from "../errors.js";
 
 /** 每个终端保留的输出（字符数），面板重新打开、刷新页面时用来还原屏幕 */
 const SCROLLBACK_CHARS = 512 * 1024;
@@ -107,8 +108,6 @@ export interface ClosedTerminal {
   running?: true;
 }
 
-export class TerminalError extends Error {}
-
 /** 右侧面板的终端：网关这台机器上的 pty，进程跟网页断开无关，关标签页或网关退出时才结束 */
 export class TerminalManager {
   private terminals = new Map<string, Terminal>();
@@ -139,7 +138,7 @@ export class TerminalManager {
     rows: number,
     opts: { title?: string; openedBy?: "user" | "agent"; dir?: string; sessionId?: string } = {},
   ): Promise<TerminalInfo> {
-    if (this.terminals.size >= MAX_TERMINALS) throw new TerminalError(`终端最多开 ${MAX_TERMINALS} 个，先关掉一些`);
+    if (this.terminals.size >= MAX_TERMINALS) throw new BadRequestError(`终端最多开 ${MAX_TERMINALS} 个，先关掉一些`);
     const size = { cols: clamp(cols, 20, 500, 80), rows: clamp(rows, 5, 200, 24) };
     const nonce = newNonce();
     const { proc, shell, marked } = parseRemote(cwd) ? await remotePty(cwd, size, opts.dir, nonce) : localPty(opts.dir ?? cwd, size, nonce);
@@ -483,7 +482,7 @@ export class TerminalManager {
 
   private get(id: string): Terminal {
     const term = this.terminals.get(id);
-    if (!term) throw new TerminalError("终端不存在");
+    if (!term) throw new BadRequestError("终端不存在");
     return term;
   }
 }
@@ -522,7 +521,7 @@ function localPty(cwd: string, size: { cols: number; rows: number }, nonce: stri
       env: env as Record<string, string>,
     });
   } catch (err) {
-    throw new TerminalError(`终端启动失败：${err instanceof Error ? err.message : String(err)}`);
+    throw new BadRequestError(`终端启动失败：${err instanceof Error ? err.message : String(err)}`);
   }
   return {
     shell,
@@ -589,7 +588,7 @@ async function remotePty(cwd: string, size: { cols: number; rows: number }, star
           { pty },
         );
   } catch (err) {
-    throw new TerminalError(`远端终端启动失败：${err instanceof Error ? err.message : String(err)}`);
+    throw new BadRequestError(`远端终端启动失败：${err instanceof Error ? err.message : String(err)}`);
   }
   const decoder = new StringDecoder("utf8");
   const ch = channel;
@@ -650,7 +649,6 @@ const PID_SCAN_CHARS = 4096;
 /** 经 SSH 问一次前台最多等多久；连接断了、远端卡住时判断不出来 */
 const PROBE_TIMEOUT_MS = 3000;
 
-/** 程序名：去掉路径，登录 shell 前面的 - 也去掉 */
 /**
  * 本机 Unix 上进程（shell）的进程组和它的终端的前台进程组：Linux 读 /proc/<pid>/stat（第 5、8 个字段），
  * macOS 等没有 /proc 的问 ps（BSD ps 和 procps 都有 pgid、tpgid）。问不到（进程没了、ps 不支持）是 null
@@ -676,6 +674,7 @@ async function processGroups(pid: number): Promise<{ pgid: number; tpgid: number
   );
 }
 
+/** 程序名：去掉路径，登录 shell 前面的 - 也去掉 */
 function programName(path: string): string {
   return path.split(/[\\/]/).pop()?.replace(/^-/, "") ?? "";
 }

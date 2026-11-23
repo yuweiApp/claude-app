@@ -6,6 +6,7 @@ import path from "node:path";
 import { Agent } from "undici";
 import { config } from "../config.js";
 import type { ProxyCoreStatus, ProxyNodes } from "../shared/types.js";
+import { HttpError } from "../errors.js";
 
 /**
  * 设置页「网络代理」订阅模式的代理内核 mihomo（见 docs/proxy-subscription.md）：网关拉起它当客户端，
@@ -468,12 +469,10 @@ class ProxyCore {
   }
 }
 
-export class CoreApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
+/** 内核控制接口的错误：接口返回内核给的状态码（不是 4xx、5xx 的按 502） */
+export class CoreApiError extends HttpError {
+  constructor(message: string, status: number) {
+    super(status >= 400 && status < 600 ? status : 502, message);
   }
 }
 

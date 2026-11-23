@@ -24,20 +24,10 @@ const MAX_RESULT_CHARS = 20_000;
 export class TaskList {
   private readonly tasks = new Map<string, TaskRecord>();
   private saveTimer?: NodeJS.Timeout;
-  /** Bash 工具调用的命令：task_started 只带 tool_use_id */
-  private readonly commands = new Map<string, string>();
-  /** browser_run_code 调用的代码（input.code）：转到后台后 task_started 只带 tool_use_id */
-  private readonly codes = new Map<string, string>();
-  /** browser_run_code 调用的脚本文件（input.file，和 code 二选一） */
-  private readonly files = new Map<string, string>();
-  /** Agent 工具调用的任务说明（input.prompt）：task_started 一般自己带着，没带时按 tool_use_id 补 */
-  private readonly prompts = new Map<string, string>();
-  /** 工具调用的工具名：MCP 任务（mcp_task）的开始消息里只有说明，按 tool_use_id 补上是哪个服务器的哪个工具 */
-  private readonly toolNames = new Map<string, string>();
+  /** 最近的工具调用（按 tool_use_id）：task_started 往往只带 tool_use_id，任务的工具名、开始时间、命令等按它补上 */
+  private readonly toolCalls = new Map<string, ToolCall>();
   /** 转到了后台的工具调用（tool_use_id）：结果里写着 moved to the background */
   private readonly backgroundedCalls = new Map<string, true>();
-  /** 工具调用发出的时间：跑久了才转到后台的（MCP 调用跑满 20 秒），开始时间按调用发出时算，不按转后台的时候 */
-  private readonly toolStarts = new Map<string, number>();
   /**
    * 最近一条 background_tasks_changed 里的任务（SDK 说它是当前所有在跑的后台任务的完整列表）。
    * 转到后台的 MCP 调用（mcp_task，比如 browser_run_code 跑满 20 秒）发的 task_started 不带 is_backgrounded，
@@ -99,23 +89,7 @@ export class TaskList {
     switch (message.type) {
       case "assistant":
         for (const block of message.message.content) {
-          if (block.type === "tool_use") {
-            remember(this.toolStarts, block.id, Date.now());
-            remember(this.toolNames, block.id, block.name);
-            const code = (block.input as { code?: unknown } | null)?.code;
-            // 空字符串和没传一样（browser_run_code 的 code、file 里不用的那个，有的模型会填 ""）
-            if (typeof code === "string" && code.trim()) remember(this.codes, block.id, code);
-            const file = (block.input as { file?: unknown } | null)?.file;
-            if (typeof file === "string" && file.trim() && block.name.endsWith("__browser_run_code")) remember(this.files, block.id, file);
-          }
-          if (block.type === "tool_use" && block.name === "Bash") {
-            const command = (block.input as { command?: unknown }).command;
-            if (typeof command === "string") remember(this.commands, block.id, command);
-          }
-          if (block.type === "tool_use" && (block.name === "Agent" || block.name === "Task")) {
-            const prompt = (block.input as { prompt?: unknown } | null)?.prompt;
-            if (typeof prompt === "string") remember(this.prompts, block.id, prompt);
-          }
+          if (block.type === "tool_use") remember(this.toolCalls, block.id, toolCall(block.name, block.input));
         }
         return false;
       case "user":
@@ -270,12 +244,15 @@ export class TaskList {
     if (type) task.type ??= type;
     if (toolUseId && !task.toolUseId) {
       task.toolUseId = toolUseId;
-      task.tool ??= this.toolNames.get(toolUseId);
-      task.startedAt = this.toolStarts.get(toolUseId) ?? task.startedAt;
-      task.command ??= this.commands.get(toolUseId);
-      task.code ??= this.codes.get(toolUseId);
-      task.file ??= this.files.get(toolUseId);
-      task.prompt ??= this.prompts.get(toolUseId);
+      const call = this.toolCalls.get(toolUseId);
+      if (call) {
+        task.tool ??= call.name;
+        task.startedAt = call.startedAt;
+        task.command ??= call.command;
+        task.code ??= call.code;
+        task.file ??= call.file;
+        task.prompt ??= call.prompt;
+      }
     }
     return task;
   }
@@ -315,6 +292,31 @@ export class TaskList {
     }
     return changed;
   }
+}
+
+/** 发出的一次工具调用：工具名、发出的时间（跑久了才转到后台的 MCP 调用，开始时间按发出时算），和任务列表要显示的参数 */
+interface ToolCall {
+  name: string;
+  startedAt: number;
+  /** Bash 的命令 */
+  command?: string;
+  /** browser_run_code 的代码（input.code）和脚本文件（input.file，和 code 二选一） */
+  code?: string;
+  file?: string;
+  /** Agent 的任务说明（task_started 一般自己带着，没带时用它） */
+  prompt?: string;
+}
+
+function toolCall(name: string, input: unknown): ToolCall {
+  const i = (input ?? {}) as { command?: unknown; code?: unknown; file?: unknown; prompt?: unknown };
+  // 空字符串和没传一样（browser_run_code 的 code、file 里不用的那个，有的模型会填 ""）
+  const filled = (v: unknown) => (typeof v === "string" && v.trim() ? v : undefined);
+  const call: ToolCall = { name, startedAt: Date.now() };
+  if (name === "Bash" && typeof i.command === "string") call.command = i.command;
+  if (filled(i.code)) call.code = i.code as string;
+  if (name.endsWith("__browser_run_code") && filled(i.file)) call.file = i.file as string;
+  if ((name === "Agent" || name === "Task") && typeof i.prompt === "string") call.prompt = i.prompt;
+  return call;
 }
 
 function readable(type: string | undefined): boolean {

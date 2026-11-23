@@ -8,8 +8,7 @@ import { desktopEnabled } from "./config-file.js";
 import { listWindows, stripOwn } from "./desktop/guard.js";
 import { setDesktopLog } from "./desktop/log.js";
 import Fastify, { type FastifyInstance } from "fastify";
-import { AttachmentError } from "./agent/attachments.js";
-import { BadRequestError, BusyError, NotFoundError, SessionManager } from "./agent/session-manager.js";
+import { SessionManager } from "./agent/session-manager.js";
 import { config } from "./config.js";
 import { EventHub } from "./events/event-hub.js";
 import { ConversationLog } from "./logging/conversation-log.js";
@@ -17,18 +16,17 @@ import { sessionRoutes } from "./http/routes/sessions.js";
 import { fileRoutes, PAGE_PREFIX } from "./http/routes/files.js";
 import { transferRoutes } from "./http/routes/transfers.js";
 import { terminalRoutes } from "./http/routes/terminals.js";
-import { TerminalError, TerminalManager } from "./terminal/terminal-manager.js";
+import { TerminalManager } from "./terminal/terminal-manager.js";
 import { folderRoutes } from "./http/routes/folders.js";
 import { uploadRoutes } from "./http/routes/uploads.js";
 import { sshRoutes } from "./http/routes/ssh.js";
-import { SshConfigError } from "./ssh/connections.js";
-import { SshError } from "./ssh/host.js";
 import { parseRemote } from "./ssh/location.js";
 import { handleTunnel } from "./browser/tunnel.js";
 import { shareRoutes } from "./http/routes/shares.js";
 import { LanServer } from "./share/lan-server.js";
 import { ShareBrowserRelay } from "./share/browser-relay.js";
 import { ShareStore } from "./share/store.js";
+import { HttpError } from "./errors.js";
 
 // 终端里用 pino-pretty 格式化。不用 transport：它在 worker 线程里把 UTF-8 字节直接写 fd 1，
 // 中文 Windows 控制台按 GBK 显示会乱码；交给 process.stdout 由 Node 转成 UTF-16 写控制台。
@@ -85,14 +83,10 @@ export function buildApp(): App {
     });
   }
 
+  // HttpError（errors.ts）和 Fastify 自己的错误（参数校验不过等）带着 statusCode；HttpError 是预料之中的，5xx 也不记错误日志
   app.setErrorHandler((err, _req, reply) => {
-    if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
-    if (err instanceof BusyError) return reply.code(429).send({ error: err.message });
-    if (err instanceof AttachmentError || err instanceof BadRequestError || err instanceof TerminalError || err instanceof SshConfigError || err instanceof SshError) {
-      return reply.code(400).send({ error: err.message });
-    }
     const status = (err as { statusCode?: number }).statusCode ?? 500;
-    if (status >= 500) app.log.error(err);
+    if (status >= 500 && !(err instanceof HttpError)) app.log.error(err);
     return reply.code(status).send({ error: err instanceof Error ? err.message : String(err) });
   });
 

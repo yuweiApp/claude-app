@@ -4,6 +4,7 @@ import path from "node:path";
 import { config } from "../config.js";
 import type { SshConnectionInput } from "../shared/types.js";
 import { configHosts, parseForwardSpec } from "./ssh-config.js";
+import { BadRequestError } from "../errors.js";
 
 /** 连上过之后记下的远端信息：会话列表在没连上时也要认出远端的普通会话（scratch 目录在远端用户目录下） */
 export interface RemoteFacts {
@@ -40,8 +41,6 @@ const FILE = path.join(config.claudeConfigDir, "gateway-ssh-connections.json");
 /** ~/.ssh/config 每次都读太频繁（会话列表里每个远程会话都要查连接），缓存一会儿 */
 const CONFIG_CACHE_MS = 5_000;
 
-export class SshConfigError extends Error {}
-
 let cache: FileShape | null = null;
 let configCache: { at: number; hosts: ReturnType<typeof configHosts> } | null = null;
 
@@ -49,11 +48,7 @@ function load(): FileShape {
   if (!cache) {
     try {
       const parsed = existsSync(FILE) ? (JSON.parse(readFileSync(FILE, "utf8")) as Partial<FileShape>) : {};
-      cache = {
-        connections: Array.isArray(parsed.connections) ? parsed.connections : [],
-        configHosts: parsed.configHosts ?? {},
-        hiddenConfigHosts: Array.isArray(parsed.hiddenConfigHosts) ? parsed.hiddenConfigHosts : [],
-      };
+      cache = { connections: [], configHosts: {}, hiddenConfigHosts: [], ...parsed };
     } catch {
       cache = { connections: [], configHosts: {} };
     }
@@ -104,17 +99,17 @@ export function getConnection(id: string): SshConnection | undefined {
 /** 检查、整理用户填的内容 */
 export function normalizeInput(input: Partial<SshConnectionInput>): SshConnectionInput {
   const host = String(input.host ?? "").trim();
-  if (!host || /\s/.test(host) || host.startsWith("-")) throw new SshConfigError("主机不能为空，也不能有空格（user@host、host 或 ~/.ssh/config 里的别名）");
+  if (!host || /\s/.test(host) || host.startsWith("-")) throw new BadRequestError("主机不能为空，也不能有空格（user@host、host 或 ~/.ssh/config 里的别名）");
   const port = input.port === undefined || input.port === null || String(input.port) === "" ? undefined : Number(input.port);
-  if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) throw new SshConfigError("端口要是 1–65535 的整数");
+  if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) throw new BadRequestError("端口要是 1–65535 的整数");
   const identityFile = input.identityFile?.trim() || undefined;
   const startDirectory = input.startDirectory?.trim() || undefined;
   if (startDirectory && !startDirectory.startsWith("/") && !startDirectory.startsWith("~") && !/^[A-Za-z]:[\\/]/.test(startDirectory)) {
-    throw new SshConfigError("默认目录要是绝对路径或 ~ 开头");
+    throw new BadRequestError("默认目录要是绝对路径或 ~ 开头");
   }
   const remoteForwards = [...new Set((Array.isArray(input.remoteForwards) ? input.remoteForwards : []).map((f) => String(f).trim()).filter(Boolean))];
   const bad = remoteForwards.find((f) => !parseForwardSpec(f));
-  if (bad) throw new SshConfigError(`反向转发「${bad}」的格式不对：同 ssh -R，写成 远端端口:本机地址:本机端口（如 5432:127.0.0.1:5432），要指定远端地址时在最前面加上（如 0.0.0.0:8080:127.0.0.1:80）`);
+  if (bad) throw new BadRequestError(`反向转发「${bad}」的格式不对：同 ssh -R，写成 远端端口:本机地址:本机端口（如 5432:127.0.0.1:5432），要指定远端地址时在最前面加上（如 0.0.0.0:8080:127.0.0.1:80）`);
   return {
     name: input.name?.trim() || host,
     host,
@@ -134,8 +129,8 @@ export function addConnection(input: Partial<SshConnectionInput>): SshConnection
 
 function savedOnly(id: string): SshConnection {
   const conn = getConnection(id);
-  if (!conn) throw new SshConfigError("SSH 连接不存在");
-  if (conn.fromConfig) throw new SshConfigError(`「${conn.name}」来自本机的 ~/.ssh/config，要改请改那个文件`);
+  if (!conn) throw new BadRequestError("SSH 连接不存在");
+  if (conn.fromConfig) throw new BadRequestError(`「${conn.name}」来自本机的 ~/.ssh/config，要改请改那个文件`);
   return conn;
 }
 
@@ -156,7 +151,7 @@ export function updateConnection(id: string, input: Partial<SshConnectionInput>)
  */
 export function removeConnection(id: string): void {
   const conn = getConnection(id);
-  if (!conn) throw new SshConfigError("SSH 连接不存在");
+  if (!conn) throw new BadRequestError("SSH 连接不存在");
   const file = load();
   if (conn.fromConfig) {
     const { [conn.host]: _forgotten, ...learned } = file.configHosts ?? {};

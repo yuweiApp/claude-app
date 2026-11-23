@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import {
   query,
   type CanUseTool,
@@ -15,11 +13,12 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
+import { ConflictError } from "../errors.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
 import type { Attachment, ContextUsage, GatewayEvent, GoalState, MessagePriority, SessionState } from "../shared/types.js";
 import { buildUserContent, imageType, type SelectedElementContent } from "./attachments.js";
-import { goalCondition, goalFeedback, goalOutput, recordedGoal } from "./goal.js";
+import { goalFeedback, goalOutput, recordedGoal } from "./goal.js";
 import { parseRemote } from "../ssh/location.js";
 import { getConnection } from "../ssh/connections.js";
 import { existingHost, sshHost } from "../ssh/hosts.js";
@@ -221,7 +220,7 @@ export class AgentSession {
   /** 撤回以 next 排队、还没交给模型的消息（Claude Code 的 cancel_async_message），返回它的内容和草稿 */
   async withdraw(uuid: string): Promise<QueuedNext> {
     const entry = this.queuedNext.get(uuid);
-    const notQueued = () => Object.assign(new Error("这条消息已经交给模型了，撤不回"), { statusCode: 409 });
+    const notQueued = () => new ConflictError("这条消息已经交给模型了，撤不回");
     if (!entry) throw notQueued();
     // SDK 的类型定义里没有这个方法（0.3.322 运行时有）：已经出队交给模型的返回 false
     const cancelled = await (this.query as unknown as { cancelAsyncMessage(uuid: string): Promise<boolean> }).cancelAsyncMessage(uuid);
@@ -275,7 +274,7 @@ export class AgentSession {
    */
   compact(): void {
     // 刚 resume 的子进程在收到第一条输入前一直是 starting
-    if (this.state === "running" || this.state === "closed") throw Object.assign(new Error("这一轮结束后才能压缩"), { statusCode: 409 });
+    if (this.state === "running" || this.state === "closed") throw new ConflictError("这一轮结束后才能压缩");
     this.rejectWhileClearing();
     this.input.push({ type: "user", uuid: randomUUID(), message: { role: "user", content: "/compact" }, parent_tool_use_id: null, origin: { kind: "human" } });
     this.setState("running");
@@ -289,8 +288,8 @@ export class AgentSession {
    * 一轮进行中、有后台任务在跑或通知没交给模型时不清（/clear 会把后台任务一起结束）
    */
   clear(): Promise<string> {
-    if (this.state === "running" || this.state === "closed") throw Object.assign(new Error("这一轮结束后才能清空"), { statusCode: 409 });
-    if (this.backgroundBusy) throw Object.assign(new Error("后台任务结束后才能清空"), { statusCode: 409 });
+    if (this.state === "running" || this.state === "closed") throw new ConflictError("这一轮结束后才能清空");
+    if (this.backgroundBusy) throw new ConflictError("后台任务结束后才能清空");
     this.rejectWhileClearing();
     const done = new Promise<string>((resolve, reject) => (this.clearing = { resolve, reject }));
     this.input.push({ type: "user", uuid: randomUUID(), message: { role: "user", content: "/clear" }, parent_tool_use_id: null, origin: { kind: "human" } });
@@ -300,26 +299,26 @@ export class AgentSession {
 
   /** 清空期间不收新的输入：/clear 之后子进程已经是新会话，交进去的消息不算这个会话的 */
   private rejectWhileClearing(): void {
-    if (this.clearing || this.resetSeen) throw Object.assign(new Error("会话正在清空"), { statusCode: 409 });
+    if (this.clearing || this.resetSeen) throw new ConflictError("会话正在清空");
   }
 
   /**
    * 设定目标：交给 Claude Code 一条 /goal <条件>，不当成用户消息显示。已有目标的换成新的。
    * Claude Code 设好后马上开始一轮朝目标做（空闲时）。这一轮还在进行时用 now：Claude Code 先结束这一轮再设定、开始新的一轮
-   * （实测；用 next 的话要等这一轮自己结束，有目标时这一轮要到目标达成才结束）
+   * （实测；用 next 的话要等这一轮自己结束，有目标时这一轮要到目标达成才结束）。condition 是 goalCondition 整理过的
    */
-  setGoal(text: string): void {
-    this.goalCommand(`/goal ${goalCondition(text)}`);
+  setGoal(condition: string): void {
+    this.goalCommand(`/goal ${condition}`);
   }
 
   /** 取消目标（/goal clear）：这一轮还在进行时同样先结束这一轮 */
   clearGoal(): void {
-    if (!this.goal && this.goalLoaded) throw Object.assign(new Error("没有进行中的目标"), { statusCode: 409 });
+    if (!this.goal && this.goalLoaded) throw new ConflictError("没有进行中的目标");
     this.goalCommand("/goal clear");
   }
 
   private goalCommand(content: string): void {
-    if (this.state === "closed") throw Object.assign(new Error("会话已结束"), { statusCode: 409 });
+    if (this.state === "closed") throw new ConflictError("会话已结束");
     this.rejectWhileClearing();
     // 有待确认的权限时同 push：now 会让这个工具调用被拒，排到下一个工具结果之后
     const priority: MessagePriority | undefined = this.state === "running" ? (this.pending.size ? "next" : "now") : undefined;
@@ -435,7 +434,7 @@ export class AgentSession {
 
   /** 有定时任务排着：子进程关着时它们不会触发（空闲回收看它，见 session-manager.ts 的 reclaimable） */
   get cronsScheduled(): boolean {
-    return this.crons.length > 0 || durableCrons(this.cwd, this.id) > 0;
+    return this.crons.length > 0;
   }
 
   /** 有后台任务在跑 */
@@ -481,7 +480,7 @@ export class AgentSession {
     // 桌面工具正在操作（或刚操作完）时收到的「允许」不算数：可能是模型经无障碍接口点的，网页版开在用户自己的浏览器里时
     // 按进程号拦不住（见 docs/agent-desktop.md 6.2）。卡片留着，用户再点一次；「拒绝」照常生效
     if (reply.behavior === "allow" && desktopWriteActive()) {
-      throw Object.assign(new Error("这次确认发生在 AI 操作桌面期间，没有生效，请再点一次"), { statusCode: 409 });
+      throw new ConflictError("这次确认发生在 AI 操作桌面期间，没有生效，请再点一次");
     }
     if (reply.behavior === "allow") {
       this.resolvePermission(requestId, {
@@ -655,7 +654,7 @@ export class AgentSession {
         if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });
         if (message.type === "result") {
           // /clear 的这一轮结束了却没有 conversation_reset：Claude Code 没清
-          this.clearing?.reject(Object.assign(new Error("Claude Code 没有执行 /clear"), { statusCode: 500 }));
+          this.clearing?.reject(new Error("Claude Code 没有执行 /clear"));
           this.clearing = undefined;
           this.afterResult = true;
           this.setState("idle");
@@ -692,7 +691,7 @@ export class AgentSession {
       clearTimeout(this.noticeTimer);
       this.pendingNotices.clear();
       this.queuedNext.clear();
-      this.clearing?.reject(Object.assign(new Error("清空没完成，claude 进程结束了"), { statusCode: 500 }));
+      this.clearing?.reject(new Error("清空没完成，claude 进程结束了"));
       this.clearing = undefined;
       this.setState("closed");
       this.onClosed(this);
@@ -781,20 +780,5 @@ function logTaskMessage(log: FastifyBaseLogger, sessionId: string, message: SDKM
     case "background_tasks_changed":
       log.info({ sessionId, live: message.tasks.map((t) => `${t.task_id}${t.ambient ? "(ambient)" : ""}`) }, "后台任务：background_tasks_changed");
       break;
-  }
-}
-
-/**
- * durable 的定时任务（CronCreate 带 durable: true）：Claude Code 写在工作目录的 .claude/scheduled_tasks.json，不在 Stop hook 的 session_crons 里（0.3.327；实测 0.3.330 不再写盘，和普通的一样在 session_crons 里）。
- * 子进程关着时不触发，resume 后接着触发；只有建它的会话会触发（createdBySessionId），同一目录下的别的会话不会（实测 0.3.327）。
- * 这是 Claude Code 内部的文件，读不到、格式不对按没有算；远程会话的在远端，不读（只看 session_crons）
- */
-function durableCrons(cwd: string, sessionId: string): number {
-  if (parseRemote(cwd)) return 0;
-  try {
-    const file = JSON.parse(readFileSync(path.join(cwd, ".claude", "scheduled_tasks.json"), "utf8")) as { tasks?: { createdBySessionId?: string }[] };
-    return (file.tasks ?? []).filter((t) => t.createdBySessionId === sessionId).length;
-  } catch {
-    return 0;
   }
 }

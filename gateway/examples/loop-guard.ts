@@ -1,8 +1,8 @@
 /**
- * 简易 demo：browser_run_code 在循环体开头插入的检查，是怎么防止模型的代码卡死网关的（真正的实现见 ../browser/repl.ts）。
+ * 简易 demo：browser_run_code 在循环体开头插入的检查，是怎么防止模型的代码卡死网关的（真正的实现见 ../src/browser/repl.ts）。
  *
  * 运行（在 gateway 目录下）：
- *   npx tsx src/example/loop-guard.ts
+ *   npx tsx examples/loop-guard.ts
  *
  * 背景：
  * - 模型的代码和网关在同一个 Node 进程里跑（vm 上下文），Node 是单线程的，

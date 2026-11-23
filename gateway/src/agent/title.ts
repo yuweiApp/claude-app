@@ -1,4 +1,4 @@
-import { config } from "../config.js";
+import { config, modelAuthHeaders } from "../config.js";
 
 const MAX_TITLE_LENGTH = 20;
 
@@ -23,9 +23,7 @@ export async function generateTitle(message: string): Promise<string> {
   // 开头的 /技能名 不算内容
   const text = message.replace(/^\/\S+\s+/, "") || message;
   if (!config.model) return fallbackTitle(text);
-  const headers: Record<string, string> = { "content-type": "application/json", "anthropic-version": "2023-06-01" };
-  if (process.env.ANTHROPIC_AUTH_TOKEN) headers.authorization = `Bearer ${process.env.ANTHROPIC_AUTH_TOKEN}`;
-  else if (process.env.ANTHROPIC_API_KEY) headers["x-api-key"] = process.env.ANTHROPIC_API_KEY;
+  const headers = { "content-type": "application/json", "anthropic-version": "2023-06-01", ...modelAuthHeaders() };
   const base = (config.baseUrl ?? "https://api.anthropic.com").replace(/\/+$/, "");
   const prompt = `用不超过 12 个字概括下面这条消息的主题，作为会话标题。不要回答消息本身，只输出标题，不要标点和引号。\n\n消息：\n${text.slice(0, 1000)}`;
   try {

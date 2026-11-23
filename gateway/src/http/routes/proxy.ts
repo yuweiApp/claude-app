@@ -1,7 +1,6 @@
-import type { FastifyInstance, FastifyReply } from "fastify";
-import { BadRequestError } from "../../agent/session-manager.js";
-import { CoreApiError, proxyCore } from "../../net/core.js";
-import { ProxySettingsError, proxySettingsView, saveProxySettings, testProxy } from "../../net/proxy.js";
+import type { FastifyInstance } from "fastify";
+import { proxyCore } from "../../net/core.js";
+import { proxySettingsView, saveProxySettings, testProxy } from "../../net/proxy.js";
 import type { ProxySettingsInput } from "../../shared/types.js";
 
 /**
@@ -11,64 +10,24 @@ import type { ProxySettingsInput } from "../../shared/types.js";
 export function proxyRoutes(app: FastifyInstance): void {
   app.get("/proxy", async () => proxySettingsView());
 
-  app.put<{ Body: ProxySettingsInput }>("/proxy", async (req) => {
-    try {
-      return saveProxySettings(input(req.body));
-    } catch (err) {
-      if (err instanceof ProxySettingsError) throw new BadRequestError(err.message);
-      throw err;
-    }
-  });
+  app.put<{ Body: ProxySettingsInput }>("/proxy", async (req) => saveProxySettings(req.body));
 
   /** 按请求体里的设置测一次，不保存 */
-  app.post<{ Body: ProxySettingsInput }>("/proxy/test", async (req) => testProxy(input(req.body)));
+  app.post<{ Body: ProxySettingsInput }>("/proxy/test", async (req) => testProxy(req.body));
 
-  // 订阅模式：节点、选节点、测延迟、马上更新订阅（都经代理内核的控制接口，内核没在跑时 503）
-  app.get("/proxy/nodes", async (_req, reply) => core(reply, () => proxyCore.nodes()));
+  // 订阅模式：节点、选节点、测延迟、马上更新订阅（都经代理内核的控制接口，内核的错误原样带上状态码：节点不存在 400、内核没在跑 503）
+  app.get("/proxy/nodes", async () => proxyCore.nodes());
 
   /** name 为 null 是「自动」 */
-  app.put<{ Body: { name?: string | null } }>("/proxy/node", async (req, reply) =>
-    core(reply, async () => {
-      const name = req.body?.name;
-      if (name !== null && typeof name !== "string") throw new BadRequestError("name 要是节点名，或者 null（自动）");
-      await proxyCore.select(name);
-      return proxyCore.nodes();
-    }),
-  );
+  app.put<{ Body: { name: string | null } }>("/proxy/node", async (req) => {
+    await proxyCore.select(req.body.name);
+    return proxyCore.nodes();
+  });
 
-  app.post("/proxy/nodes/delay", async (_req, reply) => core(reply, async () => ({ delays: await proxyCore.testDelay(), ...(await proxyCore.nodes()) })));
+  app.post("/proxy/nodes/delay", async () => ({ delays: await proxyCore.testDelay(), ...(await proxyCore.nodes()) }));
 
-  app.post("/proxy/subscription/update", async (_req, reply) =>
-    core(reply, async () => {
-      await proxyCore.update();
-      return proxyCore.nodes();
-    }),
-  );
-}
-
-/** 内核控制接口的错误原样带上状态码（节点不存在 400、内核没在跑 503） */
-async function core<T>(reply: FastifyReply, fn: () => Promise<T>): Promise<T | undefined> {
-  try {
-    return await fn();
-  } catch (err) {
-    if (err instanceof CoreApiError) {
-      void reply.code(err.status >= 400 && err.status < 600 ? err.status : 502).send({ error: err.message });
-      return undefined;
-    }
-    throw err;
-  }
-}
-
-function input(body: ProxySettingsInput | undefined): ProxySettingsInput {
-  const b = body ?? ({} as ProxySettingsInput);
-  const str = (v: unknown) => (typeof v === "string" ? v : undefined);
-  return {
-    mode: b.mode,
-    url: str(b.url),
-    username: str(b.username),
-    password: str(b.password),
-    noProxy: Array.isArray(b.noProxy) ? b.noProxy.filter((v): v is string => typeof v === "string") : undefined,
-    subscriptionUrl: str(b.subscriptionUrl),
-    subscriptionInterval: typeof b.subscriptionInterval === "number" ? b.subscriptionInterval : undefined,
-  };
+  app.post("/proxy/subscription/update", async () => {
+    await proxyCore.update();
+    return proxyCore.nodes();
+  });
 }

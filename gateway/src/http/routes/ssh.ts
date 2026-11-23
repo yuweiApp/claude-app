@@ -43,14 +43,13 @@ export function sshRoutes(app: FastifyInstance): void {
 
   app.post<{ Params: IdParams; Body: { password?: string } }>("/ssh/connections/:id/connect", async (req) => {
     const host = sshHost(req.params.id);
-    const password = typeof req.body?.password === "string" ? req.body.password : undefined;
-    await host.ensureReady(password).catch(() => undefined);
+    await host.ensureReady(req.body?.password).catch(() => undefined);
     return { connection: host.info() };
   });
 
   app.post<{ Params: IdParams; Body: { fingerprint: string } }>("/ssh/connections/:id/trust", async (req) => {
     const host = sshHost(req.params.id);
-    host.trust(String(req.body?.fingerprint ?? ""));
+    host.trust(req.body.fingerprint);
     return { connection: host.info() };
   });
 

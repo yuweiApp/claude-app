@@ -7,7 +7,7 @@ import { parseRemote } from "../ssh/location.js";
 
 /**
  * 普通会话（没选文件夹）的工作目录，同 Claude 桌面版的 scratch-workspaces：每个会话新建一个 workspace/scratch-日期-随机串，
- * AI 下载、写的文件各归各的，不混在一起。之前的普通会话工作目录就是 workspace 本身，照样算普通会话
+ * AI 下载、写的文件各归各的，不混在一起
  */
 const SCRATCH = /^scratch-\d{4}-\d{2}-\d{2}-[0-9a-f]{6}$/;
 
@@ -31,7 +31,7 @@ export function isScratchIn(dir: string, workspace: string): boolean {
 }
 
 /**
- * 是不是普通会话的工作目录：workspace 本身（旧会话），或者 workspace 下的 scratch-…。
+ * 是不是普通会话的工作目录：workspace 下的 scratch-…。
  * 远程会话（ssh://…）看那台主机的 ~/.claude-app/workspace（连上过才知道用户目录，没连上过的都算项目会话）
  */
 export function isChatCwd(cwd: string | undefined): boolean {
@@ -43,7 +43,7 @@ export function isChatCwd(cwd: string | undefined): boolean {
     return home ? isScratchIn(remote.path, `${home}/.claude-app/workspace`) : false;
   }
   const dir = path.resolve(cwd);
-  return dir === config.workspaceDir || (path.dirname(dir) === config.workspaceDir && SCRATCH.test(path.basename(dir)));
+  return path.dirname(dir) === config.workspaceDir && SCRATCH.test(path.basename(dir));
 }
 
 /** 会话记录（jsonl）所在的文件夹：Claude Code 按工作目录放在 projects/<目录名>/ 下；删会话前先找出来 */
@@ -63,7 +63,7 @@ export async function sessionRecordDir(sessionId: string): Promise<string | unde
  * 这个目录里还有别的会话时（分叉、清空出来的会话和原会话用同一个 scratch 目录）不删：那些会话还要在里面跑
  */
 export async function removeScratchDirIfEmpty(cwd: string | undefined, recordDir: string | undefined): Promise<void> {
-  if (!cwd || parseRemote(cwd) || path.resolve(cwd) === config.workspaceDir || !isChatCwd(cwd)) return;
+  if (!cwd || parseRemote(cwd) || !isChatCwd(cwd)) return;
   if (recordDir && (await readdir(recordDir).catch(() => [])).some((name) => name.endsWith(".jsonl"))) return;
   await rmdir(cwd).catch(() => undefined);
   if (recordDir) await rmdir(recordDir).catch(() => undefined);

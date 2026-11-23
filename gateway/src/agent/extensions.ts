@@ -3,8 +3,7 @@ import { cp, mkdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.js";
 import type { SkillDetail } from "../shared/types.js";
-
-export class ExtensionError extends Error {}
+import { BadRequestError } from "../errors.js";
 
 /** Claude Code 自己会发现这个目录下的技能 */
 const skillsDir = () => path.join(config.claudeConfigDir, "skills");
@@ -14,14 +13,14 @@ const pluginsDir = () => path.join(config.claudeConfigDir, "gateway-plugins");
 const VALID_NAME = /^[\w-][\w.-]*$/;
 
 function checkName(name: string): void {
-  if (!VALID_NAME.test(name)) throw new ExtensionError(`名称不合法：${name}`);
+  if (!VALID_NAME.test(name)) throw new BadRequestError(`名称不合法：${name}`);
 }
 
 async function checkSource(source: string): Promise<string> {
-  if (!path.isAbsolute(source)) throw new ExtensionError(`请选择绝对路径：${source}`);
+  if (!path.isAbsolute(source)) throw new BadRequestError(`请选择绝对路径：${source}`);
   const dir = path.resolve(source);
   const info = await stat(dir).catch(() => null);
-  if (!info?.isDirectory()) throw new ExtensionError(`文件夹不存在：${dir}`);
+  if (!info?.isDirectory()) throw new BadRequestError(`文件夹不存在：${dir}`);
   return dir;
 }
 
@@ -29,8 +28,8 @@ async function checkSource(source: string): Promise<string> {
 async function install(source: string, root: string, name: string): Promise<void> {
   checkName(name);
   const target = path.join(root, name);
-  if (existsSync(target)) throw new ExtensionError(`已经有同名的「${name}」，请先删除`);
-  if (`${source}${path.sep}`.startsWith(`${root}${path.sep}`)) throw new ExtensionError("这个文件夹已经在导入目录里了");
+  if (existsSync(target)) throw new BadRequestError(`已经有同名的「${name}」，请先删除`);
+  if (`${source}${path.sep}`.startsWith(`${root}${path.sep}`)) throw new BadRequestError("这个文件夹已经在导入目录里了");
   await mkdir(root, { recursive: true });
   await cp(source, target, { recursive: true });
 }
@@ -46,7 +45,7 @@ function frontmatter(content: string): Record<string, string> {
 export async function importSkill(source: string): Promise<string> {
   const dir = await checkSource(source);
   const content = await readFile(path.join(dir, "SKILL.md"), "utf8").catch(() => null);
-  if (content === null) throw new ExtensionError("这个文件夹里没有 SKILL.md");
+  if (content === null) throw new BadRequestError("这个文件夹里没有 SKILL.md");
   const name = frontmatter(content).name || path.basename(dir);
   await install(dir, skillsDir(), name);
   return name;
@@ -56,12 +55,12 @@ export async function importSkill(source: string): Promise<string> {
 export async function importPlugin(source: string): Promise<string> {
   const dir = await checkSource(source);
   const text = await readFile(path.join(dir, ".claude-plugin", "plugin.json"), "utf8").catch(() => null);
-  if (text === null) throw new ExtensionError("这个文件夹里没有 .claude-plugin/plugin.json");
+  if (text === null) throw new BadRequestError("这个文件夹里没有 .claude-plugin/plugin.json");
   let manifest: { name?: unknown };
   try {
     manifest = JSON.parse(text) as { name?: unknown };
   } catch {
-    throw new ExtensionError("plugin.json 不是有效的 JSON");
+    throw new BadRequestError("plugin.json 不是有效的 JSON");
   }
   const name = typeof manifest.name === "string" && manifest.name ? manifest.name : path.basename(dir);
   await install(dir, pluginsDir(), name);

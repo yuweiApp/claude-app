@@ -2,10 +2,10 @@ import { readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
-import { BadRequestError } from "../../agent/session-manager.js";
 import { remoteFs } from "../../ssh/host-fs.js";
 import { sshHost } from "../../ssh/hosts.js";
 import { fromWindowsPath, nativePath, parseRemote, remoteUri } from "../../ssh/location.js";
+import { BadRequestError } from "../../errors.js";
 
 /**
  * GET /folders?path=：列出网关这台机器上一个文件夹里的子文件夹（不含文件），给新会话的「选择文件夹」浏览用。

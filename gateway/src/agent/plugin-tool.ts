@@ -2,7 +2,7 @@ import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@
 import { z } from "zod";
 import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
 import type { MarketPlugin } from "../shared/types.js";
-import { PluginMarketError, searchMarketPlugins } from "./plugin-market.js";
+import { searchMarketPlugins } from "./plugin-market.js";
 
 /** MCP 服务器名：工具全名是 mcp__plugins__search_plugins */
 export const PLUGINS_SERVER = "plugins";
@@ -74,8 +74,7 @@ export function pluginsServer(marketplaces: string[]): McpSdkServerConfigWithIns
         const text = JSON.stringify({ total: result.total, offset: start, plugins: result.plugins.map(summary) });
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
-        const message = err instanceof PluginMarketError ? err.message : (err as Error).message;
-        return { content: [{ type: "text" as const, text: `取插件列表失败：${message}` }], isError: true };
+        return { content: [{ type: "text" as const, text: `取插件列表失败：${(err as Error).message}` }], isError: true };
       }
     },
   );

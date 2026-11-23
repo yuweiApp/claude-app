@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { createWriteStream, mkdirSync } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   deleteSession,
@@ -43,6 +44,7 @@ import type { SessionContextInfo } from "../shared/types.js";
 import { compactedSinceReply, forgetSession, savedUsage, saveUsage } from "./context-usage.js";
 import { goalCondition, recordedGoal } from "./goal.js";
 import { onProxyChange, proxyEnvKey } from "../net/proxy.js";
+import { BadRequestError, BusyError, ConflictError, NotFoundError } from "../errors.js";
 
 /** 活跃会话表：新建、按需 resume、空闲回收；历史会话直接读 Claude Code 落盘的 jsonl */
 export class SessionManager {
@@ -85,8 +87,7 @@ export class SessionManager {
     return this.active.get(sessionId);
   }
 
-  /** 新建会话并发送第一条消息 */
-  /** opts.goal：不发消息，新会话一开始就设定这个目标（见 AgentSession.setGoal），text 不用 */
+  /** 新建会话并发送第一条消息。opts.goal：不发消息，新会话一开始就设定这个目标（见 AgentSession.setGoal），text 不用 */
   async create(
     text: string,
     opts: { cwd?: string; model?: string; effort?: EffortLevel; permissionMode?: PermissionMode; attachments?: string[]; goal?: string },
@@ -346,15 +347,16 @@ export class SessionManager {
     (await this.activate(sessionId)).compact();
   }
 
-  /** 设定目标（换掉已有的）：子进程回收了的先 resume */
-  async setGoal(sessionId: string, condition: string): Promise<void> {
+  /** 设定目标（换掉已有的）：条件不对先报错；子进程回收了的先 resume */
+  async setGoal(sessionId: string, text: string): Promise<void> {
+    const condition = goalCondition(text);
     (await this.activate(sessionId)).setGoal(condition);
   }
 
   /** 取消目标：子进程回收了的先 resume（Claude Code resume 时从记录里恢复了目标，要它自己清掉） */
   async clearGoal(sessionId: string): Promise<void> {
     const active = this.active.get(sessionId);
-    if (!active && !(await recordedGoal(sessionId).catch(() => ({ goal: null }))).goal) throw Object.assign(new Error("没有进行中的目标"), { statusCode: 409 });
+    if (!active && !(await recordedGoal(sessionId).catch(() => ({ goal: null }))).goal) throw new ConflictError("没有进行中的目标");
     (await this.activate(sessionId)).clearGoal();
   }
 
@@ -387,10 +389,6 @@ export class SessionManager {
     this.log.info({ sessionId, newId }, "清空会话");
     (await this.launch(newId, true, { cwd, model, effort, permissionMode })).announce();
     return newId;
-  }
-
-  async closeSession(sessionId: string): Promise<void> {
-    await this.active.get(sessionId)?.close();
   }
 
   /** 删除会话：先关掉子进程，再删 Claude Code 落盘的会话记录（jsonl 和子代理记录），事件缓冲一起清掉 */
@@ -632,17 +630,13 @@ async function createRemoteScratch(host: SshHost): Promise<string> {
 
 /** 远端的任务输出文件取回本机临时文件；tail：只取最后 64 KB */
 async function fetchRemoteOutput(host: SshHost, file: string, tail: boolean): Promise<string | null> {
-  const { createWriteStream } = await import("node:fs");
-  const { pipeline } = await import("node:stream/promises");
-  const { createHash } = await import("node:crypto");
   const sftp = await host.sftp();
   // Windows 上的 claude 报的是 C:\Users\…\xx.output，SFTP 要 /C:/Users/…/xx.output（C:\… 会被当成相对用户目录的路径）
   file = fromWindowsPath(file);
   const size = await new Promise<number | null>((resolve) => sftp.stat(file, (err, s) => resolve(err ? null : s.size)));
-  if (size === null) return null;
+  if (!size) return null;
   const local = path.join(os.tmpdir(), `claude-app-ssh-${createHash("sha1").update(`${host.id}:${file}`).digest("hex").slice(0, 16)}`);
   const start = tail ? Math.max(0, size - 64 * 1024) : 0;
-  if (size === 0) return null;
   await pipeline(sftp.createReadStream(file, { start, end: size - 1 }), createWriteStream(local, { mode: 0o600 }));
   return local;
 }
@@ -667,8 +661,4 @@ async function restoreForkTime(sourceId: string, forkedId: string): Promise<void
   lines[index] = JSON.stringify({ ...entry, timestamp: original.timestamp });
   await writeFile(file, lines.join("\n"));
 }
-
-export class NotFoundError extends Error {}
-export class BadRequestError extends Error {}
-export class BusyError extends Error {}
 

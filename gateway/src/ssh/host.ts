@@ -10,6 +10,7 @@ import { resolveTarget, sshBin, type RemoteForward, type ResolvedTarget } from "
 import { prepareRemote, type RemoteEnv } from "./deploy.js";
 import { createModelProxy, type ModelProxy } from "./model-proxy.js";
 import { reapOrphanClaude } from "./remote-ops.js";
+import { BadRequestError } from "../errors.js";
 
 /** 单引号转义，给远端的 sh 用 */
 export const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -33,8 +34,6 @@ const psCommand = (script: string) => {
   ].join("\n");
   return `powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${psEncoded(full)}`;
 };
-
-export class SshError extends Error {}
 
 /** 127.0.0.1:80、[::1]:80 */
 export const hostPort = (host: string, port: number) => `${host.includes(":") ? `[${host}]` : host}:${port}`;
@@ -108,7 +107,7 @@ export class SshHost {
 
   get connection(): SshConnection {
     const conn = getConnection(this.id);
-    if (!conn) throw new SshError("SSH 连接不存在（可能已经在设置里删掉了）");
+    if (!conn) throw new BadRequestError("SSH 连接不存在（可能已经在设置里删掉了）");
     return conn;
   }
 
@@ -203,7 +202,7 @@ export class SshHost {
   /** 用户确认了指纹：记下来，下次连接时按它验证 */
   trust(fingerprint: string): void {
     const key = this.pendingKey;
-    if (!key || key.fingerprint !== fingerprint) throw new SshError("指纹和主机现在提供的不一致，重新连接一次再确认");
+    if (!key || key.fingerprint !== fingerprint) throw new BadRequestError("指纹和主机现在提供的不一致，重新连接一次再确认");
     patchConnection(this.id, { hostKey: { type: key.type, fingerprint: key.fingerprint } });
     this.pendingKey = undefined;
     this.emitChange();
@@ -223,9 +222,9 @@ export class SshHost {
         if (hostKeyError) return reject(hostKeyError);
         if (err.level === "client-authentication") {
           this.needsPassword = true;
-          return reject(new SshError(this.password ? "密码不对，或者服务器不接受密码登录" : "用密钥、ssh-agent 都登录不了，需要输入密码"));
+          return reject(new BadRequestError(this.password ? "密码不对，或者服务器不接受密码登录" : "用密钥、ssh-agent 都登录不了，需要输入密码"));
         }
-        reject(new SshError(`连接 ${target.user}@${target.hostname}:${target.port} 失败：${err.message}`));
+        reject(new BadRequestError(`连接 ${target.user}@${target.hostname}:${target.port} 失败：${err.message}`));
       });
       client.connect(
         connectOptions(target, this.password, (blob, verify) => {
@@ -288,7 +287,7 @@ export class SshHost {
     if (link) {
       if (this.client !== main) {
         link.end();
-        throw new SshError("SSH 连接已断开");
+        throw new BadRequestError("SSH 连接已断开");
       }
       try {
         const bound = await forwardIn(link, port);
@@ -370,7 +369,7 @@ export class SshHost {
     await this.ensureReady();
     const client = this.rawClient();
     return new Promise((resolve, reject) =>
-      client.forwardOut("127.0.0.1", 0, host, port, (err, channel) => (err ? reject(new SshError(`远端连不上 ${hostPort(host, port)}：${err.message}`)) : resolve(channel))),
+      client.forwardOut("127.0.0.1", 0, host, port, (err, channel) => (err ? reject(new BadRequestError(`远端连不上 ${hostPort(host, port)}：${err.message}`)) : resolve(channel))),
     );
   }
 
@@ -417,7 +416,7 @@ export class SshHost {
 
   /** 准备远端时用（这时还不算 ready），其余地方用 exec / openExec */
   rawClient(): Client {
-    if (!this.client) throw new SshError("SSH 连接已断开");
+    if (!this.client) throw new BadRequestError("SSH 连接已断开");
     return this.client;
   }
 
@@ -436,7 +435,7 @@ export class SshHost {
   openExecNow(command: string, opts: ExecOptions = {}): Promise<ClientChannel> {
     const client = this.rawClient();
     return new Promise((resolve, reject) =>
-      client.exec(this.windows ? psCommand(command) : `exec sh -c ${shQuote(command)}`, opts, (err, channel) => (err ? reject(new SshError(`远端执行命令失败：${err.message}`)) : resolve(channel))),
+      client.exec(this.windows ? psCommand(command) : `exec sh -c ${shQuote(command)}`, opts, (err, channel) => (err ? reject(new BadRequestError(`远端执行命令失败：${err.message}`)) : resolve(channel))),
     );
   }
 
@@ -447,7 +446,7 @@ export class SshHost {
   async isWindows(): Promise<boolean> {
     const client = this.rawClient();
     const channel = await new Promise<ClientChannel>((resolve, reject) =>
-      client.exec("echo %OS% $env:OS", (err, ch) => (err ? reject(new SshError(`远端执行命令失败：${err.message}`)) : resolve(ch))),
+      client.exec("echo %OS% $env:OS", (err, ch) => (err ? reject(new BadRequestError(`远端执行命令失败：${err.message}`)) : resolve(ch))),
     );
     const r = await collect(channel, undefined, 15_000);
     return decodeText(r.stdout).includes("Windows_NT");
@@ -458,7 +457,7 @@ export class SshHost {
     await this.ensureReady();
     const client = this.rawClient();
     return new Promise((resolve, reject) =>
-      client.exec(command, opts, (err, channel) => (err ? reject(new SshError(`远端执行命令失败：${err.message}`)) : resolve(channel))),
+      client.exec(command, opts, (err, channel) => (err ? reject(new BadRequestError(`远端执行命令失败：${err.message}`)) : resolve(channel))),
     );
   }
 
@@ -472,7 +471,7 @@ export class SshHost {
   async openSftp(): Promise<SFTPWrapper> {
     await this.ensureReady();
     const client = this.rawClient();
-    return new Promise((resolve, reject) => client.sftp((err, sftp) => (err ? reject(new SshError(`打开 SFTP 失败：${err.message}`)) : resolve(sftp))));
+    return new Promise((resolve, reject) => client.sftp((err, sftp) => (err ? reject(new BadRequestError(`打开 SFTP 失败：${err.message}`)) : resolve(sftp))));
   }
 
   /** SFTP 会话，整个连接共用一个 */
@@ -485,7 +484,7 @@ export class SshHost {
     if (!this.sftpConn) {
       const opening = new Promise<SFTPWrapper>((resolve, reject) =>
         this.rawClient().sftp((err, sftp) => {
-          if (err) return reject(new SshError(`远端打不开 SFTP：${err.message}`));
+          if (err) return reject(new BadRequestError(`远端打不开 SFTP：${err.message}`));
           sftp.on("close", () => {
             if (this.sftpConn === opening) this.sftpConn = null;
           });
@@ -502,7 +501,7 @@ export class SshHost {
 
   /** 模型代理的令牌：远端的 claude 拿它当 ANTHROPIC_AUTH_TOKEN，网关验过后换成真正的密钥 */
   get proxyToken(): string {
-    if (!this.proxy) throw new SshError("SSH 连接还没准备好");
+    if (!this.proxy) throw new BadRequestError("SSH 连接还没准备好");
     return this.proxy.token;
   }
 }
@@ -549,7 +548,7 @@ export function connectOptions(target: ResolvedTarget, password: string | undefi
 /** 在远端 127.0.0.1:<port> 上开反向转发（0 是随便一个空闲端口），返回实际端口 */
 function forwardIn(client: Client, port: number): Promise<number> {
   return new Promise((resolve, reject) =>
-    client.forwardIn("127.0.0.1", port, (err, bound) => (err ? reject(new SshError(`远端不允许端口转发，模型请求转发不了：${err.message}`)) : resolve(bound || port))),
+    client.forwardIn("127.0.0.1", port, (err, bound) => (err ? reject(new BadRequestError(`远端不允许端口转发，模型请求转发不了：${err.message}`)) : resolve(bound || port))),
   );
 }
 

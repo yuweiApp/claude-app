@@ -1,5 +1,5 @@
 import { query, type ModelInfo } from "@anthropic-ai/claude-agent-sdk";
-import { agentEnv, config } from "../config.js";
+import { agentEnv, config, modelAuthHeaders } from "../config.js";
 
 interface OpenAIModelEntry {
   id: string;
@@ -44,10 +44,7 @@ export function listModels(): Promise<ModelInfo[]> {
 
 async function fromProvider(baseUrl: string): Promise<ModelInfo[]> {
   const url = `${baseUrl.replace(/\/+$/, "")}/v1/models`;
-  const headers: Record<string, string> = {};
-  if (process.env.ANTHROPIC_AUTH_TOKEN) headers.authorization = `Bearer ${process.env.ANTHROPIC_AUTH_TOKEN}`;
-  else if (process.env.ANTHROPIC_API_KEY) headers["x-api-key"] = process.env.ANTHROPIC_API_KEY;
-  const res = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) });
+  const res = await fetch(url, { headers: modelAuthHeaders(), signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`GET ${url} 返回 ${res.status}`);
   const body = (await res.json()) as { data?: OpenAIModelEntry[] };
   if (!Array.isArray(body.data)) throw new Error(`GET ${url} 的响应里没有 data 数组`);
