@@ -85,7 +85,18 @@ export class Pet {
     });
     ipcMain.on("pet:menu", (e) => {
       if (!this.fromPet(e.sender) || !this.win) return;
-      this.menu().popup({ window: this.win });
+      const win = this.win;
+      // 灵宠窗口平时不接焦点（不抢主窗口的焦点），但菜单所在的窗口没有焦点时，点别处菜单不会收起：弹菜单期间临时让它接焦点
+      win.setFocusable(true);
+      win.focus();
+      this.menu().popup({
+        window: win,
+        callback: () => {
+          if (win.isDestroyed()) return;
+          win.setFocusable(false);
+          win.blur();
+        },
+      });
     });
     ipcMain.handle("pet:state", (e) => (this.fromPet(e.sender) ? this.state() : null));
   }

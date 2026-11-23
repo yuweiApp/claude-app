@@ -181,9 +181,43 @@
     75% { content: "..."; }
   }
 
+  /* 没事时睡觉：闭眼、慢慢呼吸、头上冒 Z */
+  .sleepy, .sleep-mouth, .zzz { display: none; }
+  .pet.sleeping .eyes, .pet.sleeping .mouth { display: none; }
+  .pet.sleeping .sleepy, .pet.sleeping .sleep-mouth, .pet.sleeping .zzz { display: inline; }
+  .pet.sleeping .float { animation: breathe 3.6s ease-in-out infinite; }
+  .pet.sleeping.jump .float { animation: jump 0.9s cubic-bezier(0.3, 0.8, 0.4, 1) 2, breathe 3.6s ease-in-out 1.8s infinite; }
+  .pet.sleeping .glow { animation: glow-dim 3.6s ease-in-out infinite; }
+  .pet.sleeping .tail { animation: wag 6s ease-in-out infinite; }
+  .sleep-mouth { animation: snore 3.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  .zzz text { opacity: 0; animation: zzz 3.6s ease-out infinite; transform-box: fill-box; transform-origin: center; paint-order: stroke; }
+  .zzz text:nth-child(2) { animation-delay: 1.2s; }
+  .zzz text:nth-child(3) { animation-delay: 2.4s; }
+  @keyframes breathe {
+    0%, 100% { transform: translateY(0) scale(1, 1); }
+    50% { transform: translateY(1px) scale(1.035, 0.965); }
+  }
+  @keyframes glow-dim {
+    0%, 100% { opacity: 0.3; transform: scale(0.97); }
+    50% { opacity: 0.45; transform: scale(1.02); }
+  }
+  @keyframes snore {
+    0%, 100% { transform: scale(0.7); }
+    50% { transform: scale(1.15); }
+  }
+  @keyframes zzz {
+    0% { opacity: 0; transform: translate(0, 0) scale(0.5) rotate(-8deg); }
+    20% { opacity: 1; }
+    100% { opacity: 0; transform: translate(16px, -30px) scale(1.25) rotate(12deg); }
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .float, .glow, .tail, .eyes, .pet.working .sparks, .pet.working .pupils, .pet.jump .float, .dots::after { animation: none; }
+    .float, .glow, .tail, .eyes, .pet.working .sparks, .pet.working .pupils, .pet.jump .float, .dots::after,
+    .pet.sleeping .float, .pet.sleeping .glow, .pet.sleeping .tail, .sleep-mouth, .zzz text { animation: none; }
     .dots { color: inherit; }
+    .zzz text { opacity: 0.85; }
+    .zzz text:nth-child(2) { transform: translate(8px, -14px); }
+    .zzz text:nth-child(3) { transform: translate(16px, -28px); }
   }
 </style>
 </head>
@@ -238,13 +272,25 @@
           <path d="M42 68 q5 -7 10 0" />
           <path d="M68 68 q5 -7 10 0" />
         </g>
+        <!-- 睡着时闭着的眼睛 -->
+        <g class="sleepy" fill="none" stroke="#3a2e25" stroke-width="2.4" stroke-linecap="round">
+          <path d="M42 66 q5 4.5 10 0" />
+          <path d="M68 66 q5 4.5 10 0" />
+        </g>
         <!-- 腮红和嘴 -->
         <ellipse cx="38" cy="76" rx="5.5" ry="3.2" fill="#ff9e8a" opacity="0.55" />
         <ellipse cx="82" cy="76" rx="5.5" ry="3.2" fill="#ff9e8a" opacity="0.55" />
-        <path d="M55 76 q2.5 3 5 0 q2.5 3 5 0" fill="none" stroke="#3a2e25" stroke-width="1.8" stroke-linecap="round" />
+        <path class="mouth" d="M55 76 q2.5 3 5 0 q2.5 3 5 0" fill="none" stroke="#3a2e25" stroke-width="1.8" stroke-linecap="round" />
+        <ellipse class="sleep-mouth" cx="60" cy="78" rx="2" ry="2.4" fill="#c96f5c" />
         <!-- 小爪子 -->
         <ellipse cx="48" cy="99" rx="7" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
         <ellipse cx="72" cy="99" rx="7" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
+      </g>
+      <!-- 睡着时头上冒的 Z -->
+      <g class="zzz" fill="#8eaaf0" stroke="#fff6e8" stroke-width="2" stroke-linejoin="round" font-family="system-ui, sans-serif" font-weight="800" font-size="15">
+        <text x="88" y="38">z</text>
+        <text x="88" y="38">z</text>
+        <text x="88" y="38">Z</text>
       </g>
       <!-- 干活时绕着转的星光 -->
       <g class="sparks" fill="#ffc35c">
@@ -263,12 +309,16 @@
   const pill = $("pill");
   let current = { working: 0, notices: [] };
   let dragging = false;
+  /** 睡着时被点了一下：醒一会儿再接着睡 */
+  let awakeUntil = 0;
+  let sleepTimer = 0;
 
   function render(state) {
     current = state;
     const notices = state.notices || [];
     petEl.classList.toggle("working", state.working > 0 && notices.length === 0);
     petEl.classList.toggle("happy-face", notices.length > 0);
+    petEl.classList.toggle("sleeping", state.working === 0 && notices.length === 0 && Date.now() >= awakeUntil);
     if (notices.length) {
       const first = notices[0];
       const title = $("bubble-title");
@@ -289,6 +339,12 @@
   }
 
   function jump() {
+    if (petEl.classList.contains("sleeping")) {
+      awakeUntil = Date.now() + 4000;
+      clearTimeout(sleepTimer);
+      sleepTimer = setTimeout(() => render(current), 4000);
+      render(current);
+    }
     petEl.classList.remove("jump");
     // 重新触发动画
     void petEl.getBoundingClientRect();
