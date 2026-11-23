@@ -566,113 +566,7 @@ export class AgentSession {
 
   private async consume(): Promise<void> {
     try {
-      for await (const message of this.query) {
-        this.lastActiveAt = Date.now();
-        // 清空（见 clear）：conversation_reset 之后的消息是新会话的，不发给网页、不记进这个会话；等到 result 就知道新的会话 id
-        if (message.type === "conversation_reset" && this.clearing) {
-          this.resetSeen = true;
-          continue;
-        }
-        if (this.resetSeen) {
-          if (message.type === "result") {
-            this.clearing?.resolve(message.session_id);
-            this.clearing = undefined;
-          }
-          continue;
-        }
-        if (message.type === "system" && message.subtype === "init") {
-          this.model = message.model;
-          this.permissionMode = message.permissionMode;
-          if (this.state === "starting") {
-            this.setState("idle");
-            void this.refreshContext();
-          } else this.publishState();
-        }
-        // 压缩完成（自动的在一轮中间）：用量变了，但要等模型下一次回复才知道压缩后的实际用量
-        if (message.type === "system" && message.subtype === "compact_boundary") {
-          this.compactedSinceReply = true;
-          void this.refreshContext();
-        }
-        if (message.type === "assistant" && message.parent_tool_use_id === null && message.message.model !== "<synthetic>") this.compactedSinceReply = false;
-        // 排队的消息可能在上一轮的 result 之后直接开始下一轮。只看主线程的：一轮结束后后台子代理还在出消息，
-        // 那不是新的一轮，算进去的话会话一直显示运行中、对话里却没有进行中的一轮（直到通知唤起新的一轮）
-        if ((message.type === "assistant" || message.type === "stream_event") && message.parent_tool_use_id === null && this.state === "idle") {
-          this.setState("running");
-        }
-        // 后台任务结束的通知：交给模型之前会话算在忙，空闲时接着发出的模型请求就是通知开始的新一轮（见 pendingNotices）
-        if (message.type === "assistant" && message.parent_tool_use_id !== null) this.trackSubagentTools(message.message.content);
-        if (message.type === "system" && message.subtype === "task_notification" && !this.subagentTools.delete(message.tool_use_id ?? "")) {
-          if (!message.skip_transcript && message.status !== "stopped" && (this.state === "idle" || this.state === "running")) {
-            this.pendingNotices.add(message.task_id);
-            if (this.state === "idle") {
-              this.publishState();
-              this.waitNotices();
-            }
-          }
-        }
-        if (message.type === "user" && message.parent_tool_use_id === null && Array.isArray(message.message.content) && message.message.content.some((b) => b.type === "tool_result")) {
-          this.toolResultSinceRequest = true;
-        }
-        if (message.type === "system" && message.subtype === "status" && message.status === "requesting") {
-          if (this.pendingNotices.size && this.state === "idle") {
-            this.setState("running");
-            this.clearNotices();
-          } else if (this.toolResultSinceRequest && this.state === "running") this.clearNotices();
-          this.toolResultSinceRequest = false;
-        }
-        const lifecycle = message as unknown as { type: string; command_uuid?: string; state?: string };
-        if (lifecycle.type === "command_lifecycle" && lifecycle.command_uuid && lifecycle.state !== "queued") this.queuedNext.delete(lifecycle.command_uuid);
-        // 上一轮的 result 之后才交给模型的消息开始了新的一轮：now 让这一轮提前结束（stop_reason 是 tool_use）、紧接着拿它开新的一轮，
-        // 或者 next 等这一轮结束。这时就算运行中，不等模型开始返回（慢的模型要一分钟，这段时间网页像没反应）；
-        // 告诉网页它是新一轮的开头（turn_start）：它跟在工具结果后面，光看位置会被当成插进上一轮的一段
-        if (lifecycle.type === "command_lifecycle" && lifecycle.state === "started" && lifecycle.command_uuid) {
-          if (this.afterResult) {
-            this.publish({ type: "turn_start", uuid: lifecycle.command_uuid });
-            if (this.state === "idle") this.setState("running");
-          }
-          this.afterResult = false;
-        }
-        this.trackTools(message);
-        this.trackGoal(message);
-        logTaskMessage(this.log, this.id, message);
-        let tasksChanged = this.tasks.ingest(message);
-        this.publish({ type: "sdk", message });
-        // 转到后台的网关工具调用（浏览器、桌面、终端）结束了：把结果原文补发给网页（通知里只有工具名），失败时显示原因
-        if (message.type === "system" && message.subtype === "task_notification" && message.tool_use_id) {
-          const result = takeToolResult(message.tool_use_id);
-          if (result) {
-            this.publish({ type: "task_result", taskId: message.task_id, text: result.text, isError: result.isError });
-            tasksChanged = this.tasks.setResult(message.task_id, result.text, result.isError) || tasksChanged;
-            const tool = this.tasks.list().find((t) => t.taskId === message.task_id)?.tool;
-            if (tool?.startsWith(`mcp__${TERMINAL_SERVER}__`)) this.terminalTaskEnded = true;
-            else this.browserTaskEnded = true;
-          }
-        }
-        if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });
-        if (message.type === "result") {
-          // /clear 的这一轮结束了却没有 conversation_reset：Claude Code 没清
-          this.clearing?.reject(new Error("Claude Code 没有执行 /clear"));
-          this.clearing = undefined;
-          this.afterResult = true;
-          this.setState("idle");
-          this.toolResultSinceRequest = false;
-          this.waitNotices();
-          void this.refreshContext();
-          // 正常结束（不是中断、出错）、最后一次停下没被拦：目标可能达成了。只有 /goal 输出的一轮（turns 为 0）不用看
-          if (this.goal && !this.goalBlocked && message.subtype === "success" && message.num_turns > 0) void this.settleGoal();
-          this.goalBlocked = false;
-          // 一轮结束：内置浏览器关掉 AI 开的、没留下的临时标签页。还有转到后台的代码在跑（inappBusy），
-          // 或者这一轮里有后台浏览器任务结束了（browserTaskEnded），先不关
-          const deferred = inappBusy(this.id) || this.browserTaskEnded;
-          this.browserTaskEnded = false;
-          if (!deferred) this.browser?.turnEnded(this.id);
-          // 终端同理：模型开的、里面的命令已经结束的终端在一轮结束时关掉（TerminalManager.turnEnded），
-          // 还有终端工具调用在跑（转到后台的 read_terminal）、或者这一轮里有这样的调用结束了，先不关
-          const holdTerminals = this.terminals?.busy(this.id) || this.terminalTaskEnded;
-          this.terminalTaskEnded = false;
-          if (!holdTerminals) void this.terminals?.turnEnded(this.id).catch((err: unknown) => this.log.warn({ sessionId: this.id, err }, "一轮结束关终端失败"));
-        }
-      }
+      for await (const message of this.query) this.handleMessage(message);
     } catch (err) {
       if (!this.closing && !this.abortController.signal.aborted) {
         const { text, host } = this.exitError(err);
@@ -680,19 +574,158 @@ export class AgentSession {
         this.publish({ type: "error", message: text, at: Date.now(), ...(host ? { host } : {}) });
       }
     } finally {
-      for (const requestId of [...this.pending.keys()]) {
-        this.resolvePermission(requestId, { behavior: "deny", message: "会话已结束" });
-      }
-      if (this.tasks.processExited()) this.publish({ type: "tasks", tasks: this.tasks.list() });
-      // 队列跟着子进程没了
-      clearTimeout(this.noticeTimer);
-      this.pendingNotices.clear();
-      this.queuedNext.clear();
-      this.clearing?.reject(new Error("清空没完成，claude 进程结束了"));
-      this.clearing = undefined;
-      this.setState("closed");
-      this.onClosed(this);
+      this.cleanupAfterExit();
     }
+  }
+
+  /** 子进程发来的一条消息，按顺序：清空期间的跳过、状态和后台通知的跟踪、排队消息、工具和目标、转给网页、一轮结束的收尾 */
+  private handleMessage(message: SDKMessage): void {
+    this.lastActiveAt = Date.now();
+    if (this.skipWhileClearing(message)) return;
+    this.trackRunState(message);
+    this.trackNotices(message);
+    this.trackQueued(message);
+    this.trackTools(message);
+    this.trackGoal(message);
+    logTaskMessage(this.log, this.id, message);
+    this.forwardMessage(message);
+    if (message.type === "result") this.turnEnded(message);
+  }
+
+  /** 清空（见 clear）：conversation_reset 之后的消息是新会话的，不发给网页、不记进这个会话；等到 result 就知道新的会话 id。返回 true 是这条不再往下处理 */
+  private skipWhileClearing(message: SDKMessage): boolean {
+    if (message.type === "conversation_reset" && this.clearing) {
+      this.resetSeen = true;
+      return true;
+    }
+    if (!this.resetSeen) return false;
+    if (message.type === "result") {
+      this.clearing?.resolve(message.session_id);
+      this.clearing = undefined;
+    }
+    return true;
+  }
+
+  /** 会话的状态、模型、权限模式，和压缩过之后模型还没回复过的标记 */
+  private trackRunState(message: SDKMessage): void {
+    if (message.type === "system" && message.subtype === "init") {
+      this.model = message.model;
+      this.permissionMode = message.permissionMode;
+      if (this.state === "starting") {
+        this.setState("idle");
+        void this.refreshContext();
+      } else this.publishState();
+    }
+    // 压缩完成（自动的在一轮中间）：用量变了，但要等模型下一次回复才知道压缩后的实际用量
+    if (message.type === "system" && message.subtype === "compact_boundary") {
+      this.compactedSinceReply = true;
+      void this.refreshContext();
+    }
+    if (message.type === "assistant" && message.parent_tool_use_id === null && message.message.model !== "<synthetic>") this.compactedSinceReply = false;
+    // 排队的消息可能在上一轮的 result 之后直接开始下一轮。只看主线程的：一轮结束后后台子代理还在出消息，
+    // 那不是新的一轮，算进去的话会话一直显示运行中、对话里却没有进行中的一轮（直到通知唤起新的一轮）
+    if ((message.type === "assistant" || message.type === "stream_event") && message.parent_tool_use_id === null && this.state === "idle") {
+      this.setState("running");
+    }
+  }
+
+  /** 后台任务结束的通知：交给模型之前会话算在忙，空闲时接着发出的模型请求就是通知开始的新一轮（见 pendingNotices） */
+  private trackNotices(message: SDKMessage): void {
+    if (message.type === "assistant" && message.parent_tool_use_id !== null) this.trackSubagentTools(message.message.content);
+    if (message.type === "system" && message.subtype === "task_notification" && !this.subagentTools.delete(message.tool_use_id ?? "")) {
+      if (!message.skip_transcript && message.status !== "stopped" && (this.state === "idle" || this.state === "running")) {
+        this.pendingNotices.add(message.task_id);
+        if (this.state === "idle") {
+          this.publishState();
+          this.waitNotices();
+        }
+      }
+    }
+    if (message.type === "user" && message.parent_tool_use_id === null && Array.isArray(message.message.content) && message.message.content.some((b) => b.type === "tool_result")) {
+      this.toolResultSinceRequest = true;
+    }
+    if (message.type === "system" && message.subtype === "status" && message.status === "requesting") {
+      if (this.pendingNotices.size && this.state === "idle") {
+        this.setState("running");
+        this.clearNotices();
+      } else if (this.toolResultSinceRequest && this.state === "running") this.clearNotices();
+      this.toolResultSinceRequest = false;
+    }
+  }
+
+  /**
+   * 排队的用户消息（command_lifecycle）：交给模型了（不是 queued）就不能再撤回。
+   * 上一轮的 result 之后才交给模型的消息开始了新的一轮：now 让这一轮提前结束（stop_reason 是 tool_use）、紧接着拿它开新的一轮，
+   * 或者 next 等这一轮结束。这时就算运行中，不等模型开始返回（慢的模型要一分钟，这段时间网页像没反应）；
+   * 告诉网页它是新一轮的开头（turn_start）：它跟在工具结果后面，光看位置会被当成插进上一轮的一段
+   */
+  private trackQueued(message: SDKMessage): void {
+    const lifecycle = message as unknown as { type: string; command_uuid?: string; state?: string };
+    if (lifecycle.type !== "command_lifecycle" || !lifecycle.command_uuid) return;
+    if (lifecycle.state !== "queued") this.queuedNext.delete(lifecycle.command_uuid);
+    if (lifecycle.state !== "started") return;
+    if (this.afterResult) {
+      this.publish({ type: "turn_start", uuid: lifecycle.command_uuid });
+      if (this.state === "idle") this.setState("running");
+    }
+    this.afterResult = false;
+  }
+
+  /** 原样转给网页（sdk 事件），后台任务列表有变化时也发；转到后台的网关工具调用（浏览器、桌面、终端）结束了，把结果原文补发给网页（通知里只有工具名），失败时显示原因 */
+  private forwardMessage(message: SDKMessage): void {
+    let tasksChanged = this.tasks.ingest(message);
+    this.publish({ type: "sdk", message });
+    if (message.type === "system" && message.subtype === "task_notification" && message.tool_use_id) {
+      const result = takeToolResult(message.tool_use_id);
+      if (result) {
+        this.publish({ type: "task_result", taskId: message.task_id, text: result.text, isError: result.isError });
+        tasksChanged = this.tasks.setResult(message.task_id, result.text, result.isError) || tasksChanged;
+        const tool = this.tasks.list().find((t) => t.taskId === message.task_id)?.tool;
+        if (tool?.startsWith(`mcp__${TERMINAL_SERVER}__`)) this.terminalTaskEnded = true;
+        else this.browserTaskEnded = true;
+      }
+    }
+    if (tasksChanged) this.publish({ type: "tasks", tasks: this.tasks.list() });
+  }
+
+  /** 一轮结束（result）：回到空闲，等没交出去的通知，取用量，看目标达成没有，关掉这一轮的临时标签页和结束了的终端 */
+  private turnEnded(message: Extract<SDKMessage, { type: "result" }>): void {
+    // /clear 的这一轮结束了却没有 conversation_reset：Claude Code 没清
+    this.clearing?.reject(new Error("Claude Code 没有执行 /clear"));
+    this.clearing = undefined;
+    this.afterResult = true;
+    this.setState("idle");
+    this.toolResultSinceRequest = false;
+    this.waitNotices();
+    void this.refreshContext();
+    // 正常结束（不是中断、出错）、最后一次停下没被拦：目标可能达成了。只有 /goal 输出的一轮（turns 为 0）不用看
+    if (this.goal && !this.goalBlocked && message.subtype === "success" && message.num_turns > 0) void this.settleGoal();
+    this.goalBlocked = false;
+    // 内置浏览器关掉 AI 开的、没留下的临时标签页。还有转到后台的代码在跑（inappBusy），
+    // 或者这一轮里有后台浏览器任务结束了（browserTaskEnded），先不关
+    const deferred = inappBusy(this.id) || this.browserTaskEnded;
+    this.browserTaskEnded = false;
+    if (!deferred) this.browser?.turnEnded(this.id);
+    // 终端同理：模型开的、里面的命令已经结束的终端在一轮结束时关掉（TerminalManager.turnEnded），
+    // 还有终端工具调用在跑（转到后台的 read_terminal）、或者这一轮里有这样的调用结束了，先不关
+    const holdTerminals = this.terminals?.busy(this.id) || this.terminalTaskEnded;
+    this.terminalTaskEnded = false;
+    if (!holdTerminals) void this.terminals?.turnEnded(this.id).catch((err: unknown) => this.log.warn({ sessionId: this.id, err }, "一轮结束关终端失败"));
+  }
+
+  /** 子进程结束了（正常关、异常退出）：没回复的权限请求拒掉，在跑的后台任务记成停止，排队的东西跟着子进程没了 */
+  private cleanupAfterExit(): void {
+    for (const requestId of [...this.pending.keys()]) {
+      this.resolvePermission(requestId, { behavior: "deny", message: "会话已结束" });
+    }
+    if (this.tasks.processExited()) this.publish({ type: "tasks", tasks: this.tasks.list() });
+    clearTimeout(this.noticeTimer);
+    this.pendingNotices.clear();
+    this.queuedNext.clear();
+    this.clearing?.reject(new Error("清空没完成，claude 进程结束了"));
+    this.clearing = undefined;
+    this.setState("closed");
+    this.onClosed(this);
   }
 
   /**
