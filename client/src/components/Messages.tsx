@@ -4,7 +4,7 @@ import { isGoalStart, SHOW_WIDGET_TOOL, type AgentItem, type ApiRetry, type Goal
 import { Attachments } from "./Attachments";
 import { GoalIcon } from "./Goal";
 import { ImageThumb } from "./ImageThumb";
-import { CopyAction, ForkAction, MessageActions } from "./MessageActions";
+import { CopyAction, ForkAction, MessageActions, MessageTime } from "./MessageActions";
 import { desktopCommandLine, SparkIcon, StepGroup, stepImages, ToolIcon, ToolStep, type ToolUse } from "./Steps";
 import { Widget, WidgetPending } from "./Widget";
 import { StepThumbs } from "./StepThumbs";
@@ -512,6 +512,7 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
             <MessageActions align="start">
               <CopyAction text={final.text} title="复制回复" />
               {onFork && <ForkAction onFork={() => onFork(final.uuid)} />}
+              {final.at !== undefined && <MessageTime at={final.at} />}
             </MessageActions>
           )}
         </div>
@@ -542,7 +543,7 @@ function processImages(units: Unit[], view: SessionView) {
 type Unit =
   | { kind: "item"; key: string; item: Exclude<Item, { kind: "assistant" }> }
   /** uuid：所在的那条 assistant 消息（会话记录里一行一个内容块） */
-  | { kind: "text"; key: string; uuid: string; text: string }
+  | { kind: "text"; key: string; uuid: string; at?: number; text: string }
   | { kind: "steps"; key: string; messageId?: string; tools: ToolUse[] }
   /** 部件（show_widget）：单独一个单元，不和同一次响应里的其他工具调用合成一组 */
   | { kind: "widget"; key: string; block: ToolUse };
@@ -556,7 +557,7 @@ function toUnits(items: Item[]): Unit[] {
     }
     item.blocks.forEach((block, i) => {
       const key = `${item.uuid}:${i}`;
-      if (block.type === "text") units.push({ kind: "text", key, uuid: item.uuid, text: block.text });
+      if (block.type === "text") units.push({ kind: "text", key, uuid: item.uuid, at: item.at, text: block.text });
       else if (block.name === SHOW_WIDGET_TOOL) units.push({ kind: "widget", key, block });
       else {
         const last = units.at(-1);

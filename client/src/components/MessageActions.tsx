@@ -70,3 +70,15 @@ export function ForkAction({ onFork }: { onFork: () => Promise<void> }) {
     </button>
   );
 }
+
+/** 消息的时间（年月日时分秒，本地时区），和操作按钮一起在鼠标移上去时显示 */
+export function MessageTime({ at }: { at: number }) {
+  const d = new Date(at);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const text = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return (
+    <time className="msg-time" dateTime={d.toISOString()}>
+      {text}
+    </time>
+  );
+}
