@@ -1,8 +1,5 @@
-import { stat } from "node:fs/promises";
-import path from "node:path";
 import type { GoalState, GoalStatusRecord } from "../shared/types.js";
-import { sessionRecordDir } from "./scratch.js";
-import { scanBackwards } from "./session-records.js";
+import { FileCache, scanBackwards, sessionRecordFile } from "./session-records.js";
 import { BadRequestError } from "../errors.js";
 
 /**
@@ -79,23 +76,22 @@ export interface RecordedGoal {
   last?: GoalStatusEntry;
 }
 
-/** 按文件大小、修改时间缓存，键是文件路径 */
-const cache = new Map<string, { size: number; mtimeMs: number; result: RecordedGoal }>();
+const cache = new FileCache<RecordedGoal>(64);
 
 /**
  * 从会话记录读目标：最后一行 goal_status 不是达成、失败、取消，目标就还在（Claude Code resume 时也这样恢复目标）。
  * 往前数到设定那一行为止，中间没通过的检查就是 checks。没有目标的会话要读完整个文件，结果按文件缓存
  */
 export async function readRecordedGoal(file: string): Promise<RecordedGoal> {
-  const info = await stat(file).catch(() => undefined);
-  if (!info) return { goal: null };
-  const hit = cache.get(file);
-  if (hit && hit.size === info.size && hit.mtimeMs === info.mtimeMs) return hit.result;
+  return (await cache.get(file, (size) => scanGoal(file, size))) ?? { goal: null };
+}
+
+async function scanGoal(file: string, size: number): Promise<RecordedGoal> {
   let last: GoalStatusEntry | undefined;
   const checks: GoalStatusEntry[] = [];
   const start = await scanBackwards(
     file,
-    info.size,
+    size,
     (line) => {
       const entry = goalLine(line);
       if (!entry) return undefined;
@@ -107,7 +103,7 @@ export async function readRecordedGoal(file: string): Promise<RecordedGoal> {
     Number.POSITIVE_INFINITY,
   ).catch(() => undefined);
   const active = last && !last.status.met && !last.status.failed;
-  const result: RecordedGoal = {
+  return {
     goal: active
       ? {
           condition: last!.status.condition,
@@ -118,13 +114,10 @@ export async function readRecordedGoal(file: string): Promise<RecordedGoal> {
       : null,
     ...(last ? { last } : {}),
   };
-  cache.set(file, { size: info.size, mtimeMs: info.mtimeMs, result });
-  if (cache.size > 64) cache.delete(cache.keys().next().value!);
-  return result;
 }
 
 /** 按会话 id 找记录文件读目标；远程会话读的是同步到本机的副本 */
 export async function recordedGoal(sessionId: string): Promise<RecordedGoal> {
-  const dir = await sessionRecordDir(sessionId);
-  return dir ? readRecordedGoal(path.join(dir, `${sessionId}.jsonl`)) : { goal: null };
+  const file = await sessionRecordFile(sessionId);
+  return file ? readRecordedGoal(file) : { goal: null };
 }

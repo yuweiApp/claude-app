@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { config } from "../config.js";
+import { readJson, writeJson } from "../json-file.js";
 import type { SshConnectionInput } from "../shared/types.js";
 import { configHosts, parseForwardSpec } from "./ssh-config.js";
 import { BadRequestError } from "../errors.js";
@@ -45,23 +45,13 @@ let cache: FileShape | null = null;
 let configCache: { at: number; hosts: ReturnType<typeof configHosts> } | null = null;
 
 function load(): FileShape {
-  if (!cache) {
-    try {
-      const parsed = existsSync(FILE) ? (JSON.parse(readFileSync(FILE, "utf8")) as Partial<FileShape>) : {};
-      cache = { connections: [], configHosts: {}, hiddenConfigHosts: [], ...parsed };
-    } catch {
-      cache = { connections: [], configHosts: {} };
-    }
-  }
+  cache ??= { connections: [], configHosts: {}, hiddenConfigHosts: [], ...readJson<Partial<FileShape>>(FILE, {}) };
   return cache;
 }
 
 function save(next: FileShape): void {
   cache = next;
-  mkdirSync(path.dirname(FILE), { recursive: true });
-  writeFileSync(FILE, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
-  // 已经存在的文件 writeFile 不改权限
-  chmodSync(FILE, 0o600);
+  writeJson(FILE, next);
 }
 
 function sshConfigHosts() {

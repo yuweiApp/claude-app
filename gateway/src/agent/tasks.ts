@@ -1,8 +1,8 @@
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
-import { open, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { rmSync } from "node:fs";
+import { open } from "node:fs/promises";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { BackgroundTask, TaskOutput } from "../shared/types.js";
+import { readJson, writeJson } from "../json-file.js";
 
 interface TaskRecord extends BackgroundTask {
   /** 任务输出文件（后台 Bash 的 tool_result 或完成通知里给出） */
@@ -37,14 +37,8 @@ export class TaskList {
 
   constructor(private readonly file?: string) {
     if (!file) return;
-    let saved: TaskRecord[] = [];
-    try {
-      saved = JSON.parse(readFileSync(file, "utf8")) as TaskRecord[];
-    } catch {
-      return;
-    }
     const now = Date.now();
-    for (const task of saved) {
+    for (const task of readJson<TaskRecord[]>(file, [])) {
       if (task.status === "running") {
         task.status = "stopped";
         task.endedAt = now;
@@ -77,9 +71,11 @@ export class TaskList {
     if (changed && this.file && !this.saveTimer) {
       this.saveTimer = setTimeout(() => {
         this.saveTimer = undefined;
-        const file = this.file!;
-        mkdirSync(path.dirname(file), { recursive: true });
-        void writeFile(file, JSON.stringify([...this.tasks.values()])).catch(() => undefined);
+        try {
+          writeJson(this.file!, [...this.tasks.values()]);
+        } catch {
+          // 写不了只是网关重启后没有这些记录
+        }
       }, 300);
     }
     return changed;

@@ -1,13 +1,11 @@
-import { readFile, stat } from "node:fs/promises";
-import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { getSessionMessages, type SessionMessage, type SessionStoreEntry } from "@anthropic-ai/claude-agent-sdk";
 import type { HistoryImageSource } from "../shared/types.js";
 import { goalStatusEntry, type GoalStatusEntry } from "./goal.js";
-import { sessionRecordDir } from "./scratch.js";
+import { FileCache, sessionRecordFile } from "./session-records.js";
 
-/** 最近读过的几个会话的结果，按会话文件的修改时间和大小判断还能不能用（会话在跑、远程会话同步过来，文件都会变） */
-const cache = new Map<string, { mtimeMs: number; size: number; messages: SessionMessage[] }>();
-const CACHE_LIMIT = 4;
+/** 最近读过的几个会话的结果 */
+const cache = new FileCache<SessionMessage[]>(4);
 
 /**
  * 会话的历史消息，给网页显示用。返回的数组可能是缓存里的同一个，调用方不要改它。
@@ -18,18 +16,11 @@ const CACHE_LIMIT = 4;
  * 会话文件只读、只解析一遍，各段都从解析好的内容里取
  */
 export async function sessionHistory(sessionId: string): Promise<SessionMessage[]> {
-  const dir = await sessionRecordDir(sessionId);
-  const file = dir && path.join(dir, `${sessionId}.jsonl`);
-  const info = file ? await stat(file).catch(() => null) : null;
-  if (!file || !info) return getSessionMessages(sessionId);
+  const file = await sessionRecordFile(sessionId);
+  return (file ? await cache.get(file, () => readHistory(sessionId, file)) : undefined) ?? getSessionMessages(sessionId);
+}
 
-  const hit = cache.get(sessionId);
-  if (hit && hit.mtimeMs === info.mtimeMs && hit.size === info.size) {
-    cache.delete(sessionId);
-    cache.set(sessionId, hit);
-    return hit.messages;
-  }
-
+async function readHistory(sessionId: string, file: string): Promise<SessionMessage[]> {
   const text = await readFile(file, "utf8");
   const entries: SessionStoreEntry[] = [];
   const boundaries: number[] = [];
@@ -53,10 +44,7 @@ export async function sessionHistory(sessionId: string): Promise<SessionMessage[
   segments.push(await read(entries));
 
   const seen = new Set<string>();
-  const messages = withGoalStatus(sessionId, segments.flat().filter((m) => !seen.has(m.uuid) && seen.add(m.uuid)), goals);
-  cache.set(sessionId, { mtimeMs: info.mtimeMs, size: info.size, messages });
-  if (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value!);
-  return messages;
+  return withGoalStatus(sessionId, segments.flat().filter((m) => !seen.has(m.uuid) && seen.add(m.uuid)), goals);
 }
 
 /**

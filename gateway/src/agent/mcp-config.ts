@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { McpHttpServerConfig, McpSSEServerConfig, McpStdioServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { config } from "../config.js";
+import { readJson, writeJson } from "../json-file.js";
 import type { ConnectorRef, McpServerInput } from "../shared/types.js";
 
 export type McpConfig = McpStdioServerConfig | McpHttpServerConfig | McpSSEServerConfig;
@@ -16,16 +16,9 @@ interface StoredServer {
 /** 设置页添加的 MCP 服务器，存在 Claude Code 配置目录下；请求头、环境变量里可能有令牌，文件权限 600 */
 const file = () => path.join(config.claudeConfigDir, "gateway-mcp-servers.json");
 
-export function readMcpServers(): Record<string, StoredServer> {
-  if (!existsSync(file())) return {};
-  return JSON.parse(readFileSync(file(), "utf8")) as Record<string, StoredServer>;
-}
+export const readMcpServers = (): Record<string, StoredServer> => readJson(file(), {});
 
-function write(servers: Record<string, StoredServer>): void {
-  const tmp = `${file()}.tmp`;
-  writeFileSync(tmp, JSON.stringify(servers, null, 2), { mode: 0o600 });
-  renameSync(tmp, file());
-}
+const write = (servers: Record<string, StoredServer>) => writeJson(file(), servers);
 
 /** 传给 query 的 mcpServers：启用的服务器 */
 export function enabledMcpServers(): Record<string, McpConfig> {

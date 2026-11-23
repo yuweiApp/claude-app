@@ -1,7 +1,8 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { cp, mkdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.js";
+import { readJson, writeJson } from "../json-file.js";
 import type { SkillDetail } from "../shared/types.js";
 import { BadRequestError } from "../errors.js";
 
@@ -87,13 +88,13 @@ export const removePlugin = (name: string) => remove(pluginsDir(), name);
 const disabledSkillsFile = () => path.join(config.claudeConfigDir, "gateway-disabled-skills.json");
 const disabledAgentsFile = () => path.join(config.claudeConfigDir, "gateway-disabled-agents.json");
 
-const readNames = (file: string): string[] => (existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as string[]) : []);
+const readNames = (file: string): string[] => readJson(file, []);
 
 function setListed(file: string, name: string, listed: boolean): void {
   const names = new Set(readNames(file));
   if (listed) names.add(name);
   else names.delete(name);
-  writeFileSync(file, JSON.stringify([...names], null, 2));
+  writeJson(file, [...names]);
 }
 
 export const disabledSkills = () => readNames(disabledSkillsFile());

@@ -98,12 +98,14 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
     // 设置页「打开文件夹」要打开它，没有就先建上
     const agentsDir = userAgentsDir();
     await mkdir(agentsDir, { recursive: true });
+    // 这几个名单每次调用都读一次文件，循环外读好
+    const [imported, disabled, importedPluginList, disabledAgentList] = [importedSkills(), disabledSkills(), importedPluginNames(), disabledAgents()];
     const value: Capabilities = {
       skills: skills.map(({ name, description, builtin }) => ({
         name,
         description,
-        managed: importedSkills().includes(name),
-        enabled: !disabledSkills().includes(name),
+        managed: imported.includes(name),
+        enabled: !disabled.includes(name),
         builtin: builtin === true,
       })),
       plugins: plugins.map(({ name, source, version, path }) => {
@@ -117,7 +119,7 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
           version,
           ...pluginManifest(path),
           ...(marketplace ? { marketplace } : {}),
-          managed: importedPluginNames().includes(name) || marketplace !== undefined,
+          managed: importedPluginList.includes(name) || marketplace !== undefined,
           builtin: origin === "builtin",
         };
       }),
@@ -134,7 +136,7 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
           ...(model ? { model } : {}),
           ...(path ? { path } : {}),
           ...(plugin ? { plugin } : {}),
-          enabled: !disabledAgents().includes(name),
+          enabled: !disabledAgentList.includes(name),
           builtin,
         };
       }),

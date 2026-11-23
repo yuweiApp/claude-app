@@ -2,99 +2,18 @@ import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { pipeline } from "node:stream/promises";
 import type { FastifyInstance } from "fastify";
-import iconv from "iconv-lite";
-import type { FileContent, FileEncoding, ProjectEntry } from "../../shared/types.js";
-import { fsFor, type HostFs } from "../../ssh/host-fs.js";
+import type { FileContent, FileEncoding } from "../../shared/types.js";
 import { PAGE_PICKER_SCRIPT } from "../../shared/page-picker.js";
 import { BadRequestError } from "../../errors.js";
+import { attachmentHeader, AUDIO_TYPES, decodeText, detectEncoding, ENCODINGS, encodeText, IMAGE_TYPES, PAGE_TYPES, parseRange, RAW_TYPES, VIDEO_TYPES } from "../../files/content.js";
+import { forgetProjectFiles, listDir, projectEntries, search } from "../../files/project-list.js";
+import { exists, fsError, isInside, resolveChild, resolveInProject, statOr400 } from "../../files/project-path.js";
+import { uploadDir, uploadInto } from "../../files/upload.js";
 
-/** 本机是 path，远程会话（cwd 是 ssh://…，见 ssh/host-fs.ts）是 path.posix */
-type PathLib = HostFs["path"];
-const LIMIT = 50;
-/** 不是 git 仓库时自己遍历，跳过这些文件夹，最多收这么多个文件 */
-const SKIP = new Set([".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".next", "target", ".cache"]);
-const MAX_FILES = 20000;
-/** 输入 @ 后每敲一个字都会来查，文件列表缓存一会儿 */
-const CACHE_MS = 10_000;
 /** 右侧面板直接显示的文本文件上限 */
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 /** 右侧面板保存 Office 文档（/files/write-bytes）的上限 */
 const MAX_BINARY_WRITE_BYTES = 200 * 1024 * 1024;
-const IMAGE_TYPES: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".svg": "image/svg+xml",
-  ".bmp": "image/bmp",
-  ".ico": "image/x-icon",
-};
-/** 右侧面板用 <video>、<audio> 播放的，能不能放由浏览器支持的编码决定 */
-const VIDEO_TYPES: Record<string, string> = {
-  ".mp4": "video/mp4",
-  ".m4v": "video/mp4",
-  ".mov": "video/quicktime",
-  ".webm": "video/webm",
-  ".ogv": "video/ogg",
-};
-const AUDIO_TYPES: Record<string, string> = {
-  ".mp3": "audio/mpeg",
-  ".m4a": "audio/mp4",
-  ".aac": "audio/aac",
-  ".wav": "audio/wav",
-  ".ogg": "audio/ogg",
-  ".oga": "audio/ogg",
-  ".opus": "audio/ogg",
-  ".flac": "audio/flac",
-};
-/** /files/raw 能直接取的 */
-const RAW_TYPES: Record<string, string> = { ...IMAGE_TYPES, ...VIDEO_TYPES, ...AUDIO_TYPES };
-const cache = new Map<string, { at: number; entries: Promise<ProjectEntry[]> }>();
-/** 网页预览按扩展名给的类型，没列的按 application/octet-stream */
-const PAGE_TYPES: Record<string, string> = {
-  ...RAW_TYPES,
-  ".html": "text/html; charset=utf-8",
-  ".htm": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".map": "application/json; charset=utf-8",
-  ".txt": "text/plain; charset=utf-8",
-  ".xml": "application/xml; charset=utf-8",
-  ".wasm": "application/wasm",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".ttf": "font/ttf",
-  ".otf": "font/otf",
-  ".pdf": "application/pdf",
-};
-const ENCODINGS = new Set<FileEncoding>(["utf-8", "gb18030", "utf-16le", "utf-16be"]);
-/**
- * 认文本文件的编码，认不出（像二进制）给 null：
- * 有 UTF-16 的 BOM 就按 UTF-16；否则前 8KB 里有 0 字节当二进制；能按 UTF-8 解就是 UTF-8（带不带 BOM 都算）；
- * 都不是按 GB18030 解（GBK、GB2312 是它的子集，Windows 中文环境下生成的文件多是这种）
- */
-function detectEncoding(buf: Buffer): FileEncoding | null {
-  if (buf[0] === 0xff && buf[1] === 0xfe) return "utf-16le";
-  if (buf[0] === 0xfe && buf[1] === 0xff) return "utf-16be";
-  if (buf.subarray(0, 8192).includes(0)) return null;
-  try {
-    utf8.decode(buf);
-    return "utf-8";
-  } catch {
-    return "gb18030";
-  }
-}
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-/** BOM 留在文本里（\uFEFF），保存时原样写回 */
-function decodeText(buf: Buffer, encoding: FileEncoding): string {
-  return encoding === "utf-8" ? buf.toString("utf8") : iconv.decode(buf, encoding, { stripBOM: false });
-}
-function encodeText(text: string, encoding: FileEncoding): Buffer {
-  return encoding === "utf-8" ? Buffer.from(text, "utf8") : iconv.encode(text, encoding, { addBOM: false });
-}
 
 /**
  * 网页预览的地址是「/files/page/<项目文件夹的随机 id>/<相对路径>」，网页里的相对路径（样式、脚本、图片）照常按目录解析，不用带令牌。
@@ -141,9 +60,7 @@ export function fileRoutes(app: FastifyInstance): void {
     const entries = await listDir(at, abs, true);
     if (entries) return { entries };
     // 列不出来：报出原因（不存在、没有权限、不是文件夹）
-    const info = await fs.stat(abs).catch((err: NodeJS.ErrnoException) => {
-      throw new BadRequestError(fsError(err, "文件夹"));
-    });
+    const info = await statOr400(fs, abs, "文件夹");
     if (!info.isDirectory) throw new BadRequestError("不是文件夹");
     await fs.readdir(abs).catch((err: NodeJS.ErrnoException) => {
       throw new BadRequestError(fsError(err, "文件夹"));
@@ -154,9 +71,7 @@ export function fileRoutes(app: FastifyInstance): void {
   // 右侧面板查看文件：文本直接给内容，图片、音视频让网页用 /files/raw 取
   app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/read", async (req): Promise<FileContent> => {
     const { fs, p, abs } = resolveInProject(req.query.cwd, req.query.path);
-    const info = await fs.stat(abs).catch((err: NodeJS.ErrnoException) => {
-      throw new BadRequestError(fsError(err, "文件"));
-    });
+    const info = await statOr400(fs, abs, "文件");
     if (!info.isFile) throw new BadRequestError(info.isDirectory ? "是文件夹，不是文件" : "不是普通文件");
     const rel = req.query.path ?? "";
     const meta = { path: rel, size: info.size, mtimeMs: info.mtimeMs };
@@ -218,7 +133,7 @@ export function fileRoutes(app: FastifyInstance): void {
     if (!(await fs.stat(p.dirname(abs)).catch(() => null))?.isDirectory) throw new BadRequestError("所在的文件夹不存在");
     if (req.body.dir) await fs.mkdir(abs);
     else await fs.writeFile(abs, "", { exclusive: true });
-    cache.delete(key);
+    forgetProjectFiles(key);
     return {};
   });
 
@@ -227,7 +142,7 @@ export function fileRoutes(app: FastifyInstance): void {
     const { key, fs, abs } = resolveChild(req.body?.cwd, req.body?.path);
     if (!(await exists(fs, abs))) throw new BadRequestError("文件不存在");
     await fs.rm(abs);
-    cache.delete(key);
+    forgetProjectFiles(key);
     return {};
   });
 
@@ -245,7 +160,7 @@ export function fileRoutes(app: FastifyInstance): void {
     if (dst && !same) throw new BadRequestError("目标位置已经有同名的文件或文件夹");
     if (!(await fs.stat(p.dirname(to)).catch(() => null))?.isDirectory) throw new BadRequestError("目标文件夹不存在");
     await fs.rename(from, to);
-    cache.delete(key);
+    forgetProjectFiles(key);
     return {};
   });
 
@@ -266,7 +181,7 @@ export function fileRoutes(app: FastifyInstance): void {
         uploaded.push(part.filename);
       }
     } finally {
-      cache.delete(at.key);
+      forgetProjectFiles(at.key);
     }
     return { uploaded };
   });
@@ -274,9 +189,7 @@ export function fileRoutes(app: FastifyInstance): void {
   // 文件树右键「下载」：整个文件作为附件返回，浏览器存到它的下载位置（桌面版弹出保存对话框）；文件夹不行
   app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/download", async (req, reply) => {
     const { fs, p, abs } = resolveInProject(req.query.cwd, req.query.path);
-    const info = await fs.stat(abs).catch((err: NodeJS.ErrnoException) => {
-      throw new BadRequestError(fsError(err, "文件"));
-    });
+    const info = await statOr400(fs, abs, "文件");
     if (!info.isFile) throw new BadRequestError(info.isDirectory ? "只能下载文件，不能下载文件夹" : "不是普通文件");
     return reply
       .type("application/octet-stream")
@@ -358,214 +271,4 @@ export function fileRoutes(app: FastifyInstance): void {
     }
     return reply.header("content-length", info.size).send(fs.createReadStream(abs));
   });
-}
-
-/** 上传的位置：要是项目里已经有的文件夹 */
-export async function uploadDir({ fs, abs }: InProject): Promise<void> {
-  const info = await fs.stat(abs).catch(() => null);
-  if (!info?.isDirectory) throw new BadRequestError(info ? "上传的位置不是文件夹" : "上传的位置不存在");
-}
-
-/**
- * 上传一个文件到 dir（uploadDir 查过的文件夹）：已经有同名文件时报错，overwrite 才覆盖；同名的是文件夹不行。
- * write 先写进同一个文件夹里的临时文件，写完再改成原名；中途失败、取消只删临时文件，原来的同名文件还在
- */
-export async function uploadInto(dir: InProject, name: string, overwrite: boolean, write: (tmp: string) => Promise<void>): Promise<void> {
-  const { fs, p } = dir;
-  if (!name || name === "." || name === ".." || /[\\/\0]/.test(name) || (p.sep === "\\" && name.includes(":"))) throw new BadRequestError(`文件名不能用：${name}`);
-  const abs = p.join(dir.abs, name);
-  const conflict = async () => {
-    const old = await fs.stat(abs).catch(() => null);
-    if (old?.isDirectory) throw new BadRequestError(`已经有同名的文件夹：${name}`);
-    if (old && !overwrite) throw new BadRequestError(`已经有同名的文件：${name}`);
-    return old !== null;
-  };
-  await conflict();
-  const tmp = p.join(dir.abs, `.${name}.upload-${randomBytes(4).toString("hex")}`);
-  try {
-    await write(tmp);
-    // 传的时候别处可能新建了同名的，再查一次；SFTP 的改名不能覆盖已有的文件，覆盖时先删掉原来的
-    if (await conflict()) await fs.rm(abs);
-    await fs.rename(tmp, abs);
-  } catch (err) {
-    await fs.rm(tmp).catch(() => undefined);
-    throw err;
-  } finally {
-    cache.delete(dir.key);
-  }
-}
-
-/** Content-Disposition：filename 给只有 ASCII 的替代名，filename* 是 UTF-8 的原名（RFC 6266） */
-function attachmentHeader(name: string): string {
-  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
-  const utf8Name = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8Name}`;
-}
-
-/** 单段的 Range 头（bytes=a-b、bytes=a-、bytes=-n），end 含在内；没有或是多段的给 null（整个文件），超出文件给 invalid */
-function parseRange(header: string | undefined, size: number): { start: number; end: number } | null | "invalid" {
-  const m = header?.match(/^bytes=(\d*)-(\d*)$/);
-  if (!m || (!m[1] && !m[2])) return null;
-  let start: number;
-  let end: number;
-  if (!m[1]) {
-    start = Math.max(0, size - Number(m[2]));
-    end = size - 1;
-  } else {
-    start = Number(m[1]);
-    end = m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
-  }
-  if (start > end || start >= size) return "invalid";
-  return { start, end };
-}
-
-/** 解析出来的项目里的一个路径：key 是网页传来的 cwd（缓存、预览 id 按它），root 是项目文件夹在那台机器上的路径 */
-export interface InProject {
-  key: string;
-  root: string;
-  abs: string;
-  fs: HostFs;
-  p: PathLib;
-}
-
-/** 项目里的路径（/ 分隔的相对路径）转成绝对路径，不能跳出项目文件夹；cwd 可以是远程会话的 ssh://… */
-export function resolveInProject(cwd: string | undefined, rel: string | undefined): InProject {
-  if (!cwd) throw new BadRequestError("缺少项目文件夹");
-  let at: ReturnType<typeof fsFor>;
-  try {
-    at = fsFor(cwd);
-  } catch (err) {
-    throw new BadRequestError(err instanceof Error ? err.message : String(err));
-  }
-  const p = at.fs.path;
-  if (!at.root || !p.isAbsolute(at.root)) throw new BadRequestError("缺少项目文件夹");
-  const root = p.resolve(at.root);
-  const abs = p.resolve(root, rel ?? "");
-  if (!isInside(p, root, abs)) throw new BadRequestError("路径不在项目里");
-  return { key: cwd, root, abs, fs: at.fs, p };
-}
-
-/**
- * abs 是 root 本身或者在它里面（都是解析过的绝对路径）。不用「root + 分隔符」做前缀比较：
- * 根目录（/、C:\、\\server\share\）本身以分隔符结尾，拼出来的前缀多一个分隔符，里面的路径都对不上
- */
-function isInside(p: PathLib, root: string, abs: string): boolean {
-  const rel = p.relative(root, abs);
-  return rel === "" || (rel !== ".." && !rel.startsWith(`..${p.sep}`) && !p.isAbsolute(rel));
-}
-
-/** 读文件、文件夹失败的原因，显示在右侧面板里；what 是「文件」或「文件夹」 */
-export function fsError(err: NodeJS.ErrnoException, what: string): string {
-  switch (err.code) {
-    case "ENOENT":
-      return `${what}不存在`;
-    case "ENOTDIR":
-      return "路径中有一级不是文件夹";
-    case "EACCES":
-    case "EPERM":
-      // macOS 的桌面、文稿、下载、iCloud 等文件夹受隐私保护，没授权的应用读不了（报 EPERM）
-      return process.platform === "darwin"
-        ? `没有权限读取这个${what}。桌面、文稿、下载等文件夹受 macOS 隐私保护，要在「系统设置 › 隐私与安全性 › 文件与文件夹」（或「完全磁盘访问权限」）里允许运行网关的应用`
-        : `没有权限读取这个${what}`;
-    default:
-      return `${what}读取失败：${err.code ?? err.message}`;
-  }
-}
-
-/** 同 resolveInProject，但不能是项目文件夹本身（新建、删除、改名用） */
-function resolveChild(cwd: string | undefined, rel: string | undefined): InProject {
-  if (!rel) throw new BadRequestError("缺少路径");
-  const resolved = resolveInProject(cwd, rel);
-  if (resolved.abs === resolved.root) throw new BadRequestError("不能操作项目文件夹本身");
-  return resolved;
-}
-
-const exists = (fs: HostFs, abs: string) => fs.stat(abs).then(() => true, () => false);
-
-/** 一个文件夹的直接子项，文件夹在前；不是文件夹时返回 null。withImageInfo：图片文件带上大小和修改时间（目录树的缩略图用） */
-async function listDir({ fs, p, root }: InProject, dir: string, withImageInfo = false): Promise<ProjectEntry[] | null> {
-  const dirents = await fs.readdir(dir).catch(() => null);
-  if (!dirents) return null;
-  const entries = await Promise.all(
-    dirents
-      .filter((d) => d.name !== ".git")
-      .map(async (d): Promise<ProjectEntry> => {
-        const abs = p.join(dir, d.name);
-        const rel = p.relative(root, abs).split(p.sep).join("/");
-        if (d.isDirectory) return { path: `${rel}/`, dir: true };
-        if (withImageInfo && IMAGE_TYPES[p.extname(d.name).toLowerCase()]) {
-          const info = await fs.stat(abs).catch(() => null);
-          if (info) return { path: rel, dir: false, size: info.size, mtimeMs: info.mtimeMs };
-        }
-        return { path: rel, dir: false };
-      }),
-  );
-  return entries.sort((a, b) => Number(b.dir) - Number(a.dir) || a.path.localeCompare(b.path));
-}
-
-function projectEntries(at: InProject): Promise<ProjectEntry[]> {
-  const hit = cache.get(at.key);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.entries;
-  const entries = listFiles(at).then(withDirs);
-  cache.set(at.key, { at: Date.now(), entries });
-  entries.catch(() => cache.delete(at.key));
-  return entries;
-}
-
-/** 项目里的文件（相对路径，/ 分隔）：git 仓库用 git ls-files（含未跟踪、不含忽略的），否则自己遍历 */
-async function listFiles({ fs, p, root }: InProject): Promise<string[]> {
-  const git = await fs.gitFiles(root);
-  if (git) return git;
-  const files: string[] = [];
-  const walk = async (rel: string): Promise<void> => {
-    const dirents = await fs.readdir(p.join(root, rel)).catch(() => []);
-    for (const d of dirents) {
-      if (files.length >= MAX_FILES) return;
-      const child = rel ? `${rel}/${d.name}` : d.name;
-      if (d.isDirectory) {
-        if (!SKIP.has(d.name)) await walk(child);
-      } else files.push(child);
-    }
-  };
-  if (!(await fs.stat(root).catch(() => null))?.isDirectory) throw new BadRequestError(`文件夹不存在：${root}`);
-  await walk("");
-  return files;
-}
-
-/** 文件列表补上中间的文件夹 */
-function withDirs(files: string[]): ProjectEntry[] {
-  const dirs = new Set<string>();
-  for (const file of files) {
-    for (let i = file.indexOf("/"); i !== -1; i = file.indexOf("/", i + 1)) dirs.add(file.slice(0, i + 1));
-  }
-  return [...[...dirs].map((p) => ({ path: p, dir: true })), ...files.map((p) => ({ path: p, dir: false }))];
-}
-
-/** 按名字匹配排序：名字相同 > 名字开头 > 名字包含 > 路径包含 > 名字按顺序含这些字；同档短路径在前 */
-function search(entries: ProjectEntry[], q: string): ProjectEntry[] {
-  const needle = q.toLowerCase();
-  const scored: { entry: ProjectEntry; score: number }[] = [];
-  for (const entry of entries) {
-    const full = entry.path.toLowerCase();
-    const trimmed = entry.dir ? full.slice(0, -1) : full;
-    const name = trimmed.slice(trimmed.lastIndexOf("/") + 1);
-    const score =
-      name === needle ? 0
-      : name.startsWith(needle) ? 1
-      : name.includes(needle) ? 2
-      : full.includes(needle) ? 3
-      : isSubsequence(needle, name) ? 4
-      : -1;
-    if (score >= 0) scored.push({ entry, score });
-  }
-  return scored
-    .sort((a, b) => a.score - b.score || a.entry.path.length - b.entry.path.length || a.entry.path.localeCompare(b.entry.path))
-    .slice(0, LIMIT)
-    .map((s) => s.entry);
-}
-
-function isSubsequence(needle: string, hay: string): boolean {
-  let i = 0;
-  for (const ch of hay) if (ch === needle[i] && ++i === needle.length) return true;
-  return needle.length === 0;
 }

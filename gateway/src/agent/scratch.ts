@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { access, mkdir, readdir, rmdir } from "node:fs/promises";
+import { mkdir, readdir, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.js";
 import { getConnection } from "../ssh/connections.js";
@@ -44,17 +44,6 @@ export function isChatCwd(cwd: string | undefined): boolean {
   }
   const dir = path.resolve(cwd);
   return path.dirname(dir) === config.workspaceDir && SCRATCH.test(path.basename(dir));
-}
-
-/** 会话记录（jsonl）所在的文件夹：Claude Code 按工作目录放在 projects/<目录名>/ 下；删会话前先找出来 */
-export async function sessionRecordDir(sessionId: string): Promise<string | undefined> {
-  const projects = path.join(config.claudeConfigDir, "projects");
-  const dirs = await readdir(projects).catch(() => []);
-  for (const name of dirs) {
-    const dir = path.join(projects, name);
-    if (await access(path.join(dir, `${sessionId}.jsonl`)).then(() => true, () => false)) return dir;
-  }
-  return undefined;
 }
 
 /**

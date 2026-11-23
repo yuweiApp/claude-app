@@ -1,8 +1,8 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { Agent, type Dispatcher, EnvHttpProxyAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { config } from "../config.js";
+import { readJson, writeJson } from "../json-file.js";
 import type { ProxyMode, ProxySettingsInput, ProxySettingsView, ProxyTestResult } from "../shared/types.js";
 import { proxyCore } from "./core.js";
 import { SocksBridge, socksConnect, type SocksUpstream } from "./socks-bridge.js";
@@ -45,20 +45,8 @@ const FIXED_NO_PROXY_ENV = [...FIXED_NO_PROXY, "[::1]"];
 /** 子进程里和代理有关的变量：Claude Code、Node 认大写，curl 的 http_proxy 只认小写，ALL_PROXY 是 curl 等的后备（常是 SOCKS） */
 const PROXY_KEYS = ["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "all_proxy", "no_proxy"];
 
-function read(): Stored {
-  if (!existsSync(file())) return {};
-  try {
-    return JSON.parse(readFileSync(file(), "utf8")) as Stored;
-  } catch {
-    return {};
-  }
-}
-
-function write(stored: Stored): void {
-  const tmp = `${file()}.tmp`;
-  writeFileSync(tmp, JSON.stringify(stored, null, 2), { mode: 0o600 });
-  renameSync(tmp, file());
-}
+const read = (): Stored => readJson(file(), {});
+const write = (stored: Stored) => writeJson(file(), stored);
 
 /** 网关进程继承来的代理（系统环境变量、.env、.env.local）：先 HTTPS 的，模型接口都是 https */
 function inheritedProxy(): string | undefined {

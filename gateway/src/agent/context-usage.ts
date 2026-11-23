@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.js";
+import { readJson, writeJson } from "../json-file.js";
 import type { ContextUsage } from "../shared/types.js";
 
 /**
@@ -13,21 +12,14 @@ interface SessionRecord {
 }
 
 const file = path.join(config.claudeConfigDir, "gateway-context.json");
-const sessions: Record<string, SessionRecord> = load();
-let writing = Promise.resolve();
-
-function load(): Record<string, SessionRecord> {
-  try {
-    const raw = JSON.parse(readFileSync(file, "utf8")) as { sessions?: Record<string, SessionRecord> };
-    return raw.sessions ?? {};
-  } catch {
-    return {};
-  }
-}
+const { sessions } = readJson<{ sessions: Record<string, SessionRecord> }>(file, { sessions: {} });
 
 function save(): void {
-  const text = JSON.stringify({ sessions }, null, 2);
-  writing = writing.then(() => mkdir(path.dirname(file), { recursive: true }).then(() => writeFile(file, text))).catch(() => undefined);
+  try {
+    writeJson(file, { sessions });
+  } catch {
+    // 写不了只是重启后没有圆环的数，不影响会话
+  }
 }
 
 /** 上次记下的用量是刚压缩过、模型还没回复过的（重启子进程后接着这么标，见 ContextUsage.compacted） */

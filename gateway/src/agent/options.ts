@@ -43,36 +43,24 @@ export interface SessionLaunch {
   stderr: (data: string) => void;
 }
 
-/** 拼 query() 的 Options，见 docs/README.md「会话模型」「模型接入」 */
+/**
+ * 拼 query() 的 Options，见 docs/README.md「会话模型」「模型接入」。
+ * 本机会话和远程会话（docs/README.md「SSH 远程开发」：claude 经 SSH 在远端跑，模型请求经反向转发回网关）共用终端、浏览器、对话里的部件和会话本身的设置；
+ * 远程会话不给插件、技能白名单、设置页的 MCP 服务器、桌面操作和插件搜索
+ */
 export function buildOptions(launch: SessionLaunch): Options {
-  if (parseRemote(launch.cwd)) return buildRemoteOptions(launch);
-  // 网页上每个会话都有右侧面板的终端，按工作目录分组：项目会话按项目文件夹，普通会话各有自己的 scratch 目录
+  const remote = parseRemote(launch.cwd);
+  const host = remote ? sshHost(remote.host) : undefined;
+  /** 远程会话所在主机的名称，写进浏览器工具的说明 */
+  const hostName = host?.connection.name;
+  // 网页上每个会话都有右侧面板的终端，按工作目录分组：项目会话按项目文件夹，普通会话各有自己的 scratch 目录，远程会话的开在远端
   const terminal = launch.terminals ? terminalServer(launch.terminals, launch.cwd, launch.sessionId) : null;
   // 网页版没有内置浏览器，但会话启动时不知道之后是不是在桌面版里打开，所以都挂上；桌面版没开时调用工具返回错误
   // 外部浏览器（用户自己的 Chrome、Edge 等）：设置页「浏览器」里启用着的，每次启动会话时重新检测；第一次调用工具时才连
   const active = activeBrowsers();
-  const browser = launch.browser
-    ? browserServer(launch.browser, launch.sessionId, launch.resume, externalNote(active), { save: fileSaver(launch.cwd), read: fileReader(launch.cwd), fact: filesFact(launch.cwd) })
-    : null;
-  const external = externalServers(active, launch.sessionId, launch.cwd, launch.resume);
-  // 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 里开了才挂，默认关
-  const desktop = desktopEnabled ? desktopServer(launch.sessionId, launch.onDesktopTarget) : null;
-  const allowedTools = [
-    ...(terminal ? TERMINAL_AUTO_TOOLS : []),
-    // 浏览器（browser_run_code）不弹权限卡片
-    ...(browser ? BROWSER_TOOLS : []),
-    ...externalTools(active),
-    // 桌面工具（run_code）不弹权限卡片
-    ...(desktop ? DESKTOP_TOOLS : []),
-    // 对话里的部件（show_widget）只是显示，不弹权限卡片
-    ...VISUALIZE_TOOLS,
-    // 搜索插件市场（search_plugins）只读，不弹权限卡片
-    ...PLUGINS_TOOLS,
-  ];
-  return {
-    cwd: launch.cwd,
-    // 附件存在 workspace/.attachments，不在会话的工作目录（项目文件夹、普通会话的 scratch 目录）里，也要能不经确认读到
-    additionalDirectories: [attachmentsDir],
+  const files = { save: fileSaver(launch.cwd), read: fileReader(launch.cwd), fact: filesFact(launch.cwd) };
+  const browser = launch.browser ? browserServer(launch.browser, launch.sessionId, launch.resume, externalNote(active), files, hostName) : null;
+  const common = {
     env: agentEnv(),
     ...(launch.resume ? { resume: launch.sessionId } : { sessionId: launch.sessionId }),
     model: launch.model ?? config.model,
@@ -83,93 +71,67 @@ export function buildOptions(launch: SessionLaunch): Options {
     canUseTool: launch.canUseTool,
     // 子代理跟着会话选的模型走（只在接第三方接口时），见 subagent-model.ts
     ...withHooks(launch),
-    ...(allowedTools.length ? { allowedTools } : {}),
-    disallowedTools: [...config.disallowedTools, ...disabledAgents().map((name) => `Agent(${name})`)],
     settingSources: ["user", "project", "local"],
     // WebFetch 抓网页前先问 api.anthropic.com 这个域名能不能抓，不支持的地区（如中国）一律 403，所有网址都报
     // "Unable to verify if domain … is safe to fetch"，网页本身其实能连上。跳过这一步
     settings: { skipWebFetchPreflight: true },
+    includePartialMessages: true,
+    abortController: launch.abortController,
+    stderr: launch.stderr,
+  } satisfies Options;
+  // 终端的读屏幕等、浏览器（browser_run_code）、对话里的部件（show_widget，只是显示）不弹权限卡片
+  const sharedTools = [...(terminal ? TERMINAL_AUTO_TOOLS : []), ...(browser ? BROWSER_TOOLS : []), ...externalTools(active), ...VISUALIZE_TOOLS];
+  const sharedServers = {
+    ...(terminal ? { [TERMINAL_SERVER]: terminal } : {}),
+    ...(browser ? { [BROWSER_SERVER]: browser } : {}),
+    ...externalServers(active, launch.sessionId, launch.cwd, launch.resume, hostName),
+    // 在对话里显示 HTML / SVG 部件，网页按调用参数渲染（docs/README.md「对话里的部件」）
+    [VISUALIZE_SERVER]: visualizeServer(launch.sessionId),
+  };
+
+  if (remote && host) {
+    // 反向转发（设置页、~/.ssh/config 的 RemoteForward）：远端连这些端口时连到用户电脑上的服务；会话启动时开着的
+    const forwards = host.activeForwards().map((f) => `- 「${hostName}」的 ${hostPort(f.bindHost, f.bindPort)} → 用户电脑的 ${hostPort(f.host, f.port)}`);
+    const append = [
+      config.appendSystemPrompt,
+      forwards.length ? `SSH 反向转发：在「${hostName}」上连下面这些地址，连到的是用户电脑（运行 claude-app 的那台）上的服务。\n${forwards.join("\n")}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    return {
+      ...common,
+      cwd: remote.path,
+      // 远端的附件目录（发消息时上传到这里）
+      ...(host.env ? { additionalDirectories: [nativePath(host.env.windows, host.env.attachments)] } : {}),
+      // env 只带 Claude Code 相关的变量过去，见 ssh/spawn.ts
+      spawnClaudeCodeProcess: remoteSpawner(host, launch.stderr),
+      allowedTools: sharedTools,
+      disallowedTools: config.disallowedTools,
+      mcpServers: sharedServers,
+      systemPrompt: { type: "preset", preset: "claude_code", ...(append ? { append } : {}) },
+    };
+  }
+
+  // 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 里开了才挂，默认关
+  const desktop = desktopEnabled ? desktopServer(launch.sessionId, launch.onDesktopTarget) : null;
+  return {
+    ...common,
+    cwd: launch.cwd,
+    // 附件存在 workspace/.attachments，不在会话的工作目录（项目文件夹、普通会话的 scratch 目录）里，也要能不经确认读到
+    additionalDirectories: [attachmentsDir],
+    // 桌面工具（run_code）、搜索插件市场（search_plugins，只读）也不弹权限卡片
+    allowedTools: [...sharedTools, ...(desktop ? DESKTOP_TOOLS : []), ...PLUGINS_TOOLS],
+    disallowedTools: [...config.disallowedTools, ...disabledAgents().map((name) => `Agent(${name})`)],
     mcpServers: {
       ...enabledMcpServers(),
-      ...(terminal ? { [TERMINAL_SERVER]: terminal } : {}),
-      ...(browser ? { [BROWSER_SERVER]: browser } : {}),
-      ...external,
+      ...sharedServers,
       ...(desktop ? { [DESKTOP_SERVER]: desktop } : {}),
-      // 在对话里显示 HTML / SVG 部件，网页按调用参数渲染（docs/README.md「对话里的部件」）
-      [VISUALIZE_SERVER]: visualizeServer(launch.sessionId),
       // 搜索插件市场，和设置页「插件市场」同一份列表（docs/README.md「插件市场」）
       [PLUGINS_SERVER]: pluginsServer(pluginMarketplaces),
     },
     plugins: importedPlugins(),
     ...(launch.skills ? { skills: launch.skills } : {}),
-    systemPrompt: {
-      type: "preset",
-      preset: "claude_code",
-      ...(config.appendSystemPrompt ? { append: config.appendSystemPrompt } : {}),
-    },
-    includePartialMessages: true,
-    abortController: launch.abortController,
-    stderr: launch.stderr,
-  };
-}
-
-/**
- * 远程会话（docs/README.md「SSH 远程开发」）：claude 经 SSH 在远端跑，模型请求经反向转发回网关。
- * 工具只挂浏览器（本机的内置浏览器和外部浏览器）、右侧面板的终端（远端的）和对话里的部件；插件、技能白名单、设置页的连接器、桌面操作都不给
- */
-function buildRemoteOptions(launch: SessionLaunch): Options {
-  const remote = parseRemote(launch.cwd)!;
-  const host = sshHost(remote.host);
-  const terminal = launch.terminals ? terminalServer(launch.terminals, launch.cwd, launch.sessionId) : null;
-  const active = activeBrowsers();
-  const name = host.connection.name;
-  const browser = launch.browser
-    ? browserServer(launch.browser, launch.sessionId, launch.resume, externalNote(active), { save: fileSaver(launch.cwd), read: fileReader(launch.cwd), fact: filesFact(launch.cwd) }, name)
-    : null;
-  const external = externalServers(active, launch.sessionId, launch.cwd, launch.resume, name);
-  // 反向转发（设置页、~/.ssh/config 的 RemoteForward）：远端连这些端口时连到用户电脑上的服务；会话启动时开着的
-  const forwards = host.activeForwards().map((f) => `- 「${name}」的 ${hostPort(f.bindHost, f.bindPort)} → 用户电脑的 ${hostPort(f.host, f.port)}`);
-  const append = [
-    config.appendSystemPrompt,
-    forwards.length ? `SSH 反向转发：在「${name}」上连下面这些地址，连到的是用户电脑（运行 claude-app 的那台）上的服务。\n${forwards.join("\n")}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-  const allowedTools = [...(terminal ? TERMINAL_AUTO_TOOLS : []), ...(browser ? BROWSER_TOOLS : []), ...externalTools(active), ...VISUALIZE_TOOLS];
-  return {
-    cwd: remote.path,
-    // 远端的附件目录（发消息时上传到这里）
-    ...(host.env ? { additionalDirectories: [nativePath(host.env.windows, host.env.attachments)] } : {}),
-    // 只带 Claude Code 相关的变量过去，见 ssh/spawn.ts
-    env: agentEnv(),
-    spawnClaudeCodeProcess: remoteSpawner(host, launch.stderr),
-    ...(launch.resume ? { resume: launch.sessionId } : { sessionId: launch.sessionId }),
-    model: launch.model ?? config.model,
-    ...(launch.effort ? { effort: launch.effort } : {}),
-    permissionMode: launch.permissionMode,
-    allowDangerouslySkipPermissions: true,
-    canUseTool: launch.canUseTool,
-    // 子代理跟着会话选的模型走（只在接第三方接口时），见 subagent-model.ts
-    ...withHooks(launch),
-    ...(allowedTools.length ? { allowedTools } : {}),
-    disallowedTools: config.disallowedTools,
-    settingSources: ["user", "project", "local"],
-    settings: { skipWebFetchPreflight: true },
-    mcpServers: {
-      ...(terminal ? { [TERMINAL_SERVER]: terminal } : {}),
-      ...(browser ? { [BROWSER_SERVER]: browser } : {}),
-      ...external,
-      // 对话里的部件在网页上显示，远程会话一样能用
-      [VISUALIZE_SERVER]: visualizeServer(launch.sessionId),
-    },
-    systemPrompt: {
-      type: "preset",
-      preset: "claude_code",
-      ...(append ? { append } : {}),
-    },
-    includePartialMessages: true,
-    abortController: launch.abortController,
-    stderr: launch.stderr,
+    systemPrompt: { type: "preset", preset: "claude_code", ...(config.appendSystemPrompt ? { append: config.appendSystemPrompt } : {}) },
   };
 }
 

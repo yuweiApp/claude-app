@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { config } from "../config.js";
+import { readJson, writeJson } from "../json-file.js";
 import { getConnection } from "../ssh/connections.js";
 import type { ShareSettingsInput } from "../shared/types.js";
 import { BadRequestError } from "../errors.js";
@@ -31,7 +31,7 @@ export interface ShareSettings {
 
 const DEFAULTS: ShareSettings = { server: { host: "", sshPort: 22, username: "", remotePort: 8790 } };
 
-let current: ShareSettings = load();
+let current: ShareSettings = readJson(FILE, DEFAULTS);
 const listeners = new Set<() => void>();
 
 export function shareSettings(): ShareSettings {
@@ -92,8 +92,7 @@ export function settingsFrom(input: ShareSettingsInput, requireServer = false): 
 
 export function saveShareSettings(next: ShareSettings): void {
   current = next;
-  mkdirSync(path.dirname(FILE), { recursive: true });
-  writeFileSync(FILE, JSON.stringify(current, null, 2), { mode: 0o600 });
+  writeJson(FILE, current);
   for (const listener of listeners) listener();
 }
 
@@ -101,20 +100,11 @@ export function saveShareSettings(next: ShareSettings): void {
 export function rememberFingerprint(host: string, sshPort: number, fingerprint: string): void {
   if (current.server.connectionId || current.server.host !== host || current.server.sshPort !== sshPort || current.server.fingerprint) return;
   current = { ...current, server: { ...current.server, fingerprint } };
-  mkdirSync(path.dirname(FILE), { recursive: true });
-  writeFileSync(FILE, JSON.stringify(current, null, 2), { mode: 0o600 });
+  writeJson(FILE, current);
 }
 
 function port(value: unknown, name: string): number {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1 || n > 65535) throw new BadRequestError(`${name}要是 1–65535 的整数`);
   return n;
-}
-
-function load(): ShareSettings {
-  try {
-    return existsSync(FILE) ? (JSON.parse(readFileSync(FILE, "utf8")) as ShareSettings) : DEFAULTS;
-  } catch {
-    return DEFAULTS;
-  }
 }

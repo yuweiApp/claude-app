@@ -3,7 +3,8 @@ import { stat, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { FileTransfer } from "../../shared/types.js";
-import { fsError, resolveInProject, uploadDir, uploadInto, type InProject } from "./files.js";
+import { fsError, resolveInProject, statOr400, type InProject } from "../../files/project-path.js";
+import { uploadDir, uploadInto } from "../../files/upload.js";
 import { BadRequestError } from "../../errors.js";
 
 /**
@@ -122,9 +123,7 @@ export function transferRoutes(app: FastifyInstance): void {
     } else if (body.kind === "download") {
       const at = resolveInProject(body.cwd, body.path);
       const local = localPath(body.local ?? "");
-      const info = await at.fs.stat(at.abs).catch((err: NodeJS.ErrnoException) => {
-        throw new BadRequestError(fsError(err, "文件"));
-      });
+      const info = await statOr400(at.fs, at.abs, "文件");
       if (!info.isFile) throw new BadRequestError(info.isDirectory ? "只能下载文件，不能下载文件夹" : "不是普通文件");
       if (!(await stat(path.dirname(local)).catch(() => null))?.isDirectory()) throw new BadRequestError("存到的文件夹不存在");
       const t: Entry = { ...base, id: randomBytes(8).toString("hex"), kind: "download", name: path.basename(local), path: body.path ?? "", local, total: info.size, overwrite: false };

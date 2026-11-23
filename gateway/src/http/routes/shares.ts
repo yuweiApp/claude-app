@@ -2,9 +2,8 @@ import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import type { FastifyInstance } from "fastify";
 import type { SessionManager } from "../../agent/session-manager.js";
 import { config } from "../../config.js";
-import { isChatCwd, sessionRecordDir } from "../../agent/scratch.js";
-import { lastCustomTitle } from "../../agent/session-records.js";
-import path from "node:path";
+import { isChatCwd } from "../../agent/scratch.js";
+import { lastCustomTitle, sessionRecordFile } from "../../agent/session-records.js";
 import type { ShareBrowserRelay } from "../../share/browser-relay.js";
 import type { LanServer } from "../../share/lan-server.js";
 import { lanAddresses, type ShareStore } from "../../share/store.js";
@@ -137,8 +136,8 @@ export function shareRoutes(app: FastifyInstance, sessions: SessionManager, shar
     // 同会话列表（SessionManager.list）：SDK 只看记录文件开头，后来生成、改过的标题要从整个文件里找
     let customTitle = info?.customTitle;
     if (!customTitle) {
-      const dir = await sessionRecordDir(share.sessionId).catch(() => undefined);
-      if (dir) customTitle = await lastCustomTitle(path.join(dir, `${share.sessionId}.jsonl`));
+      const file = await sessionRecordFile(share.sessionId);
+      if (file) customTitle = await lastCustomTitle(file);
     }
     const recorded = await sessions.cwd(share.sessionId);
     return {

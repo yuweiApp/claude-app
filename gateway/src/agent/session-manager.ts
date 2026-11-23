@@ -31,8 +31,8 @@ import { disposeRepls } from "../browser/tool.js";
 import { disposeDesktopSession } from "../desktop/tool.js";
 import { sessionHistory } from "./history.js";
 import { exportSession, SESSION_MENTION } from "./session-export.js";
-import { lastCustomTitle, lastResponseAt, lastResponseModel, recordedCwd, recordedForkParent, sessionRecordFiles } from "./session-records.js";
-import { createScratchDir, isChatCwd, isScratchIn, newScratchName, removeScratchDirIfEmpty, sessionRecordDir } from "./scratch.js";
+import { lastCustomTitle, lastResponseAt, lastResponseModel, recordedCwd, recordedForkParent, sessionRecordDir, sessionRecordFile, sessionRecordFiles } from "./session-records.js";
+import { createScratchDir, isChatCwd, isScratchIn, newScratchName, removeScratchDirIfEmpty } from "./scratch.js";
 import { fromWindowsPath, nativePath, parseRemote, remoteUri } from "../ssh/location.js";
 import { existingHost, sshHost } from "../ssh/hosts.js";
 import type { SshHost } from "../ssh/host.js";
@@ -182,8 +182,8 @@ export class SessionManager {
 
   /** 记录文件里最后一次回复用的模型 */
   private async recordedModel(sessionId: string): Promise<string | undefined> {
-    const dir = await sessionRecordDir(sessionId);
-    return dir ? lastResponseModel(path.join(dir, `${sessionId}.jsonl`)) : undefined;
+    const file = await sessionRecordFile(sessionId);
+    return file && lastResponseModel(file);
   }
 
   /** 会话的工作目录；没有这个会话时 null */
@@ -203,12 +203,8 @@ export class SessionManager {
    */
   private async infoCwd(info: { sessionId: string; cwd?: string }, file?: string): Promise<string | undefined> {
     if (info.cwd) return info.cwd;
-    if (!file) {
-      const dir = await sessionRecordDir(info.sessionId);
-      if (!dir) return undefined;
-      file = path.join(dir, `${info.sessionId}.jsonl`);
-    }
-    return recordedCwd(file);
+    file ??= await sessionRecordFile(info.sessionId);
+    return file && recordedCwd(file);
   }
 
   async list(): Promise<SessionListItem[]> {
@@ -646,16 +642,15 @@ async function fetchRemoteOutput(host: SshHost, file: string, tail: boolean): Pr
  * 列表里的最后回复时间也按它：改回原记录里那条消息的时间（每行的 forkedFrom 指着原消息）
  */
 async function restoreForkTime(sourceId: string, forkedId: string): Promise<void> {
-  const [sourceDir, forkedDir] = await Promise.all([sessionRecordDir(sourceId), sessionRecordDir(forkedId)]);
-  if (!sourceDir || !forkedDir) return;
-  const file = path.join(forkedDir, `${forkedId}.jsonl`);
+  const [sourceFile, file] = await Promise.all([sessionRecordFile(sourceId), sessionRecordFile(forkedId)]);
+  if (!sourceFile || !file) return;
   const lines = (await readFile(file, "utf8")).split("\n");
   const index = lines.findLastIndex((l) => l.includes('"forkedFrom"'));
   if (index < 0) return;
   const entry = JSON.parse(lines[index]!) as { timestamp?: string; forkedFrom?: { messageUuid?: string } };
   const uuid = entry.forkedFrom?.messageUuid;
   if (!uuid) return;
-  const source = (await readFile(path.join(sourceDir, `${sourceId}.jsonl`), "utf8")).split("\n").find((l) => l.includes(`"uuid":"${uuid}"`));
+  const source = (await readFile(sourceFile, "utf8")).split("\n").find((l) => l.includes(`"uuid":"${uuid}"`));
   const original = source ? (JSON.parse(source) as { uuid?: string; timestamp?: string }) : undefined;
   if (original?.uuid !== uuid || !original.timestamp || original.timestamp === entry.timestamp) return;
   lines[index] = JSON.stringify({ ...entry, timestamp: original.timestamp });

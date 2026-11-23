@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { open, readdir, readFile, stat } from "node:fs/promises";
+import { access, open, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { config } from "../config.js";
@@ -14,11 +14,62 @@ const CHUNK = 64 * 1024;
 /** 最多往前读这么多还没找到 AI 回复就不找了 */
 const MAX_SCAN = 4 * 1024 * 1024;
 
-/** 按文件大小、修改时间缓存，文件没变就不再读；键是文件路径 */
-const responseCache = new Map<string, { size: number; mtimeMs: number; at: number | undefined }>();
-const titleCache = new Map<string, { size: number; mtimeMs: number; title: string | undefined }>();
+/**
+ * 读文件得出的结果，按文件大小、修改时间缓存（会话在跑、远程会话同步过来，文件都会变），文件没变就不再读；键是文件路径。
+ * limit：最多留几个文件的，超过时丢掉最久没用的
+ */
+export class FileCache<T> {
+  private readonly entries = new Map<string, { size: number; mtimeMs: number; value: T }>();
+
+  constructor(private readonly limit = Number.POSITIVE_INFINITY) {}
+
+  /** 没有这个文件、读不了时是 undefined；read 拿到的是这次看到的文件大小 */
+  async get(file: string, read: (size: number) => Promise<T>): Promise<T | undefined> {
+    const info = await stat(file).catch(() => undefined);
+    if (!info) return undefined;
+    const hit = this.entries.get(file);
+    this.entries.delete(file);
+    if (hit && hit.size === info.size && hit.mtimeMs === info.mtimeMs) {
+      this.entries.set(file, hit);
+      return hit.value;
+    }
+    const value = await read(info.size);
+    this.entries.set(file, { size: info.size, mtimeMs: info.mtimeMs, value });
+    if (this.entries.size > this.limit) this.entries.delete(this.entries.keys().next().value!);
+    return value;
+  }
+}
+
+const responseCache = new FileCache<number | undefined>();
+const titleCache = new FileCache<string | undefined>();
+const forkCache = new FileCache<string | undefined>();
+/** 工作目录写进去就不会再变，找到了就一直缓存 */
 const cwdCache = new Map<string, string>();
-const forkCache = new Map<string, { size: number; mtimeMs: number; parent: string | undefined }>();
+/** 会话记录所在的文件夹：文件还在就不用再遍历 projects/ 下的所有文件夹 */
+const dirCache = new Map<string, string>();
+
+/** 会话记录（jsonl）所在的文件夹：Claude Code 按工作目录放在 projects/<目录名>/ 下；没有这个会话的记录时 undefined */
+export async function sessionRecordDir(sessionId: string): Promise<string | undefined> {
+  const has = (dir: string) => access(path.join(dir, `${sessionId}.jsonl`)).then(() => true, () => false);
+  const cached = dirCache.get(sessionId);
+  if (cached && (await has(cached))) return cached;
+  const projects = path.join(config.claudeConfigDir, "projects");
+  for (const name of await readdir(projects).catch(() => [] as string[])) {
+    const dir = path.join(projects, name);
+    if (await has(dir)) {
+      dirCache.set(sessionId, dir);
+      return dir;
+    }
+  }
+  dirCache.delete(sessionId);
+  return undefined;
+}
+
+/** 会话记录文件的路径；没有这个会话的记录时 undefined */
+export async function sessionRecordFile(sessionId: string): Promise<string | undefined> {
+  const dir = await sessionRecordDir(sessionId);
+  return dir && path.join(dir, `${sessionId}.jsonl`);
+}
 
 /** 所有会话的记录文件，键是 sessionId */
 export async function sessionRecordFiles(): Promise<Map<string, string>> {
@@ -39,14 +90,8 @@ export async function sessionRecordFiles(): Promise<Map<string, string>> {
  * 最后一次 AI 回复的时间（最后一条 assistant 行的 timestamp）；没回复过、读不到时 undefined。
  * 不用文件修改时间：子进程退出时 Claude Code 还会往末尾补写元数据（last-prompt、cost-state 等），和有没有新回复无关
  */
-export async function lastResponseAt(file: string): Promise<number | undefined> {
-  const info = await stat(file).catch(() => undefined);
-  if (!info) return undefined;
-  const cached = responseCache.get(file);
-  if (cached && cached.size === info.size && cached.mtimeMs === info.mtimeMs) return cached.at;
-  const at = await scanBackwards(file, info.size, assistantTime).catch(() => undefined);
-  responseCache.set(file, { size: info.size, mtimeMs: info.mtimeMs, at });
-  return at;
+export function lastResponseAt(file: string): Promise<number | undefined> {
+  return responseCache.get(file, (size) => scanBackwards(file, size, assistantTime).catch(() => undefined));
 }
 
 /**
@@ -60,24 +105,21 @@ export async function lastResponseModel(file: string): Promise<string | undefine
 }
 
 /** 记录文件里最后一次设的自定义标题（custom-title 行）；整个文件都读，只在 SDK 和网关都给不了标题时用 */
-export async function lastCustomTitle(file: string): Promise<string | undefined> {
-  const info = await stat(file).catch(() => undefined);
-  if (!info) return undefined;
-  const cached = titleCache.get(file);
-  if (cached && cached.size === info.size && cached.mtimeMs === info.mtimeMs) return cached.title;
-  const text = await readFile(file, "utf8").catch(() => "");
-  let title: string | undefined;
-  for (const line of text.split("\n")) {
-    if (!line.includes('"custom-title"')) continue;
-    try {
-      const entry = JSON.parse(line) as { type?: string; customTitle?: string };
-      if (entry.type === "custom-title" && entry.customTitle?.trim()) title = entry.customTitle.trim();
-    } catch {
-      // 写到一半的行
+export function lastCustomTitle(file: string): Promise<string | undefined> {
+  return titleCache.get(file, async () => {
+    const text = await readFile(file, "utf8").catch(() => "");
+    let title: string | undefined;
+    for (const line of text.split("\n")) {
+      if (!line.includes('"custom-title"')) continue;
+      try {
+        const entry = JSON.parse(line) as { type?: string; customTitle?: string };
+        if (entry.type === "custom-title" && entry.customTitle?.trim()) title = entry.customTitle.trim();
+      } catch {
+        // 写到一半的行
+      }
     }
-  }
-  titleCache.set(file, { size: info.size, mtimeMs: info.mtimeMs, title });
-  return title;
+    return title;
+  });
 }
 
 /**
@@ -113,11 +155,11 @@ export async function recordedCwd(file: string): Promise<string | undefined> {
 }
 
 /** SDK 分叉时在复制的消息中记录 forkedFrom.sessionId，旧分支和远程副本同样适用 */
-export async function recordedForkParent(file: string): Promise<string | undefined> {
-  const info = await stat(file).catch(() => undefined);
-  if (!info) return undefined;
-  const cached = forkCache.get(file);
-  if (cached && cached.size === info.size && cached.mtimeMs === info.mtimeMs) return cached.parent;
+export function recordedForkParent(file: string): Promise<string | undefined> {
+  return forkCache.get(file, () => readForkParent(file));
+}
+
+async function readForkParent(file: string): Promise<string | undefined> {
   const stream = createReadStream(file, { encoding: "utf8" });
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
   let parent: string | undefined;
@@ -142,7 +184,6 @@ export async function recordedForkParent(file: string): Promise<string | undefin
     lines.close();
     stream.destroy();
   }
-  forkCache.set(file, { size: info.size, mtimeMs: info.mtimeMs, parent });
   return parent;
 }
 

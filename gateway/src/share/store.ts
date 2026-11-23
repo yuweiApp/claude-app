@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { config } from "../config.js";
+import { readJson, writeJson } from "../json-file.js";
 import type { ShareEntry } from "../shared/types.js";
 
 /**
@@ -17,7 +17,7 @@ type Listener = () => void;
 export type ShareScope = "lan" | "public";
 
 export class ShareStore {
-  private shares: ShareEntry[] = load();
+  private shares: ShareEntry[] = readJson<{ shares: ShareEntry[] }>(FILE, { shares: [] }).shares;
   private readonly listeners = new Set<Listener>();
 
   list(): ShareEntry[] {
@@ -86,24 +86,8 @@ export class ShareStore {
   }
 
   private save(): void {
-    mkdirSync(path.dirname(FILE), { recursive: true });
-    writeFileSync(FILE, JSON.stringify({ shares: this.shares }, null, 2), { mode: 0o600 });
+    writeJson(FILE, { shares: this.shares });
     for (const listener of this.listeners) listener();
-  }
-}
-
-function load(): ShareEntry[] {
-  try {
-    if (!existsSync(FILE)) return [];
-    const parsed = JSON.parse(readFileSync(FILE, "utf8")) as { shares?: unknown };
-    if (!Array.isArray(parsed.shares)) return [];
-    return parsed.shares
-      .filter((s): s is ShareEntry => typeof s?.sessionId === "string" && typeof s?.token === "string" && typeof s?.createdAt === "string")
-      // 加公网分享之前的记录没有这两项：都是局域网分享
-      .map((s) => ({ sessionId: s.sessionId, token: s.token, createdAt: s.createdAt, lan: s.lan !== false, public: s.public === true }))
-      .filter((s) => s.lan || s.public);
-  } catch {
-    return [];
   }
 }
 

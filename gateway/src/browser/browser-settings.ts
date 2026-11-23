@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { config } from "../config.js";
+import { readJson, writeJson } from "../json-file.js";
 import type { BrowserEntry, BrowserLogo, BrowserSettingsView } from "../shared/types.js";
 import { INSTALL_URL, KNOWN_BROWSERS, listProfiles, locateKnown, looksChromium, resolveExecutable } from "./catalog.js";
 import { BadRequestError } from "../errors.js";
@@ -32,20 +33,8 @@ interface Stored {
   custom?: CustomBrowser[];
 }
 
-function read(): Stored {
-  if (!existsSync(file())) return {};
-  try {
-    return JSON.parse(readFileSync(file(), "utf8")) as Stored;
-  } catch {
-    return {};
-  }
-}
-
-function write(stored: Stored): void {
-  const tmp = `${file()}.tmp`;
-  writeFileSync(tmp, JSON.stringify(stored, null, 2), { mode: 0o600 });
-  renameSync(tmp, file());
-}
+const read = (): Stored => readJson(file(), {});
+const write = (stored: Stored) => writeJson(file(), stored);
 
 /** Playwright 按通道找可执行文件（表里的路径都没找到时的后备，chrome、msedge 这些它认识的） */
 const registry = (createRequire(import.meta.url)("playwright-core/lib/coreBundle") as {

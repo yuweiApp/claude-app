@@ -1,9 +1,10 @@
-import { createWriteStream, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import { mkdir, readFile, rm, rmdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { SFTPWrapper, Stats } from "ssh2";
 import { config } from "../config.js";
+import { readJson, writeJson } from "../json-file.js";
 import type { SshHost } from "./host.js";
 import { appendText, killRemoteClaude, rmdirQuiet, rmrf, sftpWrite } from "./remote-ops.js";
 
@@ -40,20 +41,11 @@ const deleting = new Set<string>();
 const uploadedAt = new Map<string, number>();
 
 function load(): Manifest {
-  if (!manifest) {
-    try {
-      manifest = existsSync(MANIFEST) ? (JSON.parse(readFileSync(MANIFEST, "utf8")) as Manifest) : { sessions: {} };
-      manifest.sessions ??= {};
-    } catch {
-      manifest = { sessions: {} };
-    }
-  }
+  manifest ??= readJson<Manifest>(MANIFEST, { sessions: {} });
   return manifest;
 }
 
-function save(): void {
-  writeFileSync(MANIFEST, `${JSON.stringify(load(), null, 2)}\n`, { mode: 0o600 });
-}
+const save = () => writeJson(MANIFEST, load());
 
 /** 远程会话所在的 SSH 连接 id；本机会话是 undefined */
 export function remoteSessionHost(sessionId: string): string | undefined {
