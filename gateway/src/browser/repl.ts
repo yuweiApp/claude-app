@@ -316,7 +316,8 @@ interface LocalChange {
 
 /**
  * AI 自己开、关的标签页：给 Playwright 的 BrowserContext.newPage、Page.close 加一层记录（改的是原型，所有会话共用，只改一次）。
- * 网关里调用这两个方法的只有模型的代码（浏览器工具自己不开不关标签页），所以记下的就是 AI 做的
+ * 网关里调用这两个方法的除了模型的代码（浏览器工具自己不开不关标签页），只有导入登录状态时临时开、马上关掉的空白页
+ * （external.ts 的 externalCookies），它也按 AI 自己开关的算，不告诉模型
  */
 const agentCreated = new WeakSet<Page>();
 const agentClosed = new WeakSet<Page>();
