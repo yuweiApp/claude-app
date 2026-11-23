@@ -171,7 +171,9 @@
     box-shadow: 0 3px 10px rgba(0, 0, 0, 0.16);
   }
   .pill[hidden] { display: none; }
-  .dots::after { content: ""; animation: dots 1.4s steps(4) infinite; }
+  /* 省略号一个个冒出来：占位的 "..." 是透明的，宽度不变，标签不会跟着伸缩跳动 */
+  .dots { position: relative; color: transparent; }
+  .dots::after { content: ""; position: absolute; left: 0; color: var(--pill-fg); animation: dots 1.4s steps(4) infinite; }
   @keyframes dots {
     0% { content: ""; }
     25% { content: "."; }
@@ -180,7 +182,8 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .float, .glow, .tail, .eyes, .pet.working .sparks, .pet.working .pupils, .pet.jump .float { animation: none; }
+    .float, .glow, .tail, .eyes, .pet.working .sparks, .pet.working .pupils, .pet.jump .float, .dots::after { animation: none; }
+    .dots { color: inherit; }
   }
 </style>
 </head>
@@ -191,7 +194,7 @@
     <div class="bubble-sub" id="bubble-sub"></div>
     <button class="bubble-close" id="bubble-close" title="知道了" aria-label="知道了">×</button>
   </div>
-  <div class="pill hit" id="pill" hidden><span id="pill-text"></span><span class="dots"></span></div>
+  <div class="pill hit" id="pill" hidden><span id="pill-text"></span><span class="dots" aria-hidden="true">...</span></div>
 
   <div class="pet hit" id="pet" title="双击回到 Claude App，按住可以拖动，右键有更多选项">
     <svg viewBox="0 0 120 120" aria-hidden="true">
