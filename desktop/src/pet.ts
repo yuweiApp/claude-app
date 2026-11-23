@@ -207,7 +207,7 @@ export class Pet {
       { label: "知道了", enabled: this.notices.length > 0, click: () => ((this.notices = []), this.sync()) },
       { type: "separator" },
       {
-        label: "隐藏，回到窗口前不再出现",
+        label: "隐藏",
         click: () => {
           this.dismissed = true;
           this.notices = [];
@@ -215,7 +215,7 @@ export class Pet {
         },
       },
       {
-        label: "关闭灵宠（可在设置里重新打开）",
+        label: "关闭灵宠",
         click: () => {
           this.enabled = false;
           this.notices = [];
