@@ -224,7 +224,15 @@ export async function externalCookies(id: string, signal?: AbortSignal): Promise
   const entry = listBrowsers().find((b) => b.id === id);
   if (!entry) throw new Error("没有这个浏览器：已经从设置里移除，或者这台电脑上找不到它了");
   const context = await bridgeOf(entry).context(signal);
-  return context.cookies();
+  // 读 cookie 是浏览器级的命令，扩展要借一个挂着的标签页转发；连接里一个标签页都没有时（AI 还没在这个浏览器里开过页面）
+  // 临时开一个空白页，读完关掉
+  if (context.pages().length) return context.cookies();
+  const page = await context.newPage();
+  try {
+    return await context.cookies();
+  } finally {
+    await page.close().catch(() => {});
+  }
 }
 
 /** 启用着的外部浏览器（设置页「浏览器」里开着、可执行文件还在的），每次调用都重新检测 */
