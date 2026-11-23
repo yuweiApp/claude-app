@@ -2,11 +2,12 @@ import { createWriteStream, existsSync } from "node:fs";
 import { mkdir, readFile, rm, rmdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import type { SFTPWrapper, Stats } from "ssh2";
+import type { SFTPWrapper } from "ssh2";
 import { config } from "../config.js";
 import { readJson, writeJson } from "../json-file.js";
 import type { SshHost } from "./host.js";
-import { appendText, killRemoteClaude, rmdirQuiet, rmrf, sftpWrite } from "./remote-ops.js";
+import { remoteFs } from "./host-fs.js";
+import { appendText, killRemoteClaude, rmdirQuiet, rmrf, sftpReaddir, sftpStat, sftpWrite } from "./remote-ops.js";
 
 /**
  * 远程会话的记录（jsonl）由远端的 claude 写在远端的配置目录里。网关把它们按原样同步到本机配置目录的 projects/ 下（同样的目录名、文件名），
@@ -92,14 +93,14 @@ async function doSyncHost(host: SshHost): Promise<void> {
   const sftp = await host.sftp();
   const root = remoteProjects(host);
   // 读不出来（比如正好断开）不能当成远端没有会话，不然本机的副本会被当成「别处删了」一起删掉；只有目录不存在才算空的
-  const projects = await readdir(sftp, root).catch((err: { code?: unknown }) => (err.code === NO_SUCH_FILE ? [] : null));
+  const projects = await sftpReaddir(sftp, root).catch((err: { code?: unknown }) => (err.code === NO_SUCH_FILE ? [] : null));
   if (!projects) return;
   const seen = new Set<string>();
   const m = load();
   let changed = false;
   for (const project of projects) {
     if (!project.attrs.isDirectory()) continue;
-    const files = await readdir(sftp, `${root}/${project.filename}`).catch(() => null);
+    const files = await sftpReaddir(sftp, `${root}/${project.filename}`).catch(() => null);
     if (!files) {
       // 这个目录读不出来：它下面记着的会话不动
       for (const [id, v] of Object.entries(m.sessions)) if (v.host === host.id && v.project === project.filename) seen.add(id);
@@ -154,7 +155,7 @@ export async function syncSession(host: SshHost, sessionId: string): Promise<voi
     save();
   }
   const remote = `${remoteProjects(host)}/${project}/${file}`;
-  const attrs = await new Promise<Stats | null>((resolve) => sftp.stat(remote, (err, s) => resolve(err ? null : s)));
+  const attrs = await sftpStat(sftp, remote);
   if (attrs) await syncFile(host, remote, project, file, attrs.size);
 }
 
@@ -186,8 +187,8 @@ function syncFile(host: SshHost, remote: string, project: string, name: string, 
 async function doSyncFile(host: SshHost, remote: string, local: string, listed: number): Promise<void> {
   const have = (await stat(local).catch(() => null))?.size ?? 0;
   if (have === listed) return;
-  const sftp = await host.sftp();
-  const size = await new Promise<number | null>((resolve) => sftp.stat(remote, (err, s) => resolve(err ? null : s.size)));
+  const rfs = remoteFs(host);
+  const size = (await rfs.stat(remote).catch(() => null))?.size ?? null;
   if (size === null || size === have) return;
   await mkdir(path.dirname(local), { recursive: true });
   // 只会追加；变短了说明被改写过，整个重取
@@ -195,7 +196,8 @@ async function doSyncFile(host: SshHost, remote: string, local: string, listed: 
   const abort = new AbortController();
   reading.set(local, abort);
   try {
-    await pipeline(sftp.createReadStream(remote, { start, end: size - 1 }), createWriteStream(local, { flags: start ? "a" : "w", mode: 0o600 }), { signal: abort.signal });
+    // 经 HostFs 读：ssh2 自带的读流在 Windows 远端读完不关句柄，远端的记录就删不掉（见 host-fs.ts）
+    await pipeline(rfs.createReadStream(remote, { start, end: size - 1 }), createWriteStream(local, { flags: start ? "a" : "w", mode: 0o600 }), { signal: abort.signal });
   } finally {
     reading.delete(local);
   }
@@ -343,15 +345,10 @@ async function removeMirror(sessionId: string, project = load().sessions[session
 
 /** 会话记录在 projects 下哪个目录里 */
 async function findProject(sftp: Awaited<ReturnType<SshHost["sftp"]>>, root: string, file: string): Promise<string | undefined> {
-  const projects = await readdir(sftp, root).catch(() => []);
+  const projects = await sftpReaddir(sftp, root).catch(() => []);
   for (const p of projects) {
     if (!p.attrs.isDirectory()) continue;
-    const found = await new Promise<boolean>((resolve) => sftp.stat(`${root}/${p.filename}/${file}`, (err) => resolve(!err)));
-    if (found) return p.filename;
+    if (await sftpStat(sftp, `${root}/${p.filename}/${file}`)) return p.filename;
   }
   return undefined;
-}
-
-function readdir(sftp: Awaited<ReturnType<SshHost["sftp"]>>, p: string): Promise<{ filename: string; attrs: Stats }[]> {
-  return new Promise((resolve, reject) => sftp.readdir(p, (err, list) => (err ? reject(err) : resolve(list))));
 }

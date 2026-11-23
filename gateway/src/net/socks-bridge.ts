@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import net, { type AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
@@ -40,11 +39,10 @@ export class SocksBridge {
     this.port = (server.address() as AddressInfo).port;
   }
 
-  /** 给一个上游开一个令牌，返回指向它的代理地址（带用户名、令牌）；token 不传是新生成的 */
-  register(upstream: SocksUpstream, token = randomBytes(18).toString("base64url")): { url: string; token: string } {
+  /** 令牌对应到这个上游（地址见 urlFor） */
+  register(upstream: SocksUpstream, token: string): void {
     if (!this.server) throw new Error("SOCKS5 转接还没启动");
     this.upstreams.set(token, upstream);
-    return { url: this.urlFor(token), token };
   }
 
   /** 令牌对应的代理地址（带用户名、令牌）；令牌还没 register 时连过来会被拒绝（407） */

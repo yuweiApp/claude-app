@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import os from "node:os";
 import path from "node:path";
 import type { BrowserLogo, BrowserProfile } from "../shared/types.js";
+import { readJson } from "../json-file.js";
 
 /**
  * 外部浏览器的候选表和检测：网关这台电脑上装了哪些 Chromium 内核的浏览器、各自的配置里装没装 Playwright 扩展。
@@ -249,19 +250,11 @@ export function locateKnown(browser: KnownBrowser, findChannel: (channel: string
   return { executablePath: exe, userDataDir: paths?.userData };
 }
 
-const readJson = (file: string): any => {
-  try {
-    return JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    return undefined;
-  }
-};
-
 /** 这个配置里装没装扩展：扩展目录在，或者 Preferences 里有它的记录（解压加载的） */
 function hasExtension(profileDir: string): boolean {
   if (existsSync(path.join(profileDir, "Extensions", EXTENSION_ID))) return true;
   return ["Preferences", "Secure Preferences"].some((file) => {
-    const record = readJson(path.join(profileDir, file))?.extensions?.settings?.[EXTENSION_ID];
+    const record = readJson<{ extensions?: { settings?: Record<string, unknown> } } | undefined>(path.join(profileDir, file), undefined)?.extensions?.settings?.[EXTENSION_ID];
     return !!record && typeof record === "object" && Object.keys(record).length > 0;
   });
 }
@@ -278,7 +271,7 @@ export function listProfiles(userDataDir: string | undefined): BrowserProfile[] 
   } catch {
     return [];
   }
-  const localState = readJson(path.join(userDataDir, "Local State"));
+  const localState = readJson<{ profile?: { last_used?: unknown; info_cache?: Record<string, { name?: unknown }> } } | undefined>(path.join(userDataDir, "Local State"), undefined);
   const rank = (p: string) => (p === "Default" ? -1 : Number(p.slice("Profile ".length)));
   const dirs = entries.filter((e) => e === "Default" || /^Profile \d+$/.test(e)).sort((a, b) => rank(a) - rank(b));
   const lastUsed = localState?.profile?.last_used;

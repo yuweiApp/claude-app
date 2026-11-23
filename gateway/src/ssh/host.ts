@@ -18,13 +18,13 @@ export const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 /** 单引号转义，给远端的 PowerShell 用（它把 ‘’‚‛ 也当单引号） */
 export const psQuote = (s: string) => `'${s.replace(/['\u2018\u2019\u201a\u201b]/g, "$&$&")}'`;
 
+/** PowerShell 的 -EncodedCommand 参数：UTF-16LE 的 base64 */
+export const psEncoded = (script: string) => Buffer.from(script, "utf16le").toString("base64");
+
 /**
  * Windows 远端：命令交给 PowerShell 5.1（系统自带），输出用 UTF-8。
  * 用 -EncodedCommand 时它把进度和错误写成 CLIXML：不显示进度，错误自己按纯文本写到标准错误、退出码 1
  */
-/** PowerShell 的 -EncodedCommand 参数：UTF-16LE 的 base64 */
-export const psEncoded = (script: string) => Buffer.from(script, "utf16le").toString("base64");
-
 const psCommand = (script: string) => {
   const full = [
     "$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [Text.Encoding]::UTF8",
@@ -81,6 +81,8 @@ export class SshHost {
   connectedAt: number | null = null;
   /** 上一次连上后断开的时间和原因（会话报错用，见 AgentSession） */
   lastClose: { at: number; reason: string } | null = null;
+  /** 远端是 Windows：准备远端时探测到后设上，之后的命令都是 PowerShell 写的 */
+  windows = false;
 
   private client: Client | null = null;
   /** 模型请求转发用的那条连接；没开成、退回到主连接上转发时是 null */
@@ -420,9 +422,6 @@ export class SshHost {
     return this.client;
   }
 
-  /** 远端是 Windows：准备远端时探测到后设上，之后的命令都是 PowerShell 写的 */
-  windows = false;
-
   /**
    * 开一个执行命令的通道；命令交给远端的 sh（用户的登录 shell 可能是 fish、csh）。
    * Windows 远端交给 PowerShell（默认 shell 可能是 cmd，也可能是 PowerShell，都不管），命令要用 PowerShell 写
@@ -433,10 +432,13 @@ export class SshHost {
   }
 
   openExecNow(command: string, opts: ExecOptions = {}): Promise<ClientChannel> {
+    return this.channel(this.windows ? psCommand(command) : `exec sh -c ${shQuote(command)}`, opts);
+  }
+
+  /** 在主连接上开一个执行命令的通道，命令原样交给远端 */
+  private channel(command: string, opts: ExecOptions = {}): Promise<ClientChannel> {
     const client = this.rawClient();
-    return new Promise((resolve, reject) =>
-      client.exec(this.windows ? psCommand(command) : `exec sh -c ${shQuote(command)}`, opts, (err, channel) => (err ? reject(new BadRequestError(`远端执行命令失败：${err.message}`)) : resolve(channel))),
-    );
+    return new Promise((resolve, reject) => client.exec(command, opts, (err, channel) => (err ? reject(new BadRequestError(`远端执行命令失败：${err.message}`)) : resolve(channel))));
   }
 
   /**
@@ -444,21 +446,14 @@ export class SshHost {
    * cmd 展开 %OS%，PowerShell 展开 $env:OS，Windows 上都是 Windows_NT；sh 两个都不展开成它
    */
   async isWindows(): Promise<boolean> {
-    const client = this.rawClient();
-    const channel = await new Promise<ClientChannel>((resolve, reject) =>
-      client.exec("echo %OS% $env:OS", (err, ch) => (err ? reject(new BadRequestError(`远端执行命令失败：${err.message}`)) : resolve(ch))),
-    );
-    const r = await collect(channel, undefined, 15_000);
+    const r = await collect(await this.channel("echo %OS% $env:OS"), undefined, 15_000);
     return decodeText(r.stdout).includes("Windows_NT");
   }
 
   /** 开一个执行命令的通道，命令原样交给远端的默认 shell（不包 sh、PowerShell） */
   async openRaw(command: string, opts: ExecOptions = {}): Promise<ClientChannel> {
     await this.ensureReady();
-    const client = this.rawClient();
-    return new Promise((resolve, reject) =>
-      client.exec(command, opts, (err, channel) => (err ? reject(new BadRequestError(`远端执行命令失败：${err.message}`)) : resolve(channel))),
-    );
+    return this.channel(command, opts);
   }
 
   /** 执行一条命令、收齐输出 */

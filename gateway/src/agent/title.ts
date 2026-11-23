@@ -1,4 +1,4 @@
-import { config, modelAuthHeaders } from "../config.js";
+import { config, MODEL_API_BASE, modelAuthHeaders } from "../config.js";
 
 const MAX_TITLE_LENGTH = 20;
 
@@ -24,10 +24,9 @@ export async function generateTitle(message: string): Promise<string> {
   const text = message.replace(/^\/\S+\s+/, "") || message;
   if (!config.model) return fallbackTitle(text);
   const headers = { "content-type": "application/json", "anthropic-version": "2023-06-01", ...modelAuthHeaders() };
-  const base = (config.baseUrl ?? "https://api.anthropic.com").replace(/\/+$/, "");
   const prompt = `用不超过 12 个字概括下面这条消息的主题，作为会话标题。不要回答消息本身，只输出标题，不要标点和引号。\n\n消息：\n${text.slice(0, 1000)}`;
   try {
-    const res = await fetch(`${base}/v1/messages`, {
+    const res = await fetch(`${MODEL_API_BASE}/v1/messages`, {
       method: "POST",
       headers,
       body: JSON.stringify({ model: config.model, max_tokens: 300, messages: [{ role: "user", content: prompt }] }),

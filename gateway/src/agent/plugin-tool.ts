@@ -1,6 +1,6 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
+import { withAlwaysLoad } from "../config-file.js";
 import type { MarketPlugin } from "../shared/types.js";
 import { searchMarketPlugins } from "./plugin-market.js";
 
@@ -82,7 +82,6 @@ export function pluginsServer(marketplaces: string[]): McpSdkServerConfigWithIns
     name: PLUGINS_SERVER,
     version: "1.0.0",
     instructions: "search_plugins 按关键词搜索用户的 claude-app 配置的 Claude Code 插件市场；只读，安装在用户界面的设置页里由用户操作。",
-    // config.yml 里配了常驻的：第一轮就给完整定义（默认不常驻，用到时 ToolSearch）
-    tools: [isAlwaysLoad(SEARCH_PLUGINS_TOOL) ? { ...search, _meta: { ...search._meta, [ALWAYS_LOAD_META]: true } } : search],
+    tools: [withAlwaysLoad(PLUGINS_SERVER, search)],
   });
 }

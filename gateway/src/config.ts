@@ -143,6 +143,9 @@ export const config = {
 // listSessions() / getSessionMessages() 在网关进程里读会话文件，也按 CLAUDE_CONFIG_DIR 找目录
 process.env.CLAUDE_CONFIG_DIR = config.claudeConfigDir;
 
+/** 模型接口的地址（不带结尾的 /）：配了 ANTHROPIC_BASE_URL 用它，否则是 Anthropic */
+export const MODEL_API_BASE = (config.baseUrl ?? "https://api.anthropic.com").replace(/\/+$/, "");
+
 /** 网关自己请求模型接口（生成标题、列模型、远程会话的模型请求转发）的鉴权头：同 Claude Code，ANTHROPIC_AUTH_TOKEN 优先，其次 ANTHROPIC_API_KEY */
 export function modelAuthHeaders(): Record<string, string> {
   if (env.ANTHROPIC_AUTH_TOKEN) return { authorization: `Bearer ${env.ANTHROPIC_AUTH_TOKEN}` };

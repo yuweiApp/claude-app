@@ -4,6 +4,7 @@ import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { remoteFs } from "../../ssh/host-fs.js";
 import { readyHost } from "../../ssh/hosts.js";
+import { expandHome } from "../../ssh/ssh-config.js";
 import { fromWindowsPath, nativePath, parseRemote, remoteUri } from "../../ssh/location.js";
 import { BadRequestError } from "../../errors.js";
 
@@ -19,7 +20,7 @@ export function folderRoutes(app: FastifyInstance): void {
     if (remote) return remoteFolders(remote.host, remote.path);
     const home = os.homedir();
     const raw = req.query.path?.trim() || home;
-    const expanded = raw.replace(/^~(?=$|\/)/, home);
+    const expanded = expandHome(raw);
     if (!path.isAbsolute(expanded)) throw new BadRequestError(`请填写绝对路径：${raw}`);
     const dir = path.resolve(expanded);
     const info = await stat(dir).catch(() => null);

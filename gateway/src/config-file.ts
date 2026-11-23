@@ -14,10 +14,15 @@ const alwaysLoad: RegExp[] = ((configFile?.tools?.alwaysLoad ?? []) as string[])
   (name) => new RegExp(`^${name.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^_]+")}$`),
 );
 
-export const isAlwaysLoad = (fullName: string) => alwaysLoad.some((pattern) => pattern.test(fullName));
+const isAlwaysLoad = (fullName: string) => alwaysLoad.some((pattern) => pattern.test(fullName));
 
 /** MCP 工具的常驻标记：tools/list 里的 _meta（SDK 的 tool({ alwaysLoad }) 也是写这个） */
-export const ALWAYS_LOAD_META = "anthropic/alwaysLoad";
+const ALWAYS_LOAD_META = "anthropic/alwaysLoad";
+
+/** 网关自己的 MCP 工具：config.yml 里配了常驻的加上常驻标记，第一轮就给完整定义（默认不常驻，用到时 ToolSearch） */
+export function withAlwaysLoad<T extends { name: string; _meta?: Record<string, unknown> }>(server: string, t: T): T {
+  return isAlwaysLoad(`mcp__${server}__${t.name}`) ? { ...t, _meta: { ...t._meta, [ALWAYS_LOAD_META]: true } } : t;
+}
 
 /** 桌面操作（agent-desktop，操作网关所在电脑上的原生应用）：config.yml 的 desktop.enabled，默认关（只有写成 true 才开），见 desktop/tool.ts */
 export const desktopEnabled: boolean = configFile?.desktop?.enabled === true;

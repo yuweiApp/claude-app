@@ -1,10 +1,11 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { MCP_AUTO_BACKGROUND_SECONDS } from "../config.js";
-import { errorResult, withNotice } from "../tool-result.js";
-import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
+import { errorResult, outputResult, rememberResult, signalOf, withNotice, type ToolOutput } from "../tool-result.js";
+import { withAlwaysLoad } from "../config-file.js";
 import type { BrowserHost, TemporaryTab } from "./host.js";
-import { DATA_URL_KEEP_CHARS, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, MAX_URL_CHARS, shortUrl, type Repl, type ToolOutput } from "./repl.js";
+import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, MAX_URL_CHARS, shortUrl, type Repl } from "./repl.js";
+import { DATA_URL_KEEP_CHARS } from "../code-repl.js";
 import { WorkerRepl } from "./worker-repl.js";
 
 /**
@@ -21,7 +22,6 @@ export const BROWSER_SERVER = "inapp";
 export const RUN_CODE_TOOL = "browser_run_code";
 
 export const BROWSER_TOOLS = [`mcp__${BROWSER_SERVER}__${RUN_CODE_TOOL}`];
-
 
 /**
  * browser_run_code 的运行环境，每个浏览器的说明都带上（各自独立：外部浏览器可能没开，内置浏览器可能不在桌面版里）。
@@ -44,8 +44,7 @@ export const RUNTIME_FACTS = [
   "- page.ariaSnapshot({ mode: 'ai' }) 返回页面的无障碍树（YAML 文本），元素带 [ref=e12]；之后 page.locator('aria-ref=e12') 指向同一个元素，页面变了要重新取。",
 ].join("\n");
 
-/** filesFact：saveFile、readFile 的说明（external.ts 的 filesFact），会话有工作目录时才有 */
-/** remote：远程会话所在主机的名称（docs/README.md「SSH 远程开发」） */
+/** filesFact：saveFile、readFile 的说明（external.ts 的 filesFact），会话有工作目录时才有；remote：远程会话所在主机的名称（docs/README.md「SSH 远程开发」） */
 const instructions = (filesFact?: string, remote?: string) => [
   "内置浏览器：用户界面右侧面板里的真实网页，用户能看到，也能自己操作。这些工具只能看到这个会话自己的标签页。",
   ...(remote
@@ -141,39 +140,6 @@ export function disposeRepls(sessionId: string): void {
   }
 }
 
-/**
- * 工具调用的结果，按 tool_use_id 记：调用跑久了会被 Claude Code 转到后台，结果只交给模型，
- * 网关在 task_notification 里按 tool_use_id 取出来发给网页（task_result 事件），失败时显示原因。
- * tool_use_id 是 Claude Code 调 MCP 工具时放在 _meta["claudecode/toolUseId"] 里的。只留最近的一些
- */
-const toolResults = new Map<string, { text: string; isError: boolean }>();
-const MAX_TOOL_RESULTS = 50;
-
-export function rememberResult(extra: unknown, text: string, isError: boolean): void {
-  const id = (extra as { _meta?: Record<string, unknown> } | undefined)?._meta?.["claudecode/toolUseId"];
-  if (typeof id !== "string") return;
-  toolResults.set(id, { text, isError });
-  if (toolResults.size > MAX_TOOL_RESULTS) toolResults.delete(toolResults.keys().next().value as string);
-}
-
-/** 取出（并删掉）一次工具调用的结果；不是记了结果的网关工具（浏览器、桌面、终端）、或者已经被挤掉了返回 undefined */
-export function takeToolResult(toolUseId: string): { text: string; isError: boolean } | undefined {
-  const result = toolResults.get(toolUseId);
-  toolResults.delete(toolUseId);
-  return result;
-}
-
-/** 工具输出转成 MCP 的结果：文字（有的话）在前，图片在后 */
-function toResult(output: ToolOutput) {
-  return {
-    content: [
-      ...(output.text ? [{ type: "text" as const, text: output.text }] : []),
-      ...output.images.map((img) => ({ type: "image" as const, ...img })),
-    ],
-    ...(output.isError ? { isError: true } : {}),
-  };
-}
-
 const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export interface ServerOptions {
@@ -226,13 +192,13 @@ export function browserMcpServer({ name, instructions, repl, readFile, temporary
       async ({ code, file, timeout_ms }, extra) => {
         let notice: string | undefined;
         try {
-          const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
+          const signal = signalOf(extra);
           const source = await sourceOf(code, file);
           notice = takeRestartNotice(repl);
           const result = withRestartNotice(notice, await repl.run(source, timeout_ms ?? DEFAULT_TIMEOUT_MS, signal));
           rememberResult(extra, result.text, result.isError);
           const temporary = temporaryTabs && result.opened && !result.isError ? await temporaryTabs().catch(() => null) : null;
-          return toResult(temporary?.length ? { ...result, text: `${result.text}\n\n${temporaryNote(temporary, result.tabs)}` } : result);
+          return outputResult(temporary?.length ? { ...result, text: `${result.text}\n\n${temporaryNote(temporary, result.tabs)}` } : result);
         } catch (err) {
           rememberResult(extra, withNotice(notice, errorMessage(err)), true);
           return errorResult(withNotice(notice, errorMessage(err)));
@@ -246,8 +212,7 @@ export function browserMcpServer({ name, instructions, repl, readFile, temporary
     name,
     version: "1.0.0",
     instructions,
-    // config.yml 里配了常驻的：第一轮就给完整定义，其余的用到时 ToolSearch
-    tools: tools.map((t) => (isAlwaysLoad(`mcp__${name}__${t.name}`) ? { ...t, _meta: { ...t._meta, [ALWAYS_LOAD_META]: true } } : t)),
+    tools: tools.map((t) => withAlwaysLoad(name, t)),
   });
 }
 

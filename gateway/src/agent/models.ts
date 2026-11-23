@@ -1,5 +1,5 @@
 import { query, type ModelInfo } from "@anthropic-ai/claude-agent-sdk";
-import { agentEnv, config, modelAuthHeaders } from "../config.js";
+import { agentEnv, config, MODEL_API_BASE, modelAuthHeaders } from "../config.js";
 
 interface OpenAIModelEntry {
   id: string;
@@ -34,7 +34,7 @@ let cache: { at: number; models: Promise<ModelInfo[]> } | null = null;
  */
 export function listModels(): Promise<ModelInfo[]> {
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.models;
-  const models = (config.baseUrl ? fromProvider(config.baseUrl) : fromClaudeCode()).catch((err: unknown) => {
+  const models = (config.baseUrl ? fromProvider() : fromClaudeCode()).catch((err: unknown) => {
     cache = null;
     throw err;
   });
@@ -42,8 +42,8 @@ export function listModels(): Promise<ModelInfo[]> {
   return models;
 }
 
-async function fromProvider(baseUrl: string): Promise<ModelInfo[]> {
-  const url = `${baseUrl.replace(/\/+$/, "")}/v1/models`;
+async function fromProvider(): Promise<ModelInfo[]> {
+  const url = `${MODEL_API_BASE}/v1/models`;
   const res = await fetch(url, { headers: modelAuthHeaders(), signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`GET ${url} 返回 ${res.status}`);
   const body = (await res.json()) as { data?: OpenAIModelEntry[] };

@@ -1,6 +1,6 @@
 import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import type { SFTPWrapper } from "ssh2";
+import type { SFTPWrapper, Stats } from "ssh2";
 import { decodeText, psQuote, shQuote, type SshHost } from "./host.js";
 import { nativePath } from "./location.js";
 
@@ -123,6 +123,12 @@ export async function appendText(host: SshHost, p: string, text: string): Promis
 
 const sftpCall = <T>(fn: (cb: (err: Error | null | undefined, value?: T) => void) => void): Promise<T> =>
   new Promise((resolve, reject) => fn((err, value) => (err ? reject(err) : resolve(value as T))));
+
+/** SFTP stat；不存在、读不了是 null */
+export const sftpStat = (sftp: SFTPWrapper, p: string): Promise<Stats | null> => sftpCall<Stats>((cb) => sftp.stat(p, cb)).catch(() => null);
+
+/** SFTP 列目录（带属性） */
+export const sftpReaddir = (sftp: SFTPWrapper, p: string) => sftpCall<{ filename: string; attrs: Stats }[]>((cb) => sftp.readdir(p, cb));
 
 /** SFTP 写整个文件（覆盖） */
 export function sftpWrite(sftp: SFTPWrapper, p: string, data: Buffer): Promise<void> {

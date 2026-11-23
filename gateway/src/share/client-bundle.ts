@@ -6,6 +6,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
+import { PAGE_TYPES } from "../files/content.js";
 
 /** 打包时记下「按哪一版源码打的」（源码里最新的修改时间），放在打包目录里 */
 const STAMP = ".built-from";
@@ -26,27 +27,6 @@ const SOURCES = () => [
   path.join(config.clientDir, "tsconfig.json"),
   path.resolve(config.clientDir, "..", "gateway", "src", "shared"),
 ];
-
-const TYPES: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".map": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".txt": "text/plain; charset=utf-8",
-  ".wasm": "application/wasm",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".ico": "image/x-icon",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".ttf": "font/ttf",
-};
 
 /** 值得压缩的类型（图片、字体本来就压过） */
 export const compressible = (type: string | undefined): boolean =>
@@ -188,7 +168,7 @@ export class ClientBundle {
       info = await stat(file).catch(() => null);
       if (!info?.isFile()) return false;
     }
-    const type = TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream";
+    const type = PAGE_TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream";
     const etag = `"${Math.round(info.mtimeMs).toString(36)}-${info.size.toString(36)}"`;
     const headers: Record<string, string> = {
       "content-type": type,

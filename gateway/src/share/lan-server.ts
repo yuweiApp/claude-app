@@ -50,16 +50,6 @@ export class LanServer {
     });
   }
 
-  /** 局域网入口在不在监听 */
-  get listening(): boolean {
-    return this.servers.lan !== null;
-  }
-
-  /** 局域网入口上一次监听失败的原因 */
-  get error(): string | null {
-    return this.errors.lan;
-  }
-
   isListening(scope: ShareScope): boolean {
     return this.servers[scope] !== null;
   }

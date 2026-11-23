@@ -458,7 +458,6 @@ export interface McpServerInput {
   headers?: Record<string, string>;
 }
 
-/** 上传后的附件（POST /uploads 返回），发消息时只传 id */
 /**
  * 网页上选中的元素（右侧面板的 HTML 预览、桌面版的内置浏览器），取法同 Claude 桌面版的「选择元素」（captureElementContext），
  * 在网页里取的函数见 element-context.ts
@@ -482,6 +481,7 @@ export interface SelectedElement {
   siblingHTML?: string;
 }
 
+/** 上传后的附件（POST /uploads 返回），发消息时只传 id */
 export interface Attachment {
   id: string;
   name: string;
@@ -579,13 +579,13 @@ export interface TerminalInfo {
   activeAt: number;
 }
 
-/** 终端的 WebSocket（GET /terminals/:id/socket）网关发的消息：连上时先来一条 data 是已有的输出；终端不存在时发 error 后断开 */
 /**
  * 这一轮还在进行时发的消息怎么送到模型（POST /sessions/:id/messages 的 priority）：
  * now 马上送到（正在跑的工具调用转到后台；模型正在写文字时会打断它），next 等下一次工具结果之后（没有工具调用了就等这一轮结束）
  */
 export type MessagePriority = "now" | "next";
 
+/** 终端的 WebSocket（GET /terminals/:id/socket）网关发的消息：连上时先来一条 data 是已有的输出；终端不存在时发 error 后断开 */
 export type TerminalEvent = { type: "data"; data: string } | { type: "exit"; code: number } | { type: "error"; message: string };
 
 /**

@@ -65,7 +65,6 @@ export interface HostFs {
   gitFiles(cwd: string): Promise<string[] | null>;
 }
 
-/** cwd 是本机路径还是 ssh://…；远端的返回去掉前缀的路径 */
 /**
  * 给模型看的路径：工作目录在 Windows 远端时，/C:/Users/x 换成 C:\Users\x（模型在那台机器上，按它的写法用）；
  * 本机、macOS、Linux 远端原样。p 是 fsFor 那套写法的路径，cwd 是会话的工作目录（决定是哪台机器）
@@ -75,6 +74,7 @@ export function machinePathOf(cwd: string, p: string): string {
   return remote ? nativePath(sshHost(remote.host).windows, p) : p;
 }
 
+/** cwd 是本机路径还是 ssh://…；远端的 root 去掉前缀 */
 export function fsFor(cwd: string): { fs: HostFs; root: string; host?: string } {
   const remote = parseRemote(cwd);
   if (!remote) return { fs: localFs, root: cwd };

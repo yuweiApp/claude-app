@@ -1,7 +1,7 @@
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { Agent, type Dispatcher, EnvHttpProxyAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
-import { config } from "../config.js";
+import { config, MODEL_API_BASE } from "../config.js";
 import { readJson, writeJson } from "../json-file.js";
 import type { ProxyMode, ProxySettingsInput, ProxySettingsView, ProxyTestResult } from "../shared/types.js";
 import { proxyCore } from "./core.js";
@@ -332,7 +332,7 @@ export interface BrowserProxyConfig {
 export function browserProxyConfig(): BrowserProxyConfig {
   const s = settings();
   const mode = s.mode ?? "system";
-  const probeUrl = config.baseUrl ?? "https://api.anthropic.com";
+  const probeUrl = MODEL_API_BASE;
   // 订阅：浏览器用代理内核的端口（带认证的 HTTP 代理），外壳那边当手动设置处理
   if (mode === "subscription") return s.subscriptionUrl ? { mode: "manual", probeUrl, ...proxyCore.browserProxy, bypass: s.noProxy ?? [] } : { mode: "off", probeUrl, bypass: [] };
   if (mode !== "manual" || !s.url) return { mode: mode === "manual" ? "off" : mode, probeUrl, bypass: [] };
@@ -381,8 +381,7 @@ const TEST_TIMEOUT_MS = 10_000;
 
 /** 按请求体里的设置（不保存）请求一次模型接口：收到任何 HTTP 响应（401、404 也算）都是连上了 */
 export async function testProxy(input: ProxySettingsInput): Promise<ProxyTestResult> {
-  const base = (config.baseUrl ?? "https://api.anthropic.com").replace(/\/+$/, "");
-  const target = `${base}/v1/models`;
+  const target = `${MODEL_API_BASE}/v1/models`;
   // SOCKS5 的测试用临时的转接令牌，不动正在用的
   const token = randomBytes(18).toString("base64url");
   let effective: Effective | null;

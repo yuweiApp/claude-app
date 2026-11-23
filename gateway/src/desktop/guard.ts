@@ -1,6 +1,6 @@
 import { rmSync } from "node:fs";
 import type { DesktopTarget } from "../shared/types.js";
-import { APP_ARGUMENT, flagValues, isHelp, refsIn, snapshotIdOf } from "./commands.js";
+import { appsIn, flagValues, isHelp, refsIn, snapshotIdOf } from "./commands.js";
 import { runCli, sessionStateDir } from "./cli.js";
 import { desktopLog } from "./log.js";
 
@@ -159,7 +159,6 @@ export async function checkTarget(session: string, args: string[]): Promise<stri
 }
 
 async function decide(session: string, args: string[], context: Record<string, unknown>): Promise<string | null> {
-  const command = args[0] ?? "";
   // 只是看参数说明，不作用于任何窗口
   if (isHelp(args)) return null;
   const refs = refsIn(args);
@@ -168,8 +167,7 @@ async function decide(session: string, args: string[], context: Record<string, u
     if (!entry || entry.session !== session) return `${ref} 不是这个会话经 desktop() 拿到的 ref（本应用重启后，之前拿到的 ref 也不再认）`;
   }
   const windowIds = flagValues(args, "--window-id");
-  const appArg = APP_ARGUMENT.has(command) && args[1] && !args[1].startsWith("-") ? [args[1]] : [];
-  const apps = [...flagValues(args, "--app"), ...appArg];
+  const apps = appsIn(args);
   if (ownPids.size === 0) return null;
 
   context.windows = windowIds.map((id) => knownWindows.get(id) ?? { id, known: false });
@@ -232,11 +230,7 @@ const seen = new Map<string, number>();
 /** 记下一次桌面写操作：「click（mousepad）」 */
 export function recordOperation(session: string, args: string[]): void {
   const command = args[0] ?? "";
-  const apps = new Set([
-    ...flagValues(args, "--app"),
-    ...(APP_ARGUMENT.has(command) && args[1] ? [args[1]] : []),
-    ...refsIn(args).map((ref) => snapshots.get(snapshotIdOf(ref))?.app ?? ""),
-  ]);
+  const apps = new Set([...appsIn(args), ...refsIn(args).map((ref) => snapshots.get(snapshotIdOf(ref))?.app ?? "")]);
   apps.delete("");
   operations.push({ seq: ++lastSeq, session, label: apps.size ? `${command}（${[...apps].join("、")}）` : command });
   if (operations.length > MAX_OPERATIONS) operations.shift();
@@ -276,7 +270,7 @@ export function noteTarget(session: string, args: string[], data: unknown, repor
   const result = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
   const resultWindow = result.window && typeof result.window === "object" ? (result.window as Record<string, unknown>) : {};
   let windowId = flagValues(args, "--window-id")[0] ?? str(resultWindow.id);
-  let app = flagValues(args, "--app")[0] ?? (APP_ARGUMENT.has(command) && args[1] && !args[1].startsWith("-") ? args[1] : undefined) ?? str(result.app) ?? str(result.app_name);
+  let app = appsIn(args)[0] ?? str(result.app) ?? str(result.app_name);
   for (const ref of refsIn(args)) {
     const entry = snapshots.get(snapshotIdOf(ref));
     windowId ??= entry?.windowId;

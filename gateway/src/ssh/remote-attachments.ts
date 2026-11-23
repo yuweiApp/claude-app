@@ -1,7 +1,7 @@
 import type { Attachment } from "../shared/types.js";
 import type { SshHost } from "./host.js";
 import { nativePath } from "./location.js";
-import { mkdirp } from "./remote-ops.js";
+import { mkdirp, sftpStat } from "./remote-ops.js";
 
 /**
  * 远程会话发消息时，非图片的附件传到远端的 ~/.claude-app/workspace/.attachments/<id>/<文件名>，模型在远端用 Read 读。
@@ -15,7 +15,7 @@ export async function uploadAttachments(host: SshHost, attachments: Attachment[]
   for (const a of attachments) {
     const dir = `${host.env!.attachments}/${a.id}`;
     const target = `${dir}/${a.name}`;
-    const size = await new Promise<number | null>((resolve) => sftp.stat(target, (err, s) => resolve(err ? null : s.size)));
+    const size = (await sftpStat(sftp, target))?.size ?? null;
     if (size !== a.size) {
       await mkdirp(host, dir).catch((err: Error) => {
         throw new Error(`远端建不了附件目录：${err.message}`);

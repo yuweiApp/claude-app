@@ -2,7 +2,8 @@ import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import type { BrowserHost, CdpTransport } from "./host.js";
-import type { Repl, RunResult, ToolOutput } from "./repl.js";
+import type { Repl, RunResult } from "./repl.js";
+import type { ToolOutput } from "../tool-result.js";
 import type { ReplCall, ToMain, ToWorker, WorkerRequest } from "./worker-protocol.js";
 
 /** 开发时（tsx 直接跑源码）本文件是 .ts，构建后是 .js；worker 的入口跟着用同一个扩展名 */

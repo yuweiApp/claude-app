@@ -1,4 +1,5 @@
 import { fsFor, machinePathOf } from "../ssh/host-fs.js";
+import { isInside } from "../files/project-path.js";
 import { createRequire } from "node:module";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import type { Browser, BrowserContext, Page } from "playwright-core";
@@ -7,7 +8,7 @@ import type { ExternalBrowserInfo, ExternalBrowserTabs } from "../shared/types.j
 import { listBrowsers, tabGroupEnabled, type ResolvedBrowser } from "./browser-settings.js";
 import { INSTALL_URL } from "./catalog.js";
 import { bringToFrontBeforeActions } from "./foreground.js";
-import { BrowserRepl, closeAutomatically, MAX_URL_CHARS } from "./repl.js";
+import { BrowserRepl, closeAutomatically, MAX_URL_CHARS, titleOf } from "./repl.js";
 import { browserMcpServer, replFor, RUN_CODE_TOOL, RUNTIME_FACTS } from "./tool.js";
 
 /**
@@ -180,11 +181,7 @@ class ExternalBridge {
   async tabs(): Promise<{ title: string; url: string }[]> {
     const context = this.browser?.contexts()[0];
     if (!context) return [];
-    const pages = context.pages();
-    // 后台冻结的标签页 title() 可能迟迟不回，最多等 1 秒
-    const title = (page: (typeof pages)[number]) =>
-      Promise.race([page.title().catch(() => ""), new Promise<string>((resolve) => setTimeout(() => resolve(""), 1000))]);
-    return Promise.all(pages.map(async (page) => ({ url: page.url(), title: await title(page) })));
+    return Promise.all(context.pages().map(async (page) => ({ url: page.url(), title: await titleOf(page) })));
   }
 }
 
@@ -253,11 +250,9 @@ export function externalNote(active: ExternalBrowserInfo[]): string {
  */
 function inWorkdir(cwd: string, fn: string, outside: (dir: string) => string, name: unknown): string {
   const { fs, root } = fsFor(cwd);
-  const p = fs.path;
   if (typeof name !== "string" || !name.trim()) throw new Error(`${fn} 的第一个参数是文件名（相对工作目录的路径）`);
-  const target = p.resolve(root, name);
-  const rel = p.relative(root, target);
-  if (!rel || rel.startsWith("..") || p.isAbsolute(rel)) throw new Error(`${outside(machinePathOf(cwd, root))}，name 要是相对路径`);
+  const target = fs.path.resolve(root, name);
+  if (target === fs.path.resolve(root) || !isInside(fs.path, root, target)) throw new Error(`${outside(machinePathOf(cwd, root))}，name 要是相对路径`);
   return target;
 }
 
@@ -337,9 +332,9 @@ function instructions(b: ExternalBrowserInfo, active: ExternalBrowserInfo[], cwd
 
 /**
  * 给模型用的外部浏览器工具，每个会话每个启用着的浏览器一个 MCP 服务器，共用这个浏览器的连接；REPL 按会话保留（replFor）。
- * 和内置浏览器不同，REPL 在网关主线程里：扩展同一时间只认一个客户端，所有会话共用一条连接，没法分到各自的 worker
+ * 和内置浏览器不同，REPL 在网关主线程里：扩展同一时间只认一个客户端，所有会话共用一条连接，没法分到各自的 worker。
+ * remote：远程会话所在主机的名称
  */
-/** remote：远程会话所在主机的名称 */
 export function externalServers(active: ExternalBrowserInfo[], sessionId: string, cwd: string, resumed = false, remote?: string): Record<string, McpSdkServerConfigWithInstance> {
   return Object.fromEntries(
     active.map((b) => [

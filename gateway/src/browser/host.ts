@@ -182,7 +182,7 @@ export class BrowserHost {
   }
 
   /** 取走这个会话还没告诉模型的标签页变化 */
-  takeTabEvents(sessionId: string): TabEvent[] {
+  private takeTabEvents(sessionId: string): TabEvent[] {
     const list = this.tabEvents.get(sessionId) ?? [];
     this.tabEvents.delete(sessionId);
     return list;

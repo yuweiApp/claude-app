@@ -1,6 +1,7 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
+import { withAlwaysLoad } from "../config-file.js";
+import { signalOf, toolUseIdOf } from "../tool-result.js";
 import type { WidgetReport, WidgetReportError } from "../shared/types.js";
 
 /** MCP 服务器名：工具全名是 mcp__visualize__show_widget */
@@ -119,10 +120,10 @@ export function visualizeServer(sessionId: string): McpSdkServerConfigWithInstan
     },
     async ({ widget_code }, extra) => {
       if (!widget_code.trim()) return { content: [{ type: "text" as const, text: "widget_code 是空的，没有显示。" }], isError: true };
-      // tool_use_id 是 Claude Code 调 MCP 工具时放在 _meta 里的（同 browser/tool.ts 的 rememberResult）；拿不到就没法对上网页的报告
-      const toolUseId = (extra as { _meta?: Record<string, unknown> } | undefined)?._meta?.["claudecode/toolUseId"];
-      if (typeof toolUseId !== "string") return { content: [{ type: "text" as const, text: "已交给界面显示，没有显示结果。" }] };
-      const report = await waitReport(sessionId, toolUseId, (extra as { signal?: AbortSignal } | undefined)?.signal);
+      // 拿不到 tool_use_id 就没法对上网页的报告
+      const toolUseId = toolUseIdOf(extra);
+      if (!toolUseId) return { content: [{ type: "text" as const, text: "已交给界面显示，没有显示结果。" }] };
+      const report = await waitReport(sessionId, toolUseId, signalOf(extra));
       const text = report ? describeReport(report) : `已交给界面显示；${REPORT_TIMEOUT_MS / 1000} 秒内没有网页报告显示结果。`;
       return { content: [{ type: "text" as const, text }] };
     },
@@ -131,7 +132,6 @@ export function visualizeServer(sessionId: string): McpSdkServerConfigWithInstan
     name: VISUALIZE_SERVER,
     version: "1.0.0",
     instructions: "show_widget 在对话里显示 HTML 或 SVG 部件（沙箱 iframe），用户可以直接看到和操作。",
-    // config.yml 里配了常驻的：第一轮就给完整定义（默认不常驻，用到时 ToolSearch）
-    tools: [isAlwaysLoad(SHOW_WIDGET_TOOL) ? { ...show, _meta: { ...show._meta, [ALWAYS_LOAD_META]: true } } : show],
+    tools: [withAlwaysLoad(VISUALIZE_SERVER, show)],
   });
 }

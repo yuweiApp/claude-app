@@ -14,6 +14,7 @@ import { existingHost, readyHost, sshHost } from "../ssh/hosts.js";
 import { fromWindowsPath, nativePath, parseRemote, remoteUri } from "../ssh/location.js";
 import { uploadAttachments } from "../ssh/remote-attachments.js";
 import { rmdirQuiet } from "../ssh/remote-ops.js";
+import { expandHome } from "../ssh/ssh-config.js";
 import { appendRemote, deleteRemoteSession, forkUploaded, registerRemoteSession, remoteProjectShared, remoteSessionHost, syncSession, uploadForkedSession } from "../ssh/transcripts.js";
 import { imageType } from "./attachments.js";
 import { createScratchDir, isScratchIn, newScratchName, removeScratchDirIfEmpty } from "./scratch.js";
@@ -152,7 +153,7 @@ function remoteHome(sessionId: string, hostId: string): SessionHome {
 
 /** 本机的文件夹：支持 ~，必须是已存在的目录 */
 async function resolveLocalDir(dir: string): Promise<string> {
-  const expanded = dir.trim().replace(/^~(?=$|\/)/, os.homedir());
+  const expanded = expandHome(dir.trim());
   if (!path.isAbsolute(expanded)) throw new BadRequestError(`请填写绝对路径：${dir}`);
   const resolved = path.resolve(expanded);
   const info = await stat(resolved).catch(() => null);
@@ -181,13 +182,14 @@ async function createRemoteScratch(host: SshHost): Promise<string> {
 
 /** 远端的任务输出文件取回本机临时文件；tail：只取最后 64 KB */
 async function fetchRemoteOutput(host: SshHost, file: string, tail: boolean): Promise<string | null> {
-  const sftp = await host.sftp();
+  const fs = remoteFs(host);
   // Windows 上的 claude 报的是 C:\Users\…\xx.output，SFTP 要 /C:/Users/…/xx.output（C:\… 会被当成相对用户目录的路径）
   const remote = fromWindowsPath(file);
-  const size = await new Promise<number | null>((resolve) => sftp.stat(remote, (err, s) => resolve(err ? null : s.size)));
+  const size = (await fs.stat(remote).catch(() => null))?.size;
   if (!size) return null;
   const local = path.join(os.tmpdir(), `claude-app-ssh-${createHash("sha1").update(`${host.id}:${remote}`).digest("hex").slice(0, 16)}`);
   const start = tail ? Math.max(0, size - 64 * 1024) : 0;
-  await pipeline(sftp.createReadStream(remote, { start, end: size - 1 }), createWriteStream(local, { mode: 0o600 }));
+  // 经 HostFs 读：ssh2 自带的读流在 Windows 远端读完不关句柄（见 host-fs.ts）
+  await pipeline(fs.createReadStream(remote, { start, end: size - 1 }), createWriteStream(local, { mode: 0o600 }));
   return local;
 }

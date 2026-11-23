@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { type Duplex, pipeline } from "node:stream";
 import { type Dispatcher, request } from "undici";
-import { config, modelAuthHeaders } from "../config.js";
+import { MODEL_API_BASE, modelAuthHeaders } from "../config.js";
 import { describeNetError } from "../net/proxy.js";
 
 /**
@@ -46,7 +46,7 @@ async function forward(req: IncomingMessage, res: ServerResponse, token: string)
     res.writeHead(401, { "content-type": "application/json" }).end(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "claude-app 网关：令牌不对" } }));
     return;
   }
-  const base = new URL(config.baseUrl ?? "https://api.anthropic.com");
+  const base = new URL(MODEL_API_BASE);
   const target = new URL(base.pathname.replace(/\/+$/, "") + (req.url ?? "/"), base);
   const headers: http.OutgoingHttpHeaders = {};
   for (const [k, v] of Object.entries(req.headers)) if (!DROP_HEADERS.has(k) && v !== undefined) headers[k] = v;

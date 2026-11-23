@@ -114,7 +114,13 @@ const DENIED_FLAGS: Record<string, string> = {
 };
 
 /** 第一个位置参数是应用名的命令 */
-export const APP_ARGUMENT = new Set(["launch", "close-app"]);
+const APP_ARGUMENT = new Set(["launch", "close-app"]);
+
+/** 参数里指定的应用名：--app 的值，和 launch / close-app 的第一个位置参数（不是 - 开头的） */
+export function appsIn(args: string[]): string[] {
+  const positional = APP_ARGUMENT.has(args[0] ?? "") && args[1] && !args[1].startsWith("-") ? [args[1]] : [];
+  return [...flagValues(args, "--app"), ...positional];
+}
 
 /**
  * 这次只是看参数说明（--help / -h / help）：不碰任何窗口，跳过目标检查、不算写操作。

@@ -6,9 +6,8 @@ import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@
 import sharp from "sharp";
 import { z } from "zod";
 import { MCP_AUTO_BACKGROUND_SECONDS } from "../config.js";
-import { withNotice } from "../tool-result.js";
-import { ALWAYS_LOAD_META, isAlwaysLoad } from "../config-file.js";
-import { rememberResult } from "../browser/tool.js";
+import { outputResult, rememberResult, signalOf, withNotice } from "../tool-result.js";
+import { withAlwaysLoad } from "../config-file.js";
 import { runCli, type CliResult, type Envelope } from "./cli.js";
 import { AGENT_DESKTOP_COMMANDS, deniedReason, isHelp, isReadOnly, screenshotPaths, upstreamWaitMs } from "./commands.js";
 import type { DesktopTarget } from "../shared/types.js";
@@ -35,13 +34,7 @@ const MAX_IMAGE_BYTES = 3_750_000;
 /** 缩小后仍超过上限时改成 JPEG 的质量 */
 const JPEG_QUALITY = 80;
 
-const version = (() => {
-  try {
-    return (createRequire(import.meta.url)("agent-desktop/package.json") as { version: string }).version;
-  } catch {
-    return "?";
-  }
-})();
+const { version } = createRequire(import.meta.url)("agent-desktop/package.json") as { version: string };
 
 const PLATFORM = { win32: "Windows", darwin: "macOS", linux: "Linux" }[process.platform as string] ?? process.platform;
 const ACCESSIBILITY_API = { win32: "UI Automation", darwin: "AX API", linux: "AT-SPI" }[process.platform as string] ?? "无障碍接口";
@@ -91,7 +84,6 @@ function cleanEnvelope(envelope: Envelope): Envelope {
   };
 }
 
-const signalOf = (extra: unknown) => (extra as { signal?: AbortSignal } | undefined)?.signal;
 
 type Size = { width: number; height: number };
 type ScreenshotImage = { data: Buffer; mimeType: "image/png" | "image/jpeg"; size: Size; original: Size };
@@ -234,10 +226,7 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
       const result = await replFor().run(code, timeout_ms ?? DEFAULT_TIMEOUT_MS, signalOf(extra));
       const out = withNotice(notice, result.text);
       rememberResult(extra, out, result.isError);
-      return {
-        content: [{ type: "text" as const, text: out }, ...result.images.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }))],
-        ...(result.isError ? { isError: true } : {}),
-      };
+      return outputResult({ ...result, text: out });
     },
     { annotations: { title: "Desktop script", readOnlyHint: false, destructiveHint: true, openWorldHint: true } },
   );
@@ -246,7 +235,7 @@ export function desktopServer(sessionId: string, onTarget?: (target: DesktopTarg
     name: DESKTOP_SERVER,
     version: "1.0.0",
     instructions: INSTRUCTIONS,
-    tools: [runCode].map((t) => (isAlwaysLoad(full(t.name)) ? { ...t, _meta: { ...t._meta, [ALWAYS_LOAD_META]: true } } : t)),
+    tools: [withAlwaysLoad(DESKTOP_SERVER, runCode)],
   });
 }
 
