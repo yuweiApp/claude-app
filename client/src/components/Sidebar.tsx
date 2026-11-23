@@ -160,9 +160,11 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
     setPickedProject(null);
     onSelect(id);
   };
+  /** 高亮的当前会话：选中了项目时不高亮，侧栏只有一个选中项（同文件树里选中别的，打开的文件不再高亮） */
+  const highlightId = pickedProject ? null : currentId;
 
   const row = (s: SessionListItem, branch: boolean, branchEnd: boolean) => (
-    <SessionRow key={s.sessionId} session={s} branch={branch} branchEnd={branchEnd} active={s.sessionId === currentId} onSelect={selectSession} onDelete={deleteSession} onRename={onRename} />
+    <SessionRow key={s.sessionId} session={s} branch={branch} branchEnd={branchEnd} active={s.sessionId === highlightId} onSelect={selectSession} onDelete={deleteSession} onRename={onRename} />
   );
 
   /** 「会话」和各个项目当前列出的会话数（键是 SECTION_CHATS 或项目文件夹），没记的是默认个数；不保存，刷新后都回到默认 */
@@ -243,7 +245,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
               group={g}
               open={open}
               // 展开时当前会话那一行已经高亮，项目行只在折叠、看不到当前会话时高亮
-              active={!open && g.sessions.some((session) => session.sessionId === currentId)}
+              active={!open && g.sessions.some((session) => session.sessionId === highlightId)}
               selected={pickedProject === g.cwd}
               onPick={() => setPickedProject(g.cwd)}
               onToggle={() => toggle(g.cwd)}
