@@ -236,7 +236,7 @@ export function App() {
     const timer = setInterval(refresh, 10_000);
     return () => clearInterval(timer);
   }, [refresh]);
-  // 灵宠（桌面版）：主窗口最小化时告诉用户哪个会话完成了，点它回到那个会话
+  // 灵宠（桌面版）：主窗口不在前台时告诉用户哪个会话完成了，双击它回到那个会话
   usePet(sessions, refresh, (id) => {
     setSettingsOpen(false);
     select(id);

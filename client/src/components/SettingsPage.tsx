@@ -33,7 +33,7 @@ const SHOW_AGENTS = false;
 
 const SECTIONS: { key: Section; label: string; icon: ReactNode; group?: string; hidden?: boolean }[] = [
   { key: "appearance", label: "外观", icon: <IosIcon tone="orange"><AppearanceIcon /></IosIcon>, group: "个人" },
-  // 灵宠只在桌面版有（最小化窗口时出现）
+  // 灵宠只在桌面版有（在屏幕角落）
   { key: "pet", label: "灵宠", icon: <IosIcon tone="pink"><PetIcon /></IosIcon>, hidden: !desktop?.pet },
   { key: "proxy", label: "网络代理", icon: <IosIcon tone="teal"><ProxyIcon /></IosIcon> },
   { key: "plugins", label: "插件", icon: <IosIcon tone="blue"><PluginIcon /></IosIcon>, group: "集成" },

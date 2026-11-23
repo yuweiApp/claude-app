@@ -255,7 +255,7 @@ ipcMain.handle("browser:download-action", async (e, guid: unknown, action: unkno
 });
 ipcMain.handle("browser:suggest", (e, query: unknown) => (fromUi(e.sender) && typeof query === "string" ? browserViews.history.suggest(query) : []));
 
-// 灵宠：主窗口最小化时在屏幕角落显示，会话完成时告诉用户（见 pet.ts）
+// 灵宠：设置里开着就在屏幕角落待着，会话完成时告诉用户（见 pet.ts）
 const pet = new Pet(path.join(root, "desktop", "assets"));
 
 // 桌面工具正在操作的窗口的实时画面（网页右上角的浮窗）：按标题找采集源，见 capture.ts

@@ -4,7 +4,7 @@ import { sessionTitle } from "./components/Sidebar";
 import { desktop } from "./desktop";
 
 /**
- * 灵宠（桌面版）：主窗口最小化时，屏幕角落的小精灵告诉用户会话完成了，见 desktop/src/pet.ts。
+ * 灵宠（桌面版）：屏幕角落的小精灵，主窗口不在前台时告诉用户会话完成了，见 desktop/src/pet.ts。
  * 开关记在 localStorage，默认开；关掉时只存 "off"
  */
 const KEY = "pet";

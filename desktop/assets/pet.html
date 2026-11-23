@@ -193,7 +193,7 @@
   </div>
   <div class="pill hit" id="pill" hidden><span id="pill-text"></span><span class="dots"></span></div>
 
-  <div class="pet hit" id="pet" title="点我回到 Claude App，按住可以拖动，右键有更多选项">
+  <div class="pet hit" id="pet" title="双击回到 Claude App，按住可以拖动，右键有更多选项">
     <svg viewBox="0 0 120 120" aria-hidden="true">
       <defs>
         <radialGradient id="g-glow" cx="50%" cy="50%" r="50%">
@@ -319,7 +319,9 @@
     api.hover(false);
   });
 
-  // 按住拖动，没怎么动就当点击
+  // 按住拖动，没怎么动就当点击：单击跳一下，双击回到主窗口
+  const DOUBLE_MS = 400;
+  let lastClick = 0;
   let start = null;
   let last = null;
   petEl.addEventListener("pointerdown", (e) => {
@@ -344,7 +346,15 @@
     start = last = null;
     dragging = false;
     petEl.classList.remove("dragging");
-    if (!wasDrag && !cancelled) api.open(current.notices[0]?.sessionId);
+    if (wasDrag || cancelled) return;
+    const now = Date.now();
+    if (now - lastClick < DOUBLE_MS) {
+      lastClick = 0;
+      api.open(current.notices[0]?.sessionId);
+    } else {
+      lastClick = now;
+      jump();
+    }
   };
   petEl.addEventListener("pointerup", (e) => end(e, false));
   petEl.addEventListener("pointercancel", (e) => end(e, true));

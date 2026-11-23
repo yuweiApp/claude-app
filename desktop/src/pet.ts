@@ -11,7 +11,7 @@ export interface PetNotice {
 interface PetState {
   /** 正在运行的会话数 */
   working: number;
-  /** 最小化期间完成的会话，新的在前 */
+  /** 主窗口不在前台期间完成的会话，新的在前 */
   notices: PetNotice[];
 }
 
@@ -19,17 +19,17 @@ const WIDTH = 260;
 const HEIGHT = 230;
 /** 最多记几条完成的会话 */
 const MAX_NOTICES = 5;
-/** 最小化期间叫网页刷新会话列表的间隔：窗口最小化时网页的定时器会被节流，靠外壳发消息唤起 */
+/** 主窗口最小化期间叫网页刷新会话列表的间隔：窗口最小化时网页的定时器会被节流，靠外壳发消息唤起 */
 const TICK_MS = 4000;
 /** 鼠标穿透（setIgnoreMouseEvents 的 forward）Linux 上不支持：开了就点不到灵宠，所以 Linux 上整个窗口都接鼠标 */
 const passThrough = process.platform !== "linux";
 
 /**
- * 灵宠：主窗口最小化（或隐藏）时，屏幕右下角出现一个小精灵，没事时在那儿待着，有会话在跑时它在干活，会话完成时跳出气泡告诉用户；
- * 点它恢复主窗口并打开完成的会话。设置页「灵宠」可以关掉（网页记着开关，见 client/src/pet.ts）。
+ * 灵宠：设置里开着就一直待在屏幕右下角（主窗口开着、最小化都在），没事时在那儿待着，有会话在跑时它在干活，
+ * 主窗口不在前台时会话完成就跳出气泡告诉用户；双击它或点气泡恢复主窗口并打开完成的会话。设置页「灵宠」可以关掉（网页记着开关，见 client/src/pet.ts）。
  * 右键菜单可以先隐藏到回到主窗口为止，或者直接关掉灵宠（外壳告诉网页改开关）。
  *
- * 判断哪个会话完成了在网页里做（会话列表、标题都在那边），这里只管窗口：主窗口最小化期间才显示、才收通知，恢复时收起并清空通知
+ * 判断哪个会话完成了在网页里做（会话列表、标题都在那边），这里只管窗口：主窗口不在前台时才收通知，回到主窗口时清空通知
  */
 export class Pet {
   private win: BrowserWindow | undefined;
@@ -54,7 +54,7 @@ export class Pet {
       this.sync();
     });
     ipcMain.on("pet:notify", (e, notice: unknown) => {
-      if (!this.fromMain(e.sender) || !this.enabled || this.dismissed || !this.mainHidden()) return;
+      if (!this.fromMain(e.sender) || !this.enabled || this.dismissed || this.mainFocused()) return;
       const { sessionId, title } = (notice ?? {}) as { sessionId?: unknown; title?: unknown };
       if (typeof sessionId !== "string" || !sessionId) return;
       const item = { sessionId, title: typeof title === "string" && title.trim() ? title.trim() : "新会话" };
@@ -90,13 +90,13 @@ export class Pet {
     ipcMain.handle("pet:state", (e) => (this.fromPet(e.sender) ? this.state() : null));
   }
 
-  /** 主窗口建好后接上：最小化、恢复时显示或收起灵宠 */
+  /** 主窗口建好后接上：显示灵宠；最小化期间叫网页刷新，回到主窗口时清空通知 */
   attach(main: BrowserWindow): void {
     this.main = main;
     main.on("minimize", () => this.sync());
     main.on("hide", () => this.sync());
     const back = () => {
-      if (this.mainHidden()) return;
+      if (!this.mainFocused()) return;
       this.notices = [];
       this.dismissed = false;
       this.sync();
@@ -124,15 +124,21 @@ export class Pet {
     return !!main && !main.isDestroyed() && (main.isMinimized() || !main.isVisible());
   }
 
+  /** 用户正在主窗口里：这时完成的会话不用灵宠提醒 */
+  private mainFocused(): boolean {
+    const main = this.main;
+    return !!main && !main.isDestroyed() && !this.mainHidden() && main.isFocused();
+  }
+
   private state(): PetState {
     return { working: this.working, notices: this.notices };
   }
 
   private sync(): void {
-    const hidden = this.enabled && !this.dismissed && this.mainHidden();
-    if (hidden) this.startTick();
+    const shown = this.enabled && !this.dismissed && !!this.main && !this.main.isDestroyed();
+    if (shown && this.mainHidden()) this.startTick();
     else this.stopTick();
-    if (!hidden) {
+    if (!shown) {
       if (this.win && !this.win.isDestroyed() && this.win.isVisible()) this.win.hide();
       return;
     }
