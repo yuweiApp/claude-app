@@ -197,12 +197,19 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 .group-head.active, .group-head.active:hover { background: var(--bg); box-shadow: var(--raised-shadow); }
 .group-actions { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); display: flex; gap: 2px; opacity: 0; pointer-events: none; }
 .group-head.menu-open { background: var(--frame-hover); }
+/* 单击选中的项目：同文件树里选中的文件夹（.files-row.selected） */
+.group-head.selected, .group-head.selected:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
+}
 .group-head:hover .group-actions, .group-head.menu-open .group-actions, .group-actions:focus-within { opacity: 1; pointer-events: auto; }
 .group-actions .icon-btn { width: 26px; height: 26px; color: var(--text); }
 .group-actions .icon-btn:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
 /* 悬停时右边让出按钮的位置：加在整行按钮上而不是名字上，远程项目的名字后面还有连接状态的圆点 */
 .sidebar .group-head:hover .group-toggle, .sidebar .group-head.menu-open .group-toggle { padding-right: 68px; }
-.group-toggle { flex: 1; padding: 6px 10px 6px 12px; font-size: 13.5px; }
+/* 箭头、文件夹图标、名字之间的间距同文件树的 .files-row */
+.group-toggle { flex: 1; gap: 5px; padding: 6px 10px 6px 12px; font-size: 13.5px; }
+.group-host { margin-left: 3px; }
 /* 文件夹行、分区标题行的按钮本身不画底色（盖过全局的 button:hover），悬停底色由外面一整行（.group-head、.section-head）画 */
 .sidebar .group-toggle, .sidebar .group-toggle:hover, .sidebar .section-toggle, .sidebar .section-toggle:hover { background: none; }
 .group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

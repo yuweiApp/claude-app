@@ -1651,7 +1651,8 @@ export function FoldersIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-function Chevron({ open }: { open: boolean }) {
+/** 文件夹行的展开箭头（向右，展开时转 90°）；侧栏的项目行也用这个 */
+export function Chevron({ open }: { open: boolean }) {
   return (
     <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: open ? "rotate(90deg)" : undefined }}>
       <path d="M3.5 2 6.5 5l-3 3" />

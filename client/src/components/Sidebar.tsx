@@ -6,6 +6,8 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import type { SessionListItem } from "../api";
 import { useDismiss } from "./ComposerPickers";
 import { SidebarToggle } from "./SidebarToggle";
+import { Chevron } from "./FileBrowser";
+import { FolderTypeIcon } from "./FileTypeIcon";
 import { SESSION_DRAG_TYPE } from "./MentionText";
 import { copyShareLink, publicShareLink, shareLinks, startPublicShare, startShare, stopPublicShare, stopShare, useShareNotice, useShares } from "../state/shares";
 
@@ -151,8 +153,16 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
   const deleteSession = (s: SessionListItem) => onDelete([s.sessionId]);
   const deleteProject = (g: FolderGroup) => onDelete(g.sessions.map((s) => s.sessionId));
 
+  /** 单击选中的项目（工作目录），同文件树里单击文件夹是选中；点了会话、换了当前会话就不再选中 */
+  const [pickedProject, setPickedProject] = useState<string | null>(null);
+  useEffect(() => setPickedProject(null), [currentId]);
+  const selectSession = (id: string) => {
+    setPickedProject(null);
+    onSelect(id);
+  };
+
   const row = (s: SessionListItem, branch: boolean, branchEnd: boolean) => (
-    <SessionRow key={s.sessionId} session={s} branch={branch} branchEnd={branchEnd} active={s.sessionId === currentId} onSelect={onSelect} onDelete={deleteSession} onRename={onRename} />
+    <SessionRow key={s.sessionId} session={s} branch={branch} branchEnd={branchEnd} active={s.sessionId === currentId} onSelect={selectSession} onDelete={deleteSession} onRename={onRename} />
   );
 
   /** 「会话」和各个项目当前列出的会话数（键是 SECTION_CHATS 或项目文件夹），没记的是默认个数；不保存，刷新后都回到默认 */
@@ -234,6 +244,8 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
               open={open}
               // 展开时当前会话那一行已经高亮，项目行只在折叠、看不到当前会话时高亮
               active={!open && g.sessions.some((session) => session.sessionId === currentId)}
+              selected={pickedProject === g.cwd}
+              onPick={() => setPickedProject(g.cwd)}
               onToggle={() => toggle(g.cwd)}
               onNew={onNew}
               onSearch={onSearch}
@@ -524,6 +536,8 @@ function ProjectGroup({
   group: g,
   open,
   active,
+  selected,
+  onPick,
   onToggle,
   onNew,
   onSearch,
@@ -533,6 +547,9 @@ function ProjectGroup({
   group: FolderGroup;
   open: boolean;
   active: boolean;
+  /** 单击选中的项目（同文件树里选中的文件夹） */
+  selected: boolean;
+  onPick: () => void;
   onToggle: () => void;
   onNew: (cwd?: string) => void;
   onSearch?: (cwd: string) => void;
@@ -547,11 +564,36 @@ function ProjectGroup({
   const running = g.sessions.filter(isWorking).length;
   return (
     <div className="group">
-      <div className={`group-head${active ? " active" : ""}${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
-        <button className="group-toggle" onClick={onToggle} title={remote ? `${sshName(remote.host)}：${machinePath(g.cwd)}` : g.cwd}>
-          <CaretIcon open={open} />
-          {/* 远程主机上的项目：文件夹换成主机的系统图标（同 codex-app-server），名字后面是灰色的连接名和连接状态 */}
-          {remote ? <HostIcon hostId={remote.host} /> : <FolderIcon />}
+      <div className={`group-head${active ? " active" : ""}${selected ? " selected" : ""}${menu.at ? " menu-open" : ""}`} onContextMenu={menu.openAtPointer}>
+        <button
+          className="group-toggle"
+          aria-expanded={open}
+          // 同文件树的文件夹：单击只选中，双击、点箭头展开收起
+          onClick={onPick}
+          onDoubleClick={onToggle}
+          // 回车展开收起（不当单击），→ 展开，← 收起
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || (e.key === "ArrowRight" && !open) || (e.key === "ArrowLeft" && open)) {
+              e.preventDefault();
+              onToggle();
+            }
+          }}
+          title={remote ? `${sshName(remote.host)}：${machinePath(g.cwd)}` : g.cwd}
+        >
+          {/* 箭头同文件树的文件夹：单独一块点击区，悬停有底色 */}
+          <span
+            className="files-caret toggle"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle();
+            }}
+            // 双击箭头不算双击这一行
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <Chevron open={open} />
+          </span>
+          {/* 远程主机上的项目：文件夹换成主机的系统图标（同 codex-app-server），名字后面是灰色的连接名和连接状态；本机的同文件树，按图标主题、展开时是打开的文件夹 */}
+          {remote ? <HostIcon hostId={remote.host} /> : <FolderTypeIcon open={open} name={folderName(g.cwd)} />}
           <span className="group-name">{folderName(g.cwd)}</span>
           {remote && <span className="group-host">{sshName(remote.host)}</span>}
           {/*
@@ -684,14 +726,6 @@ function ChatIcon() {
   return (
     <svg className="ic ic-chat" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M2.5 3.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5v-2.5h-.5a1 1 0 0 1-1-1z" fill="currentColor" fillOpacity="0.15" />
-    </svg>
-  );
-}
-
-function FolderIcon() {
-  return (
-    <svg className="ic ic-folder" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" aria-hidden="true">
-      <path fill="currentColor" fillOpacity="0.2" d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" />
     </svg>
   );
 }
