@@ -23,6 +23,21 @@ export interface DesktopApi {
   files: DesktopFilesApi;
   /** 内置浏览器（右侧面板的「浏览器」），见 desktop/src/browser/views.ts */
   browser: DesktopBrowserApi;
+  /** 灵宠：主窗口最小化时在屏幕角落提醒会话完成，见 desktop/src/pet.ts；旧版外壳没有 */
+  pet?: DesktopPetApi;
+}
+
+export interface DesktopPetApi {
+  /** 设置里的开关和正在运行的会话数；关着时灵宠不出现 */
+  update(state: { enabled: boolean; working: number }): void;
+  /** 一个会话一轮结束了；主窗口没最小化时外壳不理会 */
+  notify(notice: { sessionId: string; title: string }): void;
+  /** 主窗口最小化期间外壳定时发来（这时网页自己的定时器会被节流）；返回取消订阅的函数 */
+  onTick(callback: () => void): () => void;
+  /** 用户点了灵宠，主窗口已经恢复，要打开这个会话；返回取消订阅的函数 */
+  onOpen(callback: (sessionId: string) => void): () => void;
+  /** 用户在灵宠的右键菜单里关掉了灵宠；返回取消订阅的函数 */
+  onDisabled(callback: () => void): () => void;
 }
 
 export interface DesktopFilesApi {

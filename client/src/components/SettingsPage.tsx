@@ -15,12 +15,13 @@ import { McpAuthDialog } from "./McpAuthDialog";
 import { FolderPickerDialog } from "./FolderPickerDialog";
 import { IosIcon } from "./IosIcon";
 import { AppearancePage } from "./AppearancePage";
+import { PetPage } from "./PetPage";
 import { BrowsersPage } from "./BrowsersPage";
 import { ProxyPage } from "./ProxyPage";
 import { SharePage } from "./SharePage";
 import { SshPage } from "./SshPage";
 
-export type SettingsSection = "appearance" | "proxy" | "plugins" | "skills" | "agents" | "mcp" | "browsers" | "ssh" | "share";
+export type SettingsSection = "appearance" | "pet" | "proxy" | "plugins" | "skills" | "agents" | "mcp" | "browsers" | "ssh" | "share";
 type Section = SettingsSection;
 /** 技能、子代理、插件页顶部的标签：个人（导入的、项目里的、导入插件带的、从市场装的）和 Claude Code 自带的；插件页还有插件市场 */
 type Origin = "mine" | "builtin" | "directory";
@@ -32,6 +33,8 @@ const SHOW_AGENTS = false;
 
 const SECTIONS: { key: Section; label: string; icon: ReactNode; group?: string; hidden?: boolean }[] = [
   { key: "appearance", label: "外观", icon: <IosIcon tone="orange"><AppearanceIcon /></IosIcon>, group: "个人" },
+  // 灵宠只在桌面版有（最小化窗口时出现）
+  { key: "pet", label: "灵宠", icon: <IosIcon tone="pink"><PetIcon /></IosIcon>, hidden: !desktop?.pet },
   { key: "proxy", label: "网络代理", icon: <IosIcon tone="teal"><ProxyIcon /></IosIcon> },
   { key: "plugins", label: "插件", icon: <IosIcon tone="blue"><PluginIcon /></IosIcon>, group: "集成" },
   { key: "skills", label: "技能", icon: <IosIcon tone="purple"><SkillIcon /></IosIcon> },
@@ -106,9 +109,9 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
           </button>,
         ])}
       </nav>
-      {section === "appearance" || section === "proxy" || section === "browsers" || section === "ssh" || section === "share" ? (
+      {section === "appearance" || section === "pet" || section === "proxy" || section === "browsers" || section === "ssh" || section === "share" ? (
         <main className="settings-main">
-          {section === "appearance" ? <AppearancePage /> : section === "proxy" ? <ProxyPage /> : section === "ssh" ? <SshPage /> : section === "share" ? <SharePage /> : <BrowsersPage />}
+          {section === "appearance" ? <AppearancePage /> : section === "pet" ? <PetPage /> : section === "proxy" ? <ProxyPage /> : section === "ssh" ? <SshPage /> : section === "share" ? <SharePage /> : <BrowsersPage />}
         </main>
       ) : (
         <main className="settings-main">
@@ -1211,6 +1214,19 @@ function McpIcon() {
   return (
     <svg className="ic ic-mcp" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="m2.5 8 5-5a2 2 0 0 1 2.8 2.8L6.5 9.6M5 10.5l5.5-5.5a2 2 0 0 1 2.8 2.8l-5 5a1 1 0 0 0 0 1.4M7.5 11 11 7.5" />
+    </svg>
+  );
+}
+
+/** 爪印 */
+function PetIcon() {
+  return (
+    <svg className="ic" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <ellipse cx="4" cy="7" rx="1.5" ry="1.9" />
+      <ellipse cx="6.6" cy="4.2" rx="1.5" ry="1.9" />
+      <ellipse cx="9.4" cy="4.2" rx="1.5" ry="1.9" />
+      <ellipse cx="12" cy="7" rx="1.5" ry="1.9" />
+      <path d="M8 7.6c-2 0-3.8 2.1-3.8 3.9 0 1.3 1 1.9 2 1.9.7 0 1.2-.4 1.8-.4s1.1.4 1.8.4c1 0 2-.6 2-1.9 0-1.8-1.8-3.9-3.8-3.9Z" />
     </svg>
   );
 }

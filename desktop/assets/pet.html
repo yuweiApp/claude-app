@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>灵宠</title>
+<!-- 灵宠窗口（desktop/src/pet.ts）：透明背景，右下角一个小精灵，上面是完成通知的气泡。接口见 pet-preload.cts -->
+<style>
+  :root {
+    --bubble-bg: rgba(255, 255, 255, 0.97);
+    --bubble-fg: #2b2620;
+    --bubble-sub: #857a6d;
+    --bubble-border: rgba(80, 60, 30, 0.14);
+    --accent: #d9772b;
+    --pill-bg: rgba(43, 38, 32, 0.82);
+    --pill-fg: #fff7ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bubble-bg: rgba(40, 37, 34, 0.97);
+      --bubble-fg: #f4ede4;
+      --bubble-sub: #b3a796;
+      --bubble-border: rgba(255, 240, 220, 0.14);
+      --accent: #f0a05a;
+      --pill-bg: rgba(250, 244, 236, 0.9);
+      --pill-fg: #2b2620;
+    }
+  }
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+    font: 13px/1.45 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .stage {
+    position: absolute;
+    inset: 0;
+  }
+
+  /* 气泡：在小精灵上方，靠右，尾巴指向小精灵 */
+  .bubble {
+    position: absolute;
+    right: 18px;
+    bottom: 118px;
+    max-width: 210px;
+    min-width: 120px;
+    box-sizing: border-box;
+    padding: 9px 26px 9px 12px;
+    border-radius: 14px;
+    background: var(--bubble-bg);
+    color: var(--bubble-fg);
+    border: 1px solid var(--bubble-border);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+    cursor: pointer;
+    transform-origin: 80% 100%;
+    animation: pop 0.32s cubic-bezier(0.2, 1.4, 0.4, 1);
+  }
+  .bubble[hidden] { display: none; }
+  .bubble::after {
+    content: "";
+    position: absolute;
+    right: 46px;
+    bottom: -7px;
+    width: 12px;
+    height: 12px;
+    background: var(--bubble-bg);
+    border-right: 1px solid var(--bubble-border);
+    border-bottom: 1px solid var(--bubble-border);
+    transform: rotate(45deg);
+  }
+  .bubble-title {
+    font-weight: 600;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-all;
+  }
+  .bubble-title b { color: var(--accent); font-weight: 600; }
+  .bubble-sub { color: var(--bubble-sub); font-size: 12px; margin-top: 2px; }
+  .bubble-close {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--bubble-sub);
+    font-size: 14px;
+    line-height: 18px;
+    cursor: pointer;
+  }
+  .bubble-close:hover { background: var(--bubble-border); color: var(--bubble-fg); }
+  @keyframes pop {
+    from { transform: scale(0.6); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+
+  /* 小精灵 */
+  .pet {
+    position: absolute;
+    right: 22px;
+    bottom: 8px;
+    width: 104px;
+    height: 104px;
+    cursor: grab;
+    touch-action: none;
+  }
+  .pet.dragging { cursor: grabbing; }
+  .pet svg { width: 100%; height: 100%; overflow: visible; }
+  .float { animation: float 2.8s ease-in-out infinite; transform-origin: 60px 90px; }
+  .pet.jump .float { animation: jump 0.9s cubic-bezier(0.3, 0.8, 0.4, 1) 2, float 2.8s ease-in-out 1.8s infinite; }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+  }
+  @keyframes jump {
+    0% { transform: translateY(0) scale(1, 1); }
+    15% { transform: translateY(2px) scale(1.08, 0.9); }
+    45% { transform: translateY(-18px) scale(0.95, 1.06); }
+    75% { transform: translateY(0) scale(1.06, 0.94); }
+    100% { transform: translateY(0) scale(1, 1); }
+  }
+  .eyes { animation: blink 4.2s infinite; transform-origin: 60px 66px; }
+  @keyframes blink {
+    0%, 93%, 100% { transform: scaleY(1); }
+    96% { transform: scaleY(0.1); }
+  }
+  .happy { display: none; }
+  .pet.happy-face .eyes { display: none; }
+  .pet.happy-face .happy { display: inline; }
+  .glow { animation: glow 2.8s ease-in-out infinite; transform-origin: 60px 68px; }
+  @keyframes glow {
+    0%, 100% { opacity: 0.55; transform: scale(1); }
+    50% { opacity: 0.85; transform: scale(1.06); }
+  }
+  .tail { animation: wag 2.2s ease-in-out infinite; transform-origin: 88px 86px; }
+  @keyframes wag {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(-10deg); }
+  }
+
+  /* 干活中：眼睛左右看，身边转着三颗星光 */
+  .sparks { display: none; transform-origin: 60px 66px; }
+  .pet.working .sparks { display: inline; animation: orbit 2.4s linear infinite; }
+  .pet.working .pupils { animation: look 3s ease-in-out infinite; }
+  @keyframes orbit { to { transform: rotate(360deg); } }
+  @keyframes look {
+    0%, 100% { transform: translateX(0); }
+    30% { transform: translateX(-2.5px); }
+    70% { transform: translateX(2.5px); }
+  }
+
+  /* 干活中的小标签 */
+  .pill {
+    position: absolute;
+    right: 18px;
+    bottom: 112px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--pill-bg);
+    color: var(--pill-fg);
+    font-size: 12px;
+    white-space: nowrap;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.16);
+  }
+  .pill[hidden] { display: none; }
+  .dots::after { content: ""; animation: dots 1.4s steps(4) infinite; }
+  @keyframes dots {
+    0% { content: ""; }
+    25% { content: "."; }
+    50% { content: ".."; }
+    75% { content: "..."; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .float, .glow, .tail, .eyes, .pet.working .sparks, .pet.working .pupils, .pet.jump .float { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="bubble hit" id="bubble" hidden title="点击打开会话">
+    <div class="bubble-title" id="bubble-title"></div>
+    <div class="bubble-sub" id="bubble-sub"></div>
+    <button class="bubble-close" id="bubble-close" title="知道了" aria-label="知道了">×</button>
+  </div>
+  <div class="pill hit" id="pill" hidden><span id="pill-text"></span><span class="dots"></span></div>
+
+  <div class="pet hit" id="pet" title="点我回到 Claude App，按住可以拖动，右键有更多选项">
+    <svg viewBox="0 0 120 120" aria-hidden="true">
+      <defs>
+        <radialGradient id="g-glow" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#ffd49a" stop-opacity="0.9" />
+          <stop offset="100%" stop-color="#ffd49a" stop-opacity="0" />
+        </radialGradient>
+        <linearGradient id="g-body" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#fff6e8" />
+          <stop offset="100%" stop-color="#ffd2a6" />
+        </linearGradient>
+        <linearGradient id="g-tail" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#ffd2a6" />
+          <stop offset="100%" stop-color="#fff6e8" />
+        </linearGradient>
+      </defs>
+      <circle class="glow" cx="60" cy="68" r="50" fill="url(#g-glow)" />
+      <g class="float">
+        <!-- 尾巴：一缕云气 -->
+        <path class="tail" d="M86 84c14 2 22-6 22-16 0-6-4-10-9-9 3 3 3 8-1 11-4 3-9 3-14 2z" fill="url(#g-tail)" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
+        <!-- 耳朵 -->
+        <path d="M30 50 L28 22 Q29 18 33 21 L52 38 Z" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
+        <path d="M34 44 L33 28 L46 39 Z" fill="#ffb9a8" />
+        <path d="M90 50 L92 22 Q91 18 87 21 L68 38 Z" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
+        <path d="M86 44 L87 28 L74 39 Z" fill="#ffb9a8" />
+        <!-- 身体 -->
+        <ellipse cx="60" cy="68" rx="37" ry="33" fill="url(#g-body)" stroke="#e9a86d" stroke-width="1.5" />
+        <!-- 额头的灵纹 -->
+        <path d="M60 41 l3 5 -3 5 -3 -5z" fill="#5fc1b5" />
+        <!-- 眼睛 -->
+        <g class="eyes">
+          <g class="pupils">
+            <ellipse cx="47" cy="66" rx="4.6" ry="5.6" fill="#3a2e25" />
+            <ellipse cx="73" cy="66" rx="4.6" ry="5.6" fill="#3a2e25" />
+            <circle cx="48.6" cy="63.8" r="1.6" fill="#fff" />
+            <circle cx="74.6" cy="63.8" r="1.6" fill="#fff" />
+          </g>
+        </g>
+        <g class="happy" fill="none" stroke="#3a2e25" stroke-width="2.6" stroke-linecap="round">
+          <path d="M42 68 q5 -7 10 0" />
+          <path d="M68 68 q5 -7 10 0" />
+        </g>
+        <!-- 腮红和嘴 -->
+        <ellipse cx="38" cy="76" rx="5.5" ry="3.2" fill="#ff9e8a" opacity="0.55" />
+        <ellipse cx="82" cy="76" rx="5.5" ry="3.2" fill="#ff9e8a" opacity="0.55" />
+        <path d="M55 76 q2.5 3 5 0 q2.5 3 5 0" fill="none" stroke="#3a2e25" stroke-width="1.8" stroke-linecap="round" />
+        <!-- 小爪子 -->
+        <ellipse cx="48" cy="99" rx="7" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
+        <ellipse cx="72" cy="99" rx="7" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
+      </g>
+      <!-- 干活时绕着转的星光 -->
+      <g class="sparks" fill="#ffc35c">
+        <path d="M60 12 l2 5 5 2 -5 2 -2 5 -2 -5 -5 -2 5 -2z" />
+        <path d="M108 80 l1.5 3.5 3.5 1.5 -3.5 1.5 -1.5 3.5 -1.5 -3.5 -3.5 -1.5 3.5 -1.5z" />
+        <path d="M14 84 l1.5 3.5 3.5 1.5 -3.5 1.5 -1.5 3.5 -1.5 -3.5 -3.5 -1.5 3.5 -1.5z" />
+      </g>
+    </svg>
+  </div>
+</div>
+<script>
+  const api = window.pet;
+  const $ = (id) => document.getElementById(id);
+  const petEl = $("pet");
+  const bubble = $("bubble");
+  const pill = $("pill");
+  let current = { working: 0, notices: [] };
+  let dragging = false;
+
+  function render(state) {
+    current = state;
+    const notices = state.notices || [];
+    petEl.classList.toggle("working", state.working > 0 && notices.length === 0);
+    petEl.classList.toggle("happy-face", notices.length > 0);
+    if (notices.length) {
+      const first = notices[0];
+      const title = $("bubble-title");
+      title.textContent = "";
+      title.append("「");
+      const name = document.createElement("b");
+      name.textContent = first.title;
+      title.append(name, "」完成啦！");
+      $("bubble-sub").textContent =
+        notices.length > 1 ? `还有 ${notices.length - 1} 个会话也好了，点我看看` : state.working > 0 ? `还有 ${state.working} 个会话在跑，点我看看` : "点我看看";
+      bubble.hidden = false;
+      pill.hidden = true;
+    } else {
+      bubble.hidden = true;
+      pill.hidden = !(state.working > 0);
+      $("pill-text").textContent = `${state.working} 个会话在跑`;
+    }
+  }
+
+  function jump() {
+    petEl.classList.remove("jump");
+    // 重新触发动画
+    void petEl.getBoundingClientRect();
+    petEl.classList.add("jump");
+  }
+  petEl.addEventListener("animationend", (e) => {
+    if (e.animationName === "jump" && e.elapsedTime > 1.7) petEl.classList.remove("jump");
+  });
+
+  api.onState(render);
+  api.onDone(jump);
+  void api.state().then((s) => s && render(s));
+
+  // 透明的地方鼠标穿过去，移到小精灵、气泡上时接住
+  for (const el of document.querySelectorAll(".hit")) {
+    el.addEventListener("pointerenter", () => api.hover(true));
+    el.addEventListener("pointerleave", () => !dragging && api.hover(false));
+  }
+
+  document.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (e.target.closest(".hit")) api.menu();
+  });
+
+  bubble.addEventListener("click", (e) => {
+    if (e.target.closest("#bubble-close")) return;
+    api.open(current.notices[0]?.sessionId);
+  });
+  $("bubble-close").addEventListener("click", () => {
+    api.dismiss();
+    api.hover(false);
+  });
+
+  // 按住拖动，没怎么动就当点击
+  let start = null;
+  let last = null;
+  petEl.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    petEl.setPointerCapture(e.pointerId);
+    start = last = { x: e.screenX, y: e.screenY };
+    dragging = false;
+  });
+  petEl.addEventListener("pointermove", (e) => {
+    if (!start) return;
+    if (!dragging && Math.hypot(e.screenX - start.x, e.screenY - start.y) > 4) {
+      dragging = true;
+      petEl.classList.add("dragging");
+    }
+    if (!dragging) return;
+    api.move(e.screenX - last.x, e.screenY - last.y);
+    last = { x: e.screenX, y: e.screenY };
+  });
+  const end = (e, cancelled) => {
+    if (!start) return;
+    const wasDrag = dragging;
+    start = last = null;
+    dragging = false;
+    petEl.classList.remove("dragging");
+    if (!wasDrag && !cancelled) api.open(current.notices[0]?.sessionId);
+  };
+  petEl.addEventListener("pointerup", (e) => end(e, false));
+  petEl.addEventListener("pointercancel", (e) => end(e, true));
+</script>
+</body>
+</html>

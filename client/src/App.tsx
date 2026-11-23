@@ -25,6 +25,7 @@ import { TasksPopover } from "./components/TasksPopover";
 import { DesktopTargetFloat } from "./components/DesktopTargetFloat";
 import { TitleBar } from "./components/TitleBar";
 import { desktop } from "./desktop";
+import { usePet } from "./pet";
 import { useBrowserTabs } from "./state/browserTabs";
 import { TabPicker } from "./components/TabPicker";
 import { isRemote, machinePath, parseRemote } from "./remote";
@@ -230,6 +231,11 @@ export function App() {
     const timer = setInterval(refresh, 10_000);
     return () => clearInterval(timer);
   }, [refresh]);
+  // 灵宠（桌面版）：主窗口最小化时告诉用户哪个会话完成了，点它回到那个会话
+  usePet(sessions, refresh, (id) => {
+    setSettingsOpen(false);
+    select(id);
+  });
 
   return (
     <div className="app-shell">

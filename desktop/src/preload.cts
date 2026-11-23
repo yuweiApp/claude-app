@@ -30,6 +30,26 @@ contextBridge.exposeInMainWorld("desktop", {
     pickSavePath: (name: string): Promise<string | null> => ipcRenderer.invoke("files:pick-save", name),
     copyFile: (target: string): Promise<boolean> => ipcRenderer.invoke("clipboard:copy-file", target),
   },
+  // 灵宠（主窗口最小化时在屏幕角落提醒会话完成），见 pet.ts
+  pet: {
+    update: (state: { enabled: boolean; working: number }) => ipcRenderer.send("pet:update", state),
+    notify: (notice: { sessionId: string; title: string }) => ipcRenderer.send("pet:notify", notice),
+    onTick: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on("pet:tick", listener);
+      return () => void ipcRenderer.removeListener("pet:tick", listener);
+    },
+    onOpen: (callback: (sessionId: string) => void) => {
+      const listener = (_event: electron.IpcRendererEvent, sessionId: string) => callback(sessionId);
+      ipcRenderer.on("pet:open", listener);
+      return () => void ipcRenderer.removeListener("pet:open", listener);
+    },
+    onDisabled: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on("pet:disabled", listener);
+      return () => void ipcRenderer.removeListener("pet:disabled", listener);
+    },
+  },
   // 内置浏览器（右侧面板的「浏览器」），见 main.ts 和 browser/views.ts
   browser: {
     list: (): Promise<unknown[]> => ipcRenderer.invoke("browser:list"),
