@@ -194,14 +194,8 @@ code, pre, kbd, samp { font-family: var(--font-mono); }
 /* 文件夹（项目）一行：悬停整行变色，右边出现「在此项目中新建会话」（同 codex-app-server 的 .group-head / .group-actions） */
 .group-head { position: relative; display: flex; align-items: center; border-radius: 8px; }
 .group-head:hover { background: var(--frame-hover); }
-.group-head.active, .group-head.active:hover { background: var(--bg); box-shadow: var(--raised-shadow); }
 .group-actions { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); display: flex; gap: 2px; opacity: 0; pointer-events: none; }
 .group-head.menu-open { background: var(--frame-hover); }
-/* 单击选中的项目：同文件树里选中的文件夹（.files-row.selected） */
-.group-head.selected, .group-head.selected:hover {
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
-}
 .group-head:hover .group-actions, .group-head.menu-open .group-actions, .group-actions:focus-within { opacity: 1; pointer-events: auto; }
 .group-actions .icon-btn { width: 26px; height: 26px; color: var(--text); }
 .group-actions .icon-btn:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
