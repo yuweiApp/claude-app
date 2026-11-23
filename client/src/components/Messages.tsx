@@ -14,6 +14,8 @@ import { AnnotatableText, SentNotesChip } from "./ResponseAnnotations";
 import { FileLinkContext, ReplyMarkdown } from "./ReplyMarkdown";
 import { sessionPathUri } from "../remote";
 import { useSshConnections } from "../state/sshConnections";
+import { ANNOTATION_TARGET_ATTR } from "../state/responseAnnotations";
+import { findMatches, flash, showHighlight } from "../searchHighlight";
 
 type UserItem = Extract<Item, { kind: "user" }>;
 type ResultItem = Extract<Item, { kind: "result" }>;
@@ -280,8 +282,35 @@ function EarlierTurns({ count, onReach }: { count: number; onReach: (scroller: H
   return <div ref={ref} className="earlier-turns" aria-hidden />;
 }
 
-/** onFork：从某条消息（会话记录里的 uuid）分叉出新会话；不传不显示分叉按钮（新会话页） */
-export function Messages({ view, onFork }: { view: SessionView; onFork?: (messageId: string) => Promise<void> }) {
+/** 要定位到的消息（侧边栏项目的「查找…」点了某条结果）：uuid 是会话记录里那条消息的，query 是查找的文字，seq 每次点都不同 */
+export interface MessageFocus {
+  uuid: string;
+  query: string;
+  seq: number;
+}
+
+/** 查找结果定位后，匹配的文字标出来多久 */
+const SEARCH_HIGHLIGHT_MS = 8000;
+
+/** 这一轮里有没有这条消息（开头的用户消息或过程、回复里的） */
+const turnHas = (turn: Turn, uuid: string) => turn.user?.uuid === uuid || turn.body.some((item) => item.uuid === uuid);
+
+/**
+ * onFork：从某条消息（会话记录里的 uuid）分叉出新会话；不传不显示分叉按钮（新会话页）。
+ * focus：滚动到这条消息并标出匹配的文字（那一轮没渲染的先补上、过程折叠着的展开、用户消息折叠着的展开）；
+ * 滚动前调用 onReveal(true)，找不到这条消息时 onReveal(false)
+ */
+export function Messages({
+  view,
+  onFork,
+  focus,
+  onReveal,
+}: {
+  view: SessionView;
+  onFork?: (messageId: string) => Promise<void>;
+  focus?: MessageFocus | null;
+  onReveal?: (found: boolean) => void;
+}) {
   const turns = splitTurns(view.items, view.turnStartUuids);
   // 长会话打开时只渲染最后几轮，前面的往上滚时再补：Markdown、工具步骤都要渲染，一次全挂上要卡好一阵。
   // 记的是前面没渲染的轮数，之后新来的轮接在后面，不影响它
@@ -300,13 +329,71 @@ export function Messages({ view, onFork }: { view: SessionView; onFork?: (messag
     restore.current = null;
     r.scroller.scrollTop = r.scroller.scrollHeight - r.fromBottom;
   }, [start]);
+  // 定位到查找结果：所在的轮还没渲染的，从它开始渲染
+  const rootRef = useRef<HTMLDivElement>(null);
+  const focusTurn = focus ? turns.findIndex((turn) => turnHas(turn, focus.uuid)) : -1;
+  useLayoutEffect(() => {
+    if (focusTurn >= 0 && focusTurn < start) setHidden(focusTurn);
+  }, [focus?.seq]);
+  const revealRef = useRef(onReveal);
+  revealRef.current = onReveal;
+  const clearHighlight = useRef<() => void>(() => {});
+  useEffect(() => () => clearHighlight.current(), []);
+  // 等这条消息渲染出来（补轮、展开过程要再渲染一两次），滚到第一处匹配（找不到匹配的文字就滚到消息）放在中间，标出匹配的文字
+  useEffect(() => {
+    if (!focus) return;
+    const { uuid, query } = focus;
+    let frame = 0;
+    let found = 0;
+    let raf = 0;
+    const tick = () => {
+      const root = rootRef.current;
+      const sel = CSS.escape(uuid);
+      const targets = root ? [...root.querySelectorAll<HTMLElement>(`[data-msg-uuid="${sel}"], [${ANNOTATION_TARGET_ATTR}^="${sel}:"]`)] : [];
+      // 找到后再等两帧：折叠着的用户消息、过程展开后位置才对
+      if (targets.length && ++found > 2) {
+        const ranges = findMatches(targets, query);
+        clearHighlight.current();
+        const clear = showHighlight(ranges);
+        const timer = setTimeout(clear, SEARCH_HIGHLIGHT_MS);
+        clearHighlight.current = () => {
+          clearTimeout(timer);
+          clear();
+        };
+        revealRef.current?.(true);
+        const box = targets[0]!.closest<HTMLElement>(".msg-group, .assistant") ?? targets[0]!;
+        const scroller = scrollParent(box);
+        const rect = (ranges[0] ?? box).getBoundingClientRect();
+        if (scroller) {
+          const area = scroller.getBoundingClientRect();
+          scroller.scrollTop += rect.top + rect.height / 2 - (area.top + scroller.clientHeight / 2);
+        } else box.scrollIntoView({ block: "center" });
+        flash(box);
+        return;
+      }
+      if (++frame > 90) {
+        revealRef.current?.(false);
+        return;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [focus?.seq]);
   // 只有 running 算进行中：续接的会话在第一条消息之前一直是 starting（子进程等输入，init 要等发消息才来）
   const busy = view.state === "running";
   return (
-    <div className="messages">
+    <div className="messages" ref={rootRef}>
       {start > 0 && <EarlierTurns count={start} onReach={showEarlier} />}
       {turns.slice(start).map((turn, i) => (
-        <TurnView key={turn.key} turn={turn} view={view} live={busy && start + i === turns.length - 1 && !turn.result} onFork={onFork} />
+        <TurnView
+          key={turn.key}
+          turn={turn}
+          view={view}
+          live={busy && start + i === turns.length - 1 && !turn.result}
+          onFork={onFork}
+          reveal={focus && start + i === focusTurn ? focus : undefined}
+        />
       ))}
       {/* 这一轮进行中发的、还没交给模型的消息：和普通消息一样显示，保持在最后，交给模型时才固定位置（见 SessionView.queued）；以 next 排队的列在输入框上面 */}
       {view.queued.map(
@@ -413,7 +500,20 @@ function Elapsed({ since }: { since?: number }) {
  * 用户消息 → 中间过程（工具调用、中间说明）折叠在「用时 Xs」下面 → 最终回复。模型的思考不显示。
  * 进行中显示「已处理 Xs」并默认展开；结束后默认收起
  */
-function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView; live: boolean; onFork?: (messageId: string) => Promise<void> }) {
+function TurnView({
+  turn,
+  view,
+  live,
+  onFork,
+  reveal,
+}: {
+  turn: Turn;
+  view: SessionView;
+  live: boolean;
+  onFork?: (messageId: string) => Promise<void>;
+  /** 要定位到这一轮里的这条消息：在折叠的过程里时展开 */
+  reveal?: MessageFocus;
+}) {
   const [open, setOpen] = useState(false);
   const [liveCollapsed, setLiveCollapsed] = useState(false);
   const units = toUnits(turn.body);
@@ -429,6 +529,12 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
   const errors = units.filter((u) => u.kind === "item" && !inProcess(u));
   const widgets = units.filter(shownWidget);
   const process = units.filter((u, i) => i !== finalIdx && inProcess(u));
+  const revealInProcess = !!reveal && process.some((u) => u.kind === "text" && u.uuid === reveal.uuid);
+  useLayoutEffect(() => {
+    if (!revealInProcess) return;
+    setOpen(true);
+    setLiveCollapsed(false);
+  }, [reveal?.seq]);
   const streaming = live && view.streaming.text;
   // 正在生成参数的部件调用：参数完整、出现在消息里之前，在部件的位置显示 loading 提示
   const pendingWidget = live && view.streaming.widget && !widgets.some((u) => u.kind === "widget" && u.block.id === view.streaming.widget!.id) ? view.streaming.widget : null;
@@ -457,7 +563,7 @@ function TurnView({ turn, view, live, onFork }: { turn: Turn; view: SessionView;
       )}
       {turn.compact && <CompactLine item={turn.compact} />}
       {turn.goal && <GoalLine item={turn.goal} />}
-      {turn.user && <UserGroup item={turn.user} />}
+      {turn.user && <UserGroup item={turn.user} reveal={reveal?.uuid === turn.user.uuid ? reveal.seq : undefined} />}
       {(hasProcess || live || duration !== null) && !compacting && !bareCompact && (
         <div className="process-wrap">
           <div className="process-toggle-row">
@@ -610,12 +716,15 @@ function UnitView({ unit, view }: { unit: Unit; view: SessionView }) {
   }
 }
 
-/** 用户消息：带的标注、正文气泡（只有标注时不画空气泡）和复制按钮；一轮的开头和排队中的消息都用它 */
-function UserGroup({ item }: { item: UserItem }) {
+/**
+ * 用户消息：带的标注、正文气泡（只有标注时不画空气泡）和复制按钮；一轮的开头和排队中的消息都用它。
+ * reveal：要定位到这条消息（值每次不同），太长折叠着的展开
+ */
+function UserGroup({ item, reveal }: { item: UserItem; reveal?: number }) {
   return (
-    <div className="msg-group msg-group-user">
+    <div className="msg-group msg-group-user" data-msg-uuid={item.uuid}>
       {item.annotations && <SentNotesChip annotations={item.annotations} />}
-      {(item.text || item.images.length > 0 || item.attachments.length > 0 || !item.annotations) && <ItemView item={item} />}
+      {(item.text || item.images.length > 0 || item.attachments.length > 0 || !item.annotations) && <ItemView item={item} reveal={reveal} />}
       {item.text && (
         <MessageActions align="end">
           <CopyAction text={item.text} title="复制消息" />
@@ -635,10 +744,14 @@ const USER_TEXT_FOLD_OVER = 8;
  * 按实际排出来的行数判断（长链接没有换行符也会占很多行），宽度、字号变了重新量；
  * 量之前先按字数和换行数猜一下，免得长消息先整条画出来再缩回去
  */
-function UserText({ text }: { text: string }) {
+function UserText({ text, reveal }: { text: string; reveal?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [long, setLong] = useState(() => text.length > 600 || text.split("\n").length > USER_TEXT_FOLD_OVER);
   const [open, setOpen] = useState(false);
+  // 查找结果定位到这条消息：展开，匹配的地方可能在折叠掉的部分里
+  useLayoutEffect(() => {
+    if (reveal !== undefined) setOpen(true);
+  }, [reveal]);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -684,7 +797,8 @@ function ErrorLine({ item }: { item: Extract<Item, { kind: "error" }> }) {
   return <div className="result error">{item.text}</div>;
 }
 
-function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
+/** reveal：用户消息要定位到（见 UserGroup） */
+function ItemView({ item, reveal }: { item: Exclude<Item, { kind: "assistant" }>; reveal?: number }) {
   const cwd = useContext(FileLinkContext)?.cwd;
   switch (item.kind) {
     case "user": {
@@ -701,7 +815,7 @@ function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
             </div>
           )}
           {item.attachments.length > 0 && <Attachments items={item.attachments} />}
-          {text && <UserText text={text} />}
+          {text && <UserText text={text} reveal={reveal} />}
         </div>
       );
     }

@@ -258,6 +258,16 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     },
   );
 
+  /** 在项目（工作目录是 cwd）的所有会话记录里查找 q，见 SessionManager.search */
+  app.get<{ Querystring: { cwd?: string; q?: string } }>("/sessions/search", async (req) => {
+    const cwd = req.query.cwd;
+    const q = req.query.q?.trim();
+    if (!cwd) throw new BadRequestError("缺少 cwd");
+    if (!q) throw new BadRequestError("查找的内容不能为空");
+    if (q.length > 200) throw new BadRequestError("查找的内容太长（最多 200 个字）");
+    return sessions.search(cwd, q);
+  });
+
   app.get<{ Params: IdParams }>("/sessions/:id", async (req) => {
     const session = sessions.get(req.params.id);
     return {

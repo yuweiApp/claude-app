@@ -8,7 +8,8 @@ import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
-import type { BackgroundTask, MessagePriority, SessionContextInfo, SessionListItem, TaskOutput } from "../shared/types.js";
+import type { BackgroundTask, MessagePriority, SessionContextInfo, SessionListItem, SessionSearchResult, TaskOutput } from "../shared/types.js";
+import { searchSessions } from "./session-search.js";
 import { loadAttachments, loadElements, type SelectedElementInput, type SessionExport } from "./attachments.js";
 import { enabledSkillNames } from "./capabilities.js";
 import { disabledSkills } from "./extensions.js";
@@ -172,9 +173,10 @@ export class SessionManager {
     return file && recordedCwd(file);
   }
 
-  async list(): Promise<SessionListItem[]> {
+  /** sync：先同步连着的远程主机的会话记录；false 时直接列本机已有的（查找用，网页每 10 秒列一次会话，记录已经跟着同步了） */
+  async list(sync = true): Promise<SessionListItem[]> {
     // 连着的远程主机先把会话记录同步过来（最多等 3 秒，没同步完的下次再列）；没连着的用本机已有的副本
-    const syncs = listConnections().map((c) => existingHost(c.id)).filter((h): h is SshHost => Boolean(h?.isReady)).map((h) => syncHost(h).catch(() => undefined));
+    const syncs = !sync ? [] : listConnections().map((c) => existingHost(c.id)).filter((h): h is SshHost => Boolean(h?.isReady)).map((h) => syncHost(h).catch(() => undefined));
     if (syncs.length) await Promise.race([Promise.all(syncs), sleep(3000)]);
     // 不传 dir：所有工作目录（项目）的会话
     const [infos, files] = await Promise.all([listSessions(), sessionRecordFiles()]);
@@ -212,6 +214,15 @@ export class SessionManager {
       }
     }
     return stored.sort((a, b) => b.lastResponseAt - a.lastResponseAt);
+  }
+
+  /**
+   * 在一个项目（工作目录是 cwd 的项目会话，同侧边栏「项目」里的分组）的所有会话记录里查找，见 session-search.ts。
+   * 会话按列表的顺序（最近回复的在前）；远程会话查的是同步到本机的副本（列会话时同步的，这里不再等同步）
+   */
+  async search(cwd: string, query: string): Promise<SessionSearchResult> {
+    const ids = (await this.list(false)).filter((s) => !s.chat && (s.cwd || config.workspaceDir) === cwd).map((s) => s.sessionId);
+    return searchSessions(ids, query);
   }
 
   /** 历史消息：压缩上下文之前的也接上（见 history.ts）。远程会话连着时先同步一下记录 */

@@ -98,10 +98,12 @@ interface Props {
   onRename: (id: string, title: string) => void;
   /** 收起侧边栏；不传时不显示按钮（桌面版的在标题栏上） */
   onCollapse?: () => void;
+  /** 项目菜单里的「查找…」：在这个项目（工作目录）的会话里查找；不传时菜单里没有这一项 */
+  onSearch?: (cwd: string) => void;
   width: number;
 }
 
-export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, onDelete, onRename, onCollapse, width }: Props) {
+export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, onDelete, onRename, onCollapse, onSearch, width }: Props) {
   const [collapsed, setCollapsed] = useState(loadCollapsed);
   const current = sessions.find((session) => session.sessionId === currentId);
   useEffect(() => {
@@ -234,6 +236,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
               active={!open && g.sessions.some((session) => session.sessionId === currentId)}
               onToggle={() => toggle(g.cwd)}
               onNew={onNew}
+              onSearch={onSearch}
               onDelete={deleteProject}
               list={sessionList(g.cwd, g.sessions, "group-list")}
             />
@@ -523,6 +526,7 @@ function ProjectGroup({
   active,
   onToggle,
   onNew,
+  onSearch,
   onDelete,
   list,
 }: {
@@ -531,6 +535,7 @@ function ProjectGroup({
   active: boolean;
   onToggle: () => void;
   onNew: (cwd?: string) => void;
+  onSearch?: (cwd: string) => void;
   onDelete: (g: FolderGroup) => void;
   /** 这个项目的会话列表（带「展开更多 / 收起」） */
   list: ReactNode;
@@ -572,6 +577,8 @@ function ProjectGroup({
         <MenuPopup
           menu={menu}
           items={[
+            // 在这个项目的所有会话记录里查找，点结果打开会话并定位到那条消息
+            ...(onSearch ? [{ label: "查找…", onClick: () => onSearch(g.cwd) }] : []),
             // 用系统的文件管理器打开项目文件夹：桌面版、本机的项目才有（同文件浏览器里工作目录的菜单）
             ...(desktop && !remote
               ? [

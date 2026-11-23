@@ -2,6 +2,8 @@ import type { EffortLevel, ModelInfo, PermissionMode } from "@anthropic-ai/claud
 import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, ConnectorPage, ConnectorSource, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, CookieImportResult, CookieSite, CookieSitesView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, MessagePriority, ProjectEntry, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SessionListItem, ShareFixResult, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult, SkillDetail, SshConfigHost, SshConnectionInfo, SshConnectionInput, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo, WidgetReport } from "@gateway/shared/types";
 
 export type { MessagePriority, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, ConnectorPage, ConnectorSource, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, CookieImportResult, CookieSite, CookieSitesView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, ShareFixResult, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
+import type { SessionSearchHit, SessionSearchResult } from "@gateway/shared/types";
+export type { SessionSearchHit, SessionSearchResult };
 
 const BASE = "/api";
 
@@ -108,6 +110,9 @@ export interface GatewayConfig {
 export const api = {
   config: () => request<GatewayConfig>("GET", "/config"),
   listSessions: () => request<{ sessions: SessionListItem[] }>("GET", "/sessions").then((r) => r.sessions),
+  /** 在项目（工作目录 cwd）的所有会话记录里查找 */
+  searchSessions: (cwd: string, q: string, signal?: AbortSignal) =>
+    request<SessionSearchResult>("GET", `/sessions/search?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(q)}`, undefined, signal),
   /** 项目里的文件和文件夹，输入框 @ 引用用；q 为空是第一层 */
   files: (cwd: string, q: string) =>
     request<{ entries: ProjectEntry[] }>("GET", `/files?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(q)}`).then((r) => r.entries),

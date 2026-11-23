@@ -1463,6 +1463,38 @@ span.connector-added { color: var(--ok); font-weight: 500; }
 .folder-empty { color: var(--muted); font-size: 13px; padding: 8px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .confirm-dialog { width: 400px; }
+/* 侧边栏项目的「查找…」：输入框、按会话分组的结果 */
+.search-dialog { width: 640px; }
+.search-input {
+  padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 14px; outline: none;
+}
+.search-input:focus { border-color: var(--accent); }
+.search-status { min-height: 18px; color: var(--muted); font-size: 12px; }
+.search-error { color: var(--err); }
+.search-results { min-height: 120px; max-height: min(480px, calc(100vh - 220px)); overflow-y: auto; margin: 0 -6px; }
+.search-results:empty { min-height: 0; }
+.search-results.loading { opacity: 0.6; }
+.search-session { display: flex; align-items: baseline; gap: 8px; padding: 8px 8px 4px; font-size: 12.5px; font-weight: 600; color: var(--text); }
+.search-session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-session-count { flex: none; color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+.search-hit {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 6px 8px; border: none; border-radius: 8px;
+  background: transparent; color: var(--text); text-align: left; font-size: 13px; line-height: 1.55;
+}
+.search-hit.active { background: var(--frame-hover); }
+.search-hit-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.search-hit-text mark { background: color-mix(in srgb, var(--warn) 32%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+.search-role { display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 17px; vertical-align: 1px; background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--muted); }
+.search-role.user { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.search-hit-meta { flex: none; display: flex; gap: 8px; color: var(--muted); font-size: 11.5px; white-space: nowrap; font-variant-numeric: tabular-nums; padding-top: 1px; }
+/* 查找结果定位到的消息：匹配的文字标出来，消息外框闪一下 */
+::highlight(session-search) { background-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.search-flash { animation: search-flash 1.6s ease-out; border-radius: 10px; }
+@keyframes search-flash {
+  0%, 30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
+  100% { box-shadow: 0 0 0 3px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .search-flash { animation: none; } }
 .confirm-message { margin: 0; font-size: 14px; line-height: 1.6; color: var(--muted); }
 .dialog button.danger { border-color: var(--err); background: var(--err); color: #fff; }
 .dialog button.danger:hover { background: color-mix(in srgb, var(--err) 85%, #000); }

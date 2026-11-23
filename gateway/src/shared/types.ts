@@ -118,6 +118,31 @@ export interface ContextUsage {
   compacted?: boolean;
 }
 
+/**
+ * 在一个项目（同一个工作目录）的会话记录里查找（GET /sessions/search）的一条结果：一条消息算一条，
+ * 只查主线程里用户写的文字和 Claude 回复的文字（不含工具调用、工具结果、子代理、命令和通知），不分大小写
+ */
+export interface SessionSearchHit {
+  sessionId: string;
+  /** 匹配到的那条消息在会话记录里的 uuid（和 GET /sessions/:id/messages 里的一样） */
+  uuid: string;
+  role: "user" | "assistant";
+  /** 第一处匹配前后的一段文字，空白合成一个空格；截掉了的那头带「…」 */
+  snippet: string;
+  /** 这条消息里匹配到几处 */
+  count: number;
+  /** 消息的时间（毫秒）；记录里没有时不带 */
+  at?: number;
+}
+
+export interface SessionSearchResult {
+  hits: SessionSearchHit[];
+  /** 结果超过上限（一次最多 200 条），后面的没有返回 */
+  truncated: boolean;
+  /** 查了几个会话 */
+  sessions: number;
+}
+
 /** 输入框要的会话状态：上下文圆环的用量，目标栏的目标 */
 export interface SessionContextInfo {
   /** 还没取到过时 null */

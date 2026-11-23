@@ -10,7 +10,8 @@ import { MentionNamesContext } from "./components/MentionText";
 import { ContextMeter } from "./components/ContextMeter";
 import { GoalBar, GoalEditor } from "./components/Goal";
 import { Composer, type ComposerHandle } from "./components/Composer";
-import { Messages } from "./components/Messages";
+import { Messages, type MessageFocus } from "./components/Messages";
+import { SessionSearchDialog } from "./components/SessionSearchDialog";
 import { PermissionCard } from "./components/PermissionCard";
 import { EnvPicker, FolderPicker } from "./components/FolderPicker";
 import { ModelPicker, PermissionPicker, resolveModel } from "./components/ComposerPickers";
@@ -85,6 +86,10 @@ export function App() {
     setPanelOpenBy((all) => (ids.some((id) => all[id]) ? Object.fromEntries(Object.entries(all).filter(([id]) => !ids.includes(id))) : all));
   };
   const select = (id: string | null) => setCurrentId(id);
+  /** 侧边栏项目「查找…」开着的对话框（项目的工作目录） */
+  const [searchCwd, setSearchCwd] = useState<string | null>(null);
+  /** 点了查找结果：打开那个会话后要定位到的消息；定位完清掉，之后再切回这个会话不再跳 */
+  const [focus, setFocus] = useState<(MessageFocus & { sessionId: string }) | null>(null);
   /** 切到新会话页（右侧面板在新会话页不显示，会话建好后默认收起，要用再点开） */
   const startNew = (cwd?: string) => {
     setNewCwd(cwd ?? null);
@@ -290,6 +295,7 @@ export function App() {
                   onNew={startNew}
                   onDelete={(ids) => void deleteSessions(ids)}
                   onRename={(id, title) => void renameSession(id, title)}
+                  onSearch={setSearchCwd}
                   // 桌面版的收起按钮在标题栏上
                   onCollapse={desktop ? undefined : toggleSidebar}
                   width={sidebarWidth}
@@ -353,6 +359,8 @@ export function App() {
                 // Chat 按会话 id 重建，晚到的报错（切走后才失败的请求）记在发出它的那个会话上
                 onError={(message) => setSessionError(currentId ?? "new", message)}
                 headerStart={!desktop && collapsed && <SidebarToggle collapsed onToggle={toggleSidebar} />}
+                focus={focus && focus.sessionId === currentId ? focus : null}
+                onFocused={() => setFocus(null)}
               title={title}
               folder={folder}
                 headerEnd={
@@ -396,6 +404,20 @@ export function App() {
           </FileLinkContext.Provider>
         )}
       </div>
+      {searchCwd && config && (
+        <SessionSearchDialog
+          key={searchCwd}
+          cwd={searchCwd}
+          sessions={sessions.filter((s) => !s.chat && (s.cwd || config.workspaceDir) === searchCwd)}
+          onOpen={(hit, query) => {
+            setSearchCwd(null);
+            setSettingsOpen(false);
+            setFocus({ sessionId: hit.sessionId, uuid: hit.uuid, query, seq: Date.now() });
+            select(hit.sessionId);
+          }}
+          onClose={() => setSearchCwd(null)}
+        />
+      )}
     </div>
   );
 }
@@ -464,6 +486,9 @@ interface ChatProps {
   folderPicker?: ReactNode;
   /** 局域网分享的访客（见 ShareApp）：输入框上面不放按钮，不能分叉。本机不传，和原来一样 */
   guest?: boolean;
+  /** 历史拉完后滚动到这条消息、标出匹配的文字（侧边栏项目的「查找…」）；定位完或找不到时调用 onFocused */
+  focus?: MessageFocus | null;
+  onFocused?: () => void;
 }
 
 export function Chat({
@@ -480,6 +505,8 @@ export function Chat({
   folder,
   folderPicker,
   guest,
+  focus,
+  onFocused,
 }: ChatProps) {
   const [view, dispatch] = useReducer(reduce, undefined, emptyView);
   // 打开会话时向网关取的上下文用量和目标（GET /sessions/:id/context）
@@ -808,6 +835,15 @@ export function Chat({
           <WidgetHostContext.Provider value={widgetHost}>
           {(!sessionId || view.historyLoaded) && <Messages
             view={view}
+            focus={focus}
+            onReveal={(found) => {
+              // 定位到的消息不在底部：不再跟着新内容往下滚
+              if (found) {
+                stickRef.current = false;
+                setAtBottom(false);
+              }
+              onFocused?.();
+            }}
             onFork={
               sessionId && !guest
                 ? (messageId) => api.forkSession(sessionId, messageId).then(onCreated, (e: Error) => onError(`分叉失败：${e.message}`))
