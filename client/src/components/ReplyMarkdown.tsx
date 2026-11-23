@@ -137,10 +137,12 @@ export function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTML
       ? { root: cwd, rel: path, dirRoot: cwd, dirRel: path, file: () => open(path, undefined, line), folder: () => openFolder(path) }
       : { root: at(outside!.parent), rel: outside!.name, dirRoot: at(outside!.abs), dirRel: "", file: () => open(outside!.name, at(outside!.parent), line), folder: () => openFolder("", at(outside!.abs)) };
   };
-  // 是文件就打开；能列出内容的是文件夹，在目录树里定位；都不是也当文件打开（面板里显示原因）
+  // 是文件就打开；能列出内容的是文件夹，在目录树里定位；都不是也当文件打开（面板里显示原因）。
+  // 名字带扩展名的直接当文件打开，不先问网关：远程项目问一次要等一个来回，链路慢、SSH 连接正在传大文件时要等好几秒
   const openFile = () => {
     const t = target();
     if (!t) return;
+    if (FILE_NAME.test(t.rel)) return t.file();
     void api
       .filesExist(t.root, [t.rel])
       .catch(() => [t.rel])
@@ -184,9 +186,9 @@ export function ReplyLink({ href, children, ...rest }: AnchorHTMLAttributes<HTML
   return (
     <ContextMenu
       items={[
-        { label: "在右侧面板打开", run: openFile },
-        { label: "下载…", run: () => void downloadLink() },
-        ...(absolute ? [{ label: "复制路径", run: () => void navigator.clipboard.writeText(nativePath(absolute.abs)).catch(() => undefined) }] : []),
+        { label: "在右侧面板打开", icon: <OpenInPanelIcon />, run: openFile },
+        { label: "下载", icon: <DownloadIcon />, run: () => void downloadLink() },
+        ...(absolute ? [{ label: "复制路径", icon: <CopyIcon />, run: () => void navigator.clipboard.writeText(nativePath(absolute.abs)).catch(() => undefined) }] : []),
       ]}
     >
       {(onContextMenu) => (
@@ -229,9 +231,9 @@ function nativePath(abs: string): string {
  */
 function WebLink({ href, openUrl, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string; openUrl: (url: string) => void }) {
   const items = [
-    { label: "在内置浏览器中打开", run: () => openUrl(href) },
-    { label: "在外部浏览器中打开", run: () => void window.open(href, "_blank", "noopener") },
-    { label: "复制链接", run: () => void navigator.clipboard.writeText(href).catch(() => undefined) },
+    { label: "在内置浏览器中打开", icon: <OpenInPanelIcon />, run: () => openUrl(href) },
+    { label: "在外部浏览器中打开", icon: <ExternalIcon />, run: () => void window.open(href, "_blank", "noopener") },
+    { label: "复制链接", icon: <CopyIcon />, run: () => void navigator.clipboard.writeText(href).catch(() => undefined) },
   ];
   return (
     <ContextMenu items={items}>
@@ -253,6 +255,52 @@ function WebLink({ href, openUrl, children, ...rest }: AnchorHTMLAttributes<HTML
         </a>
       )}
     </ContextMenu>
+  );
+}
+
+/** 链接右键菜单的图标（同侧栏「…」菜单的线条图标） */
+function MenuSvg({ children }: { children: ReactNode }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {children}
+    </svg>
+  );
+}
+
+/** 在右侧面板（内置浏览器）打开：右边一栏是面板的窗口 */
+function OpenInPanelIcon() {
+  return (
+    <MenuSvg>
+      <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+      <path d="M9.5 2.5v11" />
+    </MenuSvg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <MenuSvg>
+      <path d="M8 2v8.5M4.5 7 8 10.5 11.5 7" />
+      <path d="M2.5 11v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V11" />
+    </MenuSvg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <MenuSvg>
+      <rect x="5" y="5" width="8.5" height="8.5" rx="1.5" />
+      <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" />
+    </MenuSvg>
+  );
+}
+
+function ExternalIcon() {
+  return (
+    <MenuSvg>
+      <path d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5" />
+      <path d="M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3" />
+    </MenuSvg>
   );
 }
 
@@ -279,6 +327,9 @@ function localPath(raw: string): string | null {
   if (url.startsWith("/") && !url.startsWith("//")) return url;
   return null;
 }
+
+/** 最后一段带扩展名（a.md、x/1553B 培训教程.pdf）：回复链接点开时直接当文件打开 */
+const FILE_NAME = /(?:^|\/)[^/]*[^/.]\.[a-z\d]{1,10}$/i;
 
 /** 链接指向本地文件：绝对路径、file://，或者相对路径（相对会话的工作目录）；带协议的网址、#锚点、?查询、//网址不是 */
 function isLocalLink(href: string): boolean {
