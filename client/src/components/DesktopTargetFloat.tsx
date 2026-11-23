@@ -49,13 +49,15 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
   }, [target.title, target.windowId]);
 
   // 展开着又没找到时：马上、之后隔一会儿再找一次，最小化的窗口不在采集源列表里（Windows、macOS 都是），还原后才找得到，这时标题、窗口 id 都没变，上面不会重新找。
-  // 还是没找到时按窗口 id 在网关的窗口列表（agent-desktop 的 list-windows）里查这个窗口的状态，提示里明确说是最小化了、关了，还是在但取不到画面
+  // 还是没找到时按窗口 id 在网关的窗口列表（agent-desktop 的 list-windows）里查这个窗口的状态：最小化了的，Windows 上不抢焦点地还原（每次展开只试一次），
+  // 还原了马上再找；其他情况提示里明确说是最小化了、关了，还是在但取不到画面
   useEffect(() => {
     setWindowState(undefined);
     if (!open || source !== null || !capture || (!target.title && !target.windowId)) return;
     const { title = "", windowId } = target;
     let cancelled = false;
     let busy = false;
+    let triedRestore = false;
     const check = async () => {
       if (busy) return;
       busy = true;
@@ -67,6 +69,17 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
         const { windows } = await api.desktopWindows();
         if (cancelled) return;
         const w = windows.find((x) => x.id === windowId);
+        if (w?.minimized && capture.platform === "win32" && !triedRestore) {
+          triedRestore = true;
+          setWindowState("restoring");
+          const restored = await capture.restoreWindow(windowId);
+          if (cancelled) return;
+          const again = restored ? await capture.findCaptureSource(title, windowId).catch(() => null) : null;
+          if (cancelled) return;
+          // 还原了但采集源列表里还没有：留着「正在还原」，下一次定时再找
+          if (again) return setSource(again);
+          if (restored) return;
+        }
         setWindowState(!w ? "gone" : w.minimized ? "minimized" : "shown");
       } catch {
         // 查不了状态（网关没开桌面工具、请求失败）：提示按不知道状态写
@@ -136,11 +149,12 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
   );
 }
 
-/** 没找到窗口的画面时，网关的窗口列表里这个窗口的状态：最小化了、不在了（关了）、在而且没最小化 */
-type WindowState = "minimized" | "gone" | "shown";
+/** 没找到窗口的画面时，网关的窗口列表里这个窗口的状态：最小化了、不在了（关了）、在而且没最小化；restoring 是正在自动还原（Windows） */
+type WindowState = "minimized" | "gone" | "shown" | "restoring";
 
 /** 没找到窗口的画面时的提示，按窗口的状态；unknown 是没有窗口 id（只知道标题）或查不了状态 */
 const NOT_FOUND: Record<WindowState | "unknown", string> = {
+  restoring: "窗口最小化了，正在还原…",
   minimized: "窗口最小化了，最小化的窗口取不到画面，还原后自动显示",
   gone: "这个窗口已经关了",
   shown: "取不到这个窗口的画面（macOS 上要给本应用开「屏幕录制」权限）",

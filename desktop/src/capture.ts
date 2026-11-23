@@ -1,10 +1,12 @@
+import { execFile } from "node:child_process";
 import { BrowserWindow, desktopCapturer } from "electron";
 
 /**
  * 桌面工具正在操作的窗口的实时画面（网页右上角的浮窗）：按网关报的窗口（Windows 上有窗口 id 时按 id，否则按标题）在 desktopCapturer 的窗口列表里找，
  * 把采集源的 id 交给网页，网页用 getUserMedia（chromeMediaSource: desktop）取视频流。
  * Windows 10 1903+ 用 Windows Graphics Capture、macOS 用 ScreenCaptureKit，被挡住的窗口也有画面；最小化的窗口不在列表里
- * （Windows 上实测，Notepad++ 等最小化的窗口都没有），找不到，还原后才有（网页那边展开浮窗时会隔几秒再找）。
+ * （Windows 上实测，Notepad++ 等最小化的窗口都没有），找不到，还原后才有：Windows 上网页展开浮窗时调 restoreWindow 不抢焦点地还原，
+ * 其他平台网页隔几秒再找。
  * macOS 要给本应用开「屏幕录制」权限，没开时列表里没有别的应用的窗口
  */
 
@@ -44,4 +46,35 @@ export async function findCaptureSource(title: string, windowId?: string): Promi
   if (!source) return null;
   const icon = source.appIcon && !source.appIcon.isEmpty() ? source.appIcon.toDataURL() : undefined;
   return { id: source.id, name: source.name, ...(icon ? { icon } : {}) };
+}
+
+/** 还原窗口时 PowerShell 最多跑多久（第一次编译 Add-Type 要一两秒） */
+const RESTORE_TIMEOUT_MS = 15_000;
+
+/**
+ * 不抢焦点地还原最小化的窗口（只有 Windows）：ShowWindow(SW_SHOWNOACTIVATE)，前台窗口不变（2026-11-23 company 上实测，前台的 RustDesk 没被切走）。
+ * 不用 agent-desktop 的 restore：它走 UI Automation，实测会把窗口切到前台。Electron 没有调 Win32 的接口，经 PowerShell 的 Add-Type 调。
+ * 窗口没最小化时不动它。返回还原后窗口在、而且不是最小化
+ */
+export async function restoreWindow(windowId: string): Promise<boolean> {
+  const hwnd = hwndOf(windowId);
+  if (!hwnd) return false;
+  const script = [
+    "$w = Add-Type -PassThru -Name W -Namespace ClaudeAppCapture -MemberDefinition '",
+    '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);',
+    '[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);',
+    '[DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);',
+    "'",
+    `$h = [IntPtr][long]${hwnd}`,
+    "if ($w::IsWindow($h) -and $w::IsIconic($h)) { [void]$w::ShowWindow($h, 4) }",
+    "if ($w::IsWindow($h) -and -not $w::IsIconic($h)) { 'ok' } else { 'no' }",
+  ].join("\n");
+  return new Promise((resolve) => {
+    execFile(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+      { windowsHide: true, timeout: RESTORE_TIMEOUT_MS },
+      (err, stdout) => resolve(!err && stdout.trim() === "ok"),
+    );
+  });
 }

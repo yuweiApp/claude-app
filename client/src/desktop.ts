@@ -20,6 +20,8 @@ export interface DesktopApi {
    * 找不到时 null。见 desktop/src/capture.ts
    */
   findCaptureSource(title: string, windowId?: string): Promise<CaptureSource | null>;
+  /** 不抢焦点地还原最小化的窗口（agent-desktop 的窗口 id），只有 Windows 上做，其他平台返回 false；返回还原后窗口在、而且不是最小化。见 desktop/src/capture.ts */
+  restoreWindow(windowId: string): Promise<boolean>;
   /** 界面上一块区域（界面的 CSS 像素）的截图，PNG 的 base64，最长边不超过 1200px；拍不到时 null */
   captureRect(rect: { x: number; y: number; width: number; height: number }): Promise<string | null>;
   /** 文件树的上传、下载：本机路径，见 desktop/src/main.ts 的 files:* */

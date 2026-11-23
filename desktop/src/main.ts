@@ -9,7 +9,7 @@ import { ElementInspector, pngBase64 } from "./browser/inspect.js";
 import { BrowserViews, FAVICON_SCHEME, PARTITION, tabInfo } from "./browser/views.js";
 import { SshProxies } from "./browser/ssh-proxy.js";
 import { NetworkProxy } from "./browser/network-proxy.js";
-import { findCaptureSource } from "./capture.js";
+import { findCaptureSource, restoreWindow } from "./capture.js";
 import { Pet } from "./pet.js";
 
 const execFileAsync = promisify(execFile);
@@ -262,6 +262,7 @@ const pet = new Pet(path.join(root, "desktop", "assets"));
 ipcMain.handle("capture:find", (e, title: unknown, windowId: unknown) =>
   fromUi(e.sender) && typeof title === "string" ? findCaptureSource(title, typeof windowId === "string" ? windowId : undefined) : null,
 );
+ipcMain.handle("capture:restore", (e, windowId: unknown) => (fromUi(e.sender) && typeof windowId === "string" ? restoreWindow(windowId) : false));
 
 // 新会话的「选择文件夹…」：系统的文件夹对话框（Windows 上是资源管理器），取消时返回 null
 ipcMain.handle("dialog:pick-folder", async (e, defaultPath: unknown) => {
