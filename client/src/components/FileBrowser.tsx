@@ -1081,13 +1081,87 @@ const THUMB_EXT = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
 /** 太大的图不当缩略图加载（列表里每张都要读） */
 const THUMB_MAX_BYTES = 5 * 1024 * 1024;
 
-/** 目录树里文件的图标；图片显示小缩略图（同 codex-app-server），读不出来时退回类型图标 */
+/**
+ * 远程项目的缩略图同时最多下载几张。图片经 SSH 从远端读，链路慢时一张要好几秒，
+ * 而网页所有请求（发消息、刷新列表）共用浏览器对同一地址的 6 个连接，缩略图一多就把连接占满，发消息只能排在后面
+ */
+const REMOTE_THUMB_SLOTS = 2;
+let remoteThumbBusy = 0;
+const remoteThumbWaiting: (() => void)[] = [];
+
+/** 排队等一个下载名额，轮到时调用 start；返回的函数在下载完、出错或不再需要时调用（重复调用没关系） */
+function queueRemoteThumb(start: () => void): () => void {
+  let state: "waiting" | "running" | "done" = "waiting";
+  const run = () => {
+    state = "running";
+    remoteThumbBusy++;
+    start();
+  };
+  if (remoteThumbBusy < REMOTE_THUMB_SLOTS) run();
+  else remoteThumbWaiting.push(run);
+  return () => {
+    if (state === "waiting") {
+      const i = remoteThumbWaiting.indexOf(run);
+      if (i >= 0) remoteThumbWaiting.splice(i, 1);
+    } else if (state === "running") {
+      remoteThumbBusy--;
+      remoteThumbWaiting.shift()?.();
+    }
+    state = "done";
+  };
+}
+
+/**
+ * 目录树里文件的图标；图片显示小缩略图（同 codex-app-server），读不出来时退回类型图标。
+ * 远程项目的缩略图滚到看得见时排队下载（见 REMOTE_THUMB_SLOTS），轮到之前先显示类型图标；本机的照常由浏览器懒加载
+ */
 function TreeFileIcon({ cwd, entry }: { cwd: string; entry: ProjectEntry }) {
   const [failed, setFailed] = useState(false);
   const name = basename(entry.path);
-  if (failed || !THUMB_EXT.test(name) || entry.size === undefined || entry.size > THUMB_MAX_BYTES) return <FileTypeIcon name={name} />;
+  const thumb = !failed && THUMB_EXT.test(name) && entry.size !== undefined && entry.size <= THUMB_MAX_BYTES;
+  const remote = isRemote(cwd);
+  const url = api.rawFileUrl(cwd, entry.path, entry.mtimeMs);
+  const [granted, setGranted] = useState<string | null>(null);
+  const waitRef = useRef<HTMLSpanElement>(null);
+  const release = useRef<(() => void) | null>(null);
+  const done = () => {
+    release.current?.();
+    release.current = null;
+  };
+  useEffect(() => {
+    const el = waitRef.current;
+    if (!thumb || !remote || !el) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      observer.disconnect();
+      release.current = queueRemoteThumb(() => setGranted(url));
+    });
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      done();
+    };
+  }, [thumb, remote, url]);
+  if (!thumb) return <FileTypeIcon name={name} />;
+  if (!remote) return <img className="files-thumb" src={url} alt="" loading="lazy" draggable={false} onError={() => setFailed(true)} />;
+  if (granted !== url)
+    return (
+      <span ref={waitRef} className="files-thumb-wait">
+        <FileTypeIcon name={name} />
+      </span>
+    );
   return (
-    <img className="files-thumb" src={api.rawFileUrl(cwd, entry.path, entry.mtimeMs)} alt="" loading="lazy" draggable={false} onError={() => setFailed(true)} />
+    <img
+      className="files-thumb"
+      src={url}
+      alt=""
+      draggable={false}
+      onLoad={done}
+      onError={() => {
+        done();
+        setFailed(true);
+      }}
+    />
   );
 }
 
