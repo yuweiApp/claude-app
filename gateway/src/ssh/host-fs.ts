@@ -156,6 +156,8 @@ async function sftpCopy(host: SshHost, kind: "put" | "get", from: string, to: st
 
 /** 远端读流一次读的大小 */
 const READ_CHUNK = 64 * 1024;
+/** 远端读流同时在路上的读请求数（最多先读出 256 KB）：再多速度不涨，排在后面的列目录等小请求却要多等（实测 16 个时等 7 秒，4 个时 3 秒） */
+const READ_AHEAD = 4;
 
 const fsCache = new WeakMap<SshHost, HostFs>();
 
@@ -245,11 +247,38 @@ function createRemoteFs(host: SshHost): HostFs {
     },
     createReadStream(p, range) {
       // 不用 ssh2 的 createReadStream：Windows 远端上读完后文件句柄没有关，文件一直删不掉、覆盖不了（预览过的图片、下载过的文件），
-      // 要等 SSH 连接断开。这里自己开句柄，读完、出错、提前断开（destroy）都关掉
+      // 要等 SSH 连接断开。这里自己开句柄，读完、出错、提前断开（destroy）都关掉。
+      // 同时有 READ_AHEAD 个读请求在路上（同 fastGet）：一次只发一个时速度被往返延迟卡住，延迟高的链路上一个 PDF 要读几十秒
       let s: SFTPWrapper | undefined;
       let handle: Buffer | null = null;
-      let pos = range?.start ?? 0;
-      const end = range ? range.end : Infinity;
+      /** 下一个要发出的读请求从哪里读 */
+      let next = range?.start ?? 0;
+      /** 读到哪里为止（含）：打开后按文件大小收窄 */
+      let end = range ? range.end : Infinity;
+      /** 已经发出、按顺序排着的读请求 */
+      const queue: { len: number; data: Promise<Buffer> }[] = [];
+      let reading = false;
+      /** 从 pos 读满 len 字节，服务器一次给得少就接着读；读到文件末尾时返回的比 len 短 */
+      const readFull = async (conn: SFTPWrapper, h: Buffer, pos: number, len: number): Promise<Buffer> => {
+        const buf = Buffer.allocUnsafe(len);
+        let got = 0;
+        while (got < len) {
+          const n = await call<number>((done) => conn.read(h, buf, got, len - got, pos + got, done), p);
+          if (!n) break;
+          got += n;
+        }
+        return got < len ? buf.subarray(0, got) : buf;
+      };
+      const fill = () => {
+        while (s && handle && queue.length < READ_AHEAD && next <= end) {
+          const len = Math.min(READ_CHUNK, end - next + 1);
+          const data = readFull(s, handle, next, len);
+          // 流提前关掉时还在路上的请求会失败，没人等它们
+          data.catch(() => undefined);
+          queue.push({ len, data });
+          next += len;
+        }
+      };
       return new Readable({
         highWaterMark: READ_CHUNK,
         construct(cb) {
@@ -257,19 +286,38 @@ function createRemoteFs(host: SshHost): HostFs {
             .then(async (conn) => {
               s = conn;
               handle = await call<Buffer>((done) => conn.open(p, "r", done), p);
+              const size = (await call<Stats>((done) => conn.fstat(handle!, done), p)).size;
+              end = Math.min(end, size - 1);
             })
             .then(() => cb(), (err: Error) => cb(err));
         },
         read() {
-          const len = Math.min(READ_CHUNK, end - pos + 1);
-          if (len <= 0 || !s || !handle) return void this.push(null);
-          const buf = Buffer.allocUnsafe(len);
-          s.read(handle, buf, 0, len, pos, (err, n) => {
-            if (err) return void this.destroy(nodeError(err, p));
-            if (!n) return void this.push(null);
-            pos += n;
-            this.push(n < len ? buf.subarray(0, n) : buf);
-          });
+          if (reading) return;
+          reading = true;
+          void (async () => {
+            try {
+              for (;;) {
+                if (this.destroyed) return;
+                fill();
+                const head = queue.shift();
+                if (!head) return void this.push(null);
+                const buf = await head.data;
+                if (this.destroyed) return;
+                // 比打开时短：文件在读的过程中变小了，读到的就是全部
+                if (buf.length < head.len) {
+                  queue.length = 0;
+                  next = Infinity;
+                  if (buf.length) this.push(buf);
+                  return void this.push(null);
+                }
+                if (!this.push(buf)) return;
+              }
+            } catch (err) {
+              if (!this.destroyed) this.destroy(err as Error);
+            } finally {
+              reading = false;
+            }
+          })();
         },
         destroy(err, cb) {
           const h = handle;

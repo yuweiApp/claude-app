@@ -32,6 +32,9 @@ function pageId(cwd: string): string {
 }
 export const PAGE_PREFIX = "/files/page/";
 
+/** 地址里带着文件修改时间的响应：内容变了地址就变 */
+const CACHE_FOREVER = "private, max-age=31536000, immutable";
+
 /**
  * GET /files?cwd=&q=：输入框里 @ 引用文件用。
  * q 为空列项目文件夹第一层；q 以 / 结尾且是文件夹时列这个文件夹；否则在整个项目里搜（git 仓库按 .gitignore 过滤）
@@ -225,7 +228,7 @@ export function fileRoutes(app: FastifyInstance): void {
   // 网页预览：不走令牌鉴权（见 app.ts），靠地址里的随机 id，只能读这个项目文件夹里的文件。
   // 和界面同源，用 CSP 的 sandbox 把它放进单独的源（不带 allow-same-origin），脚本碰不到界面的存储和接口。
   // HTML 末尾接上标注用的脚本（见 shared/page-picker.ts）
-  app.get<{ Params: { id: string; "*": string } }>(`${PAGE_PREFIX}:id/*`, async (req, reply) => {
+  app.get<{ Params: { id: string; "*": string }; Querystring: { v?: string } }>(`${PAGE_PREFIX}:id/*`, async (req, reply) => {
     const cwd = pageCwds.get(req.params.id);
     if (!cwd) return reply.code(404).type("text/plain; charset=utf-8").send("预览地址已失效，重新打开文件");
     const at = resolveInProject(cwd, req.params["*"]);
@@ -247,11 +250,12 @@ export function fileRoutes(app: FastifyInstance): void {
       .header("x-content-type-options", "nosniff")
       // 沙箱里的页面是单独的源，type="module" 的脚本、fetch 同目录的文件要 CORS
       .header("access-control-allow-origin", "*")
-      .header("cache-control", "no-store")
+      // PDF 预览的地址带着修改时间（v），同上可以一直缓存；网页（和它引用的文件）不缓存，改了刷新就能看到
+      .header("cache-control", ext === ".pdf" && req.query.v ? CACHE_FOREVER : "no-store")
       .send(body);
   });
 
-  app.get<{ Querystring: { cwd?: string; path?: string } }>("/files/raw", async (req, reply) => {
+  app.get<{ Querystring: { cwd?: string; path?: string; v?: string } }>("/files/raw", async (req, reply) => {
     const { fs, p, abs } = resolveInProject(req.query.cwd, req.query.path);
     const info = await fs.stat(abs).catch(() => null);
     if (!info?.isFile) throw new BadRequestError("文件不存在");
@@ -259,6 +263,8 @@ export function fileRoutes(app: FastifyInstance): void {
     if (!type) throw new BadRequestError("只能直接取图片、音频、视频");
     // svg 里可以有脚本，按附件的 CSP 禁掉
     reply.type(type).header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox").header("accept-ranges", "bytes");
+    // 地址带着修改时间（v）的（目录树的缩略图、预览的图片）：文件改了地址就变，浏览器可以一直用缓存的，不用每次重新下载
+    if (req.query.v) reply.header("cache-control", CACHE_FOREVER);
     // 音视频拖进度条时浏览器按 Range 取一段
     const range = parseRange(req.headers.range, info.size);
     if (range === "invalid") return reply.code(416).header("content-range", `bytes */${info.size}`).send();
