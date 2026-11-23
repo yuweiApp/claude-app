@@ -382,11 +382,13 @@
   const DOUBLE_MS = 400;
   let lastClick = 0;
   let start = null;
-  let last = null;
+  /** 按下时鼠标在窗口里的位置：拖动时窗口左上角 = 鼠标的屏幕位置减去它，窗口卡在屏幕边上时松开再拖也不会错位 */
+  let grab = null;
   petEl.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     petEl.setPointerCapture(e.pointerId);
-    start = last = { x: e.screenX, y: e.screenY };
+    start = { x: e.screenX, y: e.screenY };
+    grab = { x: e.clientX, y: e.clientY };
     dragging = false;
   });
   petEl.addEventListener("pointermove", (e) => {
@@ -396,13 +398,12 @@
       petEl.classList.add("dragging");
     }
     if (!dragging) return;
-    api.move(e.screenX - last.x, e.screenY - last.y);
-    last = { x: e.screenX, y: e.screenY };
+    api.move(e.screenX - grab.x, e.screenY - grab.y);
   });
   const end = (e, cancelled) => {
     if (!start) return;
     const wasDrag = dragging;
-    start = last = null;
+    start = grab = null;
     dragging = false;
     petEl.classList.remove("dragging");
     if (wasDrag || cancelled) return;

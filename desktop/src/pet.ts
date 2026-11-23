@@ -25,6 +25,40 @@ const TICK_MS = 4000;
 const passThrough = process.platform !== "linux";
 
 /**
+ * 小精灵两只眼睛在灵宠窗口里的位置（窗口坐标），按 assets/pet.html 的布局算：小精灵 104px 见方，离窗口右边 22px、下边 8px，
+ * SVG 的 viewBox 是 120；眼睛中心在 (47, 66)、(73, 66)，半宽 4.6、半高 5.6。改了 pet.html 的布局要跟着改
+ */
+const PET_SIZE = 104;
+const PET_LEFT = WIDTH - 22 - PET_SIZE;
+const PET_TOP = HEIGHT - 8 - PET_SIZE;
+const UNIT = PET_SIZE / 120;
+const EYES = {
+  /** 左眼的左边、右边 */
+  leftEye: [PET_LEFT + (47 - 4.6) * UNIT, PET_LEFT + (47 + 4.6) * UNIT] as const,
+  /** 右眼的左边、右边 */
+  rightEye: [PET_LEFT + (73 - 4.6) * UNIT, PET_LEFT + (73 + 4.6) * UNIT] as const,
+  top: PET_TOP + (66 - 5.6) * UNIT,
+  bottom: PET_TOP + (66 + 5.6) * UNIT,
+};
+/** 眼睛离屏幕边至少留这么多：浮动动画会往上飘 4px，干活时眼珠左右看 2.5px，留够了贴边时眼睛也不会被切掉一点 */
+const EYE_MARGIN = 4;
+
+/**
+ * 灵宠窗口能放的位置：可以拖出屏幕一部分，但眼睛得露着——拖到下边两只眼睛都露着，拖到右边至少露左眼，拖到左边至少露右眼，
+ * 拖到上边两只眼睛也都露着。按眼睛中间那一点最近的屏幕的工作区算（不压到任务栏下面），多块屏幕之间照常能拖过去
+ */
+function clampPosition(x: number, y: number): { x: number; y: number } {
+  const cx = x + (EYES.leftEye[0] + EYES.rightEye[1]) / 2;
+  const cy = y + (EYES.top + EYES.bottom) / 2;
+  const a = screen.getDisplayNearestPoint({ x: Math.round(cx), y: Math.round(cy) }).workArea;
+  const minX = a.x - EYES.rightEye[0] + EYE_MARGIN;
+  const maxX = a.x + a.width - EYES.leftEye[1] - EYE_MARGIN;
+  const minY = a.y - EYES.top + EYE_MARGIN;
+  const maxY = a.y + a.height - EYES.bottom - EYE_MARGIN;
+  return { x: Math.round(Math.min(Math.max(x, minX), maxX)), y: Math.round(Math.min(Math.max(y, minY), maxY)) };
+}
+
+/**
  * 灵宠：设置里开着就一直待在屏幕右下角（主窗口开着、最小化都在），没事时在那儿待着，有会话在跑时它在干活，
  * 主窗口不在前台时会话完成就跳出气泡告诉用户；双击它或点气泡恢复主窗口并打开完成的会话。设置页「灵宠」可以关掉（网页记着开关，见 client/src/pet.ts）。
  * 右键菜单可以先隐藏到回到主窗口为止，或者直接关掉灵宠（外壳告诉网页改开关）。
@@ -72,10 +106,10 @@ export class Pet {
       this.notices = [];
       this.sync();
     });
-    ipcMain.on("pet:move", (e, dx: unknown, dy: unknown) => {
-      if (!this.fromPet(e.sender) || !this.win || typeof dx !== "number" || typeof dy !== "number") return;
-      const [x = 0, y = 0] = this.win.getPosition();
-      this.position = { x: Math.round(x + dx), y: Math.round(y + dy) };
+    // 拖动：页面按鼠标位置算出窗口该在的位置（屏幕坐标），这里限制在眼睛还露着的范围里
+    ipcMain.on("pet:move", (e, x: unknown, y: unknown) => {
+      if (!this.fromPet(e.sender) || !this.win || typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return;
+      this.position = clampPosition(x, y);
       this.win.setPosition(this.position.x, this.position.y);
     });
     // 窗口透明的地方要让鼠标穿过去，不挡住下面的东西；鼠标移到小精灵、气泡上时页面告诉这里接住鼠标
@@ -205,9 +239,7 @@ export class Pet {
   private place(win: BrowserWindow): void {
     const display = this.main && !this.main.isDestroyed() ? screen.getDisplayMatching(this.main.getBounds()) : screen.getPrimaryDisplay();
     const area = display.workArea;
-    const saved = this.position;
-    const fits = saved && screen.getAllDisplays().some(({ workArea: a }) => saved.x >= a.x - WIDTH / 2 && saved.x <= a.x + a.width - WIDTH / 2 && saved.y >= a.y - HEIGHT / 2 && saved.y <= a.y + a.height - HEIGHT / 2);
-    const { x, y } = fits ? saved : { x: area.x + area.width - WIDTH - 12, y: area.y + area.height - HEIGHT };
+    const { x, y } = this.position ? clampPosition(this.position.x, this.position.y) : { x: area.x + area.width - WIDTH - 12, y: area.y + area.height - HEIGHT };
     win.setPosition(Math.round(x), Math.round(y));
   }
 

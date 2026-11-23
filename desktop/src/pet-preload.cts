@@ -15,8 +15,8 @@ contextBridge.exposeInMainWorld("pet", {
   open: (sessionId?: string) => ipcRenderer.send("pet:open", sessionId),
   /** 清掉完成的通知 */
   dismiss: () => ipcRenderer.send("pet:dismiss"),
-  /** 拖动：按屏幕像素挪窗口 */
-  move: (dx: number, dy: number) => ipcRenderer.send("pet:move", dx, dy),
+  /** 拖动：把窗口挪到这个位置（屏幕坐标，窗口左上角），外壳会限制在小精灵眼睛还露着的范围里 */
+  move: (x: number, y: number) => ipcRenderer.send("pet:move", x, y),
   /** 弹出右键菜单 */
   menu: () => ipcRenderer.send("pet:menu"),
   /** 鼠标在不在小精灵、气泡上（不在时鼠标穿过透明的窗口） */
