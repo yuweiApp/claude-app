@@ -34,7 +34,8 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
     return () => window.removeEventListener("keydown", onKey);
   }, [open, large]);
 
-  // 找窗口（Windows 上按窗口 id，否则按标题）：窗口、标题变了（记事本保存后标题变成文件名）重新找
+  // 找窗口（Windows 上按窗口 id，否则按标题）：窗口、标题变了（记事本保存后标题变成文件名）重新找；
+  // 展开、收起时也重新找：上次找到后窗口可能最小化了，用旧的采集源取流会失败（Could not start video source），重新找才会走下面的自动还原
   useEffect(() => {
     setSource(undefined);
     if (!capture || (!target.title && !target.windowId)) return;
@@ -46,7 +47,7 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
     return () => {
       cancelled = true;
     };
-  }, [target.title, target.windowId]);
+  }, [target.title, target.windowId, open]);
 
   // 展开着又没找到时：马上、之后隔一会儿再找一次，最小化的窗口不在采集源列表里（Windows、macOS 都是），还原后才找得到，这时标题、窗口 id 都没变，上面不会重新找。
   // 还是没找到时按窗口 id 在网关的窗口列表（agent-desktop 的 list-windows）里查这个窗口的状态：最小化了的，Windows 上不抢焦点地还原（每次展开只试一次），
@@ -65,7 +66,7 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
         const found = await capture.findCaptureSource(title, windowId).catch(() => null);
         if (cancelled) return;
         if (found) return setSource(found);
-        if (!windowId) return;
+        if (!windowId) return setWindowState("unknown");
         const { windows } = await api.desktopWindows();
         if (cancelled) return;
         const w = windows.find((x) => x.id === windowId);
@@ -83,6 +84,7 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
         setWindowState(!w ? "gone" : w.minimized ? "minimized" : "shown");
       } catch {
         // 查不了状态（网关没开桌面工具、请求失败）：提示按不知道状态写
+        if (!cancelled) setWindowState("unknown");
       } finally {
         busy = false;
       }
@@ -149,11 +151,14 @@ export function DesktopTargetFloat({ target, running }: { target: DesktopTarget;
   );
 }
 
-/** 没找到窗口的画面时，网关的窗口列表里这个窗口的状态：最小化了、不在了（关了）、在而且没最小化；restoring 是正在自动还原（Windows） */
-type WindowState = "minimized" | "gone" | "shown" | "restoring";
+/**
+ * 没找到窗口的画面时，网关的窗口列表里这个窗口的状态：最小化了、不在了（关了）、在而且没最小化；restoring 是正在自动还原（Windows），
+ * unknown 是没有窗口 id（只知道标题）或查不了状态
+ */
+type WindowState = "minimized" | "gone" | "shown" | "restoring" | "unknown";
 
-/** 没找到窗口的画面时的提示，按窗口的状态；unknown 是没有窗口 id（只知道标题）或查不了状态 */
-const NOT_FOUND: Record<WindowState | "unknown", string> = {
+/** 没找到窗口的画面时的提示，按窗口的状态 */
+const NOT_FOUND: Record<WindowState, string> = {
   restoring: "窗口最小化了，正在还原…",
   minimized: "窗口最小化了，最小化的窗口取不到画面，还原后自动显示",
   gone: "这个窗口已经关了",
@@ -263,7 +268,8 @@ function LiveView({
   else if (!capture) message = "桌面版重启后才能看实时画面";
   else if (!target.title && !target.windowId) message = "还没找到这个软件的窗口";
   else if (source === undefined) message = "正在找窗口…";
-  else if (source === null) message = NOT_FOUND[windowState ?? "unknown"];
+  // 还没查完窗口的状态时（查网关的窗口列表要零点几秒）按还在找写，免得先闪一下「没找到」
+  else if (source === null) message = windowState ? NOT_FOUND[windowState] : "正在找窗口…";
   else if (error) message = `取不到画面：${error}`;
   else if (ended) message = "窗口已经关闭";
   const live = !!source && !error && !ended;
