@@ -149,7 +149,18 @@ export class Pet {
     main.on("restore", back);
     main.on("show", back);
     main.on("focus", back);
+    // 屏幕缩放、分辨率变了（比如远程桌面连上、断开时），或者接上、拔掉显示器：窗口大小、位置按现在的屏幕重新放。
+    // Windows 上缩放变了以后透明窗口会停在原来的物理大小，换算成新的缩放就大了或小了，小精灵会跑到屏幕外面去
+    const replace = () => {
+      if (this.win && !this.win.isDestroyed() && this.win.isVisible()) this.place(this.win);
+    };
+    screen.on("display-metrics-changed", replace);
+    screen.on("display-added", replace);
+    screen.on("display-removed", replace);
     main.on("closed", () => {
+      screen.off("display-metrics-changed", replace);
+      screen.off("display-added", replace);
+      screen.off("display-removed", replace);
       this.main = undefined;
       this.stopTick();
       if (this.win && !this.win.isDestroyed()) this.win.destroy();
@@ -235,12 +246,15 @@ export class Pet {
     return win;
   }
 
-  /** 放到主窗口所在屏幕的右下角（拖过就放回拖到的位置，屏幕变了放不下时回到右下角） */
+  /**
+   * 放到主窗口所在屏幕的右下角（拖过就放回拖到的位置，限制在眼睛还露着的范围里）。
+   * 大小也一起设回去：缩放变过之后窗口可能不是 WIDTH × HEIGHT 了
+   */
   private place(win: BrowserWindow): void {
     const display = this.main && !this.main.isDestroyed() ? screen.getDisplayMatching(this.main.getBounds()) : screen.getPrimaryDisplay();
     const area = display.workArea;
     const { x, y } = this.position ? clampPosition(this.position.x, this.position.y) : { x: area.x + area.width - WIDTH - 12, y: area.y + area.height - HEIGHT };
-    win.setPosition(Math.round(x), Math.round(y));
+    win.setBounds({ x: Math.round(x), y: Math.round(y), width: WIDTH, height: HEIGHT });
   }
 
   private menu(): Menu {
