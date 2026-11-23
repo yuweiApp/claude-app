@@ -7,6 +7,7 @@ import { AddMenu } from "./AddMenu";
 import { ContextMenu } from "./ContextMenu";
 import { formatSize } from "./Attachments";
 import { ImageThumb } from "./ImageThumb";
+import { sessionPathUri } from "../remote";
 import { MentionMenu, type MentionOption } from "./MentionMenu";
 import { fileMention, fileRefParts, findMentions, IMAGE_EXT, MentionText, browserMention, PATH_DRAG_TYPE, SESSION_DRAG_TYPE, MentionNamesContext, sessionMention, sessionToken, tabMention, tabToken, type Mention, type MentionSource } from "./MentionText";
 
@@ -379,7 +380,7 @@ export function Composer({ running, working = running, maxUploadMb, onSend, onIn
     // 图片：输入框里显示缩略图（和上传的图片一样），不上传，发送时写成 @绝对路径
     if (IMAGE_EXT.test(path)) {
       if (!files.some((f) => f.path === path)) {
-        setFiles((prev) => [...prev, { key: crypto.randomUUID(), name: fileRefParts(path).base, size: 0, status: "done", preview: api.rawFileUrl(path, ""), path }]);
+        setFiles((prev) => [...prev, { key: crypto.randomUUID(), name: fileRefParts(path).base, size: 0, status: "done", preview: api.rawFileUrl(sessionPathUri(cwd, path), ""), path }]);
       }
       return;
     }

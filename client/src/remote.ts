@@ -34,3 +34,9 @@ export const remoteUri = (host: string, path = "") => {
   const p = win ? `/${path[0]!.toUpperCase()}:${path.slice(2).replaceAll("\\", "/").replace(/\/+$/, "") || "/"}` : path;
   return `${SSH_PREFIX}${host}${p}`;
 };
+
+/** 会话所在机器上的绝对路径（machinePath 的写法）换成网关接口要的：远程会话是 ssh://<id><路径>，本机会话原样 */
+export const sessionPathUri = (cwd: string | null | undefined, path: string) => {
+  const remote = parseRemote(cwd);
+  return remote ? remoteUri(remote.host, path) : path;
+};

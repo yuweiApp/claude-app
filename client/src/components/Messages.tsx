@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { isGoalStart, SHOW_WIDGET_TOOL, type AgentItem, type ApiRetry, type GoalItem, type Item, type SessionView, type TaskItem } from "../state/session";
 import { Attachments } from "./Attachments";
@@ -11,7 +11,8 @@ import { StepThumbs } from "./StepThumbs";
 import { formatShortDuration } from "./TasksPopover";
 import { MentionText, splitImageRefs } from "./MentionText";
 import { AnnotatableText, SentNotesChip } from "./ResponseAnnotations";
-import { ReplyMarkdown } from "./ReplyMarkdown";
+import { FileLinkContext, ReplyMarkdown } from "./ReplyMarkdown";
+import { sessionPathUri } from "../remote";
 import { useSshConnections } from "../state/sshConnections";
 
 type UserItem = Extract<Item, { kind: "user" }>;
@@ -683,11 +684,12 @@ function ErrorLine({ item }: { item: Extract<Item, { kind: "error" }> }) {
 }
 
 function ItemView({ item }: { item: Exclude<Item, { kind: "assistant" }> }) {
+  const cwd = useContext(FileLinkContext)?.cwd;
   switch (item.kind) {
     case "user": {
-      // 拖进来的图片是消息末尾的 @绝对路径，和上传的图片一样显示成缩略图（图片从网关按路径取）
+      // 拖进来的图片是消息末尾的 @绝对路径（会话所在机器上的），和上传的图片一样显示成缩略图（图片从网关按路径取）
       const { text, paths } = splitImageRefs(item.text);
-      const images = [...item.images, ...paths.map((p) => api.rawFileUrl(p, ""))];
+      const images = [...item.images, ...paths.map((p) => api.rawFileUrl(sessionPathUri(cwd, p), ""))];
       return (
         <div className="user">
           {images.length > 0 && (
