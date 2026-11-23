@@ -1434,6 +1434,11 @@ span.connector-added { color: var(--ok); font-weight: 500; }
 .context-menu .menu-item:hover:not(:disabled) { background: var(--panel); }
 .context-menu .menu-item:disabled { opacity: 0.45; cursor: default; }
 .menu-item.danger { color: var(--err); }
+/* 侧栏的「…」菜单：每项左边一个图标，灰色；危险项（删除）图标跟文字一样红 */
+.sidebar-menu .menu-item { flex-direction: row; align-items: center; gap: 9px; padding: 6px 12px 6px 10px; }
+.sidebar-menu-ic { flex: none; display: inline-flex; width: 16px; justify-content: center; color: var(--muted); }
+.sidebar-menu .menu-item:hover:not(:disabled) .sidebar-menu-ic { color: var(--text); }
+.sidebar-menu .menu-item.danger .sidebar-menu-ic { color: inherit; }
 .menu-item-icon { display: flex; align-items: center; gap: 8px; }
 /* 新会话栏的环境选择（本机 / SSH 主机）：左边图标，中间名字和地址，右边连接状态的圆点 */
 .env-menu { min-width: 220px; }

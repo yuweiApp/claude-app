@@ -225,6 +225,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
         menu={[
           {
             label: "全部删除",
+            icon: <TrashIcon />,
             danger: true,
             disabled: projects.length === 0,
             onClick: () => onDelete(projects.flatMap((g) => g.sessions.map((s) => s.sessionId))),
@@ -264,6 +265,7 @@ export function Sidebar({ sessions, workspaceDir, currentId, onSelect, onNew, on
         menu={[
           {
             label: "全部删除",
+            icon: <TrashIcon />,
             danger: true,
             disabled: chats.length === 0,
             onClick: () => onDelete(chats.map((s) => s.sessionId)),
@@ -299,6 +301,8 @@ function relativeTime(ms: number) {
 
 interface MenuAction {
   label: string;
+  /** 菜单项左边的图标 */
+  icon: ReactNode;
   danger?: boolean;
   disabled?: boolean;
   onClick: () => void;
@@ -347,7 +351,7 @@ function MoreButton({ className, label, menu }: { className: string; label: stri
 function MenuPopup({ menu, items }: { menu: ReturnType<typeof useRowMenu>; items: MenuAction[] }) {
   if (!menu.at) return null;
   return (
-    <div ref={menu.menuRef} className="menu context-menu" role="menu" style={{ left: menu.at.left ?? "auto", right: menu.at.right ?? "auto", top: menu.at.top }}>
+    <div ref={menu.menuRef} className="menu context-menu sidebar-menu" role="menu" style={{ left: menu.at.left ?? "auto", right: menu.at.right ?? "auto", top: menu.at.top }}>
       {items.map((item) => (
         <button
           key={item.label}
@@ -359,6 +363,7 @@ function MenuPopup({ menu, items }: { menu: ReturnType<typeof useRowMenu>; items
             item.onClick();
           }}
         >
+          <span className="sidebar-menu-ic">{item.icon}</span>
           <span className="menu-item-name">{item.label}</span>
         </button>
       ))}
@@ -416,19 +421,19 @@ function SessionRow({
   const sharedLabel = sharedLan && sharedPublic ? "已分享到局域网和公网" : sharedPublic ? "已分享到公网" : "已分享到局域网";
   const lanItems: MenuAction[] = sharedLan
     ? [
-        ...links.map((link) => ({ label: links.length > 1 ? `复制分享链接（${link.address}）` : "复制分享链接", onClick: () => copyShareLink(link.url) })),
-        { label: sharedPublic ? "停止局域网分享" : "停止分享", onClick: () => void stopShare(s.sessionId) },
+        ...links.map((link) => ({ label: links.length > 1 ? `复制分享链接（${link.address}）` : "复制分享链接", icon: <LinkIcon />, onClick: () => copyShareLink(link.url) })),
+        { label: sharedPublic ? "停止局域网分享" : "停止分享", icon: <StopShareIcon />, onClick: () => void stopShare(s.sessionId) },
       ]
-    : [{ label: "分享到局域网", onClick: () => void startShare(s.sessionId) }];
+    : [{ label: "分享到局域网", icon: <ShareIcon size={14} />, onClick: () => void startShare(s.sessionId) }];
   // 公网分享要先在设置「公网分享」里配置服务器，没配置时不显示。复制公网链接也走开分享的接口：断开了、出错了时会重新连
   const publicUrl = publicShareLink(sharesView, s.sessionId);
   const publicItems: MenuAction[] = sharedPublic
     ? [
-        { label: "复制公网链接", onClick: () => (publicUrl && sharesView?.tunnel.status === "ready" ? copyShareLink(publicUrl) : void startPublicShare(s.sessionId)) },
-        { label: "停止公网分享", onClick: () => void stopPublicShare(s.sessionId) },
+        { label: "复制公网链接", icon: <LinkIcon />, onClick: () => (publicUrl && sharesView?.tunnel.status === "ready" ? copyShareLink(publicUrl) : void startPublicShare(s.sessionId)) },
+        { label: "停止公网分享", icon: <StopShareIcon />, onClick: () => void stopPublicShare(s.sessionId) },
       ]
     : sharesView?.publicEnabled
-      ? [{ label: "分享到公网", onClick: () => void startPublicShare(s.sessionId) }]
+      ? [{ label: "分享到公网", icon: <GlobeIcon />, onClick: () => void startPublicShare(s.sessionId) }]
       : [];
   const shareItems = [...lanItems, ...publicItems];
   const itemClass = `session-item${branch ? " branch-row" : ""}${branch && branchEnd ? " branch-end" : ""}${menu.at ? " menu-open" : ""}`;
@@ -478,19 +483,20 @@ function SessionRow({
       <MenuPopup
         menu={menu}
         items={[
-          { label: "重命名", onClick: () => setRenaming(true) },
+          { label: "重命名", icon: <PencilIcon />, onClick: () => setRenaming(true) },
           // 「会话」里的会话：用系统的文件管理器打开它的工作目录（网关建的 scratch 文件夹）；桌面版、本机的会话才有（同项目的菜单）
           ...(desktop && s.chat && s.cwd && !remote
             ? [
                 {
                   label: `在${fileManagerName}中打开`,
+                  icon: <OpenFolderIcon />,
                   onClick: () =>
                     void desktop!.openFolder(s.cwd!).then((opened) => !opened && window.alert("这台电脑上没有这个文件夹（网关在别的机器上，或文件夹已被删除）")),
                 },
               ]
             : []),
           ...shareItems,
-          { label: "删除", danger: true, onClick: () => onDelete(s) },
+          { label: "删除", icon: <TrashIcon />, danger: true, onClick: () => onDelete(s) },
         ]}
       />
     </li>
@@ -622,18 +628,19 @@ function ProjectGroup({
           menu={menu}
           items={[
             // 在这个项目的所有会话记录里查找，点结果打开会话并定位到那条消息
-            ...(onSearch ? [{ label: "查找…", onClick: () => onSearch(g.cwd) }] : []),
+            ...(onSearch ? [{ label: "查找", icon: <SearchIcon />, onClick: () => onSearch(g.cwd) }] : []),
             // 用系统的文件管理器打开项目文件夹：桌面版、本机的项目才有（同文件浏览器里工作目录的菜单）
             ...(desktop && !remote
               ? [
                   {
                     label: `在${fileManagerName}中打开`,
+                    icon: <OpenFolderIcon />,
                     onClick: () =>
                       void desktop!.openFolder(g.cwd).then((opened) => !opened && window.alert("这台电脑上没有这个文件夹（网关在别的机器上，或文件夹已被删除）")),
                   },
                 ]
               : []),
-            { label: "删除项目", danger: true, onClick: () => onDelete(g) },
+            { label: "删除项目", icon: <TrashIcon />, danger: true, onClick: () => onDelete(g) },
           ]}
         />
       </div>
@@ -692,9 +699,9 @@ function ComposeIcon() {
 
 
 /** 分享中的会话：标题后面的图标（三个点连成的分享符号） */
-function ShareIcon() {
+function ShareIcon({ size = 12 }: { size?: number }) {
   return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
       <circle cx="12" cy="3.5" r="2" />
       <circle cx="4" cy="8" r="2" />
       <circle cx="12" cy="12.5" r="2" />
@@ -749,3 +756,74 @@ function CaretIcon({ open }: { open: boolean }) {
   );
 }
 
+/* 侧栏「…」菜单项左边的图标：14px 线条图标 */
+function MenuSvg({ children }: { children: ReactNode }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {children}
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <MenuSvg>
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="m10.3 10.3 3.2 3.2" />
+    </MenuSvg>
+  );
+}
+
+function OpenFolderIcon() {
+  return (
+    <MenuSvg>
+      <path d="M2 12.5V4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.2A1.5 1.5 0 0 1 13.5 6v1" />
+      <path d="M2 12.5 3.7 8A1.5 1.5 0 0 1 5.1 7h8.4a1 1 0 0 1 .95 1.3l-1.3 3.9a1.5 1.5 0 0 1-1.4 1H3a1 1 0 0 1-1-.7z" />
+    </MenuSvg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <MenuSvg>
+      <path d="M10.5 2.8a1.4 1.4 0 0 1 2 0l.7.7a1.4 1.4 0 0 1 0 2L6 12.7 2.8 13.5l.8-3.2z" />
+      <path d="m9.5 3.8 2.7 2.7" />
+    </MenuSvg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <MenuSvg>
+      <path d="M2.5 4.5h11M6.5 4.5V3a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5" />
+      <path d="M3.8 4.5 4.5 13a1 1 0 0 0 1 .9h5a1 1 0 0 0 1-.9l.7-8.5M6.8 7v4.5M9.2 7v4.5" />
+    </MenuSvg>
+  );
+}
+
+function LinkIcon() {
+  return (
+    <MenuSvg>
+      <path d="M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.9.9" />
+      <path d="M9.2 6.8a2.6 2.6 0 0 0-3.7 0L3.3 9a2.6 2.6 0 0 0 3.7 3.7l.9-.9" />
+    </MenuSvg>
+  );
+}
+
+function GlobeIcon() {
+  return (
+    <MenuSvg>
+      <circle cx="8" cy="8" r="5.8" />
+      <path d="M2.2 8h11.6M8 2.2c1.6 1.6 2.4 3.5 2.4 5.8S9.6 12.2 8 13.8C6.4 12.2 5.6 10.3 5.6 8S6.4 3.8 8 2.2z" />
+    </MenuSvg>
+  );
+}
+
+function StopShareIcon() {
+  return (
+    <MenuSvg>
+      <circle cx="8" cy="8" r="5.8" />
+      <path d="m3.9 3.9 8.2 8.2" />
+    </MenuSvg>
+  );
+}
