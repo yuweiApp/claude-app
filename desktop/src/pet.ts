@@ -25,7 +25,7 @@ const TICK_MS = 4000;
 const passThrough = process.platform !== "linux";
 
 /**
- * 灵宠：主窗口最小化（或隐藏）时，屏幕右下角出现一个小精灵，有会话在跑时它在干活，会话完成时跳出气泡告诉用户；
+ * 灵宠：主窗口最小化（或隐藏）时，屏幕右下角出现一个小精灵，没事时在那儿待着，有会话在跑时它在干活，会话完成时跳出气泡告诉用户；
  * 点它恢复主窗口并打开完成的会话。设置页「灵宠」可以关掉（网页记着开关，见 client/src/pet.ts）。
  * 右键菜单可以先隐藏到回到主窗口为止，或者直接关掉灵宠（外壳告诉网页改开关）。
  *
@@ -132,8 +132,7 @@ export class Pet {
     const hidden = this.enabled && !this.dismissed && this.mainHidden();
     if (hidden) this.startTick();
     else this.stopTick();
-    const visible = hidden && (this.working > 0 || this.notices.length > 0);
-    if (!visible) {
+    if (!hidden) {
       if (this.win && !this.win.isDestroyed() && this.win.isVisible()) this.win.hide();
       return;
     }
