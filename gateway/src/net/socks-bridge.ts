@@ -1,6 +1,7 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import net, { type AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
+import { endToEndHeaders } from "./hop-headers.js";
 
 /**
  * SOCKS5 代理的转接：Claude Code、curl、git、Node 的 fetch 都只认 HTTP 代理（HTTPS_PROXY），
@@ -99,13 +100,10 @@ export class SocksBridge {
     } catch (err) {
       return void res.writeHead(502, { "content-type": "text/plain; charset=utf-8" }).end((err as Error).message);
     }
-    const headers = { ...req.headers };
-    for (const h of ["proxy-authorization", "proxy-connection", "connection", "keep-alive"]) delete headers[h];
+    const headers = endToEndHeaders(req.headers);
     // 不传 agent：传了 agent（包括 false，会新建一个）时 createConnection 不起作用，又按 localhost:80 去连
     const out = http.request({ method: req.method, path: `${url.pathname}${url.search}`, headers, createConnection: () => s.resume() }, (up) => {
-      const h = { ...up.headers };
-      for (const k of ["connection", "keep-alive", "transfer-encoding"]) delete h[k];
-      res.writeHead(up.statusCode ?? 502, up.statusMessage, h);
+      res.writeHead(up.statusCode ?? 502, up.statusMessage, endToEndHeaders(up.headers));
       up.pipe(res);
     });
     out.on("error", (err) => {

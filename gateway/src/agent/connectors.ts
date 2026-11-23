@@ -217,7 +217,7 @@ export async function addConnector(input: ConnectorInput): Promise<string> {
   const name = serverName(input.name, entry);
   saveMcpServer(
     { name, type: entry.type, url, ...(Object.keys(headers).length ? { headers } : {}) },
-    { id: entry.id, title: entry.title, ...(entry.icon ? { icon: entry.icon } : {}) },
+    { id: entry.id, title: entry.title, source: "registry", ...(entry.icon ? { icon: entry.icon } : {}) },
   );
   return name;
 }

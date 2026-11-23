@@ -355,8 +355,8 @@ export interface ConnectorRef {
   id: string;
   title: string;
   icon?: string;
-  /** 来自哪个连接器市场；没有是 MCP 注册表（以前添加的都是） */
-  source?: ConnectorSource;
+  /** 来自哪个连接器市场 */
+  source: ConnectorSource;
 }
 
 /** 连接器市场的来源：directory 是 Claude 目录（claude.ai 上的连接器目录），registry 是 MCP 官方注册表 */

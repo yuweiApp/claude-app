@@ -87,21 +87,21 @@ export function getConnection(id: string): SshConnection | undefined {
 }
 
 /** 检查、整理用户填的内容 */
-export function normalizeInput(input: Partial<SshConnectionInput>): SshConnectionInput {
-  const host = String(input.host ?? "").trim();
+export function normalizeInput(input: SshConnectionInput): SshConnectionInput {
+  const host = input.host.trim();
   if (!host || /\s/.test(host) || host.startsWith("-")) throw new BadRequestError("主机不能为空，也不能有空格（user@host、host 或 ~/.ssh/config 里的别名）");
-  const port = input.port === undefined || input.port === null || String(input.port) === "" ? undefined : Number(input.port);
+  const { port } = input;
   if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) throw new BadRequestError("端口要是 1–65535 的整数");
   const identityFile = input.identityFile?.trim() || undefined;
   const startDirectory = input.startDirectory?.trim() || undefined;
   if (startDirectory && !startDirectory.startsWith("/") && !startDirectory.startsWith("~") && !/^[A-Za-z]:[\\/]/.test(startDirectory)) {
     throw new BadRequestError("默认目录要是绝对路径或 ~ 开头");
   }
-  const remoteForwards = [...new Set((Array.isArray(input.remoteForwards) ? input.remoteForwards : []).map((f) => String(f).trim()).filter(Boolean))];
+  const remoteForwards = [...new Set((input.remoteForwards ?? []).map((f) => f.trim()).filter(Boolean))];
   const bad = remoteForwards.find((f) => !parseForwardSpec(f));
   if (bad) throw new BadRequestError(`反向转发「${bad}」的格式不对：同 ssh -R，写成 远端端口:本机地址:本机端口（如 5432:127.0.0.1:5432），要指定远端地址时在最前面加上（如 0.0.0.0:8080:127.0.0.1:80）`);
   return {
-    name: input.name?.trim() || host,
+    name: input.name.trim() || host,
     host,
     ...(port ? { port } : {}),
     ...(identityFile ? { identityFile } : {}),
@@ -110,7 +110,7 @@ export function normalizeInput(input: Partial<SshConnectionInput>): SshConnectio
   };
 }
 
-export function addConnection(input: Partial<SshConnectionInput>): SshConnection {
+export function addConnection(input: SshConnectionInput): SshConnection {
   const conn: SshConnection = { id: randomBytes(6).toString("hex").slice(0, 8).replace(/^[0-9]/, "s"), ...normalizeInput(input) };
   const file = load();
   save({ ...file, connections: [...file.connections, conn] });
@@ -124,10 +124,10 @@ function savedOnly(id: string): SshConnection {
   return conn;
 }
 
-/** 改了主机、端口就是另一台机器：信任过的密钥和远端信息作废 */
-export function updateConnection(id: string, input: Partial<SshConnectionInput>): SshConnection {
+/** 按设置页的表单整个换掉（不和旧值合并：清空的项就是去掉）。改了主机、端口就是另一台机器：信任过的密钥和远端信息作废 */
+export function updateConnection(id: string, input: SshConnectionInput): SshConnection {
   const old = savedOnly(id);
-  const next = normalizeInput({ ...old, ...input });
+  const next = normalizeInput(input);
   const moved = next.host !== old.host || next.port !== old.port;
   const conn: SshConnection = { id, ...next, ...(!moved && old.hostKey ? { hostKey: old.hostKey } : {}), ...(!moved && old.facts ? { facts: old.facts } : {}) };
   const file = load();

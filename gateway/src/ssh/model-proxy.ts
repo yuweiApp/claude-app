@@ -3,6 +3,7 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { type Duplex, pipeline } from "node:stream";
 import { type Dispatcher, request } from "undici";
 import { MODEL_API_BASE, modelAuthHeaders } from "../config.js";
+import { endToEndHeaders } from "../net/hop-headers.js";
 import { describeNetError } from "../net/proxy.js";
 
 /**
@@ -16,8 +17,6 @@ export interface ModelProxy {
   handle(stream: Duplex): void;
 }
 
-/** 不往上游转的请求头：逐跳的、远端的认证 */
-const DROP_HEADERS = new Set(["host", "connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "authorization", "x-api-key"]);
 
 export function createModelProxy(): ModelProxy {
   const token = `claude-app-ssh-${randomBytes(24).toString("base64url")}`;
@@ -48,8 +47,8 @@ async function forward(req: IncomingMessage, res: ServerResponse, token: string)
   }
   const base = new URL(MODEL_API_BASE);
   const target = new URL(base.pathname.replace(/\/+$/, "") + (req.url ?? "/"), base);
-  const headers: http.OutgoingHttpHeaders = {};
-  for (const [k, v] of Object.entries(req.headers)) if (!DROP_HEADERS.has(k) && v !== undefined) headers[k] = v;
+  // 远端的认证（临时令牌）不往上游转，换成真正的密钥
+  const headers: Record<string, string | string[]> = endToEndHeaders(req.headers, ["host", "authorization", "x-api-key"]);
   headers.host = target.host;
   Object.assign(headers, modelAuthHeaders());
   // ANTHROPIC_CUSTOM_HEADERS：一行一个「名称: 值」，Claude Code 本来会自己加，远端没有它，这里补上
@@ -65,7 +64,7 @@ async function forward(req: IncomingMessage, res: ServerResponse, token: string)
   try {
     up = await request(target, {
       method: (req.method ?? "GET") as Dispatcher.HttpMethod,
-      headers: headers as Record<string, string | string[]>,
+      headers,
       body: req.method === "GET" || req.method === "HEAD" ? undefined : req,
       signal: abort.signal,
     });
@@ -75,14 +74,8 @@ async function forward(req: IncomingMessage, res: ServerResponse, token: string)
     res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: `claude-app 网关转发模型请求失败：${describeNetError(err)}` } }));
     return;
   }
-  res.writeHead(up.statusCode, filterResponseHeaders(up.headers));
+  res.writeHead(up.statusCode, endToEndHeaders(up.headers));
   // 上游回到一半断开（流没完整结束）时，pipeline 会把发给远端的响应也断开，远端 claude 立刻看到连接中断、自己重试；
   // 只用 pipe 的话远端这边的响应一直不结束，要等远端自己超时
   pipeline(up.body, res, () => {});
-}
-
-function filterResponseHeaders(h: Record<string, string | string[] | undefined>): http.OutgoingHttpHeaders {
-  const out: http.OutgoingHttpHeaders = {};
-  for (const [k, v] of Object.entries(h)) if (v !== undefined && !["connection", "keep-alive", "transfer-encoding"].includes(k)) out[k] = v;
-  return out;
 }

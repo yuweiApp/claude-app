@@ -229,8 +229,8 @@ export const api = {
   sshConnections: () => request<{ connections: SshConnectionInfo[] }>("GET", "/ssh/connections").then((r) => r.connections),
   sshConfigHosts: () => request<{ hosts: SshConfigHost[] }>("GET", "/ssh/config-hosts").then((r) => r.hosts),
   addSshConnection: (input: SshConnectionInput) => request<{ connection: SshConnectionInfo }>("POST", "/ssh/connections", input).then((r) => r.connection),
-  updateSshConnection: (id: string, input: Partial<SshConnectionInput>) =>
-    request<{ connection: SshConnectionInfo }>("PATCH", `/ssh/connections/${id}`, input).then((r) => r.connection),
+  updateSshConnection: (id: string, input: SshConnectionInput) =>
+    request<{ connection: SshConnectionInfo }>("PUT", `/ssh/connections/${id}`, input).then((r) => r.connection),
   removeSshConnection: (id: string) => request("DELETE", `/ssh/connections/${id}`),
   /** 连上并准备好远端（第一次要装 Claude Code），等到连上或失败才返回；失败时看返回的状态（error、hostKey、needsPassword） */
   connectSsh: (id: string, password?: string) =>

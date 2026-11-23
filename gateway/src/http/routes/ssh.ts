@@ -18,14 +18,14 @@ export function sshRoutes(app: FastifyInstance): void {
   /** 本机 ~/.ssh/config 里的主机（添加连接对话框的候选；它们本身也已经在连接列表里） */
   app.get("/ssh/config-hosts", async () => ({ hosts: configHosts() }));
 
-  app.post<{ Body: Partial<SshConnectionInput> }>("/ssh/connections", async (req) => {
-    const conn = addConnection(req.body ?? {});
+  app.post<{ Body: SshConnectionInput }>("/ssh/connections", async (req) => {
+    const conn = addConnection(req.body);
     return { connection: sshHost(conn.id).info() };
   });
 
-  app.patch<{ Params: IdParams; Body: Partial<SshConnectionInput> }>("/ssh/connections/:id", async (req) => {
+  app.put<{ Params: IdParams; Body: SshConnectionInput }>("/ssh/connections/:id", async (req) => {
     const before = getConnection(req.params.id);
-    const conn = updateConnection(req.params.id, req.body ?? {});
+    const conn = updateConnection(req.params.id, req.body);
     // 主机、端口、密钥换了：断开，下次按新配置连
     if (before && (before.host !== conn.host || before.port !== conn.port || before.identityFile !== conn.identityFile)) dropHost(conn.id);
     // 只改了反向转发：连着时马上按新的开、关
