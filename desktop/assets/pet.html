@@ -116,6 +116,7 @@
   .pet svg { width: 100%; height: 100%; overflow: visible; }
   .float { animation: float 2.8s ease-in-out infinite; transform-origin: 60px 90px; }
   .pet.jump .float { animation: jump 0.9s cubic-bezier(0.3, 0.8, 0.4, 1) 2, float 2.8s ease-in-out 1.8s infinite; }
+  .pet.land .float { animation: land 0.4s cubic-bezier(0.25, 0.9, 0.35, 1), float 2.8s ease-in-out 0.4s infinite; }
   @keyframes float {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-4px); }
@@ -125,6 +126,12 @@
     15% { transform: translateY(2px) scale(1.08, 0.9); }
     45% { transform: translateY(-18px) scale(0.95, 1.06); }
     75% { transform: translateY(0) scale(1.06, 0.94); }
+    100% { transform: translateY(0) scale(1, 1); }
+  }
+  @keyframes land {
+    0% { transform: translateY(-4px) scale(0.96, 1.05); }
+    35% { transform: translateY(3px) scale(1.11, 0.88); }
+    70% { transform: translateY(-2.5px) scale(0.98, 1.03); }
     100% { transform: translateY(0) scale(1, 1); }
   }
   .eyes { animation: blink 4.2s infinite; transform-origin: 60px 66px; }
@@ -211,6 +218,61 @@
     100% { opacity: 0; transform: translate(16px, -30px) scale(1.25) rotate(12deg); }
   }
 
+  /* 拖动动效（委屈挣扎 > < + 御风拖尾）：飞机耳、小汗滴、高频微颤乱蹬，拖动方向身后飘出风痕与灵光星点 */
+  .drag-face, .drag-sweat, .drag-wind { display: none; }
+  .drag-body { transform-origin: 60px 68px; }
+  .pet.dragging .float { animation: drag-shake 0.24s ease-in-out infinite; transform-origin: 60px 68px; }
+  .pet.dragging .drag-body { transform: rotate(var(--drag-tilt, 0deg)) scale(1.04, 0.96); }
+  .pet.dragging .eyes, .pet.dragging .happy, .pet.dragging .sleepy,
+  .pet.dragging .mouth, .pet.dragging .sleep-mouth, .pet.dragging .zzz, .pet.dragging .sparks { display: none; }
+  .pet.dragging .drag-face { display: inline; }
+  .pet.dragging .drag-sweat { display: inline; animation: drag-sweat 0.7s ease-in-out infinite; transform-origin: 90px 44px; }
+  .pet.dragging .drag-wind { display: inline; opacity: var(--drag-wind, 0.65); }
+  .pet.dragging .drag-wind-dir { transform: scaleX(var(--drag-dir, 1)); transform-origin: 60px 68px; }
+  .pet.dragging .wind-streak-1 { animation: wind-streak 0.52s linear infinite; }
+  .pet.dragging .wind-streak-2 { animation: wind-streak 0.52s linear 0.17s infinite; }
+  .pet.dragging .wind-streak-3 { animation: wind-streak 0.52s linear 0.34s infinite; }
+  .pet.dragging .blush { opacity: 0.85; }
+  .pet.dragging .glow { animation: none; opacity: 0.85; transform: scale(1.08); }
+  .pet.dragging .ear-left { animation: drag-ear-l 0.2s ease-in-out infinite; transform-origin: 41px 44px; }
+  .pet.dragging .ear-right { animation: drag-ear-r 0.2s ease-in-out infinite; transform-origin: 79px 44px; }
+  .pet.dragging .paw-left { animation: drag-paw-l 0.18s ease-in-out infinite; transform-origin: 48px 97px; }
+  .pet.dragging .paw-right { animation: drag-paw-r 0.18s ease-in-out infinite; transform-origin: 72px 97px; }
+  .pet.dragging .tail { animation: drag-wag 0.22s ease-in-out infinite; }
+  @keyframes drag-shake {
+    0%, 100% { transform: translate(0, -2px) rotate(-3deg); }
+    50% { transform: translate(0, -4px) rotate(3deg); }
+  }
+  @keyframes drag-ear-l {
+    0%, 100% { transform: rotate(-20deg) translate(-2px, 3px); }
+    50% { transform: rotate(-27deg) translate(-2px, 4px); }
+  }
+  @keyframes drag-ear-r {
+    0%, 100% { transform: rotate(20deg) translate(2px, 3px); }
+    50% { transform: rotate(27deg) translate(2px, 4px); }
+  }
+  @keyframes drag-paw-l {
+    0%, 100% { transform: translate(-2px, -3px) rotate(22deg); }
+    50% { transform: translate(2px, 2px) rotate(-18deg); }
+  }
+  @keyframes drag-paw-r {
+    0%, 100% { transform: translate(2px, 2px) rotate(18deg); }
+    50% { transform: translate(-2px, -3px) rotate(-22deg); }
+  }
+  @keyframes drag-wag {
+    0%, 100% { transform: rotate(10deg); }
+    50% { transform: rotate(-18deg); }
+  }
+  @keyframes drag-sweat {
+    0%, 100% { transform: translateY(0) scale(0.95); opacity: 0.95; }
+    50% { transform: translateY(3px) scale(1.08); opacity: 0.65; }
+  }
+  @keyframes wind-streak {
+    0% { opacity: 0; transform: translateX(6px) scaleX(0.55); }
+    30% { opacity: 0.92; }
+    100% { opacity: 0; transform: translateX(-16px) scaleX(1.1); }
+  }
+
   /* 跳舞时的侧面：外壳（pet.ts）在线上一帧帧挪窗口，这里换成侧面，蹦着走、到头翻跟头。默认朝右，朝左时镜像 */
   .side, .side-happy { display: none; }
   .pet.dancing .float, .pet.dancing .sparks, .pet.dancing .zzz { display: none; }
@@ -257,7 +319,12 @@
 
   @media (prefers-reduced-motion: reduce) {
     .pet.walk .side-move, .pet.flip .side-move, .pet.walk .side-tail,
-    .pet.walk .side-paw-near, .pet.walk .side-paw-far, .pet.walk .side-ear-near, .pet.walk .side-ear-far { animation: none; }
+    .pet.walk .side-paw-near, .pet.walk .side-paw-far, .pet.walk .side-ear-near, .pet.walk .side-ear-far,
+    .pet.dragging .float, .pet.dragging .tail, .pet.dragging .ear-left, .pet.dragging .ear-right,
+    .pet.dragging .paw-left, .pet.dragging .paw-right, .pet.dragging .drag-sweat,
+    .pet.dragging .wind-streak-1, .pet.dragging .wind-streak-2, .pet.dragging .wind-streak-3,
+    .pet.land .float { animation: none; }
+    .pet.dragging .drag-wind { display: none; }
     .float, .glow, .tail, .eyes, .pet.working .sparks, .pet.working .pupils, .pet.jump .float, .dots::after,
     .pet.sleeping .float, .pet.sleeping .glow, .pet.sleeping .tail, .sleep-mouth, .zzz text { animation: none; }
     .dots { color: inherit; }
@@ -301,44 +368,67 @@
         </linearGradient>
       </defs>
       <circle class="glow" cx="60" cy="68" r="50" fill="url(#g-glow)" />
+      <!-- 拖动时的风痕与灵光拖尾（随拖动方向左右翻转） -->
+      <g class="drag-wind">
+        <g class="drag-wind-dir">
+          <path class="wind-streak-1" d="M22 44 q-9 0 -16 2" fill="none" stroke="#8ad8ce" stroke-width="2" stroke-linecap="round" />
+          <path class="wind-streak-2" d="M20 68 q-10 0 -18 0" fill="none" stroke="#ffd49a" stroke-width="2.2" stroke-linecap="round" />
+          <path class="wind-streak-3" d="M24 90 q-9 0 -15 -2" fill="none" stroke="#8ad8ce" stroke-width="1.8" stroke-linecap="round" />
+          <path class="wind-streak-2" d="M12 52 l1.5 3.3 3.3 1.5 -3.3 1.5 -1.5 3.3 -1.5 -3.3 -3.3 -1.5 3.3 -1.5z" fill="#ffc35c" />
+          <path class="wind-streak-3" d="M14 76 l1.1 2.4 2.4 1.1 -2.4 1.1 -1.1 2.4 -1.1 -2.4 -2.4 -1.1 2.4 -1.1z" fill="#8ad8ce" />
+        </g>
+      </g>
       <g class="float">
-        <!-- 尾巴：一缕云气 -->
-        <path class="tail" d="M86 84c14 2 22-6 22-16 0-6-4-10-9-9 3 3 3 8-1 11-4 3-9 3-14 2z" fill="url(#g-tail)" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
-        <!-- 耳朵 -->
-        <path d="M30 50 L28 22 Q29 18 33 21 L52 38 Z" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
-        <path d="M34 44 L33 28 L46 39 Z" fill="#ffb9a8" />
-        <path d="M90 50 L92 22 Q91 18 87 21 L68 38 Z" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
-        <path d="M86 44 L87 28 L74 39 Z" fill="#ffb9a8" />
-        <!-- 身体 -->
-        <ellipse cx="60" cy="68" rx="37" ry="33" fill="url(#g-body)" stroke="#e9a86d" stroke-width="1.5" />
-        <!-- 额头的灵纹 -->
-        <path d="M60 41 l3 5 -3 5 -3 -5z" fill="#5fc1b5" />
-        <!-- 眼睛 -->
-        <g class="eyes">
-          <g class="pupils">
-            <ellipse cx="47" cy="66" rx="4.6" ry="5.6" fill="#3a2e25" />
-            <ellipse cx="73" cy="66" rx="4.6" ry="5.6" fill="#3a2e25" />
-            <circle cx="48.6" cy="63.8" r="1.6" fill="#fff" />
-            <circle cx="74.6" cy="63.8" r="1.6" fill="#fff" />
+        <g class="drag-body">
+          <!-- 尾巴：一缕云气 -->
+          <path class="tail" d="M86 84c14 2 22-6 22-16 0-6-4-10-9-9 3 3 3 8-1 11-4 3-9 3-14 2z" fill="url(#g-tail)" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
+          <!-- 耳朵 -->
+          <g class="ear-left">
+            <path d="M30 50 L28 22 Q29 18 33 21 L52 38 Z" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
+            <path d="M34 44 L33 28 L46 39 Z" fill="#ffb9a8" />
           </g>
+          <g class="ear-right">
+            <path d="M90 50 L92 22 Q91 18 87 21 L68 38 Z" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
+            <path d="M86 44 L87 28 L74 39 Z" fill="#ffb9a8" />
+          </g>
+          <!-- 身体 -->
+          <ellipse cx="60" cy="68" rx="37" ry="33" fill="url(#g-body)" stroke="#e9a86d" stroke-width="1.5" />
+          <!-- 额头的灵纹 -->
+          <path d="M60 41 l3 5 -3 5 -3 -5z" fill="#5fc1b5" />
+          <!-- 眼睛 -->
+          <g class="eyes">
+            <g class="pupils">
+              <ellipse cx="47" cy="66" rx="4.6" ry="5.6" fill="#3a2e25" />
+              <ellipse cx="73" cy="66" rx="4.6" ry="5.6" fill="#3a2e25" />
+              <circle cx="48.6" cy="63.8" r="1.6" fill="#fff" />
+              <circle cx="74.6" cy="63.8" r="1.6" fill="#fff" />
+            </g>
+          </g>
+          <g class="happy" fill="none" stroke="#3a2e25" stroke-width="2.6" stroke-linecap="round">
+            <path d="M42 68 q5 -7 10 0" />
+            <path d="M68 68 q5 -7 10 0" />
+          </g>
+          <!-- 睡着时闭着的眼睛 -->
+          <g class="sleepy" fill="none" stroke="#3a2e25" stroke-width="2.4" stroke-linecap="round">
+            <path d="M42 66 q5 4.5 10 0" />
+            <path d="M68 66 q5 4.5 10 0" />
+          </g>
+          <!-- 拖动时的委屈 > < 眼、波浪嘴与小汗滴 -->
+          <g class="drag-face" fill="none" stroke="#3a2e25" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M42 62 l7 4 -7 4" />
+            <path d="M78 62 l-7 4 7 4" />
+            <path d="M54 77 q2 -2.4 4 0 t4 0 t4 0" stroke-width="1.8" />
+          </g>
+          <path class="drag-sweat" d="M90 36 C90 36 95 43 95 46.5 A5 5 0 0 1 85 46.5 C85 43 90 36 90 36 Z" fill="#8fd3ff" stroke="#5aa9e6" stroke-width="1.2" />
+          <!-- 腮红和嘴 -->
+          <ellipse class="blush" cx="38" cy="76" rx="5.5" ry="3.2" fill="#ff9e8a" opacity="0.55" />
+          <ellipse class="blush" cx="82" cy="76" rx="5.5" ry="3.2" fill="#ff9e8a" opacity="0.55" />
+          <path class="mouth" d="M55 76 q2.5 3 5 0 q2.5 3 5 0" fill="none" stroke="#3a2e25" stroke-width="1.8" stroke-linecap="round" />
+          <ellipse class="sleep-mouth" cx="60" cy="78" rx="2" ry="2.4" fill="#c96f5c" />
+          <!-- 小爪子 -->
+          <ellipse class="paw-left" cx="48" cy="99" rx="7" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
+          <ellipse class="paw-right" cx="72" cy="99" rx="7" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
         </g>
-        <g class="happy" fill="none" stroke="#3a2e25" stroke-width="2.6" stroke-linecap="round">
-          <path d="M42 68 q5 -7 10 0" />
-          <path d="M68 68 q5 -7 10 0" />
-        </g>
-        <!-- 睡着时闭着的眼睛 -->
-        <g class="sleepy" fill="none" stroke="#3a2e25" stroke-width="2.4" stroke-linecap="round">
-          <path d="M42 66 q5 4.5 10 0" />
-          <path d="M68 66 q5 4.5 10 0" />
-        </g>
-        <!-- 腮红和嘴 -->
-        <ellipse cx="38" cy="76" rx="5.5" ry="3.2" fill="#ff9e8a" opacity="0.55" />
-        <ellipse cx="82" cy="76" rx="5.5" ry="3.2" fill="#ff9e8a" opacity="0.55" />
-        <path class="mouth" d="M55 76 q2.5 3 5 0 q2.5 3 5 0" fill="none" stroke="#3a2e25" stroke-width="1.8" stroke-linecap="round" />
-        <ellipse class="sleep-mouth" cx="60" cy="78" rx="2" ry="2.4" fill="#c96f5c" />
-        <!-- 小爪子 -->
-        <ellipse cx="48" cy="99" rx="7" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
-        <ellipse cx="72" cy="99" rx="7" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
       </g>
       <!-- 侧面（跳舞时）：朝右，与正面同款圆润团子身形，爪子底边和正面一样在 y 103 -->
       <g class="side">
@@ -432,15 +522,23 @@
     render(current);
   }
 
+  function land() {
+    if (reducedMotion.matches) return;
+    petEl.classList.remove("land");
+    void petEl.getBoundingClientRect();
+    petEl.classList.add("land");
+  }
+
   function jump() {
     if (petEl.classList.contains("sleeping")) wake();
-    petEl.classList.remove("jump");
+    petEl.classList.remove("jump", "land");
     // 重新触发动画
     void petEl.getBoundingClientRect();
     petEl.classList.add("jump");
   }
   petEl.addEventListener("animationend", (e) => {
     if (e.animationName === "jump" && e.elapsedTime > 1.7) petEl.classList.remove("jump");
+    if (e.animationName === "land") petEl.classList.remove("land");
   });
 
   // 跳舞时外壳让换姿势：侧面朝哪边、蹦着走还是翻跟头；回到正面时 facing 是 null
@@ -448,6 +546,7 @@
     const facing = pose && (pose.facing === "left" || pose.facing === "right") ? pose.facing : null;
     const wasDancing = petEl.classList.contains("dancing");
     if (facing || wasDancing) wake();
+    if (facing) petEl.classList.remove("land");
     petEl.classList.toggle("dancing", !!facing);
     petEl.classList.toggle("face-left", facing === "left");
     petEl.classList.toggle("walk", !!facing && pose.motion === "walk");
@@ -483,11 +582,64 @@
   });
 
   // 按住拖动，没怎么动就当点击：单击跳一下，双击回到主窗口
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const DOUBLE_MS = 400;
   let lastClick = 0;
   let start = null;
   /** 按下时鼠标在窗口里的位置：拖动时窗口左上角 = 鼠标的屏幕位置减去它，窗口卡在屏幕边上时松开再拖也不会错位 */
   let grab = null;
+  /** 拖动动效状态：按鼠标移动速度和方向驱动轻微惯性倾角与御风拖尾方向/显隐 */
+  let lastDragPos = null;
+  let dragDx = 0;
+  let dragDy = 0;
+  let dragRaf = 0;
+  let dragLastTick = 0;
+  let dragTilt = 0;
+  let dragDir = 1;
+  let dragWind = 0.35;
+
+  function startDragMotion() {
+    if (reducedMotion.matches || dragRaf) return;
+    dragLastTick = performance.now();
+    const step = (now) => {
+      if (!dragging) {
+        dragRaf = 0;
+        return;
+      }
+      const dt = Math.min(0.05, Math.max(0.004, (now - dragLastTick) / 1000));
+      dragLastTick = now;
+      const vx = dragDx / (dt * 60);
+      const vy = dragDy / (dt * 60);
+      dragDx = 0;
+      dragDy = 0;
+
+      if (Math.abs(vx) > 0.4) dragDir = vx > 0 ? 1 : -1;
+      const lerp = 1 - Math.exp(-14 * dt);
+      const targetTilt = Math.max(-12, Math.min(12, vx * 0.75));
+      dragTilt += (targetTilt - dragTilt) * lerp;
+      const speed = Math.min(1, Math.hypot(vx, vy) / 14);
+      const targetWind = 0.32 + speed * 0.68;
+      dragWind += (targetWind - dragWind) * (1 - Math.exp(-10 * dt));
+
+      petEl.style.setProperty("--drag-tilt", `${dragTilt.toFixed(2)}deg`);
+      petEl.style.setProperty("--drag-dir", String(dragDir));
+      petEl.style.setProperty("--drag-wind", dragWind.toFixed(2));
+      dragRaf = requestAnimationFrame(step);
+    };
+    dragRaf = requestAnimationFrame(step);
+  }
+
+  function stopDragMotion() {
+    if (dragRaf) cancelAnimationFrame(dragRaf);
+    dragRaf = 0;
+    lastDragPos = null;
+    dragDx = dragDy = dragTilt = 0;
+    dragWind = 0.35;
+    petEl.style.removeProperty("--drag-tilt");
+    petEl.style.removeProperty("--drag-dir");
+    petEl.style.removeProperty("--drag-wind");
+  }
+
   petEl.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     petEl.setPointerCapture(e.pointerId);
@@ -499,10 +651,20 @@
     if (!start) return;
     if (!dragging && Math.hypot(e.screenX - start.x, e.screenY - start.y) > 4) {
       dragging = true;
+      lastDragPos = { x: e.screenX, y: e.screenY };
+      if (Math.abs(e.screenX - start.x) > 1) dragDir = e.screenX > start.x ? 1 : -1;
+      petEl.classList.remove("land", "jump");
       petEl.classList.add("dragging");
+      wake();
+      startDragMotion();
       api.drag(true);
     }
     if (!dragging) return;
+    if (lastDragPos) {
+      dragDx += e.screenX - lastDragPos.x;
+      dragDy += e.screenY - lastDragPos.y;
+      lastDragPos = { x: e.screenX, y: e.screenY };
+    }
     api.move(e.screenX - grab.x, e.screenY - grab.y);
   });
   const end = (e, cancelled) => {
@@ -511,7 +673,12 @@
     start = grab = null;
     dragging = false;
     petEl.classList.remove("dragging");
-    if (wasDrag) api.drag(false);
+    stopDragMotion();
+    if (wasDrag) {
+      wake();
+      land();
+      api.drag(false);
+    }
     if (wasDrag || cancelled) return;
     const now = Date.now();
     if (now - lastClick < DOUBLE_MS) {

@@ -45,33 +45,35 @@ const EYES = {
 const EYE_MARGIN = 4;
 
 /**
- * 小精灵轮廓在窗口里的位置（窗口坐标），吸附和限制最低位置时拿来对齐线和屏幕边，加上了描边的一半 0.75。改了 pet.html 的布局要跟着改：
- * 下边是小爪子底边（爪子椭圆 cy 99、ry 4，侧面的也一样），左边是身体左边（身体椭圆 cx 60、rx 37），右边是尾巴尖（尾巴最右到 x 108，摇尾巴时往里收），
- * 中间是两只爪子中间（x 60），站在线上要这一点落在线段里
+ * 小精灵轮廓在窗口里的位置（窗口坐标），吸附和限制位置时拿来对齐线和屏幕边，加上了描边的一半 0.75。改了 pet.html 的布局要跟着改：
+ * 下边是小爪子底边（爪子椭圆 cy 99、ry 4，侧面的也一样），左边/右边是身体左右沿（身体椭圆 cx 60、rx 37），
+ * 中间是身体与两只爪子中线（x 60）：站在线上要这一点落在线段里，吸附左右屏幕边时把这一条中线贴到屏幕边（正好露出一半）
  */
 const OUTLINE = {
   bottom: Math.round(PET_TOP + (99 + 4 + 0.75) * UNIT),
   left: Math.round(PET_LEFT + (60 - 37 - 0.75) * UNIT),
-  right: Math.round(PET_LEFT + (108 + 0.75) * UNIT),
+  right: Math.round(PET_LEFT + (60 + 37 + 0.75) * UNIT),
   center: Math.round(PET_LEFT + 60 * UNIT),
 };
 
 /**
- * 灵宠窗口能放的位置：左右和上边可以拖出屏幕一部分，但眼睛得露着（拖到右边至少露左眼，拖到左边至少露右眼，拖到上边两只眼睛都露着）；
+ * 灵宠窗口能放的位置：左右最多拖到身体中线贴住屏幕边（正好露出一半，单侧眼睛完整露着），上边可以拖出一部分但两只眼睛都露着；
  * 下边最低到小爪子底边贴住工作区下沿（不压到任务栏下面）。按眼睛中间那一点最近的屏幕的工作区算，多块屏幕之间照常能拖过去
  */
 function clampPosition(x: number, y: number): { x: number; y: number } {
   const cx = x + (EYES.leftEye[0] + EYES.rightEye[1]) / 2;
   const cy = y + (EYES.top + EYES.bottom) / 2;
   const a = screen.getDisplayNearestPoint({ x: Math.round(cx), y: Math.round(cy) }).workArea;
-  const minX = a.x - EYES.rightEye[0] + EYE_MARGIN;
-  const maxX = a.x + a.width - EYES.leftEye[1] - EYE_MARGIN;
+  const minX = a.x - OUTLINE.center;
+  const maxX = a.x + a.width - OUTLINE.center;
   const minY = a.y - EYES.top + EYE_MARGIN;
   const maxY = a.y + a.height - OUTLINE.bottom;
   return { x: Math.round(Math.min(Math.max(x, minX), maxX)), y: Math.round(Math.min(Math.max(y, minY), maxY)) };
 }
 /** 拖动时轮廓离线、离屏幕边在这么多以内就吸上去，里外都算 */
 const SNAP = 12;
+/** 贴左右屏幕边松手时，滑到露出一半位置的时长 */
+const SIDE_DOCK_MS = 180;
 /** 爪子中间离线段两头至少这么多才算站在线上 */
 const STAND_MARGIN = 8;
 /** 跳舞：最多走出去多远、往哪边能走的不到这么多就换一边、爪子中间离线段两头留多少 */
@@ -89,14 +91,36 @@ function workAreaAt(p: { x: number; y: number }): Electron.Rectangle {
   return screen.getDisplayNearestPoint({ x: Math.round(cx), y: Math.round(cy) }).workArea;
 }
 
+/** 这块工作区的左（side=-1）或右（side=1）边是不是紧挨着另一块显示器（拼缝处不做吸一半，方便跨屏拖） */
+function hasAdjacentDisplay(a: Electron.Rectangle, side: -1 | 1): boolean {
+  const edge = side < 0 ? a.x : a.x + a.width;
+  return screen.getAllDisplays().some(({ workArea: b }) => {
+    if (b.x === a.x && b.y === a.y && b.width === a.width && b.height === a.height) return false;
+    if (!(b.y < a.y + a.height && b.y + b.height > a.y)) return false;
+    return side < 0 ? Math.abs(b.x + b.width - edge) <= 2 : Math.abs(b.x - edge) <= 2;
+  });
+}
+
 /** 每块屏幕工作区的下边（任务栏上沿；任务栏自动隐藏时是屏幕下边），也是一条能站的线 */
 function workAreaBottoms(): Segment[] {
   return screen.getAllDisplays().map(({ workArea: a }) => ({ y: a.y + a.height, x1: a.x, x2: a.x + a.width }));
 }
 
 /**
+ * 拖动松手时检查是不是贴在屏幕最左/最右边：身体边缘碰到或越过屏幕边（12px 内）就返回「吸附一半」的目标 x，
+ * 让窗口顺滑贴进去露出一半；多屏之间的拼缝不吸附
+ */
+function sideDockX(p: { x: number; y: number }): number | undefined {
+  const a = workAreaAt(p);
+  const right = a.x + a.width;
+  if (!hasAdjacentDisplay(a, -1) && p.x + OUTLINE.left <= a.x + SNAP) return a.x - OUTLINE.center;
+  if (!hasAdjacentDisplay(a, 1) && p.x + OUTLINE.right >= right - SNAP) return right - OUTLINE.center;
+  return undefined;
+}
+
+/**
  * 拖动时吸附（p 已经 clampPosition 过）：
- * - 左右：轮廓离工作区左边、右边够近就贴上去（任务栏在左右两侧时是任务栏的边）；
+ * - 左右：中线靠近屏幕外侧左右边够近时，直接吸到正好露出一半（任务栏在左右两侧时是任务栏的边）；
  * - 上下：爪子离某条线够近、爪子中间又在这段线里，就让爪子正好踩在线上。线是别的窗口露出来的上沿（lines）和各块屏幕工作区的下边，
  *   几条都够近时取最近的；踩上去以后眼睛不在能放的范围里（比如线贴着屏幕上边）就不吸。
  * 返回吸附后的位置，和站着的那条线（没站在线上时没有）
@@ -105,8 +129,8 @@ function snapPosition(p: { x: number; y: number }, lines: Segment[]): { x: numbe
   const a = workAreaAt(p);
   const right = a.x + a.width;
   let { x, y } = p;
-  if (Math.abs(x + OUTLINE.left - a.x) <= SNAP) x = a.x - OUTLINE.left;
-  else if (Math.abs(x + OUTLINE.right - right) <= SNAP) x = right - OUTLINE.right;
+  if (!hasAdjacentDisplay(a, -1) && Math.abs(x + OUTLINE.center - a.x) <= SNAP) x = a.x - OUTLINE.center;
+  else if (!hasAdjacentDisplay(a, 1) && Math.abs(x + OUTLINE.center - right) <= SNAP) x = right - OUTLINE.center;
   const feetX = x + OUTLINE.center;
   const feetY = y + OUTLINE.bottom;
   let best: Segment | undefined;
@@ -180,7 +204,7 @@ export class Pet {
       this.notices = [];
       this.sync();
     });
-    // 拖动开始、结束：开始时停下正在跳的舞，取一次别的窗口的上沿；松手时站在线上就跳一段舞
+    // 拖动开始、结束：开始时停下正在跳的舞，取一次别的窗口的上沿；松手时贴左右边就顺滑吸进去露一半，否则站在线上就跳一段舞
     ipcMain.on("pet:drag", (e, active: unknown) => {
       if (!this.fromPet(e.sender) || !this.win) return;
       if (active === true) {
@@ -198,7 +222,13 @@ export class Pet {
         const line = this.standing;
         this.lines = [];
         this.standing = undefined;
-        if (line) this.dance(line);
+        const cur = this.position ?? this.win.getBounds();
+        const dockX = sideDockX(cur);
+        if (dockX !== undefined) {
+          if (dockX !== cur.x) this.slide(cur.x, dockX, cur.y, SIDE_DOCK_MS);
+        } else if (line) {
+          this.dance(line);
+        }
       }
     });
     // 拖动：页面按鼠标位置算出窗口该在的位置（屏幕坐标），这里限制在眼睛还露着的范围里，靠近线、左右屏幕边时吸上去
@@ -295,6 +325,7 @@ export class Pet {
     if (shown && this.mainHidden()) this.startTick();
     else this.stopTick();
     if (!shown) {
+      this.stopDance();
       if (this.win && !this.win.isDestroyed() && this.win.isVisible()) this.win.hide();
       return;
     }
