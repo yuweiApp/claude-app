@@ -1,6 +1,6 @@
 import path from "node:path";
 import { BrowserWindow, ipcMain, Menu, screen } from "electron";
-import { stopWindowEdges, warmWindowEdges, windowEdges, type Segment } from "./pet-lines.js";
+import { captureScreens, screenLinesAt, stopWindowEdges, warmWindowEdges, windowEdges, type ScreenFrame, type Segment } from "./pet-lines.js";
 
 /** 会话一轮结束的通知，网页发来（client/src/pet.ts） */
 export interface PetNotice {
@@ -97,11 +97,11 @@ function workAreaBottoms(): Segment[] {
 /**
  * 拖动时吸附（p 已经 clampPosition 过）：
  * - 左右：轮廓离工作区左边、右边够近就贴上去（任务栏在左右两侧时是任务栏的边）；
- * - 上下：爪子离某条线够近、爪子中间又在这段线里，就让爪子正好踩在线上。线是别的窗口露出来的上沿（lines）和各块屏幕工作区的下边，
- *   几条都够近时取最近的；踩上去以后眼睛不在能放的范围里（比如线贴着屏幕上边）就不吸。
+ * - 上下：爪子离某条线够近、爪子中间又在这段线里，就让爪子正好踩在线上。线有三种：屏幕画面里看得见的横线（frames，拖动开始时截的）、
+ *   别的窗口露出来的上沿（lines）、各块屏幕工作区的下边。几条都够近时取最近的；踩上去以后眼睛不在能放的范围里（比如线贴着屏幕上边）就不吸。
  * 返回吸附后的位置，和站着的那条线（没站在线上时没有）
  */
-function snapPosition(p: { x: number; y: number }, lines: Segment[]): { x: number; y: number; line?: Segment } {
+function snapPosition(p: { x: number; y: number }, lines: Segment[], frames: ScreenFrame[]): { x: number; y: number; line?: Segment } {
   const a = workAreaAt(p);
   const right = a.x + a.width;
   let { x, y } = p;
@@ -110,7 +110,7 @@ function snapPosition(p: { x: number; y: number }, lines: Segment[]): { x: numbe
   const feetX = x + OUTLINE.center;
   const feetY = y + OUTLINE.bottom;
   let best: Segment | undefined;
-  for (const line of [...lines, ...workAreaBottoms()]) {
+  for (const line of [...screenLinesAt(frames, feetX, feetY, SNAP), ...lines, ...workAreaBottoms()]) {
     if (feetX < line.x1 + STAND_MARGIN || feetX > line.x2 - STAND_MARGIN) continue;
     const d = Math.abs(feetY - line.y);
     if (d > SNAP || (best && d >= Math.abs(feetY - best.y))) continue;
@@ -140,8 +140,9 @@ export class Pet {
   private position: { x: number; y: number } | undefined;
   private tick: NodeJS.Timeout | undefined;
   private main: BrowserWindow | undefined;
-  /** 这次拖动开始时取到的别的窗口露出来的上沿（还没取到时是空的，只吸屏幕的边） */
+  /** 这次拖动开始时取到的别的窗口露出来的上沿、截的屏幕画面（还没取到时是空的，只吸屏幕的边），松手时丢掉 */
   private lines: Segment[] = [];
+  private frames: ScreenFrame[] = [];
   /** 正在拖动，第几次拖动：取窗口上沿是异步的，结果回来时对得上才用 */
   private dragging = false;
   private drags = 0;
@@ -180,23 +181,25 @@ export class Pet {
       this.notices = [];
       this.sync();
     });
-    // 拖动开始、结束：开始时停下正在跳的舞，取一次别的窗口的上沿；松手时站在线上就跳一段舞
+    // 拖动开始、结束：开始时停下正在跳的舞，取一次别的窗口的上沿、截一次屏幕画面；松手时站在线上就跳一段舞
     ipcMain.on("pet:drag", (e, active: unknown) => {
       if (!this.fromPet(e.sender) || !this.win) return;
       if (active === true) {
         this.stopDance();
         this.lines = [];
+        this.frames = [];
         this.standing = undefined;
         const drag = ++this.drags;
-        void windowEdges(this.win.getBounds()).then((lines) => {
-          // 取得慢、这次拖动已经结束或者又开始了新的一次时不用
-          if (drag === this.drags && this.dragging) this.lines = lines;
-        });
+        // 取得慢、这次拖动已经结束或者又开始了新的一次时不用
+        const current = () => drag === this.drags && this.dragging;
+        void windowEdges(this.win.getBounds()).then((lines) => current() && (this.lines = lines));
+        void captureScreens(this.win).then((frames) => current() && (this.frames = frames));
         this.dragging = true;
       } else if (active === false) {
         this.dragging = false;
         const line = this.standing;
         this.lines = [];
+        this.frames = [];
         this.standing = undefined;
         if (line) this.dance(line);
       }
@@ -205,7 +208,7 @@ export class Pet {
     ipcMain.on("pet:move", (e, x: unknown, y: unknown) => {
       if (!this.fromPet(e.sender) || !this.win || typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return;
       const c = clampPosition(x, y);
-      const { line, ...p } = snapPosition(c, this.lines);
+      const { line, ...p } = snapPosition(c, this.lines, this.frames);
       this.standing = line;
       this.position = p;
       this.win.setPosition(p.x, p.y);
