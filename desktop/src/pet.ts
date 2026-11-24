@@ -58,6 +58,20 @@ function clampPosition(x: number, y: number): { x: number; y: number } {
   return { x: Math.round(Math.min(Math.max(x, minX), maxX)), y: Math.round(Math.min(Math.max(y, minY), maxY)) };
 }
 
+/** 小爪子底边在窗口里的位置（窗口坐标）：爪子椭圆 cy 99、ry 4，加上描边的一半 0.75。改了 pet.html 的布局要跟着改 */
+const FEET = Math.round(PET_TOP + (99 + 4 + 0.75) * UNIT);
+/** 拖动时爪子离工作区下边（任务栏上沿）在这么多以内就吸上去，上下都算 */
+const SNAP = 12;
+
+/** 拖动时吸附：爪子离工作区下边够近，就让爪子正好踩在下边上（任务栏上沿；任务栏自动隐藏时是屏幕下边）。工作区按眼睛中间那一点最近的屏幕算，和 clampPosition 一致 */
+function snapPosition(p: { x: number; y: number }): { x: number; y: number } {
+  const cx = p.x + (EYES.leftEye[0] + EYES.rightEye[1]) / 2;
+  const cy = p.y + (EYES.top + EYES.bottom) / 2;
+  const a = screen.getDisplayNearestPoint({ x: Math.round(cx), y: Math.round(cy) }).workArea;
+  const bottom = a.y + a.height;
+  return Math.abs(p.y + FEET - bottom) <= SNAP ? { x: p.x, y: bottom - FEET } : p;
+}
+
 /**
  * 灵宠：设置里开着就一直待在屏幕右下角（主窗口开着、最小化都在），没事时在那儿待着，有会话在跑时它在干活，
  * 主窗口不在前台时会话完成就跳出气泡告诉用户；双击它或点气泡恢复主窗口并打开完成的会话。设置页「灵宠」可以关掉（网页记着开关，见 client/src/pet.ts）。
@@ -106,10 +120,10 @@ export class Pet {
       this.notices = [];
       this.sync();
     });
-    // 拖动：页面按鼠标位置算出窗口该在的位置（屏幕坐标），这里限制在眼睛还露着的范围里
+    // 拖动：页面按鼠标位置算出窗口该在的位置（屏幕坐标），这里限制在眼睛还露着的范围里，靠近任务栏上沿时吸上去
     ipcMain.on("pet:move", (e, x: unknown, y: unknown) => {
       if (!this.fromPet(e.sender) || !this.win || typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return;
-      this.position = clampPosition(x, y);
+      this.position = snapPosition(clampPosition(x, y));
       this.win.setPosition(this.position.x, this.position.y);
     });
     // 窗口透明的地方要让鼠标穿过去，不挡住下面的东西；鼠标移到小精灵、气泡上时页面告诉这里接住鼠标
