@@ -211,7 +211,28 @@
     100% { opacity: 0; transform: translate(16px, -30px) scale(1.25) rotate(12deg); }
   }
 
+  /* 跳舞时的侧面：外壳（pet.ts）在线上一帧帧挪窗口，这里换成侧面，蹦着走、到头翻跟头。默认朝右，朝左时镜像 */
+  .side { display: none; }
+  .pet.dancing .float, .pet.dancing .sparks, .pet.dancing .zzz { display: none; }
+  .pet.dancing .side { display: inline; }
+  .pet.face-left .side-flip { transform: scale(-1, 1); transform-origin: 60px 60px; }
+  .pet.walk .side-move { animation: hop 0.6s ease-in-out infinite; transform-origin: 58px 103px; }
+  .pet.flip .side-move { animation: flip 0.7s cubic-bezier(0.3, 0.8, 0.4, 1); transform-origin: 66px 70px; }
+  .pet.walk .side-tail { animation: wag 0.6s ease-in-out infinite; transform-origin: 88px 86px; }
+  @keyframes hop {
+    0%, 50%, 100% { transform: translateY(0) rotate(0deg); }
+    25% { transform: translateY(-8px) rotate(-6deg); }
+    75% { transform: translateY(-8px) rotate(6deg); }
+  }
+  @keyframes flip {
+    0% { transform: translateY(0) scale(1, 1) rotate(0deg); }
+    20% { transform: translateY(3px) scale(1.08, 0.9) rotate(0deg); }
+    60% { transform: translateY(-24px) scale(1, 1) rotate(-200deg); }
+    100% { transform: translateY(0) scale(1, 1) rotate(-360deg); }
+  }
+
   @media (prefers-reduced-motion: reduce) {
+    .pet.walk .side-move, .pet.flip .side-move, .pet.walk .side-tail { animation: none; }
     .float, .glow, .tail, .eyes, .pet.working .sparks, .pet.working .pupils, .pet.jump .float, .dots::after,
     .pet.sleeping .float, .pet.sleeping .glow, .pet.sleeping .tail, .sleep-mouth, .zzz text { animation: none; }
     .dots { color: inherit; }
@@ -286,6 +307,39 @@
         <ellipse cx="48" cy="99" rx="7" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
         <ellipse cx="72" cy="99" rx="7" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
       </g>
+      <!-- 侧面（跳舞时）：朝右，头在右边、尾巴在左边，爪子底边和正面一样在 y 103 -->
+      <g class="side">
+        <g class="side-flip">
+          <g class="side-move">
+            <!-- 尾巴：正面那缕云气左右翻过来 -->
+            <g transform="translate(120 0) scale(-1 1)">
+              <path class="side-tail" d="M86 84c14 2 22-6 22-16 0-6-4-10-9-9 3 3 3 8-1 11-4 3-9 3-14 2z" fill="url(#g-tail)" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
+            </g>
+            <!-- 后面那只耳朵 -->
+            <path d="M66 42 L66 18 Q67 14 71 17 L84 34 Z" fill="#ffe8d0" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
+            <!-- 后腿 -->
+            <ellipse cx="36" cy="99" rx="6.5" ry="4" fill="#ffe8d0" stroke="#e9a86d" stroke-width="1.5" />
+            <ellipse cx="62" cy="99" rx="6.5" ry="4" fill="#ffe8d0" stroke="#e9a86d" stroke-width="1.5" />
+            <!-- 身子 -->
+            <ellipse cx="52" cy="82" rx="27" ry="17" fill="url(#g-body)" stroke="#e9a86d" stroke-width="1.5" />
+            <!-- 前腿 -->
+            <ellipse cx="46" cy="99" rx="6.5" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
+            <ellipse cx="74" cy="99" rx="6.5" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
+            <!-- 头 -->
+            <ellipse cx="76" cy="60" rx="26" ry="23" fill="url(#g-body)" stroke="#e9a86d" stroke-width="1.5" />
+            <!-- 前面那只耳朵 -->
+            <path d="M76 42 L82 16 Q84 12 87 16 L98 39 Z" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
+            <path d="M81 37 L84 22 L92 37 Z" fill="#ffb9a8" />
+            <!-- 额头的灵纹 -->
+            <path d="M92 42 l2.6 4.3 -2.6 4.3 -2.6 -4.3z" fill="#5fc1b5" />
+            <!-- 眼睛、腮红、嘴 -->
+            <ellipse cx="88" cy="60" rx="4.2" ry="5.4" fill="#3a2e25" />
+            <circle cx="89.4" cy="57.8" r="1.5" fill="#fff" />
+            <ellipse cx="91" cy="70" rx="4.6" ry="2.8" fill="#ff9e8a" opacity="0.55" />
+            <path d="M96 67 q1.8 2.6 3.6 0" fill="none" stroke="#3a2e25" stroke-width="1.6" stroke-linecap="round" />
+          </g>
+        </g>
+      </g>
       <!-- 睡着时头上冒的 Z -->
       <g class="zzz" fill="#8eaaf0" stroke="#fff6e8" stroke-width="2" stroke-linejoin="round" font-family="system-ui, sans-serif" font-weight="800" font-size="15">
         <text x="88" y="38">z</text>
@@ -354,6 +408,19 @@
     if (e.animationName === "jump" && e.elapsedTime > 1.7) petEl.classList.remove("jump");
   });
 
+  // 跳舞时外壳让换姿势：侧面朝哪边、蹦着走还是翻跟头；回到正面时 facing 是 null
+  api.onPose((pose) => {
+    const facing = pose && (pose.facing === "left" || pose.facing === "right") ? pose.facing : null;
+    petEl.classList.toggle("dancing", !!facing);
+    petEl.classList.toggle("face-left", facing === "left");
+    petEl.classList.toggle("walk", !!facing && pose.motion === "walk");
+    petEl.classList.remove("flip");
+    if (facing && pose.motion === "flip") {
+      void petEl.getBoundingClientRect();
+      petEl.classList.add("flip");
+    }
+  });
+
   api.onState(render);
   api.onDone(jump);
   void api.state().then((s) => s && render(s));
@@ -396,6 +463,7 @@
     if (!dragging && Math.hypot(e.screenX - start.x, e.screenY - start.y) > 4) {
       dragging = true;
       petEl.classList.add("dragging");
+      api.drag(true);
     }
     if (!dragging) return;
     api.move(e.screenX - grab.x, e.screenY - grab.y);
@@ -406,6 +474,7 @@
     start = grab = null;
     dragging = false;
     petEl.classList.remove("dragging");
+    if (wasDrag) api.drag(false);
     if (wasDrag || cancelled) return;
     const now = Date.now();
     if (now - lastClick < DOUBLE_MS) {
