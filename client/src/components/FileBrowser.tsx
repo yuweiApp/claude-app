@@ -1112,6 +1112,42 @@ function queueRemoteThumb(start: () => void): () => void {
 }
 
 /**
+ * 显示出来过的缩略图，按地址（带着修改时间）记一张裁好的小图。目录树放在 FileViewer 里，点一个文件就整棵重新挂载
+ * （FileViewer 的 key 是路径），每行的状态都没了：远程的要回到类型图标重新排队下载，本机的也要重新解码原图，中间是空白。
+ * 记住的在画出来之前同步画到 canvas 上，点文件时缩略图不动
+ */
+const thumbCache = new Map<string, HTMLCanvasElement>();
+/** 16px 的缩略图，按最高 3 倍屏存 */
+const THUMB_PX = 48;
+const THUMB_CACHE_MAX = 1000;
+
+/** 图片加载好了：同 .files-thumb 的 object-fit: cover，裁成方形缩小后记下来 */
+function rememberThumb(url: string, img: HTMLImageElement) {
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  if (!w || !h) return;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = THUMB_PX;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.imageSmoothingQuality = "high";
+  // 整张画、超出画布的裁掉（SVG 按源矩形裁的坐标不对，只给目标矩形）
+  const scale = THUMB_PX / Math.min(w, h);
+  ctx.drawImage(img, (THUMB_PX - w * scale) / 2, (THUMB_PX - h * scale) / 2, w * scale, h * scale);
+  thumbCache.delete(url);
+  thumbCache.set(url, canvas);
+  if (thumbCache.size > THUMB_CACHE_MAX) thumbCache.delete(thumbCache.keys().next().value!);
+}
+
+function CachedThumb({ src }: { src: HTMLCanvasElement }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useLayoutEffect(() => {
+    ref.current?.getContext("2d")?.drawImage(src, 0, 0);
+  }, [src]);
+  return <canvas ref={ref} className="files-thumb" width={THUMB_PX} height={THUMB_PX} aria-hidden />;
+}
+
+/**
  * 目录树里文件的图标；图片显示小缩略图（同 codex-app-server），读不出来时退回类型图标。
  * 远程项目的缩略图滚到看得见时排队下载（见 REMOTE_THUMB_SLOTS），轮到之前先显示类型图标；本机的照常由浏览器懒加载
  */
@@ -1121,6 +1157,7 @@ function TreeFileIcon({ cwd, entry }: { cwd: string; entry: ProjectEntry }) {
   const thumb = !failed && THUMB_EXT.test(name) && entry.size !== undefined && entry.size <= THUMB_MAX_BYTES;
   const remote = isRemote(cwd);
   const url = api.rawFileUrl(cwd, entry.path, entry.mtimeMs);
+  const cached = thumb ? thumbCache.get(url) : undefined;
   const [granted, setGranted] = useState<string | null>(null);
   const waitRef = useRef<HTMLSpanElement>(null);
   const release = useRef<(() => void) | null>(null);
@@ -1143,7 +1180,19 @@ function TreeFileIcon({ cwd, entry }: { cwd: string; entry: ProjectEntry }) {
     };
   }, [thumb, remote, url]);
   if (!thumb) return <FileTypeIcon name={name} />;
-  if (!remote) return <img className="files-thumb" src={url} alt="" loading="lazy" draggable={false} onError={() => setFailed(true)} />;
+  if (cached) return <CachedThumb src={cached} />;
+  if (!remote)
+    return (
+      <img
+        className="files-thumb"
+        src={url}
+        alt=""
+        loading="lazy"
+        draggable={false}
+        onLoad={(e) => rememberThumb(url, e.currentTarget)}
+        onError={() => setFailed(true)}
+      />
+    );
   if (granted !== url)
     return (
       <span ref={waitRef} className="files-thumb-wait">
@@ -1156,7 +1205,10 @@ function TreeFileIcon({ cwd, entry }: { cwd: string; entry: ProjectEntry }) {
       src={url}
       alt=""
       draggable={false}
-      onLoad={done}
+      onLoad={(e) => {
+        done();
+        rememberThumb(url, e.currentTarget);
+      }}
       onError={() => {
         done();
         setFailed(true);
