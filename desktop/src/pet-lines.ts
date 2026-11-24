@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { desktopCapturer, screen, systemPreferences, type BrowserWindow } from "electron";
+import { screen } from "electron";
 
 /** 屏幕坐标（DIP）里的矩形 */
 export interface Rect {
@@ -15,16 +15,6 @@ export interface Segment {
   x1: number;
   x2: number;
 }
-
-/**
- * 屏幕画面里的横线：上下相邻两行像素亮度差到这么多（0–255）的地方连成一长条就算一条线。
- * VS Code 深色主题里编辑区和面板之间的分隔线和背景只差 10 左右
- */
-const EDGE_CONTRAST = 9;
-/** 连着的一条里允许断开几个像素（抗锯齿、虚线） */
-const EDGE_GAP = 2;
-/** 画面里的线至少这么长（DIP）才算，短的多半是文字的笔画 */
-const MIN_SCREEN_LINE = 60;
 
 /** 太窄、太矮的窗口不算（多半是看不见的辅助窗口），露出来太短的线段也不算 */
 const MIN_WIDTH = 50;
@@ -57,114 +47,6 @@ export function topEdges(rects: Rect[]): Segment[] {
     for (const [x1, x2] of parts) if (x2 - x1 >= MIN_SEGMENT) out.push({ y, x1, x2 });
   });
   return out;
-}
-
-/**
- * 一帧画面（w × h 的 4 字节像素，RGBA 或 BGRA 都行，红蓝权重一样）里找横线：某一行和上一行亮度差得多的像素连成一长条就是一条线的上沿
- * （分隔线、上下两块不同颜色的边界、窗口的边）。不整张扫：拖动时只看爪子附近那几行
- */
-export class Frame {
-  constructor(
-    private readonly buf: Uint8Array,
-    readonly width: number,
-    readonly height: number,
-  ) {}
-
-  private lum(i: number): number {
-    const j = i * 4;
-    return (this.buf[j]! + 2 * this.buf[j + 1]! + this.buf[j + 2]!) >> 2;
-  }
-
-  private strong(x: number, y: number): boolean {
-    const i = y * this.width + x;
-    return Math.abs(this.lum(i) - this.lum(i - this.width)) >= EDGE_CONTRAST;
-  }
-
-  /** 第 y 行（1 ≤ y < height）经过 x 的那条线从哪到哪（像素，x2 不含），离 x 最近的亮度差超过 EDGE_GAP 就算不经过 */
-  private runAt(x: number, y: number): [number, number] | undefined {
-    let left = -1;
-    for (let i = x; i >= 0; i--) {
-      if (this.strong(i, y)) left = i;
-      else if ((left < 0 ? x : left) - i > EDGE_GAP) break;
-    }
-    let right = -1;
-    for (let i = x; i < this.width; i++) {
-      if (this.strong(i, y)) right = i;
-      else if (i - (right < 0 ? x : right) > EDGE_GAP) break;
-    }
-    if (left < 0 && right < 0) return undefined;
-    return [left >= 0 ? left : right, (right >= 0 ? right : left) + 1];
-  }
-
-  /**
-   * y0 到 y1 行之间（含）经过 x、至少 minRun 长的线（像素）。很细的线上下两边都是亮度变化的地方，只要上面那条：
-   * 上一两行在同一处也有线时这一行不算
-   */
-  linesAt(x: number, y0: number, y1: number, minRun: number): Segment[] {
-    if (x < 0 || x >= this.width) return [];
-    const out: Segment[] = [];
-    const hits = new Set<number>();
-    for (let y = Math.max(1, y0 - 2); y <= Math.min(this.height - 1, y1); y++) {
-      const run = this.runAt(x, y);
-      if (!run || run[1] - run[0] < minRun) continue;
-      if (y >= y0 && !hits.has(y - 1) && !hits.has(y - 2)) out.push({ y, x1: run[0], x2: run[1] });
-      hits.add(y);
-    }
-    return out;
-  }
-}
-
-/** 截屏前把灵宠窗口从画面里去掉，等这么久让它生效 */
-const HIDE_FROM_CAPTURE_MS = 60;
-
-/** 一块屏幕的一帧画面，和它在屏幕坐标（DIP）里的位置 */
-export interface ScreenFrame {
-  bounds: Electron.Rectangle;
-  frame: Frame;
-}
-
-/**
- * 截一次每块屏幕的画面，拖动时用 screenLinesAt 在里面找线。截的时候把灵宠窗口设成不进画面（setContentProtection），它挡住的地方也找得到线。
- * macOS 上没给录屏权限时不截（截了会弹授权框），Linux 上 Wayland 不截（会弹选择屏幕的框）
- */
-export async function captureScreens(pet: BrowserWindow): Promise<ScreenFrame[]> {
-  if (process.platform === "darwin" && systemPreferences.getMediaAccessStatus("screen") !== "granted") return [];
-  if (process.platform === "linux" && process.env.XDG_SESSION_TYPE === "wayland") return [];
-  const displays = screen.getAllDisplays();
-  const width = Math.max(...displays.map((d) => Math.round(d.bounds.width * d.scaleFactor)));
-  const height = Math.max(...displays.map((d) => Math.round(d.bounds.height * d.scaleFactor)));
-  let sources: Electron.DesktopCapturerSource[] = [];
-  try {
-    pet.setContentProtection(true);
-    await new Promise((r) => setTimeout(r, HIDE_FROM_CAPTURE_MS));
-    sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width, height } });
-  } catch {
-    return [];
-  } finally {
-    if (!pet.isDestroyed()) pet.setContentProtection(false);
-  }
-  const out: ScreenFrame[] = [];
-  for (const source of sources) {
-    const display = displays.find((d) => String(d.id) === source.display_id) ?? (displays.length === 1 ? displays[0] : undefined);
-    const size = source.thumbnail.getSize();
-    if (!display || !size.width || !size.height) continue;
-    out.push({ bounds: display.bounds, frame: new Frame(source.thumbnail.toBitmap(), size.width, size.height) });
-  }
-  return out;
-}
-
-/** 画面里经过 (x, y ± range) 的横线（DIP），x、y 是屏幕坐标 */
-export function screenLinesAt(frames: ScreenFrame[], x: number, y: number, range: number): Segment[] {
-  const f = frames.find(({ bounds: b }) => x >= b.x && x < b.x + b.width && y >= b.y - range && y < b.y + b.height + range);
-  if (!f) return [];
-  const sx = f.bounds.width / f.frame.width;
-  const sy = f.bounds.height / f.frame.height;
-  const px = Math.floor((x - f.bounds.x) / sx);
-  const y0 = Math.floor((y - range - f.bounds.y) / sy);
-  const y1 = Math.ceil((y + range - f.bounds.y) / sy);
-  return f.frame
-    .linesAt(px, y0, y1, Math.ceil(MIN_SCREEN_LINE / sx))
-    .map((l) => ({ y: f.bounds.y + l.y * sy, x1: f.bounds.x + l.x1 * sx, x2: f.bounds.x + l.x2 * sx }));
 }
 
 /**
