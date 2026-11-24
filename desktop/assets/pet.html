@@ -212,27 +212,52 @@
   }
 
   /* 跳舞时的侧面：外壳（pet.ts）在线上一帧帧挪窗口，这里换成侧面，蹦着走、到头翻跟头。默认朝右，朝左时镜像 */
-  .side { display: none; }
+  .side, .side-happy { display: none; }
   .pet.dancing .float, .pet.dancing .sparks, .pet.dancing .zzz { display: none; }
   .pet.dancing .side { display: inline; }
+  .pet.flip .side-eye { display: none; }
+  .pet.flip .side-happy { display: inline; }
   .pet.face-left .side-flip { transform: scale(-1, 1); transform-origin: 60px 60px; }
-  .pet.walk .side-move { animation: hop 0.6s ease-in-out infinite; transform-origin: 58px 103px; }
-  .pet.flip .side-move { animation: flip 0.7s cubic-bezier(0.3, 0.8, 0.4, 1); transform-origin: 66px 70px; }
-  .pet.walk .side-tail { animation: wag 0.6s ease-in-out infinite; transform-origin: 88px 86px; }
+  .pet.walk .side-move { animation: hop 0.6s ease-in-out infinite; transform-origin: 60px 103px; }
+  .pet.flip .side-move { animation: flip 0.7s cubic-bezier(0.3, 0.8, 0.4, 1); transform-origin: 60px 68px; }
+  .pet.walk .side-tail { animation: side-wag 0.6s ease-in-out infinite; transform-origin: 34px 81px; }
+  .pet.walk .side-paw-near { animation: paw-near 0.6s ease-in-out infinite; transform-origin: 52px 99px; }
+  .pet.walk .side-paw-far { animation: paw-far 0.6s ease-in-out infinite; transform-origin: 72px 99px; }
+  .pet.walk .side-ear-near { animation: ear-bob 0.6s ease-in-out infinite; transform-origin: 45px 43px; }
+  .pet.walk .side-ear-far { animation: ear-bob 0.6s ease-in-out infinite; transform-origin: 73px 40px; }
   @keyframes hop {
-    0%, 50%, 100% { transform: translateY(0) rotate(0deg); }
-    25% { transform: translateY(-8px) rotate(-6deg); }
-    75% { transform: translateY(-8px) rotate(6deg); }
+    0%, 50%, 100% { transform: translateY(0) scale(1.03, 0.97) rotate(0deg); }
+    25% { transform: translateY(-7px) scale(0.97, 1.03) rotate(4deg); }
+    75% { transform: translateY(-7px) scale(0.97, 1.03) rotate(-2deg); }
   }
   @keyframes flip {
     0% { transform: translateY(0) scale(1, 1) rotate(0deg); }
     20% { transform: translateY(3px) scale(1.08, 0.9) rotate(0deg); }
-    60% { transform: translateY(-24px) scale(1, 1) rotate(-200deg); }
-    100% { transform: translateY(0) scale(1, 1) rotate(-360deg); }
+    60% { transform: translateY(-24px) scale(1, 1) rotate(200deg); }
+    100% { transform: translateY(0) scale(1, 1) rotate(360deg); }
+  }
+  @keyframes side-wag {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(-12deg); }
+  }
+  @keyframes paw-near {
+    0%, 50%, 100% { transform: translate(0, 0) rotate(0deg); }
+    25% { transform: translate(-4px, -1px) rotate(10deg); }
+    75% { transform: translate(5px, -2px) rotate(-10deg); }
+  }
+  @keyframes paw-far {
+    0%, 50%, 100% { transform: translate(0, 0) rotate(0deg); }
+    25% { transform: translate(4px, -2px) rotate(-10deg); }
+    75% { transform: translate(-5px, -1px) rotate(10deg); }
+  }
+  @keyframes ear-bob {
+    0%, 50%, 100% { transform: rotate(0deg); }
+    25%, 75% { transform: rotate(-3.5deg); }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .pet.walk .side-move, .pet.flip .side-move, .pet.walk .side-tail { animation: none; }
+    .pet.walk .side-move, .pet.flip .side-move, .pet.walk .side-tail,
+    .pet.walk .side-paw-near, .pet.walk .side-paw-far, .pet.walk .side-ear-near, .pet.walk .side-ear-far { animation: none; }
     .float, .glow, .tail, .eyes, .pet.working .sparks, .pet.working .pupils, .pet.jump .float, .dots::after,
     .pet.sleeping .float, .pet.sleeping .glow, .pet.sleeping .tail, .sleep-mouth, .zzz text { animation: none; }
     .dots { color: inherit; }
@@ -265,6 +290,14 @@
         <linearGradient id="g-tail" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stop-color="#ffd2a6" />
           <stop offset="100%" stop-color="#fff6e8" />
+        </linearGradient>
+        <linearGradient id="g-tail-side" x1="1" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#ffd2a6" />
+          <stop offset="100%" stop-color="#fff6e8" />
+        </linearGradient>
+        <linearGradient id="g-ear-near" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#fff1df" />
+          <stop offset="100%" stop-color="#fff2e1" />
         </linearGradient>
       </defs>
       <circle class="glow" cx="60" cy="68" r="50" fill="url(#g-glow)" />
@@ -307,36 +340,36 @@
         <ellipse cx="48" cy="99" rx="7" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
         <ellipse cx="72" cy="99" rx="7" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
       </g>
-      <!-- 侧面（跳舞时）：朝右，头在右边、尾巴在左边，爪子底边和正面一样在 y 103 -->
+      <!-- 侧面（跳舞时）：朝右，与正面同款圆润团子身形，爪子底边和正面一样在 y 103 -->
       <g class="side">
         <g class="side-flip">
           <g class="side-move">
-            <!-- 尾巴：正面那缕云气左右翻过来 -->
-            <g transform="translate(120 0) scale(-1 1)">
-              <path class="side-tail" d="M86 84c14 2 22-6 22-16 0-6-4-10-9-9 3 3 3 8-1 11-4 3-9 3-14 2z" fill="url(#g-tail)" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
-            </g>
+            <!-- 尾巴：一缕云气 -->
+            <path class="side-tail" d="M35 83 C20 85 11 77 11 66 C11 60 15 56 20 57 C17 60 17 65 21 68 C25 71 30 71 36 70 Z" fill="url(#g-tail-side)" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
             <!-- 后面那只耳朵 -->
-            <path d="M66 42 L66 18 Q67 14 71 17 L84 34 Z" fill="#ffe8d0" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
-            <!-- 后腿 -->
-            <ellipse cx="36" cy="99" rx="6.5" ry="4" fill="#ffe8d0" stroke="#e9a86d" stroke-width="1.5" />
-            <ellipse cx="62" cy="99" rx="6.5" ry="4" fill="#ffe8d0" stroke="#e9a86d" stroke-width="1.5" />
-            <!-- 身子 -->
-            <ellipse cx="52" cy="82" rx="27" ry="17" fill="url(#g-body)" stroke="#e9a86d" stroke-width="1.5" />
-            <!-- 前腿 -->
-            <ellipse cx="46" cy="99" rx="6.5" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
-            <ellipse cx="74" cy="99" rx="6.5" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
-            <!-- 头 -->
-            <ellipse cx="76" cy="60" rx="26" ry="23" fill="url(#g-body)" stroke="#e9a86d" stroke-width="1.5" />
-            <!-- 前面那只耳朵 -->
-            <path d="M76 42 L82 16 Q84 12 87 16 L98 39 Z" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
-            <path d="M81 37 L84 22 L92 37 Z" fill="#ffb9a8" />
-            <!-- 额头的灵纹 -->
-            <path d="M92 42 l2.6 4.3 -2.6 4.3 -2.6 -4.3z" fill="#5fc1b5" />
-            <!-- 眼睛、腮红、嘴 -->
-            <ellipse cx="88" cy="60" rx="4.2" ry="5.4" fill="#3a2e25" />
-            <circle cx="89.4" cy="57.8" r="1.5" fill="#fff" />
-            <ellipse cx="91" cy="70" rx="4.6" ry="2.8" fill="#ff9e8a" opacity="0.55" />
-            <path d="M96 67 q1.8 2.6 3.6 0" fill="none" stroke="#3a2e25" stroke-width="1.6" stroke-linecap="round" />
+            <path class="side-ear-far" d="M62 41 L71 19 Q73.5 16 76 20 L85 43 Z" fill="#ffe8d0" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
+            <!-- 后面那只小爪子 -->
+            <ellipse class="side-paw-far" cx="72" cy="99" rx="7" ry="4" fill="#ffe8d0" stroke="#e9a86d" stroke-width="1.5" />
+            <!-- 圆润侧身身体 -->
+            <path d="M61 35 C79 35 92 47 94.5 64 C96 76 90.5 88.5 79 95 C69 99.5 49 99.5 38 95 C26.5 89.5 23.5 79.5 25 68 C27 50 42 35 61 35 Z" fill="url(#g-body)" stroke="#e9a86d" stroke-width="1.5" stroke-linejoin="round" />
+            <!-- 前面那只耳朵（底部无缝融入头部，无生硬封边） -->
+            <g class="side-ear-near">
+              <path d="M41 46 L44 20 Q46 16.5 49.5 19.5 L62 42 Q51 48 41 46 Z" fill="url(#g-ear-near)" />
+              <path d="M41 46 L44 20 Q46 16.5 49.5 19.5 L62 42" fill="none" stroke="#e9a86d" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M45.5 42 L47.5 25.5 Q48.5 24 50 25.5 L57.5 40.5 Q51 43 45.5 42 Z" fill="#ffb9a8" />
+            </g>
+            <!-- 额头的灵纹（顺着额头弧度微倾） -->
+            <path d="M79.5 43 l2.2 4.5 -2.2 4.5 -2.2 -4.5 z" fill="#5fc1b5" transform="rotate(20 79.5 47.5)" />
+            <!-- 眼睛、翻跟头时的开心眼、腮红和嘴 -->
+            <g class="side-eye">
+              <ellipse cx="81" cy="65" rx="4.3" ry="5.5" fill="#3a2e25" />
+              <circle cx="82.5" cy="62.8" r="1.6" fill="#fff" />
+            </g>
+            <path class="side-happy" d="M76.5 66.5 q4.5 -6.5 9 0" fill="none" stroke="#3a2e25" stroke-width="2.5" stroke-linecap="round" />
+            <ellipse cx="74.5" cy="75" rx="5.2" ry="3" fill="#ff9e8a" opacity="0.55" />
+            <path d="M86 74 q2.5 2.8 5 -0.2" fill="none" stroke="#3a2e25" stroke-width="1.7" stroke-linecap="round" />
+            <!-- 前面那只小爪子 -->
+            <ellipse class="side-paw-near" cx="52" cy="99" rx="7" ry="4" fill="#fff1df" stroke="#e9a86d" stroke-width="1.5" />
           </g>
         </g>
       </g>
@@ -392,13 +425,15 @@
     }
   }
 
+  function wake() {
+    awakeUntil = Date.now() + 4000;
+    clearTimeout(sleepTimer);
+    sleepTimer = setTimeout(() => render(current), 4000);
+    render(current);
+  }
+
   function jump() {
-    if (petEl.classList.contains("sleeping")) {
-      awakeUntil = Date.now() + 4000;
-      clearTimeout(sleepTimer);
-      sleepTimer = setTimeout(() => render(current), 4000);
-      render(current);
-    }
+    if (petEl.classList.contains("sleeping")) wake();
     petEl.classList.remove("jump");
     // 重新触发动画
     void petEl.getBoundingClientRect();
@@ -411,6 +446,8 @@
   // 跳舞时外壳让换姿势：侧面朝哪边、蹦着走还是翻跟头；回到正面时 facing 是 null
   api.onPose((pose) => {
     const facing = pose && (pose.facing === "left" || pose.facing === "right") ? pose.facing : null;
+    const wasDancing = petEl.classList.contains("dancing");
+    if (facing || wasDancing) wake();
     petEl.classList.toggle("dancing", !!facing);
     petEl.classList.toggle("face-left", facing === "left");
     petEl.classList.toggle("walk", !!facing && pose.motion === "walk");

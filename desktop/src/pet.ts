@@ -45,22 +45,7 @@ const EYES = {
 const EYE_MARGIN = 4;
 
 /**
- * 灵宠窗口能放的位置：可以拖出屏幕一部分，但眼睛得露着——拖到下边两只眼睛都露着，拖到右边至少露左眼，拖到左边至少露右眼，
- * 拖到上边两只眼睛也都露着。按眼睛中间那一点最近的屏幕的工作区算（不压到任务栏下面），多块屏幕之间照常能拖过去
- */
-function clampPosition(x: number, y: number): { x: number; y: number } {
-  const cx = x + (EYES.leftEye[0] + EYES.rightEye[1]) / 2;
-  const cy = y + (EYES.top + EYES.bottom) / 2;
-  const a = screen.getDisplayNearestPoint({ x: Math.round(cx), y: Math.round(cy) }).workArea;
-  const minX = a.x - EYES.rightEye[0] + EYE_MARGIN;
-  const maxX = a.x + a.width - EYES.leftEye[1] - EYE_MARGIN;
-  const minY = a.y - EYES.top + EYE_MARGIN;
-  const maxY = a.y + a.height - EYES.bottom - EYE_MARGIN;
-  return { x: Math.round(Math.min(Math.max(x, minX), maxX)), y: Math.round(Math.min(Math.max(y, minY), maxY)) };
-}
-
-/**
- * 小精灵轮廓在窗口里的位置（窗口坐标），吸附时拿来对齐线和屏幕边，加上了描边的一半 0.75。改了 pet.html 的布局要跟着改：
+ * 小精灵轮廓在窗口里的位置（窗口坐标），吸附和限制最低位置时拿来对齐线和屏幕边，加上了描边的一半 0.75。改了 pet.html 的布局要跟着改：
  * 下边是小爪子底边（爪子椭圆 cy 99、ry 4，侧面的也一样），左边是身体左边（身体椭圆 cx 60、rx 37），右边是尾巴尖（尾巴最右到 x 108，摇尾巴时往里收），
  * 中间是两只爪子中间（x 60），站在线上要这一点落在线段里
  */
@@ -70,6 +55,21 @@ const OUTLINE = {
   right: Math.round(PET_LEFT + (108 + 0.75) * UNIT),
   center: Math.round(PET_LEFT + 60 * UNIT),
 };
+
+/**
+ * 灵宠窗口能放的位置：左右和上边可以拖出屏幕一部分，但眼睛得露着（拖到右边至少露左眼，拖到左边至少露右眼，拖到上边两只眼睛都露着）；
+ * 下边最低到小爪子底边贴住工作区下沿（不压到任务栏下面）。按眼睛中间那一点最近的屏幕的工作区算，多块屏幕之间照常能拖过去
+ */
+function clampPosition(x: number, y: number): { x: number; y: number } {
+  const cx = x + (EYES.leftEye[0] + EYES.rightEye[1]) / 2;
+  const cy = y + (EYES.top + EYES.bottom) / 2;
+  const a = screen.getDisplayNearestPoint({ x: Math.round(cx), y: Math.round(cy) }).workArea;
+  const minX = a.x - EYES.rightEye[0] + EYE_MARGIN;
+  const maxX = a.x + a.width - EYES.leftEye[1] - EYE_MARGIN;
+  const minY = a.y - EYES.top + EYE_MARGIN;
+  const maxY = a.y + a.height - OUTLINE.bottom;
+  return { x: Math.round(Math.min(Math.max(x, minX), maxX)), y: Math.round(Math.min(Math.max(y, minY), maxY)) };
+}
 /** 拖动时轮廓离线、离屏幕边在这么多以内就吸上去，里外都算 */
 const SNAP = 12;
 /** 爪子中间离线段两头至少这么多才算站在线上 */
@@ -359,18 +359,21 @@ export class Pet {
   }
 
   /**
-   * 在站着的线上跳一段舞：转成侧面，往屏幕中间那边（在屏幕右半边就往左，左半边往右）蹦着走出去一段，到头翻个跟头，转身蹦回原来的位置，再转回正面。
-   * 那边地方不够（线到头了、到屏幕边了）就往另一边，两边都不够就不跳。窗口由这里一帧帧挪，页面只管换姿势和动画
+   * 跳一段舞：转成侧面，往屏幕中间那边（在屏幕右半边就往左，左半边往右）蹦着走出去一段，到头翻个跟头，转身蹦回原来的位置，再转回正面。
+   * 传了 line 时按那条线限制范围（拖到线上松手），没传时按当前屏幕工作区范围（右键菜单手动触发）。
+   * 那边地方不够就往另一边，两边都不够就不跳。窗口由这里一帧帧挪，页面只管换姿势和动画
    */
-  private dance(line: Segment): void {
+  private dance(line?: Segment): void {
     const win = this.win;
     if (!win || win.isDestroyed()) return;
     const home = win.getBounds();
     const a = workAreaAt(home);
     const feet = home.x + OUTLINE.center;
+    const x1 = line ? line.x1 : a.x;
+    const x2 = line ? line.x2 : a.x + a.width;
     // 往一边最多能走多远：爪子中间离线段两头留点地方，窗口也不出能放的范围
     const room = (dir: -1 | 1) => {
-      const toLine = dir < 0 ? feet - (line.x1 + DANCE_MARGIN) : line.x2 - DANCE_MARGIN - feet;
+      const toLine = dir < 0 ? feet - (x1 + DANCE_MARGIN) : x2 - DANCE_MARGIN - feet;
       const tx = home.x + dir * Math.max(0, Math.min(DANCE_DISTANCE, toLine));
       return Math.abs(clampPosition(tx, home.y).x - home.x);
     };
@@ -431,6 +434,8 @@ export class Pet {
     return Menu.buildFromTemplate([
       { label: latest ? `打开「${latest.title.length > 20 ? `${latest.title.slice(0, 20)}…` : latest.title}」` : "回到 Claude App", click: () => this.openMain(latest?.sessionId) },
       { label: "知道了", enabled: this.notices.length > 0, click: () => ((this.notices = []), this.sync()) },
+      { type: "separator" },
+      { label: "跳一段舞", click: () => this.dance() },
       { type: "separator" },
       {
         label: "隐藏",
