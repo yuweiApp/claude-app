@@ -10,10 +10,12 @@ import type { DownloadInfo, TabEvent } from "./host.js";
 
 /**
  * 不指定 timeout_ms 时等多久；上限见 MAX_TIMEOUT_MS。
- * 比 Playwright 单个动作的默认超时（30 秒）长：一样长时两者几乎同时到点，先返回的是笼统的「超过 timeout_ms」，
- * Playwright 报的具体原因（哪个元素、不可见还是被挡住）就丢了
+ * 交互动作（click/fill/hover 等）默认 10 秒超时，遇到弹窗遮挡可快速失败并附带截图；
+ * 页面加载（goto/waitForNavigation 等）保持 30 秒超时，需要更长等待时可在代码里显式传 { timeout } 覆盖
  */
 export const DEFAULT_TIMEOUT_MS = 60_000;
+export const DEFAULT_ACTION_TIMEOUT_MS = 10_000;
+export const DEFAULT_NAVIGATION_TIMEOUT_MS = 30_000;
 /** 单次调用最长等多久：网页里的 AI 生成、查询这类要几分钟的，一次调用就能等完 */
 export const MAX_TIMEOUT_MS = 15 * 60_000;
 /** 工具自己附的说明（标签页的变化、临时标签页的提醒）里，网址最多显示这么多个字符 */
@@ -172,6 +174,8 @@ export class BrowserRepl extends CodeRepl implements Repl {
   private watch(context: BrowserContext): void {
     if (this.watched === context) return;
     this.watched = context;
+    context.setDefaultTimeout(DEFAULT_ACTION_TIMEOUT_MS);
+    context.setDefaultNavigationTimeout(DEFAULT_NAVIGATION_TIMEOUT_MS);
     trackAgent(context);
     if (this.tabEvents) return;
     const push = (change: LocalChange) => {
@@ -293,8 +297,17 @@ export class BrowserRepl extends CodeRepl implements Repl {
       // 没有标签页时 page.goto(...) 报「reading 'goto'」，看不出是 page 没有，补上这个事实
       errorNote: () => (this.currentPage === undefined ? "（现在没有标签页，page 是 undefined。）" : undefined),
     });
+    let finalText = text;
+    let images = run.images;
+    if (isError && images.length === 0 && after.current && !after.current.isClosed() && /intercepts pointer events|Timeout \d+ms exceeded/i.test(text)) {
+      const shot = await after.current.screenshot({ type: "jpeg", quality: 75, timeout: 3000 }).catch(() => null);
+      if (shot) {
+        images = [{ data: shot.toString("base64"), mimeType: "image/jpeg" }];
+        finalText = `${text}\n\n（已附当前页面截图，便于查看是否有弹窗或遮挡层。）`;
+      }
+    }
     const tabs = after.pages.map((p) => (p.isClosed() ? "" : p.url()));
-    return { text, images: run.images, isError, opened, tabs };
+    return { text: finalText, images, isError, opened, tabs };
   }
 }
 

@@ -37,7 +37,7 @@ export const RUNTIME_FACTS = [
   "- 返回最后一个表达式的值和 console.log 的输出；emitImage(buffer) 把图片加进结果。",
   `- 返回的文字里，数据部分超过 ${DATA_URL_KEEP_CHARS} 个字符的 data: 地址只保留类型（如 data:image/jpeg;base64,），数据换成「…（省略了 N 个字符）」；代码里拿到的值是完整的。`,
   "- 给 page 赋另一个标签页时，那个标签页切到前台。",
-  `- timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}；Playwright 单个动作默认 30 秒超时。`,
+  `- timeout_ms 默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}；Playwright 交互动作默认 10 秒超时、页面加载 30 秒超时（均可传 timeout 覆盖），遇到遮挡或动作超时会自动附带当前页面截图。`,
   `- 调用超过约 ${MCP_AUTO_BACKGROUND_SECONDS} 秒会转为后台任务：先返回一条「在后台运行」的结果，代码继续跑，结束后结果作为通知送达；会话空闲时，这个通知会开始新的一轮。多次调用可以同时在跑，操作的是同一批标签页。`,
   "- 网页本身的变化不会通知你；一轮结束后，只有后台任务结束会再唤起你。",
   "- 连续同步执行（中间没有 await）超过 2 秒的代码会被中止。",
