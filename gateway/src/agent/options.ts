@@ -18,6 +18,7 @@ import { sshHost } from "../ssh/hosts.js";
 import { remoteSpawner } from "../ssh/spawn.js";
 import { hostPort } from "../ssh/host.js";
 import { subagentModelHooks } from "./subagent-model.js";
+import { gbkTextHooks } from "./gbk-text.js";
 
 export interface SessionLaunch {
   sessionId: string;
@@ -136,12 +137,12 @@ export function buildOptions(launch: SessionLaunch): Options {
 }
 
 /**
- * 子代理的模型（subagent-model.ts），和定时任务：Claude Code 的定时任务只在子进程的内存里，子进程关了就没了。
+ * 子代理的模型（subagent-model.ts），Read、Grep 结果里 GBK 文件的中文（gbk-text.ts），和定时任务：Claude Code 的定时任务只在子进程的内存里，子进程关了就没了。
  * Stop hook 的 session_crons 是一轮结束时还排着的（建、删、一次性的触发后自动删、7 天到期都发生在一轮里，结束时就是最新的），
  * 交给 onCrons，有定时任务的会话不回收子进程（session-manager.ts 的 reclaimable）
  */
 function withHooks(launch: SessionLaunch): Pick<Options, "hooks"> {
-  const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = { ...subagentModelHooks() };
+  const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = { ...subagentModelHooks(), PostToolUse: gbkTextHooks(launch.cwd) };
   const onCrons = launch.onCrons;
   if (onCrons) {
     hooks.Stop = [
