@@ -178,6 +178,8 @@
     box-shadow: 0 3px 10px rgba(0, 0, 0, 0.16);
   }
   .pill[hidden] { display: none; }
+  /* 悬停卡片打开时藏起来，但不用 hidden：元素消失、再出现在鼠标底下会触发 pointerleave / pointerenter，卡片跟着收起、弹出 */
+  .pill.peeking { opacity: 0; }
   /* 省略号一个个冒出来：占位的 "..." 是透明的，宽度不变，标签不会跟着伸缩跳动 */
   .dots { position: relative; color: transparent; }
   .dots::after { content: ""; position: absolute; left: 0; color: var(--pill-fg); animation: dots 1.4s steps(4) infinite; }
@@ -511,7 +513,8 @@
       pill.hidden = true;
     } else {
       bubble.hidden = true;
-      pill.hidden = !(state.working > 0) || peeking;
+      pill.hidden = !(state.working > 0);
+      pill.classList.toggle("peeking", peeking);
       $("pill-text").textContent = `${state.working} 个会话在跑`;
     }
   }
