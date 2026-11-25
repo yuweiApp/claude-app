@@ -76,6 +76,14 @@ export class SessionManager {
     return this.active.get(sessionId);
   }
 
+  /** 灵宠悬停卡片用：取指定会话里正在跑的这一轮的最新回复与当前动作 */
+  liveReplies(ids: string[]): { sessionId: string; text: string; activity: string; startedAt: number }[] {
+    return ids.slice(0, 20).flatMap((sessionId) => {
+      const peek = this.active.get(sessionId)?.peek();
+      return peek ? [{ sessionId, ...peek }] : [];
+    });
+  }
+
   /** 新建会话并发送第一条消息。opts.goal：不发消息，新会话一开始就设定这个目标（见 AgentSession.setGoal），text 不用 */
   async create(
     text: string,

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import type { SessionListItem } from "./api";
+import { api, type SessionListItem } from "./api";
 import { sessionTitle } from "./components/Sidebar";
 import { desktop } from "./desktop";
 
@@ -68,6 +68,44 @@ export function usePet(sessions: SessionListItem[], refresh: () => void, open: (
   }, [sessions, on, pet]);
 
   useEffect(() => pet?.onTick(refresh), [pet, refresh]);
+
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  // 鼠标悬停在灵宠上时，外壳定时发 pet:peek，这里按在跑的会话列表向网关取最新回复推回去
+  useEffect(() => {
+    if (!pet?.onPeek || !pet?.setLive) return;
+    let inFlight = false;
+    return pet.onPeek(() => {
+      if (inFlight) return;
+      const active = sessionsRef.current.filter(busy);
+      if (!active.length) {
+        pet.setLive?.([]);
+        return;
+      }
+      inFlight = true;
+      void api
+        .liveReplies(active.map((s) => s.sessionId))
+        .then(({ replies }) => {
+          const byId = new Map(replies.map((r) => [r.sessionId, r]));
+          pet.setLive?.(
+            active.map((s) => {
+              const r = byId.get(s.sessionId);
+              return {
+                sessionId: s.sessionId,
+                title: sessionTitle(s),
+                text: r?.text ?? "",
+                activity: r?.activity ?? "正在处理",
+                startedAt: r?.startedAt ?? 0,
+              };
+            }),
+          );
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight = false;
+        });
+    });
+  }, [pet]);
 
   const openRef = useRef(open);
   openRef.current = open;

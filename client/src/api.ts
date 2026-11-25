@@ -110,6 +110,12 @@ export interface GatewayConfig {
 export const api = {
   config: () => request<GatewayConfig>("GET", "/config"),
   listSessions: () => request<{ sessions: SessionListItem[] }>("GET", "/sessions").then((r) => r.sessions),
+  /** 正在跑的各会话的最新回复和当前动作（桌面版灵宠悬停气泡用） */
+  liveReplies: (sessionIds: string[]) =>
+    request<{ replies: { sessionId: string; text: string; activity: string; startedAt: number }[] }>(
+      "GET",
+      `/sessions/live-replies?ids=${encodeURIComponent(sessionIds.join(","))}`,
+    ),
   /** 在项目（工作目录 cwd）的所有会话记录里查找 */
   searchSessions: (cwd: string, q: string, signal?: AbortSignal) =>
     request<SessionSearchResult>("GET", `/sessions/search?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(q)}`, undefined, signal),

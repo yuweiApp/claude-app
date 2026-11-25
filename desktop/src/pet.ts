@@ -16,8 +16,23 @@ interface PetState {
   notices: PetNotice[];
 }
 
+/** 推给灵宠悬停实时回复卡片的单条任务（desktop/assets/pet-peek.html） */
+interface PetLiveTask {
+  id: string;
+  title: string;
+  text: string;
+  activity: string;
+  startedAt: number;
+}
+
 const WIDTH = 260;
 const HEIGHT = 230;
+/** 悬停实时回复卡片窗口大小（内含 12px 阴影留白，卡片本体宽 332px） */
+const PEEK_WIDTH = 356;
+const PEEK_HEIGHT = 248;
+/** 悬停期间拉取实时回复的间隔；移出灵宠与卡片后延迟这么久收起，方便鼠标从灵宠滑进卡片 */
+const PEEK_POLL_MS = 850;
+const PEEK_HIDE_MS = 260;
 /** 最多记几条完成的会话 */
 const MAX_NOTICES = 5;
 /** 主窗口最小化期间叫网页刷新会话列表的间隔：窗口最小化时网页的定时器会被节流，靠外壳发消息唤起 */
@@ -154,10 +169,18 @@ function snapPosition(p: { x: number; y: number }, lines: Segment[]): { x: numbe
  */
 export class Pet {
   private win: BrowserWindow | undefined;
+  /** 悬停时展示正在运行任务实时回复的浮窗 */
+  private peekWin: BrowserWindow | undefined;
   /** 网页没发来开关之前按默认开着 */
   private enabled = true;
   private working = 0;
   private notices: PetNotice[] = [];
+  private liveTasks: PetLiveTask[] = [];
+  private peekOverPet = false;
+  private peekOverCard = false;
+  private peekPoll: NodeJS.Timeout | undefined;
+  private peekHideTimer: NodeJS.Timeout | undefined;
+  private peekLayout: { arrowX: number; placement: "top" | "bottom" } = { arrowX: 286, placement: "top" };
   /** 右键菜单里选了「隐藏」：回到主窗口之前不再出现 */
   private dismissed = false;
   /** 用户拖过之后的位置，这次运行期间记着 */
@@ -182,8 +205,26 @@ export class Pet {
       const { enabled, working } = state as { enabled?: unknown; working?: unknown };
       if (typeof enabled === "boolean") this.enabled = enabled;
       if (typeof working === "number" && Number.isFinite(working)) this.working = Math.max(0, Math.floor(working));
+      if (this.working === 0) this.liveTasks = [];
       if (!this.enabled) this.notices = [];
       this.sync();
+    });
+    ipcMain.on("pet:live", (e, tasks: unknown) => {
+      if (!this.fromMain(e.sender) || !Array.isArray(tasks)) return;
+      this.liveTasks = tasks
+        .filter((t): t is Record<string, unknown> => !!t && typeof t === "object" && typeof (t as { sessionId?: unknown }).sessionId === "string" && !!(t as { sessionId: string }).sessionId)
+        .slice(0, 20)
+        .map((t) => ({
+          id: t.sessionId as string,
+          title: typeof t.title === "string" && t.title.trim() ? t.title.trim() : "新会话",
+          text: typeof t.text === "string" ? t.text : "",
+          activity: typeof t.activity === "string" && t.activity.trim() ? t.activity.trim() : "正在处理",
+          startedAt: typeof t.startedAt === "number" && Number.isFinite(t.startedAt) ? t.startedAt : 0,
+        }));
+      if (this.peekWin && !this.peekWin.isDestroyed() && this.peekWin.isVisible()) {
+        if (!this.liveTasks.length) this.hidePeek();
+        else this.peekWin.webContents.send("pet:live", this.livePayload());
+      }
     });
     ipcMain.on("pet:notify", (e, notice: unknown) => {
       if (!this.fromMain(e.sender) || !this.enabled || this.dismissed || this.mainFocused()) return;
@@ -195,8 +236,16 @@ export class Pet {
       this.win?.webContents.send("pet:done", item);
     });
     // 灵宠页面上的操作
+    ipcMain.on("pet:peek-hover", (e, source: unknown, over: unknown) => {
+      if (source === "pet" && this.fromPet(e.sender)) this.peekOverPet = !!over;
+      else if (source === "card" && this.fromPeek(e.sender)) this.peekOverCard = !!over;
+      else return;
+      if (this.peekOverPet || this.peekOverCard) this.showPeek();
+      else this.scheduleHidePeek();
+    });
     ipcMain.on("pet:open", (e, sessionId: unknown) => {
-      if (!this.fromPet(e.sender)) return;
+      if (!this.fromPet(e.sender) && !this.fromPeek(e.sender)) return;
+      this.hidePeek();
       this.openMain(typeof sessionId === "string" ? sessionId : this.notices[0]?.sessionId);
     });
     ipcMain.on("pet:dismiss", (e) => {
@@ -209,6 +258,7 @@ export class Pet {
       if (!this.fromPet(e.sender) || !this.win) return;
       if (active === true) {
         this.stopDance();
+        this.hidePeek();
         this.lines = [];
         this.standing = undefined;
         const drag = ++this.drags;
@@ -261,6 +311,7 @@ export class Pet {
       });
     });
     ipcMain.handle("pet:state", (e) => (this.fromPet(e.sender) ? this.state() : null));
+    ipcMain.handle("pet:live-state", (e) => (this.fromPeek(e.sender) ? this.livePayload() : null));
   }
 
   /** 主窗口建好后接上：显示灵宠；最小化期间叫网页刷新，回到主窗口时清空通知 */
@@ -281,6 +332,7 @@ export class Pet {
     // Windows 上缩放变了以后透明窗口会停在原来的物理大小，换算成新的缩放就大了或小了，小精灵会跑到屏幕外面去
     const replace = () => {
       if (this.win && !this.win.isDestroyed() && this.win.isVisible()) this.place(this.win);
+      if (this.peekWin && !this.peekWin.isDestroyed() && this.peekWin.isVisible()) this.placePeek(this.peekWin);
     };
     screen.on("display-metrics-changed", replace);
     screen.on("display-added", replace);
@@ -292,7 +344,9 @@ export class Pet {
       this.main = undefined;
       this.stopTick();
       this.stopDance();
+      this.hidePeek();
       stopWindowEdges();
+      if (this.peekWin && !this.peekWin.isDestroyed()) this.peekWin.destroy();
       if (this.win && !this.win.isDestroyed()) this.win.destroy();
     });
   }
@@ -303,6 +357,18 @@ export class Pet {
 
   private fromPet(sender: Electron.WebContents): boolean {
     return !!this.win && !this.win.isDestroyed() && sender === this.win.webContents;
+  }
+
+  private fromPeek(sender: Electron.WebContents): boolean {
+    return !!this.peekWin && !this.peekWin.isDestroyed() && sender === this.peekWin.webContents;
+  }
+
+  private canPeek(): boolean {
+    return this.enabled && !this.dismissed && this.working > 0 && this.notices.length === 0 && !this.dragging && !!this.win && !this.win.isDestroyed() && this.win.isVisible();
+  }
+
+  private livePayload(): { tasks: PetLiveTask[]; arrowX: number; placement: "top" | "bottom" } {
+    return { tasks: this.liveTasks, ...this.peekLayout };
   }
 
   private mainHidden(): boolean {
@@ -326,6 +392,7 @@ export class Pet {
     else this.stopTick();
     if (!shown) {
       this.stopDance();
+      this.hidePeek();
       if (this.win && !this.win.isDestroyed() && this.win.isVisible()) this.win.hide();
       return;
     }
@@ -336,6 +403,97 @@ export class Pet {
       // 不抢焦点
       win.showInactive();
     }
+    if (!this.canPeek()) this.hidePeek();
+  }
+
+  private ensurePeekWindow(): BrowserWindow {
+    if (this.peekWin && !this.peekWin.isDestroyed()) return this.peekWin;
+    const w = new BrowserWindow({
+      width: PEEK_WIDTH,
+      height: PEEK_HEIGHT,
+      frame: false,
+      transparent: true,
+      backgroundColor: "#00000000",
+      hasShadow: false,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      focusable: false,
+      show: false,
+      title: "灵宠实时回复",
+      webPreferences: { preload: path.join(import.meta.dirname, "pet-preload.cjs") },
+    });
+    w.setAlwaysOnTop(true, "floating");
+    if (process.platform === "darwin") w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    void w.loadFile(path.join(this.assetsDir, "pet-peek.html"));
+    this.peekWin = w;
+    return w;
+  }
+
+  /** 根据灵宠当前位置把悬停卡片放在上方（顶边不够时翻到下方），左右限制在屏幕工作区内（贴边露一半时卡片也不出屏） */
+  private placePeek(w: BrowserWindow): void {
+    if (!this.win || this.win.isDestroyed()) return;
+    const pb = this.win.getBounds();
+    const a = workAreaAt(pb);
+    const petCenterX = pb.x + OUTLINE.center;
+    const petTopY = pb.y + PET_TOP;
+    const petBottomY = pb.y + OUTLINE.bottom;
+    const x = Math.round(Math.min(Math.max(petCenterX - PEEK_WIDTH + 54, a.x + 8), a.x + a.width - PEEK_WIDTH - 8));
+    let placement: "top" | "bottom" = "top";
+    let y = Math.round(petTopY - PEEK_HEIGHT + 16);
+    if (y < a.y + 4) {
+      placement = "bottom";
+      y = Math.round(Math.min(petBottomY - 6, a.y + a.height - PEEK_HEIGHT - 4));
+    }
+    const arrowX = Math.round(Math.min(Math.max(petCenterX - (x + 12), 24), 332 - 24));
+    this.peekLayout = { arrowX, placement };
+    w.setBounds({ x, y, width: PEEK_WIDTH, height: PEEK_HEIGHT });
+  }
+
+  private requestPeekData(): void {
+    if (this.main && !this.main.isDestroyed()) this.main.webContents.send("pet:peek");
+  }
+
+  private showPeek(): void {
+    if (!this.canPeek()) return;
+    clearTimeout(this.peekHideTimer);
+    this.peekHideTimer = undefined;
+    const w = this.ensurePeekWindow();
+    this.placePeek(w);
+    w.webContents.send("pet:live", this.livePayload());
+    if (!w.isVisible()) {
+      w.showInactive();
+      if (this.win && !this.win.isDestroyed()) this.win.webContents.send("pet:peeking", true);
+    }
+    if (!this.peekPoll) {
+      this.requestPeekData();
+      this.peekPoll = setInterval(() => {
+        if (!this.canPeek() || (!this.peekOverPet && !this.peekOverCard)) return this.hidePeek();
+        this.requestPeekData();
+      }, PEEK_POLL_MS);
+    }
+  }
+
+  private hidePeek(): void {
+    clearTimeout(this.peekHideTimer);
+    this.peekHideTimer = undefined;
+    if (this.peekPoll) clearInterval(this.peekPoll);
+    this.peekPoll = undefined;
+    this.peekOverPet = false;
+    this.peekOverCard = false;
+    if (this.peekWin && !this.peekWin.isDestroyed() && this.peekWin.isVisible()) this.peekWin.hide();
+    if (this.win && !this.win.isDestroyed()) this.win.webContents.send("pet:peeking", false);
+  }
+
+  private scheduleHidePeek(): void {
+    clearTimeout(this.peekHideTimer);
+    this.peekHideTimer = setTimeout(() => {
+      this.peekHideTimer = undefined;
+      if (!this.peekOverPet && !this.peekOverCard) this.hidePeek();
+    }, PEEK_HIDE_MS);
   }
 
   private startTick(): void {

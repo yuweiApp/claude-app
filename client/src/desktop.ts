@@ -32,11 +32,23 @@ export interface DesktopApi {
   pet?: DesktopPetApi;
 }
 
+export interface PetLiveTask {
+  sessionId: string;
+  title: string;
+  text: string;
+  activity: string;
+  startedAt: number;
+}
+
 export interface DesktopPetApi {
   /** 设置里的开关和正在运行的会话数；关着时灵宠不出现 */
   update(state: { enabled: boolean; working: number }): void;
   /** 一个会话一轮结束了；用户正在主窗口里时外壳不理会 */
   notify(notice: { sessionId: string; title: string }): void;
+  /** 悬停灵宠期间，把正在跑的各会话的最新回复推给外壳 */
+  setLive?(tasks: PetLiveTask[]): void;
+  /** 鼠标停在灵宠上时外壳定时发来，网页去网关取正在跑的会话回复；返回取消订阅的函数 */
+  onPeek?(callback: () => void): () => void;
   /** 主窗口最小化期间外壳定时发来（这时网页自己的定时器会被节流）；返回取消订阅的函数 */
   onTick(callback: () => void): () => void;
   /** 用户点了灵宠，主窗口已经恢复，要打开这个会话；返回取消订阅的函数 */

@@ -49,6 +49,10 @@ function requireContent(body: { text: string; attachments?: string[]; elements?:
 
 export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hub: EventHub, shares: ShareStore): void {
   app.get("/sessions", async () => ({ sessions: await sessions.list() }));
+  app.get<{ Querystring: { ids?: string } }>("/sessions/live-replies", async (req) => {
+    const ids = (req.query.ids ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    return { replies: sessions.liveReplies(ids) };
+  });
 
   /** Claude Code 的模型列表（SDK 的 ModelInfo） */
   app.get("/models", async () => ({ models: await listModels() }));

@@ -578,11 +578,17 @@ export class AgentSession {
     }
   }
 
+  /** 本轮（进行中）最新的回复文字与动作，灵宠悬停卡片用 */
+  private liveText = "";
+  private liveActivity = "";
+  private turnStartedAt = 0;
+
   /** 子进程发来的一条消息，按顺序：清空期间的跳过、状态和后台通知的跟踪、排队消息、工具和目标、转给网页、一轮结束的收尾 */
   private handleMessage(message: SDKMessage): void {
     this.lastActiveAt = Date.now();
     if (this.skipWhileClearing(message)) return;
     this.trackRunState(message);
+    this.trackLive(message);
     this.trackNotices(message);
     this.trackQueued(message);
     this.trackTools(message);
@@ -590,6 +596,54 @@ export class AgentSession {
     logTaskMessage(this.log, this.id, message);
     this.forwardMessage(message);
     if (message.type === "result") this.turnEnded(message);
+  }
+
+  /** 灵宠悬停气泡用的实时概况：正在跑或有后台任务在跑时返回最新回复与当前动作 */
+  peek(): { text: string; activity: string; startedAt: number } | undefined {
+    if (this.state !== "running" && !this.backgroundBusy) return undefined;
+    const text = this.liveText.trim();
+    const activity = this.state === "running" ? this.liveActivity || "正在处理" : "后台任务运行中";
+    return {
+      text: text.length > 600 ? `…${text.slice(-600)}` : text,
+      activity,
+      startedAt: this.turnStartedAt || this.lastActiveAt,
+    };
+  }
+
+  /** 跟踪主线程本轮流式输出和工具调用，给灵宠悬停卡片看 */
+  private trackLive(message: SDKMessage): void {
+    if ("parent_tool_use_id" in message && message.parent_tool_use_id !== null) return;
+    if (message.type === "stream_event") {
+      const ev = message.event;
+      if (ev.type === "content_block_start") {
+        if (ev.content_block.type === "thinking") this.liveActivity = "正在思考";
+        else if (ev.content_block.type === "text") {
+          // 新的文本块开始（例如工具调用后的下一条回复）：清空上一段，避免多条消息拼在一起
+          this.liveText = "";
+          this.liveActivity = "正在回复";
+        } else if (ev.content_block.type === "tool_use") this.liveActivity = `正在调用 ${ev.content_block.name}`;
+      } else if (ev.type === "content_block_delta") {
+        if (ev.delta.type === "text_delta") {
+          this.liveText = (this.liveText + ev.delta.text).slice(-1200);
+          this.liveActivity = "正在回复";
+        } else if (ev.delta.type === "thinking_delta") {
+          this.liveActivity = "正在思考";
+        }
+      }
+      return;
+    }
+    if (message.type === "assistant" && message.message.model !== "<synthetic>") {
+      const content = message.message.content;
+      if (!Array.isArray(content)) return;
+      let lastText = "";
+      let lastTool = "";
+      for (const block of content) {
+        if (block.type === "text" && block.text) lastText = block.text;
+        else if (block.type === "tool_use" && block.name) lastTool = block.name;
+      }
+      if (lastText) this.liveText = lastText.slice(-1200);
+      if (lastTool) this.liveActivity = `正在调用 ${lastTool}`;
+    }
   }
 
   /** 清空（见 clear）：conversation_reset 之后的消息是新会话的，不发给网页、不记进这个会话；等到 result 就知道新的会话 id。返回 true 是这条不再往下处理 */
@@ -745,6 +799,15 @@ export class AgentSession {
   private setState(state: SessionState): void {
     if (this.state === state) return;
     this.state = state;
+    if (state === "running") {
+      this.turnStartedAt = Date.now();
+      this.liveText = "";
+      this.liveActivity = "正在思考";
+    } else if (state !== "starting") {
+      this.turnStartedAt = 0;
+      this.liveText = "";
+      this.liveActivity = "";
+    }
     if (state !== "idle") clearTimeout(this.noticeTimer);
     this.lastActiveAt = Date.now();
     this.publishState();

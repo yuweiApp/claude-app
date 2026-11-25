@@ -486,6 +486,7 @@
   const pill = $("pill");
   let current = { working: 0, notices: [] };
   let dragging = false;
+  let peeking = false;
   /** 睡着时被点了一下：醒一会儿再接着睡 */
   let awakeUntil = 0;
   let sleepTimer = 0;
@@ -510,7 +511,7 @@
       pill.hidden = true;
     } else {
       bubble.hidden = true;
-      pill.hidden = !(state.working > 0);
+      pill.hidden = !(state.working > 0) || peeking;
       $("pill-text").textContent = `${state.working} 个会话在跑`;
     }
   }
@@ -559,12 +560,21 @@
 
   api.onState(render);
   api.onDone(jump);
+  api.onPeeking((active) => {
+    peeking = !!active;
+    render(current);
+  });
   void api.state().then((s) => s && render(s));
 
   // 透明的地方鼠标穿过去，移到小精灵、气泡上时接住
   for (const el of document.querySelectorAll(".hit")) {
     el.addEventListener("pointerenter", () => api.hover(true));
     el.addEventListener("pointerleave", () => !dragging && api.hover(false));
+  }
+  // 鼠标移到小精灵（或「会话在跑」小胶囊）上时，通知外壳弹出正在运行任务的实时回复卡片
+  for (const el of [petEl, pill]) {
+    el.addEventListener("pointerenter", () => !dragging && api.peek("pet", true));
+    el.addEventListener("pointerleave", () => api.peek("pet", false));
   }
 
   document.addEventListener("contextmenu", (e) => {

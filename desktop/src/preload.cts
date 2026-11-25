@@ -36,6 +36,12 @@ contextBridge.exposeInMainWorld("desktop", {
   pet: {
     update: (state: { enabled: boolean; working: number }) => ipcRenderer.send("pet:update", state),
     notify: (notice: { sessionId: string; title: string }) => ipcRenderer.send("pet:notify", notice),
+    setLive: (tasks: unknown) => ipcRenderer.send("pet:live", tasks),
+    onPeek: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on("pet:peek", listener);
+      return () => void ipcRenderer.removeListener("pet:peek", listener);
+    },
     onTick: (callback: () => void) => {
       const listener = () => callback();
       ipcRenderer.on("pet:tick", listener);
