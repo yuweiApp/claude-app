@@ -29,6 +29,12 @@ export class LanServer {
   private syncing: Promise<void> = Promise.resolve();
   /** 每个入口、每个令牌的连接（HTTP 响应、WebSocket），停止分享时全部断开 */
   private readonly connections: Record<ShareScope, Map<string, Set<{ destroy(): void }>>> = { lan: new Map(), public: new Map() };
+  /**
+   * 每个入口接进来的所有连接，关闭入口时全部断开。
+   * server.closeAllConnections() 不管升级成 WebSocket 的连接（开发时 Vite 的 HMR 不带令牌，也不在 connections 里），
+   * server.close() 却要等它们断开，不断开的话访客页面关掉之前停止分享都不返回
+   */
+  private readonly sockets: Record<ShareScope, Set<net.Socket>> = { lan: new Set(), public: new Set() };
   /** 上一次开始监听失败的原因（端口被占用等），开分享的接口据此报错 */
   readonly errors: Record<ShareScope, string | null> = { lan: null, public: null };
   /** 公网分享到服务器的 SSH 反向转发 */
@@ -89,6 +95,11 @@ export class LanServer {
     const { host, port, name } = LISTEN[scope];
     const server = http.createServer((req, res) => this.handle(scope, req, res));
     server.on("upgrade", (req, socket, head) => this.upgrade(scope, req, socket, head));
+    const sockets = this.sockets[scope];
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+    });
     return new Promise((resolve) => {
       server.once("error", (err) => {
         this.errors[scope] = `${name}端口 ${port()} 监听失败：${err.message}`;
@@ -108,10 +119,11 @@ export class LanServer {
     const server = this.servers[scope];
     if (!server) return;
     this.servers[scope] = null;
-    for (const set of this.connections[scope].values()) for (const c of set) c.destroy();
     this.connections[scope].clear();
-    server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+    for (const socket of this.sockets[scope]) socket.destroy();
+    this.sockets[scope].clear();
+    await closed;
     this.log.info(`没有这种分享了，${LISTEN[scope].name}已关闭`);
   }
 

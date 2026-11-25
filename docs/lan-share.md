@@ -39,7 +39,7 @@
   - `POST /sessions/:id/share`：开分享，已有就用原来的。入口没能监听（端口被占用）时撤掉这次新开的、报 500
   - `DELETE /sessions/:id/share`：停止局域网分享（还分享到公网时只去掉 `lan`）
   - `POST`、`DELETE /sessions/:id/share/public`：开、停公网分享，见第 9 节
-- **入口的开关**（`LanServer.sync()`）：有分享时监听 `0.0.0.0:<SHARE_PORT>`（默认 8789），最后一条停掉时关闭；停掉的分享的连接（事件流、终端、浏览器）立刻断开。
+- **入口的开关**（`LanServer.sync()`）：有分享时监听 `0.0.0.0:<SHARE_PORT>`（默认 8789），最后一条停掉时关闭（连进来的连接全部断开，包括不带令牌的页面 HMR 的 WebSocket，不然关闭要等访客关掉页面）；停掉的分享的连接（事件流、终端、浏览器）立刻断开。
 - **会话删除时**删掉它的分享；**会话清空后**（Claude Code 换了新的会话 id）分享跟到新 id，令牌不变（`routes/sessions.ts` 的 delete、clear 里各一行）。
 
 ## 4. 局域网入口（`share/lan-server.ts`）
