@@ -27,14 +27,16 @@ contextBridge.exposeInMainWorld("pet", {
   menu: () => ipcRenderer.send("pet:menu"),
   /** 鼠标在不在小精灵、气泡上（不在时鼠标穿过透明的窗口） */
   hover: (over: boolean) => ipcRenderer.send("pet:hover", over),
-  /** 鼠标悬停在灵宠或实时回复卡片上，外壳据此显示/隐藏悬停气泡并拉取实时回复 */
+  /** 鼠标在不在灵宠或实时回复卡片上：卡片开着时都移出了就收起 */
   peek: (source: "pet" | "card", over: boolean) => ipcRenderer.send("pet:peek-hover", source, over),
+  /** 双击灵宠：有会话在跑时弹出（开着时收起）实时回复卡片，否则恢复主窗口并打开这个会话（不传是最近完成的那个） */
+  activate: (sessionId?: string) => ipcRenderer.send("pet:activate", sessionId),
   /** 实时回复卡片当前显示的状态 */
   live: (): Promise<unknown> => ipcRenderer.invoke("pet:live-state"),
   onLive: (callback: (payload: unknown) => void) => {
     ipcRenderer.on("pet:live", (_event, payload: unknown) => callback(payload));
   },
-  /** 悬停气泡有没有打开（打开时灵宠窗口暂时藏起「N 个会话在跑」的小胶囊） */
+  /** 实时回复卡片有没有打开（打开时灵宠窗口暂时藏起「N 个会话在跑」的小胶囊） */
   onPeeking: (callback: (active: boolean) => void) => {
     ipcRenderer.on("pet:peeking", (_event, active: boolean) => callback(active));
   },

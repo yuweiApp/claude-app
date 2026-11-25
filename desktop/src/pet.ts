@@ -16,7 +16,7 @@ interface PetState {
   notices: PetNotice[];
 }
 
-/** 推给灵宠悬停实时回复卡片的单条任务（desktop/assets/pet-peek.html） */
+/** 推给灵宠实时回复卡片的单条任务（desktop/assets/pet-peek.html） */
 interface PetLiveTask {
   id: string;
   title: string;
@@ -27,14 +27,12 @@ interface PetLiveTask {
 
 const WIDTH = 260;
 const HEIGHT = 230;
-/** 悬停实时回复卡片窗口大小（内含 12px 阴影留白，卡片本体宽 332px） */
+/** 实时回复卡片窗口大小（内含 12px 阴影留白，卡片本体宽 332px） */
 const PEEK_WIDTH = 356;
 const PEEK_HEIGHT = 248;
-/** 悬停期间拉取实时回复的间隔；移出灵宠与卡片后延迟这么久收起，方便鼠标从灵宠滑进卡片 */
+/** 卡片开着期间拉取实时回复的间隔；移出灵宠与卡片后延迟这么久收起，方便鼠标从灵宠滑进卡片 */
 const PEEK_POLL_MS = 850;
 const PEEK_HIDE_MS = 260;
-/** 点「打开会话」后鼠标挪开这么远以内，算还停在原处（见 Pet.peekLatch） */
-const PEEK_LATCH_MOVE = 6;
 /** 最多记几条完成的会话 */
 const MAX_NOTICES = 5;
 /** 主窗口最小化期间叫网页刷新会话列表的间隔：窗口最小化时网页的定时器会被节流，靠外壳发消息唤起 */
@@ -171,7 +169,7 @@ function snapPosition(p: { x: number; y: number }, lines: Segment[]): { x: numbe
  */
 export class Pet {
   private win: BrowserWindow | undefined;
-  /** 悬停时展示正在运行任务实时回复的浮窗 */
+  /** 双击灵宠时展示正在运行任务实时回复的浮窗 */
   private peekWin: BrowserWindow | undefined;
   /** 网页没发来开关之前按默认开着 */
   private enabled = true;
@@ -183,11 +181,6 @@ export class Pet {
   private peekPoll: NodeJS.Timeout | undefined;
   private peekHideTimer: NodeJS.Timeout | undefined;
   private peekLayout: { arrowX: number; placement: "top" | "bottom" } = { arrowX: 286, placement: "top" };
-  /**
-   * 点了「打开会话」（或双击灵宠）时鼠标所在的屏幕位置：卡片收起后鼠标还停在灵宠上，这期间不再弹卡片，
-   * 等鼠标离开灵宠一次（或已经挪开了）再弹。不然卡片收起时下面的「N 个会话在跑」小胶囊冒到鼠标底下，又把卡片弹出来
-   */
-  private peekLatch: Electron.Point | undefined;
   /** 右键菜单里选了「隐藏」：回到主窗口之前不再出现 */
   private dismissed = false;
   /** 用户拖过之后的位置，这次运行期间记着 */
@@ -243,24 +236,33 @@ export class Pet {
       this.win?.webContents.send("pet:done", item);
     });
     // 灵宠页面上的操作
+    // 卡片只在双击时弹出（pet:activate），悬停不弹；开着时鼠标移出灵宠和卡片就收起
     ipcMain.on("pet:peek-hover", (e, source: unknown, over: unknown) => {
       if (source === "pet" && this.fromPet(e.sender)) this.peekOverPet = !!over;
       else if (source === "card" && this.fromPeek(e.sender)) this.peekOverCard = !!over;
       else return;
-      if (this.peekLatch) {
-        const c = screen.getCursorScreenPoint();
-        const moved = Math.abs(c.x - this.peekLatch.x) > PEEK_LATCH_MOVE || Math.abs(c.y - this.peekLatch.y) > PEEK_LATCH_MOVE;
-        if (source === "pet" && !over) this.peekLatch = undefined;
-        if (!moved) return;
-        this.peekLatch = undefined;
+      if (!this.peekWin || this.peekWin.isDestroyed() || !this.peekWin.isVisible()) return;
+      if (this.peekOverPet || this.peekOverCard) {
+        clearTimeout(this.peekHideTimer);
+        this.peekHideTimer = undefined;
+      } else {
+        this.scheduleHidePeek();
       }
-      if (this.peekOverPet || this.peekOverCard) this.showPeek();
-      else this.scheduleHidePeek();
+    });
+    // 双击灵宠：有会话在跑（没有待看的完成通知）时弹出实时回复卡片，卡片开着时收起；否则同以前，回到主窗口打开那个会话
+    ipcMain.on("pet:activate", (e, sessionId: unknown) => {
+      if (!this.fromPet(e.sender)) return;
+      if (this.peekWin && !this.peekWin.isDestroyed() && this.peekWin.isVisible()) return this.hidePeek();
+      if (this.canPeek()) {
+        // 双击时鼠标就在灵宠上（hidePeek 清掉过这个标记，鼠标没离开过就不会再收到 pointerenter）
+        this.peekOverPet = true;
+        return this.showPeek();
+      }
+      this.openMain(typeof sessionId === "string" ? sessionId : this.notices[0]?.sessionId);
     });
     ipcMain.on("pet:open", (e, sessionId: unknown) => {
       if (!this.fromPet(e.sender) && !this.fromPeek(e.sender)) return;
       this.hidePeek();
-      this.peekLatch = screen.getCursorScreenPoint();
       this.openMain(typeof sessionId === "string" ? sessionId : this.notices[0]?.sessionId);
     });
     ipcMain.on("pet:dismiss", (e) => {
@@ -448,7 +450,7 @@ export class Pet {
     return w;
   }
 
-  /** 根据灵宠当前位置把悬停卡片放在上方（顶边不够时翻到下方），左右限制在屏幕工作区内（贴边露一半时卡片也不出屏） */
+  /** 根据灵宠当前位置把实时回复卡片放在上方（顶边不够时翻到下方），左右限制在屏幕工作区内（贴边露一半时卡片也不出屏） */
   private placePeek(w: BrowserWindow): void {
     if (!this.win || this.win.isDestroyed()) return;
     const pb = this.win.getBounds();
