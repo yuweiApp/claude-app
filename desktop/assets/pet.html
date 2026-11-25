@@ -179,7 +179,7 @@
   }
   .pill[hidden] { display: none; }
   /*
-   * 实时回复卡片打开时藏起来，但不用 hidden：元素消失、再出现在鼠标底下会触发 pointerleave / pointerenter，卡片跟着收起。
+   * 悬停卡片打开时藏起来，但不用 hidden：元素消失、再出现在鼠标底下会触发 pointerleave / pointerenter，卡片跟着收起、弹出。
    * 也不接鼠标：它在卡片窗口底下，接了的话灵宠窗口和卡片窗口来回抢鼠标（见 pet.ts 的 showPeek），还会挡住卡片上的「打开会话」
    */
   .pill.peeking { opacity: 0; pointer-events: none; }
@@ -577,7 +577,7 @@
     el.addEventListener("pointerenter", () => api.hover(true));
     el.addEventListener("pointerleave", () => !dragging && api.hover(false));
   }
-  // 鼠标在不在小精灵（或「会话在跑」小胶囊）上：实时回复卡片开着时，移出灵宠和卡片就收起（卡片双击才弹出）
+  // 鼠标移到小精灵（或「会话在跑」小胶囊）上时，通知外壳弹出正在运行任务的实时回复卡片
   for (const el of [petEl, pill]) {
     el.addEventListener("pointerenter", () => !dragging && api.peek("pet", true));
     el.addEventListener("pointerleave", () => api.peek("pet", false));
@@ -597,7 +597,7 @@
     api.hover(false);
   });
 
-  // 按住拖动，没怎么动就当点击：单击跳一下，双击弹出（或收起）实时回复卡片，没有会话在跑时回到主窗口
+  // 按住拖动，没怎么动就当点击：单击跳一下，双击回到主窗口
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const DOUBLE_MS = 400;
   let lastClick = 0;
@@ -699,7 +699,7 @@
     const now = Date.now();
     if (now - lastClick < DOUBLE_MS) {
       lastClick = 0;
-      api.activate(current.notices[0]?.sessionId);
+      api.open(current.notices[0]?.sessionId);
     } else {
       lastClick = now;
       jump();
