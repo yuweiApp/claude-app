@@ -6,7 +6,7 @@ MCP Apps（SEP-1865，规范 `ext-apps/specification/2026-01-26/apps.mdx`，状�
 
 ## 1. 现状
 
-- 本项目：第 1、2 期已经做了（第 5 节），`config.yml` 的 `mcpApps.enabled` 默认关。关着时声明了界面的工具显示成普通工具调用，网关也不开沙箱代理的端口。
+- 本项目：第 1、2 期已经做了（第 5 节），`config.yml` 的 `mcpApps.enabled` 默认打开（随项目的 `config.yml` 里是 `true`；没写这一项时是关的）。关着时声明了界面的工具显示成普通工具调用，网关也不开沙箱代理的端口。
 - SDK 0.3.331 / 自带的 CLI 已经有宿主要用的东西：
 
 | 能力 | 怎么用 | 说明 |
@@ -24,7 +24,7 @@ MCP Apps（SEP-1865，规范 `ext-apps/specification/2026-01-26/apps.mdx`，状�
 
 ### 2.1 开关
 
-`config.yml` 加一项（暂定 `mcpApps.enabled`，默认关）。打开时网关给子进程设 `CLAUDE_CODE_MCP_APPS_HOST=1`。关着时完全是现在的行为，以下所有路径都不走。
+`config.yml` 加一项 `mcpApps.enabled`（验证阶段默认关，2026-11-25 起默认打开）。打开时网关给子进程设 `CLAUDE_CODE_MCP_APPS_HOST=1`。关着时完全是现在的行为，以下所有路径都不走。
 
 ### 2.2 网关
 

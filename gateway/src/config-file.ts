@@ -28,7 +28,7 @@ export function withAlwaysLoad<T extends { name: string; _meta?: Record<string, 
 export const desktopEnabled: boolean = configFile?.desktop?.enabled === true;
 
 /**
- * MCP Apps（SEP-1865，MCP 服务器给工具配的界面）：config.yml 的 mcpApps.enabled，默认关（只有写成 true 才开），见 docs/mcp-apps.md。
+ * MCP Apps（SEP-1865，MCP 服务器给工具配的界面）：config.yml 的 mcpApps.enabled（随项目的 config.yml 里是 true；没写这一项时是关的，只有写成 true 才开），见 docs/mcp-apps.md。
  * 打开时子进程带 CLAUDE_CODE_MCP_APPS_HOST，Claude Code 向所有 MCP 服务器声明宿主支持 MCP Apps
  */
 export const mcpAppsEnabled: boolean = configFile?.mcpApps?.enabled === true;
