@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import os from "node:os";
 import { StringDecoder } from "node:string_decoder";
@@ -123,6 +122,12 @@ export class TerminalManager {
   /** 某个会话的模型开的终端里有没有命令在跑，变了时调用（网页的输入框、侧栏据此显示在运行） */
   onAgentRunning?: (sessionId: string, running: boolean) => void;
 
+  private nextId = 1;
+  /** 终端的 id（也是给模型的 tab_id）：网关进程里递增的 t1、t2…，网关重启后从头数。不用 UUID：太长，模型每次调用都要原样抄一遍 */
+  private newId(): string {
+    return `t${this.nextId++}`;
+  }
+
   /** sessionId：只要这个会话的（加上不属于哪个会话的旧终端） */
   list(cwd?: string, sessionId?: string): TerminalInfo[] {
     return [...this.terminals.values()].filter((t) => (!cwd || t.cwd === cwd) && (!sessionId || !t.sessionId || t.sessionId === sessionId)).map(info);
@@ -143,7 +148,7 @@ export class TerminalManager {
     const nonce = newNonce();
     const { proc, shell, marked } = parseRemote(cwd) ? await remotePty(cwd, size, opts.dir, nonce) : localPty(opts.dir ?? cwd, size, nonce);
     const term: Terminal = {
-      id: randomUUID(),
+      id: this.newId(),
       cwd,
       ...(opts.dir ? { dir: opts.dir } : {}),
       shell: shell.split(/[\\/]/).pop() || shell,
