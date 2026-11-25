@@ -4,6 +4,7 @@ import path from "node:path";
 import { parseEnv } from "node:util";
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { applyProxyEnv } from "./net/proxy.js";
+import { mcpAppsEnabled } from "./config-file.js";
 
 // 按优先级从低到高覆盖：.env.local > .env > 系统环境变量
 for (const file of [".env", ".env.local"]) {
@@ -124,6 +125,8 @@ export const config = {
   shareClientUrl: env.SHARE_CLIENT_URL?.trim() || "http://localhost:5180",
   /** 公网分享：本机给到服务器的 SSH 反向转发连的入口端口（只监听 127.0.0.1），有公网分享时才监听 */
   shareTunnelPort: int("SHARE_TUNNEL_PORT", 8790),
+  /** MCP Apps 的沙箱代理页（和网页不同源的外层 iframe）：开了 mcpApps 时监听，局域网分享开着时改成监听 0.0.0.0，见 mcp-apps/sandbox.ts */
+  mcpAppsSandboxPort: int("MCP_APPS_SANDBOX_PORT", 8791),
   /** 网页的源码目录（公网分享给访客打包用） */
   clientDir: path.resolve(env.CLIENT_DIR || path.join(gatewayRoot, "..", "client")),
   /** 公网分享的访客用的打包版网页放在哪（网关自己打包，见 share/client-bundle.ts） */
@@ -202,6 +205,8 @@ export function agentEnv(): Record<string, string | undefined> {
     // MCP 调用（浏览器的 browser_run_code 等）多久后转由 CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS 定，默认 120 秒，这里改成 20 秒
     CLAUDE_AUTO_BACKGROUND_TASKS: env.CLAUDE_AUTO_BACKGROUND_TASKS ?? "1",
     CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS ?? String(MCP_AUTO_BACKGROUND_MS),
+    // MCP Apps（config.yml 的 mcpApps.enabled）：Claude Code 在 MCP 的 initialize 里声明 io.modelcontextprotocol/ui 扩展，见 docs/mcp-apps.md
+    ...(mcpAppsEnabled ? { CLAUDE_CODE_MCP_APPS_HOST: "1" } : {}),
     ...(process.platform === "win32" ? windowsBashEnv(inherited.CLAUDE_ENV_FILE) : {}),
   };
 }

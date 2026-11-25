@@ -27,6 +27,13 @@ tools:
 desktop:
   enabled: true
 
+# MCP Apps（SEP-1865）：MCP 服务器给工具配的界面（ui:// 资源），调用这个工具时显示在对话里，见 docs/mcp-apps.md。
+# 打开后 Claude Code 向所有 MCP 服务器声明宿主支持 MCP Apps（有的服务器会因此多出工具、或者工具的描述和返回变了），
+# 声明了界面的工具调用也不再自动转后台。打开时网关另外监听沙箱代理的端口（MCP_APPS_SANDBOX_PORT，默认 8791，局域网分享时对局域网开放）。
+# 默认关；要用时改成 true，重启网关。
+mcpApps:
+  enabled: false
+
 # 连接器市场（设置页「连接器」→「连接器市场」），两个来源，都只列有远程地址（HTTP / SSE）的服务器：
 # - Claude 目录（directory，默认）：claude.ai 上的连接器目录，Claude Code 查目录用的同一个公开接口，不用登录。
 #   一千多个，带分类、热度排序和审核情况，网关一次取完缓存 1 小时。

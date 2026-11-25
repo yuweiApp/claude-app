@@ -3,6 +3,7 @@ import { getSessionMessages, type SessionMessage, type SessionStoreEntry } from 
 import type { HistoryImageSource } from "../shared/types.js";
 import { goalStatusEntry, type GoalStatusEntry } from "./goal.js";
 import { FileCache, sessionRecordFile } from "./session-records.js";
+import { mcpAppsEnabled } from "../config-file.js";
 
 /** 最近读过的几个会话的结果 */
 const cache = new FileCache<SessionMessage[]>(4);
@@ -25,6 +26,8 @@ async function readHistory(sessionId: string, file: string): Promise<SessionMess
   const entries: SessionStoreEntry[] = [];
   const boundaries: number[] = [];
   const goals: GoalStatusEntry[] = [];
+  /** MCP 工具结果的原始 structuredContent、_meta（会话文件里那一行的 mcpMeta），按消息 uuid */
+  const mcpMetas = new Map<string, unknown>();
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     try {
@@ -32,6 +35,8 @@ async function readHistory(sessionId: string, file: string): Promise<SessionMess
       if (entry.type === "system" && entry.subtype === "compact_boundary") boundaries.push(entries.length);
       const goal = entry.type === "attachment" ? goalStatusEntry(entry) : undefined;
       if (goal && !goal.status.sentinel) goals.push(goal);
+      const mcpMeta = (entry as { mcpMeta?: unknown }).mcpMeta;
+      if (mcpAppsEnabled && mcpMeta && typeof mcpMeta === "object" && typeof entry.uuid === "string") mcpMetas.set(entry.uuid, mcpMeta);
       entries.push(entry);
     } catch {
       // 写到一半的行（会话正在运行）跳过
@@ -44,7 +49,10 @@ async function readHistory(sessionId: string, file: string): Promise<SessionMess
   segments.push(await read(entries));
 
   const seen = new Set<string>();
-  return withGoalStatus(sessionId, segments.flat().filter((m) => !seen.has(m.uuid) && seen.add(m.uuid)), goals);
+  const messages = segments.flat().filter((m) => !seen.has(m.uuid) && seen.add(m.uuid));
+  // MCP Apps 的界面要工具结果的 structuredContent、_meta：getSessionMessages 不返回会话文件里的 mcpMeta，补成 mcp_meta（只在开了 mcpApps 时）
+  const withMeta = mcpMetas.size ? messages.map((m) => (mcpMetas.has(m.uuid) ? { ...m, mcp_meta: mcpMetas.get(m.uuid) } : m)) : messages;
+  return withGoalStatus(sessionId, withMeta, goals);
 }
 
 /**

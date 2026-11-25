@@ -775,6 +775,11 @@ span.connector-added { color: var(--ok); font-weight: 500; }
 /* 参数还在生成：只有一行提示，和部件刚插进页面时的 iframe 一样高（Widget.tsx 的 LOADING_HEIGHT） */
 .widget-pending { height: 28px; }
 .widget-loading { position: absolute; top: 0; left: 0; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+/* MCP Apps 的界面（McpAppView.tsx）：资源声明了 prefersBorder 的加边框；调用出错的原因写在界面下面 */
+/* 边框用阴影画：不占 iframe 的尺寸，界面报的高度就是它看到的高度 */
+.mcp-app.bordered .widget-frame { box-shadow: 0 0 0 1px var(--border); border-radius: 10px; }
+.mcp-app-error, .mcp-app-note { color: var(--muted); font-size: 13px; }
+.mcp-app-note { margin-top: 6px; color: var(--err); }
 .widget-loading-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: widget-pulse 1.2s ease-in-out infinite; }
 @keyframes widget-pulse { 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .widget-loading-dot { animation: none; } }

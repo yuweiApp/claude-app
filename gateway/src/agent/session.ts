@@ -13,10 +13,10 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { FastifyBaseLogger } from "fastify";
 import { config } from "../config.js";
-import { ConflictError } from "../errors.js";
+import { ConflictError, NotFoundError } from "../errors.js";
 import type { EventHub } from "../events/event-hub.js";
 import type { ConversationLog } from "../logging/conversation-log.js";
-import type { Attachment, ContextUsage, GatewayEvent, GoalState, MessagePriority, SessionState } from "../shared/types.js";
+import type { Attachment, ContextUsage, GatewayEvent, GoalState, McpAppCallResult, McpAppContextUpdate, McpAppResource, McpAppTools, MessagePriority, SessionState } from "../shared/types.js";
 import { buildUserContent, type SelectedElementContent } from "./attachments.js";
 import { goalFeedback, goalOutput, recordedGoal } from "./goal.js";
 import { parseRemote } from "../ssh/location.js";
@@ -32,6 +32,9 @@ import { inappBusy } from "../browser/tool.js";
 import { takeToolResult } from "../tool-result.js";
 import { desktopWriteActive } from "../desktop/guard.js";
 import { buildOptions } from "./options.js";
+import { mcpAppsEnabled } from "../config-file.js";
+import { appContextOf, appToolsOf, callAppTool, formatAppContext, readAppResource, sameTools, type AppContext } from "../mcp-apps/apps.js";
+import { settledMcpStatus } from "./capabilities.js";
 import type { TaskList } from "./tasks.js";
 
 interface PendingPermission {
@@ -212,7 +215,7 @@ export class AgentSession {
   async send(text: string, attachments: Attachment[] = [], elements: SelectedElementContent[] = [], priority?: MessagePriority, draft?: unknown): Promise<string> {
     // 远程会话的附件先传到远端
     const remotePaths = await sessionHome(this.id, this.cwd).uploadAttachments(attachments);
-    const content = await buildUserContent(text, attachments, elements, remotePaths);
+    const content = this.withAppContexts(await buildUserContent(text, attachments, elements, remotePaths));
     return this.push(content, priority, draft);
   }
 
@@ -447,6 +450,60 @@ export class AgentSession {
   /** 重连 MCP 服务器：登录、退出登录之后，让已经开着的会话用上新的令牌 */
   async reconnectMcpServer(name: string): Promise<void> {
     await this.query.reconnectMcpServer(name);
+    if (mcpAppsEnabled) void this.mcpAppTools(true).catch(() => {});
+  }
+
+  /** MCP Apps：声明了 _meta.ui 的工具（见 mcp-apps/apps.ts），取过就用记下的；refresh 时重新取，变了发 mcp_apps */
+  private appTools?: McpAppTools;
+  private appToolsLoading?: Promise<McpAppTools>;
+  async mcpAppTools(refresh = false): Promise<McpAppTools> {
+    if (!mcpAppsEnabled) return {};
+    if (this.appTools && !refresh) return this.appTools;
+    if (this.appToolsLoading && !refresh) return this.appToolsLoading;
+    const loading = (async () => {
+      const tools = appToolsOf(await settledMcpStatus(this.query, await this.query.mcpServerStatus()));
+      if (!sameTools(this.appTools, tools)) {
+        this.appTools = tools;
+        this.publish({ type: "mcp_apps", tools });
+      }
+      return tools;
+    })();
+    this.appToolsLoading = loading;
+    try {
+      return await loading;
+    } finally {
+      if (this.appToolsLoading === loading) this.appToolsLoading = undefined;
+    }
+  }
+
+  /** 读工具 toolName 的界面资源 */
+  async mcpAppResource(toolName: string): Promise<McpAppResource> {
+    const tool = (await this.mcpAppTools())[toolName];
+    if (!tool?.resourceUri) throw new NotFoundError(`${toolName} 没有界面`);
+    return readAppResource(this.query, tool.server, tool.resourceUri);
+  }
+
+  /** 界面更新给模型的内容（ui/update-model-context）：每个界面（工具调用）只留最后一份，下一条用户消息发出时附在前面，之后清掉 */
+  private readonly appContexts = new Map<string, AppContext>();
+
+  async mcpAppContext(update: McpAppContextUpdate): Promise<void> {
+    const tool = (await this.mcpAppTools())[update.from];
+    if (!tool?.resourceUri) throw new NotFoundError(`${update.from} 没有界面`);
+    const context = appContextOf(tool, update);
+    if (context) this.appContexts.set(update.toolUseId, context);
+    else this.appContexts.delete(update.toolUseId);
+  }
+
+  private withAppContexts(content: UserContent): UserContent {
+    if (!this.appContexts.size) return content;
+    const blocks = [...this.appContexts.values()].map((c) => ({ type: "text" as const, text: formatAppContext(c) }));
+    this.appContexts.clear();
+    return [...blocks, ...(typeof content === "string" ? (content ? [{ type: "text" as const, text: content }] : []) : content)];
+  }
+
+  /** 工具 from 的界面调用同一个服务器上的工具 name */
+  async mcpAppCall(from: string, name: string, args: Record<string, unknown>): Promise<McpAppCallResult> {
+    return callAppTool(this.query, await this.mcpAppTools(), from, name, args);
   }
 
   async setPermissionMode(mode: PermissionMode): Promise<void> {
@@ -669,6 +726,7 @@ export class AgentSession {
         this.setState("idle");
         void this.refreshContext();
       } else this.publishState();
+      if (mcpAppsEnabled) void this.mcpAppTools(true).catch((e) => this.log.warn({ sessionId: this.id, err: String(e) }, "取 MCP Apps 工具表失败"));
     }
     // 压缩完成（自动的在一轮中间）：用量变了，但要等模型下一次回复才知道压缩后的实际用量
     if (message.type === "system" && message.subtype === "compact_boundary") {

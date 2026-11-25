@@ -3,6 +3,7 @@ import type { Attachment, BackgroundTask, Capabilities, ContextUsage, SessionCon
 
 export type { MessagePriority, ProxyMode, ProxyNodes, ProxySettingsInput, ProxySettingsView, ProxyTestResult, SshConfigHost, SshConnectionInfo, SshConnectionInput, Attachment, BackgroundTask, Capabilities, ContextUsage, SessionContextInfo, GoalState, GoalStatusRecord, ConnectorEntry, ConnectorInput, ConnectorPage, ConnectorSource, DesktopTarget, BrowserEntry, BrowserLogo, BrowserProfile, BrowserSettingsView, CookieImportResult, CookieSite, CookieSitesView, ExternalBrowserId, ExternalBrowserInfo, ExternalBrowserTabs, FileContent, FileEncoding, FileTransfer, GatewayEvent, MarketPlugin, MarketPluginPage, McpAuthState, McpServerInfo, McpServerInput, ProjectEntry, SessionListItem, ShareFixResult, ShareInfo, ShareSettingsInput, ShareSettingsView, SharesView, ShareTestResult, SkillDetail, TaskOutput, TerminalClientMessage, TerminalEvent, TerminalInfo };
 import type { SessionSearchHit, SessionSearchResult } from "@gateway/shared/types";
+import type { McpAppCallResult, McpAppContextUpdate, McpAppResource, McpAppTools } from "@gateway/shared/types";
 export type { SessionSearchHit, SessionSearchResult };
 
 const BASE = "/api";
@@ -87,6 +88,8 @@ export interface HistoryMessage {
   isCompactSummary?: boolean;
   /** 不是用户写的消息的来源（SDK 的类型定义里没有，运行时带着）。后台任务的通知带 runId：任务这一次运行的 id，同实时通知的 run_id */
   origin?: { kind?: string; runId?: string };
+  /** MCP 工具结果的原始 structuredContent、_meta（网关从会话文件的 mcpMeta 补的，只在开了 MCP Apps 时有） */
+  mcp_meta?: { structuredContent?: unknown; _meta?: unknown };
 }
 
 /** GET /folders：网关机器上一个文件夹里的子文件夹 */
@@ -105,6 +108,10 @@ export interface GatewayConfig {
   maxUploadMb: number;
   /** 网关开没开桌面工具（config.yml 的 desktop.enabled） */
   desktop: boolean;
+  /** 网关开没开 MCP Apps（config.yml 的 mcpApps.enabled） */
+  mcpApps?: boolean;
+  /** MCP Apps 沙箱代理页的端口（按网页自己的主机名拼地址）；null 是没有代理（公网分享的访客、没监听上），界面用单层显示 */
+  mcpAppsSandboxPort?: number | null;
 }
 
 export const api = {
@@ -270,6 +277,15 @@ export const api = {
   /** 对话里的部件显示后报告结果（大小、加载期间的错误），交给正在等它的 show_widget 调用；accepted：网关收下了（同一次调用只收第一份） */
   reportWidget: (id: string, toolUseId: string, report: WidgetReport) =>
     request<{ accepted: boolean }>("POST", `/sessions/${id}/widgets/${encodeURIComponent(toolUseId)}/report`, report),
+  /** MCP Apps：会话里带界面的工具表（子进程回收了的会话网关会先 resume） */
+  mcpAppTools: (id: string) => request<{ tools: McpAppTools }>("GET", `/sessions/${id}/mcp-apps/tools`).then((r) => r.tools),
+  /** MCP Apps：读工具 tool（全名）的界面资源 */
+  mcpAppResource: (id: string, tool: string) => request<McpAppResource>("GET", `/sessions/${id}/mcp-apps/resource?tool=${encodeURIComponent(tool)}`),
+  /** MCP Apps：工具 from 的界面调用同一个服务器上的工具 name */
+  mcpAppCall: (id: string, from: string, name: string, args: Record<string, unknown>) =>
+    request<McpAppCallResult>("POST", `/sessions/${id}/mcp-apps/call`, { from, name, arguments: args }),
+  /** 界面更新给模型的内容（ui/update-model-context），网关附在下一条用户消息前面 */
+  mcpAppContext: (id: string, update: McpAppContextUpdate) => request<{ ok: true }>("POST", `/sessions/${id}/mcp-apps/context`, update),
   /** 以 next 排队的消息改成立即发送（now） */
   sendQueuedNow: (id: string, uuid: string) => request<{ uuid: string }>("POST", `/sessions/${id}/queued/${uuid}/send`),
   upload: (files: File[]) => {

@@ -41,6 +41,8 @@ export class LanServer {
   readonly tunnel: SshShareTunnel;
   /** 公网的访客用的打包版网页 */
   readonly bundle: ClientBundle;
+  /** 每次按分享开关调整完监听之后调用（MCP Apps 的沙箱代理跟着局域网入口改监听地址） */
+  onSynced?: () => void;
 
   constructor(
     private readonly shares: ShareStore,
@@ -89,6 +91,7 @@ export class LanServer {
         if (tokens.size > 0) this.bundle.check(true);
       }
     }
+    this.onSynced?.();
   }
 
   private start(scope: ShareScope): Promise<void> {
@@ -191,7 +194,7 @@ export class LanServer {
 
   /** 转给网关或页面服务；公网入口上能压缩的内容压缩了再发（经服务器、SSH 转一圈，带宽有限） */
   private proxy(scope: ShareScope, req: IncomingMessage, res: ServerResponse, route: Exclude<Route, { kind: "reject" }>): void {
-    const { host, port, headers } = this.upstream(route, req);
+    const { host, port, headers } = this.upstream(scope, route, req);
     const proxyReq = http.request({ host, port, method: req.method, path: route.path, headers }, (proxyRes) => {
       const status = proxyRes.statusCode ?? 502;
       const encoding = scope === "public" ? compressionFor(req, proxyRes) : null;
@@ -233,7 +236,7 @@ export class LanServer {
       socket.end(`HTTP/1.1 ${route.status} ${http.STATUS_CODES[route.status] ?? ""}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`);
       return;
     }
-    const { host, port, headers } = this.upstream(route, req);
+    const { host, port, headers } = this.upstream(scope, route, req);
     const upstream = net.connect({ host, port, autoSelectFamily: true }, () => {
       let raw = `${req.method ?? "GET"} ${route.path} HTTP/1.1\r\n`;
       for (const [key, value] of Object.entries(headers)) {
@@ -257,10 +260,11 @@ export class LanServer {
   }
 
   /** 上游地址和转发的请求头：Host 换成上游自己的（Vite 只认本机的 Host），令牌换成校验过的，网关设了 API_TOKEN 时补上 */
-  private upstream(route: Exclude<Route, { kind: "reject" }>, req: IncomingMessage): { host: string; port: number; headers: OutgoingHttpHeaders } {
+  private upstream(scope: ShareScope, route: Exclude<Route, { kind: "reject" }>, req: IncomingMessage): { host: string; port: number; headers: OutgoingHttpHeaders } {
     const headers: OutgoingHttpHeaders = { ...req.headers };
     delete headers.authorization;
     delete headers["x-share-token"];
+    delete headers["x-share-scope"];
     if (route.kind === "client") {
       const target = new URL(config.shareClientUrl);
       headers.host = target.host;
@@ -271,6 +275,8 @@ export class LanServer {
     const host = config.host === "0.0.0.0" || config.host === "::" ? "127.0.0.1" : config.host;
     headers.host = `${host}:${config.port}`;
     if (route.token) headers["x-share-token"] = route.token;
+    // 从哪个入口进来的（网关的 /config 据此告诉公网的访客没有沙箱代理）
+    headers["x-share-scope"] = scope;
     if (config.apiToken) headers.authorization = `Bearer ${config.apiToken}`;
     return { host, port: config.port, headers };
   }

@@ -36,7 +36,14 @@ import { AnnotationEditor, AnnotationSelectionButton, AnnotationSessionContext, 
 import { ANNOTATION_SCOPE_ATTR, clearResponseAnnotations, restoreResponseAnnotations, useResponseAnnotations, withResponseAnnotations, type ResponseAnnotation } from "./state/responseAnnotations";
 import { moveComposerDraft, setComposerDraft, type ComposerDraft } from "./state/composerDrafts";
 import { WidgetHostContext } from "./components/Widget";
+import { McpAppSessionContext } from "./components/McpAppView";
+
 import type { WidgetReport } from "@gateway/shared/types";
+
+/** 不是网关自带服务器的 MCP 工具（网关自带的是进程内服务器，没有 MCP Apps 界面） */
+function isExternalMcpTool(name: string): boolean {
+  return name.startsWith("mcp__") && !/^mcp__(visualize|terminal|desktop|inapp|plugins)__/.test(name) && !name.endsWith("__browser_run_code");
+}
 
 export function App() {
   const [config, setConfig] = useState<GatewayConfig | null>(null);
@@ -744,6 +751,27 @@ export function Chat({
     [sessionId],
   );
 
+  // MCP Apps：工具表平时由网关的 mcp_apps 事件带来（子进程起来时发）；没收到（子进程回收了）而对话里有外部 MCP 工具的调用时，
+  // 向网关取一次（网关会先 resume 子进程），取到的按同一个事件交给 reduce
+  const hasMcpCall = useMemo(
+    () => !!config.mcpApps && view.items.some((i) => i.kind === "assistant" && i.blocks.some((b) => b.type === "tool_use" && isExternalMcpTool(b.name))),
+    [config.mcpApps, view.items],
+  );
+  const sandboxPort = config.mcpAppsSandboxPort ?? null;
+  const mcpAppSession = useMemo(() => (sessionId ? { sessionId, sandboxPort } : null), [sessionId, sandboxPort]);
+  const needAppTools = !!sessionId && view.historyLoaded && view.mcpApps === null && hasMcpCall;
+  useEffect(() => {
+    if (!needAppTools || !sessionId) return;
+    let cancelled = false;
+    api.mcpAppTools(sessionId).then(
+      (tools) => !cancelled && dispatch({ type: "event", event: { type: "mcp_apps", tools } }),
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [needAppTools, sessionId]);
+
   // 以 next 排队的消息：立即发送（改成 now）、撤回到输入框编辑（还原发送时的草稿和标注）、删除
   const queuedAction = async (uuid: string, action: "send" | "edit" | "delete") => {
     if (!sessionId) return;
@@ -833,6 +861,7 @@ export function Chat({
         )}
         <AnnotationSessionContext.Provider value={sessionId}>
           <WidgetHostContext.Provider value={widgetHost}>
+          <McpAppSessionContext.Provider value={mcpAppSession}>
           {(!sessionId || view.historyLoaded) && <Messages
             view={view}
             focus={focus}
@@ -850,6 +879,7 @@ export function Chat({
                 : undefined
             }
           />}
+          </McpAppSessionContext.Provider>
           </WidgetHostContext.Provider>
         </AnnotationSessionContext.Provider>
         {view.permissions.map((request) => (

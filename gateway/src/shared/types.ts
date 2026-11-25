@@ -69,6 +69,11 @@ export type GatewayEvent =
    * uuid 是记录里那一行的，和历史消息里的（见 GoalStatusRecord）一样
    */
   | { type: "goal_status"; uuid: string; at: number; status: GoalStatusRecord }
+  /**
+   * MCP Apps：会话里声明了 _meta.ui 的 MCP 工具（带界面的、只给界面用的），子进程起来、MCP 服务器重连后取一次，变了才发。
+   * 只在 config.yml 的 mcpApps.enabled 打开时有，见 docs/mcp-apps.md
+   */
+  | { type: "mcp_apps"; tools: McpAppTools }
   | { type: "reset" };
 
 /**
@@ -862,4 +867,62 @@ export interface WidgetReportError {
   message: string;
   /** 出错位置在 widget_code 里的行号（从 1 开始），外部脚本里的错误没有 */
   line?: number;
+}
+
+/** MCP Apps 的工具可见范围：model 是模型能看到、能调用；app 是同一个服务器的界面能调用 */
+export type McpAppVisibility = "model" | "app";
+
+/** 声明了 _meta.ui 的一个 MCP 工具 */
+export interface McpAppTool {
+  /** MCP 服务器名（mcpServerStatus 里的，没规范化过） */
+  server: string;
+  /** 工具在服务器上的名字 */
+  tool: string;
+  /** 界面资源（ui://），没有界面的工具没有 */
+  resourceUri?: string;
+  /** 没声明时是 undefined，按规范当作 ["model", "app"] */
+  visibility?: McpAppVisibility[];
+}
+
+/** 工具全名（mcp__服务器__工具）→ 工具 */
+export type McpAppTools = Record<string, McpAppTool>;
+
+/** MCP Apps 界面资源声明的内容安全策略（资源 _meta.ui.csp） */
+export interface McpAppCsp {
+  connectDomains?: string[];
+  resourceDomains?: string[];
+  frameDomains?: string[];
+  baseUriDomains?: string[];
+}
+
+/** 读到的界面资源（GET /sessions/:id/mcp-apps/resource） */
+export interface McpAppResource {
+  server: string;
+  uri: string;
+  html: string;
+  csp?: McpAppCsp;
+  /** 按 csp 生成的内容安全策略（同沙箱代理页的 HTTP 头），没有沙箱代理时网页放进 <meta> */
+  cspPolicy: string;
+  /** 资源 _meta.ui.permissions：camera、microphone、geolocation、clipboardWrite */
+  permissions?: Record<string, unknown>;
+  prefersBorder?: boolean;
+}
+
+/** 界面更新给模型的内容（ui/update-model-context，POST /sessions/:id/mcp-apps/context） */
+export interface McpAppContextUpdate {
+  /** 界面所在的那次工具调用 */
+  toolUseId: string;
+  /** 那次调用的工具全名 */
+  from: string;
+  /** MCP 的内容块，只用 text 的 */
+  content?: unknown[];
+  structuredContent?: Record<string, unknown>;
+}
+
+/** 界面调用工具的结果（MCP 的 CallToolResult），原样交给界面 */
+export interface McpAppCallResult {
+  content?: unknown[];
+  structuredContent?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
+  isError?: boolean;
 }

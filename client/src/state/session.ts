@@ -1,6 +1,7 @@
 import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
 import { withToken, type BackgroundTask, type ContextUsage, type DesktopTarget, type GatewayEvent, type GoalState, type GoalStatusRecord, type HistoryMessage } from "../api";
 import { parseSelectedElement, splitResponseAnnotations, type SentResponseAnnotation } from "./responseAnnotations";
+import type { McpAppTools } from "@gateway/shared/types";
 
 /** 网关的部件工具（gateway/src/visualize/tool.ts）：模型把 HTML / SVG 放在参数 widget_code 里，网页按参数渲染（components/Widget.tsx） */
 export const SHOW_WIDGET_TOOL = "mcp__visualize__show_widget";
@@ -131,13 +132,21 @@ export interface SessionView {
   /** 子代理里的消息，按所属 Agent 工具调用的 id 分组 */
   children: Record<string, Item[]>;
   toolResults: Record<string, ToolResult>;
+  /**
+   * MCP 工具结果的原始内容（user 消息的 tool_use_result 里的 structuredContent、_meta），按 tool_use id。
+   * 只有实时收到的才有：历史消息里没有 tool_use_result。MCP Apps 的界面要它（ui/notifications/tool-result）
+   */
+  toolRaw: Record<string, { structuredContent?: Record<string, unknown>; _meta?: Record<string, unknown> }>;
+  /** MCP Apps：带界面的工具表（网关的 mcp_apps 事件），还没收到时 null */
+  mcpApps: McpAppTools | null;
   /** 工具调用开始的时间（毫秒），按 tool_use id，算耗时用 */
   toolStarts: Record<string, number>;
   /**
    * 正在生成、还没收到完整 assistant 消息的文字；widget 是正在生成参数的部件调用（show_widget）：
    * id 是 tool_use 的 id，index 是它在这条消息里的内容块序号，json 是到目前为止收到的参数（不完整的 JSON）
    */
-  streaming: { text: string; widget?: { id: string; index: number; json: string } };
+  /** app：正在生成参数的 MCP Apps 工具调用（工具名在 mcpApps 里、有界面），参数完整前界面就先显示，收到部分参数 */
+  streaming: { text: string; widget?: { id: string; index: number; json: string }; app?: { id: string; index: number; name: string; json: string } };
   permissions: PermissionRequest[];
   state: string;
   model?: string;
@@ -223,6 +232,8 @@ export function emptyView(): SessionView {
     items: [],
     children: {},
     toolResults: {},
+    toolRaw: {},
+    mcpApps: null,
     toolStarts: {},
     streaming: { text: "" },
     permissions: [],
@@ -266,7 +277,10 @@ export function reduce(view: SessionView, action: Action): SessionView {
         // 网关从会话记录里补的目标检查结果（见 gateway/src/agent/history.ts 的 withGoalStatus）
         if ((m.message as { type?: unknown } | null)?.type === "goal_status") ingestGoalStatus(next, m.uuid, m.message, at);
       }
-      else ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id, at, m.origin?.runId);
+      else {
+        ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id, at, m.origin?.runId);
+        if (m.type === "user" && m.mcp_meta) ingestToolRaw(next, (m.message as { content?: unknown } | null)?.content, m.mcp_meta);
+      }
     }
     for (const item of view.items) {
       if (item.kind === "model") {
@@ -292,6 +306,8 @@ export function reduce(view: SessionView, action: Action): SessionView {
     next.backgroundTasksLive = view.backgroundTasksLive;
     next.terminalsRunning = view.terminalsRunning;
     next.desktopTarget = view.desktopTarget;
+    next.toolRaw = { ...next.toolRaw, ...view.toolRaw };
+    next.mcpApps = view.mcpApps;
     next.context = view.context;
     next.goal = view.goal;
     next.lastCommand = view.lastCommand;
@@ -382,6 +398,9 @@ export function reduce(view: SessionView, action: Action): SessionView {
     case "desktop_target":
       next.desktopTarget = event.target;
       break;
+    case "mcp_apps":
+      next.mcpApps = event.tools;
+      break;
     case "context":
       next.context = event.usage;
       break;
@@ -399,6 +418,17 @@ export function reduce(view: SessionView, action: Action): SessionView {
       break;
   }
   return next;
+}
+
+/** 只有一个工具结果的 user 消息：tool_use_result 里有 structuredContent 或 _meta（MCP 工具）就按 tool_use id 记下 */
+function ingestToolRaw(view: SessionView, content: unknown, raw: unknown): void {
+  if (!Array.isArray(content) || !raw || typeof raw !== "object") return;
+  const results = content.filter((b): b is { type: "tool_result"; tool_use_id: string } => !!b && typeof b === "object" && (b as { type?: unknown }).type === "tool_result");
+  if (results.length !== 1) return;
+  const { structuredContent, _meta } = raw as { structuredContent?: unknown; _meta?: unknown };
+  const obj = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
+  if (!obj(structuredContent) && !obj(_meta)) return;
+  view.toolRaw = { ...view.toolRaw, [results[0]!.tool_use_id]: { ...(obj(structuredContent) ? { structuredContent: obj(structuredContent) } : {}), ...(obj(_meta) ? { _meta: obj(_meta) } : {}) } };
 }
 
 function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sdk" }>["message"]): void {
@@ -427,6 +457,12 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       const widget = view.streaming.widget;
       if (e.type === "content_block_delta" && e.delta.type === "input_json_delta" && widget && widget.index === e.index)
         view.streaming = { ...view.streaming, widget: { ...widget, json: widget.json + e.delta.partial_json } };
+      // MCP Apps 的工具调用同样边生成边记下参数，界面先显示、收部分参数（ui/notifications/tool-input-partial）
+      if (e.type === "content_block_start" && e.content_block.type === "tool_use" && view.mcpApps?.[e.content_block.name]?.resourceUri)
+        view.streaming = { ...view.streaming, app: { id: e.content_block.id, index: e.index, name: e.content_block.name, json: "" } };
+      const app = view.streaming.app;
+      if (e.type === "content_block_delta" && e.delta.type === "input_json_delta" && app && app.index === e.index)
+        view.streaming = { ...view.streaming, app: { ...app, json: app.json + e.delta.partial_json } };
       return;
     }
     case "assistant":
@@ -452,6 +488,7 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       } else ingestMessage(view, "user", message.uuid, message.message, message.parent_tool_use_id, Date.now());
       const content = message.message.content;
       if (!message.parent_tool_use_id && Array.isArray(content) && content.some((b) => b.type === "tool_result")) view.toolResultSinceRequest = true;
+      ingestToolRaw(view, content, (message as { tool_use_result?: unknown }).tool_use_result);
       if (message.parent_tool_use_id) queueAgentMessages(view, message.parent_tool_use_id, (message as { agent_id?: unknown }).agent_id, message.message.content);
       return;
     }
@@ -716,7 +753,7 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
           if (shot && images.at(-1) === shot) images.pop();
           elements.push(shot && element.element ? { ...element, element: { ...element.element, image: shot } } : element);
         } else if (parsed) attachments.push(...parsed);
-        else if (!SKILL_META.test(b.text)) texts.push(b.text);
+        else if (!SKILL_META.test(b.text) && !MCP_APP_CONTEXT.test(b.text)) texts.push(b.text);
       }
     }
     if (texts.length || images.length || attachments.length || elements.length) {
@@ -765,6 +802,9 @@ function userItem(uuid: string, at: number | undefined, raw: string, images: str
   const text = split ? split.text : raw;
   return annotations.length ? { kind: "user", uuid, at, text, images, attachments, annotations } : { kind: "user", uuid, at, text, images, attachments };
 }
+
+/** 网关附在用户消息前面的 MCP Apps 界面内容（ui/update-model-context，见 gateway/src/mcp-apps/apps.ts 的 formatAppContext），不显示 */
+const MCP_APP_CONTEXT = /^<mcp-app-context [^>]*>[\s\S]*<\/mcp-app-context>$/;
 
 /** 用户中断时 Claude Code 写进对话的 user 消息（字符串，或只有一个 text 块） */
 const INTERRUPT = /^\[Request interrupted by user( for tool use)?\]$/;

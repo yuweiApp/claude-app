@@ -3,8 +3,9 @@ import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk
 import { listModels } from "../../agent/models.js";
 import { historyForDisplay, historyImage, sessionHistory } from "../../agent/history.js";
 import type { FastifyInstance } from "fastify";
-import type { ConnectorInput, ConnectorPage, MarketPluginPage, McpAuthState, McpServerInput, MessagePriority, WidgetReport } from "../../shared/types.js";
+import type { ConnectorInput, ConnectorPage, MarketPluginPage, McpAppContextUpdate, McpAuthState, McpServerInput, MessagePriority, WidgetReport } from "../../shared/types.js";
 import { reportWidget } from "../../visualize/tool.js";
+import { mcpAppsEnabled } from "../../config-file.js";
 import type { SelectedElementInput } from "../../agent/attachments.js";
 import type { SessionManager } from "../../agent/session-manager.js";
 import type { EventHub } from "../../events/event-hub.js";
@@ -353,6 +354,53 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
   app.post<{ Params: IdParams & { toolUseId: string }; Body: WidgetReport }>("/sessions/:id/widgets/:toolUseId/report", async (req) => {
     return { accepted: reportWidget(req.params.id, req.params.toolUseId, req.body) };
   });
+
+  // MCP Apps（config.yml 的 mcpApps.enabled，见 docs/mcp-apps.md）：带界面的工具表、读界面资源、界面调同一个服务器的工具、界面更新给模型的内容。
+  // 要用子进程（经它连的 MCP 服务器），回收了的会话先 resume
+  app.get<{ Params: IdParams }>("/sessions/:id/mcp-apps/tools", async (req) => ({
+    tools: mcpAppsEnabled ? await (await sessions.activate(req.params.id)).mcpAppTools() : {},
+  }));
+
+  app.get<{ Params: IdParams; Querystring: { tool?: string } }>("/sessions/:id/mcp-apps/resource", async (req) => {
+    if (!mcpAppsEnabled) throw new NotFoundError("没有打开 MCP Apps（config.yml 的 mcpApps.enabled）");
+    if (!req.query.tool) throw new BadRequestError("缺少 tool");
+    return (await sessions.activate(req.params.id)).mcpAppResource(req.query.tool);
+  });
+
+  app.post<{ Params: IdParams; Body: { from: string; name: string; arguments?: Record<string, unknown> } }>(
+    "/sessions/:id/mcp-apps/call",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["from", "name"],
+          properties: { from: { type: "string" }, name: { type: "string" }, arguments: { type: "object" } },
+        },
+      },
+    },
+    async (req) => {
+      if (!mcpAppsEnabled) throw new NotFoundError("没有打开 MCP Apps（config.yml 的 mcpApps.enabled）");
+      return (await sessions.activate(req.params.id)).mcpAppCall(req.body.from, req.body.name, req.body.arguments ?? {});
+    },
+  );
+
+  app.post<{ Params: IdParams; Body: McpAppContextUpdate }>(
+    "/sessions/:id/mcp-apps/context",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["toolUseId", "from"],
+          properties: { toolUseId: { type: "string" }, from: { type: "string" }, content: { type: "array" }, structuredContent: { type: "object" } },
+        },
+      },
+    },
+    async (req) => {
+      if (!mcpAppsEnabled) throw new NotFoundError("没有打开 MCP Apps（config.yml 的 mcpApps.enabled）");
+      await (await sessions.activate(req.params.id)).mcpAppContext(req.body);
+      return { ok: true };
+    },
+  );
 
   app.post<{ Params: IdParams }>("/sessions/:id/interrupt", async (req) => {
     await activeOr404(sessions, req.params.id).interrupt();

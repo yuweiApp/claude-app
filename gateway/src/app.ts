@@ -4,7 +4,7 @@ import { BrowserHost } from "./browser/host.js";
 import { externalTabs } from "./browser/external.js";
 import { browserRoutes } from "./http/routes/browsers.js";
 import { proxyRoutes } from "./http/routes/proxy.js";
-import { desktopEnabled } from "./config-file.js";
+import { desktopEnabled, mcpAppsEnabled } from "./config-file.js";
 import { listWindows, stripOwn } from "./desktop/guard.js";
 import { setDesktopLog } from "./desktop/log.js";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -27,6 +27,7 @@ import { LanServer } from "./share/lan-server.js";
 import { ShareBrowserRelay } from "./share/browser-relay.js";
 import { ShareStore } from "./share/store.js";
 import { HttpError } from "./errors.js";
+import { SandboxServer } from "./mcp-apps/sandbox.js";
 
 // 终端里用 pino-pretty 格式化。不用 transport：它在 worker 线程里把 UTF-8 字节直接写 fd 1，
 // 中文 Windows 控制台按 GBK 显示会乱码；交给 process.stdout 由 Node 转成 UTF-16 写控制台。
@@ -42,6 +43,8 @@ export interface App {
   browser: BrowserHost;
   /** 局域网分享的入口：网关监听之后 sync() 一次（有分享就开始监听），退出时 close() */
   lan: LanServer;
+  /** MCP Apps 的沙箱代理（开了 mcpApps 才有）：跟着 lan.sync() 开始监听，退出时 close() */
+  sandbox: SandboxServer | null;
 }
 
 export function buildApp(): App {
@@ -72,6 +75,8 @@ export function buildApp(): App {
   const shares = new ShareStore();
   const lan = new LanServer(shares, app.log);
   const relay = new ShareBrowserRelay(browser, shares);
+  const sandbox = mcpAppsEnabled ? new SandboxServer(app.log) : null;
+  if (sandbox) lan.onSynced = () => void sandbox.sync(lan.isListening("lan"));
 
   // 慢请求写进对话日志，排查「打开文件、发消息要等很久」：方法、地址（去掉令牌）、状态码、耗时，以及它进来时网关上同时在处理的请求数（含它自己）。
   // 请求还没结束浏览器就断开的（关掉了预览、刷新了页面）标 aborted。事件流和 WebSocket 本来就一直连着，不算
@@ -115,7 +120,7 @@ export function buildApp(): App {
 
   app.get("/health", async () => ({ ok: true }));
 
-  app.get("/config", async () => ({
+  app.get("/config", async (req) => ({
     workspaceDir: config.workspaceDir,
     model: config.model ?? null,
     permissionMode: config.defaultPermissionMode,
@@ -123,6 +128,10 @@ export function buildApp(): App {
     maxUploadMb: config.maxUploadMb,
     // 开没开桌面工具：输入框上面的「Computer Use」据此显示，不用等列窗口（list-windows 在 Windows 上要几秒）
     desktop: desktopEnabled,
+    // 开没开 MCP Apps（config.yml 的 mcpApps.enabled）：网页据此去取带界面的工具表
+    mcpApps: mcpAppsEnabled,
+    // MCP Apps 沙箱代理页的端口（网页按自己的主机名拼地址）：没开、没监听上，或者是公网分享的访客（只转了一个端口）时是 null，网页用单层显示
+    mcpAppsSandboxPort: sandbox?.listening && req.headers["x-share-scope"] !== "public" ? sandbox.port : null,
   }));
 
   // 超过大小的文件流会被截断（file.truncated），由 saveUpload 删掉并报错
@@ -161,5 +170,5 @@ export function buildApp(): App {
     // 远程会话的内置浏览器访问远端 localhost 的连接，每条一个
     scoped.get<{ Querystring: { host?: string; dest?: string; port?: string } }>("/browser/tunnel", { websocket: true }, (socket, req) => handleTunnel(socket, req.query));
   });
-  return { app, sessions, terminals, browser, lan };
+  return { app, sessions, terminals, browser, lan, sandbox };
 }

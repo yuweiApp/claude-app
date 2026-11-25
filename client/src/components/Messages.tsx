@@ -7,6 +7,8 @@ import { ImageThumb } from "./ImageThumb";
 import { CopyAction, ForkAction, MessageActions, MessageTime } from "./MessageActions";
 import { desktopCommandLine, SparkIcon, StepGroup, stepImages, ToolIcon, ToolStep, type ToolUse } from "./Steps";
 import { Widget, WidgetPending } from "./Widget";
+import { McpAppView, parsePartialInput } from "./McpAppView";
+import type { McpAppTool, McpAppTools } from "@gateway/shared/types";
 import { StepThumbs } from "./StepThumbs";
 import { formatShortDuration } from "./TasksPopover";
 import { MentionText, splitImageRefs } from "./MentionText";
@@ -516,7 +518,7 @@ function TurnView({
 }) {
   const [open, setOpen] = useState(false);
   const [liveCollapsed, setLiveCollapsed] = useState(false);
-  const units = toUnits(turn.body);
+  const units = toUnits(turn.body, view.mcpApps);
   // 结束后最后一段文字是最终回复，不折叠；进行中全部算过程。历史里读回来的轮没有 result，不在进行中就算结束了
   // 本地命令的灰字、网关报错（kind: "item"）不算，跳过它们找最后一段
   const lastIdx = units.findLastIndex((u) => u.kind !== "item");
@@ -524,7 +526,8 @@ function TurnView({
   const final = finalIdx >= 0 ? units[finalIdx]! : null;
   // 网关报的错、目标达成这些不折叠；目标检查没通过的那几行算过程
   // 部件（show_widget）不折叠，按顺序显示在过程下面；调用出错的（参数是空的、被中断）还是过程里的一步
-  const shownWidget = (u: Unit) => u.kind === "widget" && !view.toolResults[u.block.id]?.isError;
+  // MCP Apps 的界面出错时照样显示（界面收到 tool-cancelled，出错原因写在界面下面）
+  const shownWidget = (u: Unit) => u.kind === "widget" && (!!u.app || !view.toolResults[u.block.id]?.isError);
   const inProcess = (u: Unit) => !shownWidget(u) && (u.kind !== "item" || (u.item.kind === "goal" && u.item.event === "check"));
   const errors = units.filter((u) => u.kind === "item" && !inProcess(u));
   const widgets = units.filter(shownWidget);
@@ -538,6 +541,19 @@ function TurnView({
   const streaming = live && view.streaming.text;
   // 正在生成参数的部件调用：参数完整、出现在消息里之前，在部件的位置显示 loading 提示
   const pendingWidget = live && view.streaming.widget && !widgets.some((u) => u.kind === "widget" && u.block.id === view.streaming.widget!.id) ? view.streaming.widget : null;
+  // 正在生成参数的 MCP Apps 调用：界面先显示、收部分参数。key 和参数完整后的单元一样（app:工具调用 id），React 沿用同一个界面，不重新加载
+  const streamingApp = live ? view.streaming.app : undefined;
+  const pendingApp: Unit | null =
+    streamingApp && view.mcpApps?.[streamingApp.name] && !widgets.some((u) => u.kind === "widget" && u.block.id === streamingApp.id)
+      ? {
+          kind: "widget",
+          key: `app:${streamingApp.id}`,
+          block: { type: "tool_use", id: streamingApp.id, name: streamingApp.name, input: parsePartialInput(streamingApp.json) },
+          app: view.mcpApps[streamingApp.name],
+          partial: true,
+        }
+      : null;
+  const shownUnits = pendingApp ? [...widgets, pendingApp] : widgets;
   const hasProcess = process.length > 0;
   const duration = live ? null : turnDuration(turn);
   const expanded = live ? !liveCollapsed : open;
@@ -596,6 +612,7 @@ function TurnView({
           {live &&
             !streaming &&
             !pendingWidget &&
+            !pendingApp &&
             !(expanded && toolRunning) &&
             (view.retry ? (
               <RetryLine key={view.retry.at} retry={view.retry} />
@@ -607,8 +624,8 @@ function TurnView({
             ))}
         </div>
       )}
-      {widgets.map((u) => (
-        <UnitView key={u.key} unit={u} view={view} />
+      {shownUnits.map((u) => (
+        <UnitView key={u.kind === "widget" && u.app ? `app:${u.block.id}` : u.key} unit={u} view={view} />
       ))}
       {pendingWidget && <WidgetPending json={pendingWidget.json} />}
       {final && (
@@ -651,10 +668,13 @@ type Unit =
   /** uuid：所在的那条 assistant 消息（会话记录里一行一个内容块） */
   | { kind: "text"; key: string; uuid: string; at?: number; text: string }
   | { kind: "steps"; key: string; messageId?: string; tools: ToolUse[] }
-  /** 部件（show_widget）：单独一个单元，不和同一次响应里的其他工具调用合成一组 */
-  | { kind: "widget"; key: string; block: ToolUse };
+  /**
+   * 部件（show_widget）：单独一个单元，不和同一次响应里的其他工具调用合成一组。
+   * app：MCP Apps 的工具（声明了界面资源的 MCP 工具），同样单独一个单元、不折叠，显示服务器给的界面
+   */
+  | { kind: "widget"; key: string; block: ToolUse; app?: McpAppTool; partial?: boolean };
 
-function toUnits(items: Item[]): Unit[] {
+function toUnits(items: Item[], apps: McpAppTools | null): Unit[] {
   const units: Unit[] = [];
   for (const item of items) {
     if (item.kind !== "assistant") {
@@ -665,6 +685,7 @@ function toUnits(items: Item[]): Unit[] {
       const key = `${item.uuid}:${i}`;
       if (block.type === "text") units.push({ kind: "text", key, uuid: item.uuid, at: item.at, text: block.text });
       else if (block.name === SHOW_WIDGET_TOOL) units.push({ kind: "widget", key, block });
+      else if (apps?.[block.name]?.resourceUri) units.push({ kind: "widget", key, block, app: apps[block.name] });
       else {
         const last = units.at(-1);
         if (last?.kind === "steps" && item.messageId && last.messageId === item.messageId) last.tools.push(block);
@@ -679,7 +700,7 @@ function toUnits(items: Item[]): Unit[] {
 function ItemList({ items, view }: { items: Item[]; view: SessionView }) {
   return (
     <>
-      {toUnits(items).map((unit) => (
+      {toUnits(items, view.mcpApps).map((unit) => (
         <UnitView key={unit.key} unit={unit} view={view} />
       ))}
     </>
@@ -698,6 +719,19 @@ function UnitView({ unit, view }: { unit: Unit; view: SessionView }) {
         </AnnotatableText>
       );
     case "widget": {
+      if (unit.app) {
+        return (
+          <McpAppView
+            toolUseId={unit.block.id}
+            partial={unit.partial === true}
+            toolName={unit.block.name}
+            tool={unit.app}
+            input={(unit.block.input ?? {}) as Record<string, unknown>}
+            result={view.toolResults[unit.block.id]}
+            raw={view.toolRaw[unit.block.id]}
+          />
+        );
+      }
       const input = (unit.block.input ?? {}) as { widget_code?: unknown; title?: unknown; loading_messages?: unknown };
       // 出错的调用（参数是空的、被中断）显示成一步
       if (typeof input.widget_code !== "string" || !input.widget_code.trim() || view.toolResults[unit.block.id]?.isError)
