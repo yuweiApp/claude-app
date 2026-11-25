@@ -178,8 +178,11 @@
     box-shadow: 0 3px 10px rgba(0, 0, 0, 0.16);
   }
   .pill[hidden] { display: none; }
-  /* 悬停卡片打开时藏起来，但不用 hidden：元素消失、再出现在鼠标底下会触发 pointerleave / pointerenter，卡片跟着收起、弹出 */
-  .pill.peeking { opacity: 0; }
+  /*
+   * 悬停卡片打开时藏起来，但不用 hidden：元素消失、再出现在鼠标底下会触发 pointerleave / pointerenter，卡片跟着收起、弹出。
+   * 也不接鼠标：它在卡片窗口底下，接了的话灵宠窗口和卡片窗口来回抢鼠标（见 pet.ts 的 showPeek），还会挡住卡片上的「打开会话」
+   */
+  .pill.peeking { opacity: 0; pointer-events: none; }
   /* 省略号一个个冒出来：占位的 "..." 是透明的，宽度不变，标签不会跟着伸缩跳动 */
   .dots { position: relative; color: transparent; }
   .dots::after { content: ""; position: absolute; left: 0; color: var(--pill-fg); animation: dots 1.4s steps(4) infinite; }

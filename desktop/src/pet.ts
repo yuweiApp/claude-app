@@ -481,7 +481,13 @@ export class Pet {
     w.webContents.send("pet:live", this.livePayload());
     if (!w.isVisible()) {
       w.showInactive();
-      if (this.win && !this.win.isDestroyed()) this.win.webContents.send("pet:peeking", true);
+      if (this.win && !this.win.isDestroyed()) {
+        // 卡片窗口下沿的留白和箭头压在小精灵上沿（点击区是整个方框，耳朵上面那一条是透明的）。卡片窗口在上面时，
+        // 灵宠窗口穿透期间照样收到转发的鼠标移动，判断在小精灵上就改成接鼠标，可鼠标落在上面的卡片窗口里，
+        // 页面马上收到离开、又改回穿透，光标在抓手和箭头之间来回闪。灵宠窗口放到最上面，重叠的地方由它按自己的点击区决定
+        this.win.moveTop();
+        this.win.webContents.send("pet:peeking", true);
+      }
     }
     if (!this.peekPoll) {
       this.requestPeekData();
