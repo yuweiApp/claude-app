@@ -645,6 +645,9 @@ export function Chat({
   const lastTopRef = useRef(0);
   const userScrollRef = useRef(0); // 最近一次用户滚动输入的时间
   const pointerDownRef = useRef(false); // 按住滚动条拖动中
+  // 鼠标在 iframe（部件、MCP Apps 的界面）上：滚轮、触摸事件进了 iframe，这里收不到，
+  // iframe 自己滚不动时浏览器把滚动传给对话区，所以在 iframe 上时往上滚也算用户在滚
+  const overFrameRef = useRef(false);
   const pinToBottom = () => {
     const el = scrollRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
@@ -653,7 +656,7 @@ export function Chat({
     const el = scrollRef.current;
     if (!el) return;
     const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-    const byUser = pointerDownRef.current || performance.now() - userScrollRef.current < 300;
+    const byUser = pointerDownRef.current || overFrameRef.current || performance.now() - userScrollRef.current < 300;
     if (bottom) stickRef.current = true;
     else if (byUser && el.scrollTop < lastTopRef.current - 2) stickRef.current = false;
     lastTopRef.current = el.scrollTop;
@@ -674,12 +677,17 @@ export function Chat({
       if (e.target === el) pointerDownRef.current = true;
     };
     const onUp = () => (pointerDownRef.current = false);
+    // 进入 iframe 时父页面收到一次 pointerover（目标是 iframe 元素），之后在 iframe 里移动收不到；移到别的元素或离开对话区时改回来
+    const onOver = (e: PointerEvent) => (overFrameRef.current = e.target instanceof HTMLIFrameElement);
+    const onLeave = () => (overFrameRef.current = false);
     // 平滑滚动停下时内容可能又长了，补一下
     const onScrollEnd = () => pinToBottom();
     el.addEventListener("wheel", onWheel, { passive: true });
     el.addEventListener("touchmove", mark, { passive: true });
     el.addEventListener("keydown", onKey);
     el.addEventListener("pointerdown", onDown);
+    el.addEventListener("pointerover", onOver);
+    el.addEventListener("pointerleave", onLeave);
     window.addEventListener("pointerup", onUp);
     el.addEventListener("scrollend", onScrollEnd);
     return () => {
@@ -687,6 +695,8 @@ export function Chat({
       el.removeEventListener("touchmove", mark);
       el.removeEventListener("keydown", onKey);
       el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("pointerover", onOver);
+      el.removeEventListener("pointerleave", onLeave);
       window.removeEventListener("pointerup", onUp);
       el.removeEventListener("scrollend", onScrollEnd);
     };
