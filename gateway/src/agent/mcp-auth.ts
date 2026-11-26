@@ -3,6 +3,7 @@ import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import type { McpAuthState } from "../shared/types.js";
 import { clearCapabilitiesCache, inspectQuery, settledMcpStatus } from "./capabilities.js";
 import { BadRequestError, HttpError } from "../errors.js";
+import { clearAuthProbeCache, connectedButNeedsAuth } from "./mcp-probe.js";
 
 /**
  * MCP 服务器的 OAuth 登录，由 Claude Code 自己完成：注册客户端、PKCE、在本机 localhost 的随机端口上等回调、换令牌、
@@ -30,6 +31,8 @@ const KEEP_RESULT_MS = 5 * 60_000;
 interface Flow extends McpAuthState {
   q?: Query;
   cleanup?: NodeJS.Timeout;
+  /** 开始时 Claude Code 已经说连上了（握手不要认证、列工具才要，见 mcp-probe.ts）：登录成功要等列出工具 */
+  connectedBefore?: boolean;
 }
 
 const flows = new Map<string, Flow>();
@@ -54,7 +57,7 @@ async function watch(name: string, flow: Flow, q: Query, onDone: () => void): Pr
     if (Date.now() > deadline) return finish(name, flow, { state: "failed", error: "登录超时，请重新登录" }, onDone);
     await sleep(1000);
     const server = (await q.mcpServerStatus().catch(() => [])).find((s) => s.name === name);
-    if (server?.status === "connected") return finish(name, flow, { state: "done" }, onDone);
+    if (server?.status === "connected" && (!flow.connectedBefore || (server.tools?.length ?? 0) > 0)) return finish(name, flow, { state: "done" }, onDone);
     if (server?.status === "failed") return finish(name, flow, { state: "failed", error: server.error || "登录后连接失败" }, onDone);
   }
 }
@@ -74,8 +77,11 @@ export async function startMcpAuth(name: string, cwd: string, onDone: () => void
     const server = servers.find((s) => s.name === name);
     if (!server) throw new BadRequestError(`找不到 MCP 服务器「${name}」`);
     if (server.status === "connected") {
-      finish(name, flow, { state: "done" }, () => {});
-      return view(flow);
+      if (!(await connectedButNeedsAuth(server))) {
+        finish(name, flow, { state: "done" }, () => {});
+        return view(flow);
+      }
+      flow.connectedBefore = true;
     }
     const { authUrl } = await authQuery(q).mcpAuthenticate(name);
     if (!authUrl) throw new BadRequestError("服务器没有给出登录地址");
@@ -111,7 +117,8 @@ export async function submitMcpAuthCallback(name: string, url: string): Promise<
 
 /**
  * 断开：清除 Claude Code 存的这个服务器的令牌（mcp_clear_auth 控制请求，类型定义里同样没写），再重连一次看结果。
- * 令牌同一个配置目录下的会话共用，所以对所有会话生效。返回清除后的状态：不是靠登录连上的服务器（地址不要认证、令牌写在请求头里）仍是 connected
+ * 令牌同一个配置目录下的会话共用，所以对所有会话生效。返回清除后的状态：不是靠登录连上的服务器（地址不要认证、令牌写在请求头里）仍是 connected；
+ * 连上了、列工具却要认证的（见 mcp-probe.ts）返回 needs-auth
  */
 export async function clearMcpAuth(name: string, cwd: string): Promise<string> {
   cancelMcpAuth(name);
@@ -123,8 +130,10 @@ export async function clearMcpAuth(name: string, cwd: string): Promise<string> {
       throw new BadRequestError(err.message);
     });
     await q.reconnectMcpServer(name).catch(() => {});
-    const after = await settledMcpStatus(q, await q.mcpServerStatus());
-    return after.find((s) => s.name === name)?.status ?? "pending";
+    const after = (await settledMcpStatus(q, await q.mcpServerStatus())).find((s) => s.name === name);
+    if (!after) return "pending";
+    clearAuthProbeCache();
+    return after.status === "connected" && (await connectedButNeedsAuth(after)) ? "needs-auth" : after.status;
   } finally {
     q.close();
     clearCapabilitiesCache();

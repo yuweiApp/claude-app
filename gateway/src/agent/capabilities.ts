@@ -8,6 +8,7 @@ import { HIDDEN_BUILTIN_SKILLS, agentFiles, disabledAgents, userAgentsDir, disab
 import { enabledMcpServers, readMcpServers, type McpConfig } from "./mcp-config.js";
 import { readUserMcpServerInput } from "./mcp-user-config.js";
 import { noInput } from "./models.js";
+import { clearAuthProbeCache, withAuthProbe } from "./mcp-probe.js";
 
 const CACHE_MS = 60_000;
 /** 等 MCP 服务器连上的最长时间，超过还没连上的显示连接中 */
@@ -16,6 +17,7 @@ const cache = new Map<string, { at: number; value: Capabilities }>();
 
 export function clearCapabilitiesCache(): void {
   cache.clear();
+  clearAuthProbeCache();
 }
 
 /** 刚起的 query 里 MCP 服务器还在连接，等到都有结果 */
@@ -70,7 +72,8 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
     const { skills } = await q.reloadSkills();
     const reloaded = await q.reloadPlugins();
     const { plugins } = reloaded;
-    const mcpServers = await settledMcpStatus(q, reloaded.mcpServers);
+    // 连上了、却在列工具时要求认证的，按需要认证显示（见 mcp-probe.ts）
+    const mcpServers = await withAuthProbe(await settledMcpStatus(q, reloaded.mcpServers));
     const agents = await q.supportedAgents();
     const stored = readMcpServers();
     const live = new Map(mcpServers.map((server) => [server.name, server]));

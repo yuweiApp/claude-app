@@ -376,7 +376,9 @@ PKCE 只保证「换令牌的就是发起登录的那个程序」，以下情况
 
 Claude Code 判断状态只做到连接、列工具，两步都成功就是 `connected`，设置页不出「登录」，模型调用工具时才报缺少认证；「断开」（清令牌）后照样是已连接，提示「没有保存的登录信息」。
 
-即使走到登录这一步也不行：`resource_metadata` 指向的授权服务器是 `accounts.google.com`，它的 `/.well-known/openid-configuration` 和 `/.well-known/oauth-authorization-server` 都**没有 `registration_endpoint`**，也没有 `client_id_metadata_document_supported`（MCP 新规范里另一种不用提前登记的方式）。只能在 Google Cloud Console 手动建 OAuth 客户端，把 `client_id`、`client_secret` 交给 Claude Code。连接器市场对这类服务器的处理见 [README.md](README.md)（`custom_oauth_client_id`、`--client-id`）。
+还有一种：Apify 对 Claude Code 新版协议（2026-07-28）的握手 `server/discover` 回 200，`tools/list` 才回 401。Claude Code 同样记成已连接、0 个工具；网关对这种「已连接、0 个工具」的服务器自己发一次 `tools/list`，401 的改报需要认证，见 [README.md](README.md)「MCP 服务器的 OAuth 登录」。Gmail 的 `tools/list` 是 200，不在此列。
+
+Gmail 即使走到登录这一步也不行：`resource_metadata` 指向的授权服务器是 `accounts.google.com`，它的 `/.well-known/openid-configuration` 和 `/.well-known/oauth-authorization-server` 都**没有 `registration_endpoint`**，也没有 `client_id_metadata_document_supported`（MCP 新规范里另一种不用提前登记的方式）。只能在 Google Cloud Console 手动建 OAuth 客户端，把 `client_id`、`client_secret` 交给 Claude Code。连接器市场对这类服务器的处理见 [README.md](README.md)（`custom_oauth_client_id`、`--client-id`）。
 
 ## 13. 做完实验
 
