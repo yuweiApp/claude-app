@@ -139,7 +139,7 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
             </button>
             {section === "plugins" && <ImportButton kind="plugins" onImported={() => load(false)} onError={setError} />}
             {section === "skills" && <ImportButton kind="skills" onImported={() => load(false)} onError={setError} />}
-            {section === "mcp" && <AddServerButton onAdded={() => load(false)} />}
+            {section === "mcp" && <AddServerButton names={data?.mcpServers.map((m) => m.name) ?? []} onAdded={() => load(false)} />}
             {section === "agents" && desktop && data && (
               <button
                 className="primary"
@@ -238,7 +238,7 @@ export function SettingsPage({ navCollapsed = false, initialSection = "plugins" 
           {section === "mcp" && !browsing && (
             <List className="server-list" empty={data ? (keyword ? "没有匹配的连接器" : "还没有连接器，在「连接器市场」里添加，或点右上角手动添加") : "加载中…"}>
               {servers.map((server) => (
-                <ServerRow key={server.name} server={server} onChanged={() => load(false)} onError={setError} />
+                <ServerRow key={server.name} server={server} names={data?.mcpServers.map((m) => m.name) ?? []} onChanged={() => load(false)} onError={setError} />
               ))}
             </List>
           )}
@@ -817,9 +817,19 @@ function DetailDialog({
 
 const STATUS_TEXT: Record<string, string> = { connected: "已连接", failed: "连接失败", "needs-auth": "需要认证", pending: "连接中", disabled: "已停用" };
 
-function ServerRow({ server, onChanged, onError }: { server: McpServerInfo; onChanged: () => void; onError: (message: string) => void }) {
+function ServerRow({ server, names, onChanged, onError }: { server: McpServerInfo; names?: string[]; onChanged: () => void; onError: (message: string) => void }) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  /** 编辑：先取完整配置（列表里只有拼好的命令行），取到了才打开表单 */
+  const [editing, setEditing] = useState<ServerForm | null>(null);
+  const [loadingConfig, setLoadingConfig] = useState(false);
+  const edit = () => {
+    setLoadingConfig(true);
+    api
+      .mcpServerConfig(server.name)
+      .then((input) => setEditing(toForm(input)), (e: Error) => onError(`读取配置失败：${e.message}`))
+      .finally(() => setLoadingConfig(false));
+  };
   const [signingIn, setSigningIn] = useState(false);
   const [loggingOut, setLoggingOut] = useState<"confirm" | "running" | null>(null);
   const run = (action: Promise<unknown>) => action.then(onChanged, (e: Error) => onError(e.message));
@@ -886,7 +896,7 @@ function ServerRow({ server, onChanged, onError }: { server: McpServerInfo; onCh
           </ul>
         )}
       </div>
-      {(server.managed || server.status === "needs-auth" || (remote && server.status === "connected")) && (
+      {(server.managed || server.editable || server.status === "needs-auth" || (remote && server.status === "connected")) && (
         <div className="settings-row-actions">
           {server.status === "needs-auth" && (
             <button className="primary" onClick={() => setSigningIn(true)}>
@@ -896,6 +906,11 @@ function ServerRow({ server, onChanged, onError }: { server: McpServerInfo; onCh
           {remote && server.status === "connected" && (
             <button disabled={loggingOut === "running"} onClick={() => setLoggingOut("confirm")}>
               {loggingOut === "running" ? "断开中…" : "断开"}
+            </button>
+          )}
+          {server.editable && (
+            <button disabled={loadingConfig} onClick={edit}>
+              编辑
             </button>
           )}
           {server.managed && (
@@ -935,6 +950,16 @@ function ServerRow({ server, onChanged, onError }: { server: McpServerInfo; onCh
           onConfirm={logout}
         />
       )}
+      {editing && (
+        <ServerDialog
+          original={server.name}
+          userScope={!server.managed}
+          initial={editing}
+          names={names ?? []}
+          onClose={() => setEditing(null)}
+          onSaved={onChanged}
+        />
+      )}
       {signingIn && (
         <McpAuthDialog
           name={server.name}
@@ -964,6 +989,18 @@ function parsePairs(text: string, separator: string): Record<string, string> | u
 
 type ServerForm = { name: string; type: McpServerInput["type"]; command: string; args: string; env: string; url: string; headers: string };
 const EMPTY_FORM: ServerForm = { name: "", type: "stdio", command: "", args: "", env: "", url: "", headers: "" };
+
+/** 已有配置转成表单：参数每行一个，环境变量 名称=值，请求头 名称: 值 */
+const toForm = (input: McpServerInput): ServerForm => ({
+  ...EMPTY_FORM,
+  name: input.name,
+  type: input.type,
+  command: input.command ?? "",
+  args: (input.args ?? []).join("\n"),
+  env: Object.entries(input.env ?? {}).map(([k, v]) => `${k}=${v}`).join("\n"),
+  url: input.url ?? "",
+  headers: Object.entries(input.headers ?? {}).map(([k, v]) => `${k}: ${v}`).join("\n"),
+});
 
 const JSON_PLACEHOLDER = `{
   "mcpServers": {
@@ -1008,9 +1045,38 @@ function parseServerJson(text: string): { form: ServerForm; note?: string } {
   return { form, note: entries.length > 1 ? `JSON 里有 ${entries.length} 个服务器，已填入第一个「${name}」` : undefined };
 }
 
-function AddServerButton({ onAdded }: { onAdded: () => void }) {
+function AddServerButton({ names, onAdded }: { names: string[]; onAdded: () => void }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<ServerForm>(EMPTY_FORM);
+  return (
+    <>
+      <button className="primary" onClick={() => setOpen(true)}>
+        手动添加
+      </button>
+      {open && <ServerDialog initial={EMPTY_FORM} names={names} onClose={() => setOpen(false)} onSaved={onAdded} />}
+    </>
+  );
+}
+
+/**
+ * 添加或编辑 MCP 服务器的表单，名称和 names 里别的服务器重名时不让保存（网关也会拒绝和设置页添加的、用户范围的重名）。
+ * 传 original 是编辑那个服务器，名称可以改；userScope 是用户范围的（Claude Code 的 .claude.json），不传 original 是手动添加
+ */
+function ServerDialog({
+  original,
+  userScope = false,
+  initial,
+  names = [],
+  onClose,
+  onSaved,
+}: {
+  original?: string;
+  userScope?: boolean;
+  initial: ServerForm;
+  names?: string[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState<ServerForm>(initial);
   // 「从 JSON 导入」：粘贴页，解析后回到表单
   const [importing, setImporting] = useState(false);
   const [json, setJson] = useState("");
@@ -1019,20 +1085,17 @@ function AddServerButton({ onAdded }: { onAdded: () => void }) {
   const [saving, setSaving] = useState(false);
   const update = (key: keyof ServerForm) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const stdio = form.type === "stdio";
-
-  const close = () => {
-    setOpen(false);
-    setForm(EMPTY_FORM);
-    setImporting(false);
-    setJson("");
-    setNote(null);
-    setError(null);
-  };
+  const editing = original !== undefined;
+  const title = editing ? "编辑 MCP 服务器" : "添加 MCP 服务器";
+  const name = form.name.trim();
+  const renamed = editing && name !== original;
+  const taken = (!editing || renamed) && names.includes(name);
 
   const parse = () => {
     try {
       const parsed = parseServerJson(json);
-      setForm(parsed.form);
+      // 编辑时 JSON 里没写名字就保留原来的
+      setForm(editing && !parsed.form.name ? { ...parsed.form, name: form.name } : parsed.form);
       setNote(parsed.note ?? null);
       setError(null);
       setImporting(false);
@@ -1043,16 +1106,16 @@ function AddServerButton({ onAdded }: { onAdded: () => void }) {
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (taken) return;
     setSaving(true);
     const input: Omit<McpServerInput, "name"> = stdio
       ? { type: "stdio", command: form.command.trim(), args: form.args.split("\n").map((a) => a.trim()).filter(Boolean), env: parsePairs(form.env, "=") }
       : { type: form.type, url: form.url.trim(), headers: parsePairs(form.headers, ":") };
-    api
-      .saveMcpServer(form.name.trim(), input)
+    (editing ? api.updateMcpServer(original, { ...input, name }) : api.saveMcpServer(name, input))
       .then(
         () => {
-          close();
-          onAdded();
+          onClose();
+          onSaved();
         },
         (err: Error) => setError(err.message),
       )
@@ -1060,106 +1123,113 @@ function AddServerButton({ onAdded }: { onAdded: () => void }) {
   };
 
   return (
-    <>
-      <button className="primary" onClick={() => setOpen(true)}>
-        手动添加
-      </button>
-      {open && (
-        <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
-          {importing ? (
-            <div className="dialog settings-form mcp-dialog" role="dialog" aria-label="从 JSON 导入 MCP 服务器">
-              <h3>添加 MCP 服务器</h3>
-              <label>
-                粘贴 JSON 配置
-                <textarea autoFocus className="mono" rows={10} value={json} placeholder={JSON_PLACEHOLDER} onChange={(e) => setJson(e.target.value)} />
-              </label>
-              <p className="mcp-hint">支持 MCP 服务器文档里常见的 mcpServers 写法，解析后填进表单。</p>
-              {error && <div className="settings-error">{error}</div>}
-              <div className="dialog-actions">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setImporting(false);
-                    setError(null);
-                  }}
-                >
-                  返回
-                </button>
-                <button type="button" className="primary" disabled={!json.trim()} onClick={parse}>
-                  解析
-                </button>
-              </div>
-            </div>
-          ) : (
-            <form className="dialog settings-form mcp-dialog" aria-label="添加 MCP 服务器" onSubmit={submit}>
-              <h3>添加 MCP 服务器</h3>
-              <label>
-                名称
-                <input autoFocus required value={form.name} onChange={update("name")} placeholder="例如 filesystem、github" pattern="[\w\-]+" title="字母、数字、下划线和连字符；同名会覆盖" />
-              </label>
-              <div className="mcp-type-row">
-                <div className="mcp-type" role="radiogroup" aria-label="类型">
-                  <button type="button" role="radio" aria-checked={stdio} className={stdio ? "active" : undefined} onClick={() => setForm((f) => ({ ...f, type: "stdio" }))}>
-                    STDIO（本机命令）
-                  </button>
-                  <button type="button" role="radio" aria-checked={!stdio} className={stdio ? undefined : "active"} onClick={() => setForm((f) => ({ ...f, type: f.type === "sse" ? "sse" : "http" }))}>
-                    HTTP（远程地址）
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  className="mcp-import"
-                  onClick={() => {
-                    setImporting(true);
-                    setError(null);
-                  }}
-                >
-                  从 JSON 导入
-                </button>
-              </div>
-              {note && <p className="mcp-hint">{note}</p>}
-              {stdio ? (
-                <>
-                  <label>
-                    启动命令
-                    <input required value={form.command} onChange={update("command")} placeholder="npx、uvx、node 或可执行文件路径" />
-                  </label>
-                  <label>
-                    参数（每行一个）
-                    <textarea className="mono" rows={3} value={form.args} onChange={update("args")} placeholder={"-y\n@modelcontextprotocol/server-filesystem"} />
-                  </label>
-                  <label>
-                    环境变量（每行一个 名称=值）
-                    <textarea className="mono" rows={2} value={form.env} onChange={update("env")} placeholder="API_KEY=xxx" />
-                  </label>
-                </>
-              ) : (
-                <>
-                  <label>
-                    地址
-                    <input required type="url" value={form.url} onChange={update("url")} placeholder="https://example.com/mcp" />
-                  </label>
-                  <label>
-                    请求头（每行一个 名称: 值）
-                    <textarea className="mono" rows={2} value={form.headers} onChange={update("headers")} placeholder="Authorization: Bearer xxx" />
-                  </label>
-                  {form.type === "sse" && <p className="mcp-hint">按 JSON 里的配置使用 SSE 传输</p>}
-                </>
-              )}
-              {error && <div className="settings-error">{error}</div>}
-              <div className="dialog-actions">
-                <button type="button" onClick={close}>
-                  取消
-                </button>
-                <button type="submit" className="primary" disabled={saving}>
-                  {saving ? "保存中…" : "保存"}
-                </button>
-              </div>
-            </form>
-          )}
+    <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      {importing ? (
+        <div className="dialog settings-form mcp-dialog" role="dialog" aria-label={`从 JSON 导入：${title}`}>
+          <h3>{title}</h3>
+          <label>
+            粘贴 JSON 配置
+            <textarea autoFocus className="mono" rows={10} value={json} placeholder={JSON_PLACEHOLDER} onChange={(e) => setJson(e.target.value)} />
+          </label>
+          <p className="mcp-hint">支持 MCP 服务器文档里常见的 mcpServers 写法，解析后填进表单。</p>
+          {error && <div className="settings-error">{error}</div>}
+          <div className="dialog-actions">
+            <button
+              type="button"
+              onClick={() => {
+                setImporting(false);
+                setError(null);
+              }}
+            >
+              返回
+            </button>
+            <button type="button" className="primary" disabled={!json.trim()} onClick={parse}>
+              解析
+            </button>
+          </div>
         </div>
+      ) : (
+        <form className="dialog settings-form mcp-dialog" aria-label={title} onSubmit={submit}>
+          <h3>{title}</h3>
+          <label>
+            名称
+            <input
+              autoFocus
+              required
+              value={form.name}
+              onChange={update("name")}
+              placeholder="例如 filesystem、github"
+              pattern="[\w\-]+"
+              title="字母、数字、下划线和连字符"
+              aria-invalid={taken || undefined}
+            />
+          </label>
+          {taken && <div className="settings-error">已经有名为「{name}」的连接器，换一个名字</div>}
+          {userScope && <p className="mcp-hint">这是 Claude Code 用户范围的服务器，保存后改的是 Claude Code 自己的配置（.claude.json），终端里直接用 claude 也会跟着变。</p>}
+          {renamed && !taken && (
+            <p className="mcp-hint">改名后模型看到的工具名跟着变（mcp__{name || "…"}__工具名）{stdio ? "。" : "；保存的登录信息按名字记，改名后要重新登录。"}</p>
+          )}
+          <div className="mcp-type-row">
+            <div className="mcp-type" role="radiogroup" aria-label="类型">
+              <button type="button" role="radio" aria-checked={stdio} className={stdio ? "active" : undefined} onClick={() => setForm((f) => ({ ...f, type: "stdio" }))}>
+                STDIO（本机命令）
+              </button>
+              <button type="button" role="radio" aria-checked={!stdio} className={stdio ? undefined : "active"} onClick={() => setForm((f) => ({ ...f, type: f.type === "sse" ? "sse" : "http" }))}>
+                HTTP（远程地址）
+              </button>
+            </div>
+            <button
+              type="button"
+              className="mcp-import"
+              onClick={() => {
+                setImporting(true);
+                setError(null);
+              }}
+            >
+              从 JSON 导入
+            </button>
+          </div>
+          {note && <p className="mcp-hint">{note}</p>}
+          {stdio ? (
+            <>
+              <label>
+                启动命令
+                <input required value={form.command} onChange={update("command")} placeholder="npx、uvx、node 或可执行文件路径" />
+              </label>
+              <label>
+                参数（每行一个）
+                <textarea className="mono" rows={3} value={form.args} onChange={update("args")} placeholder={"-y\n@modelcontextprotocol/server-filesystem"} />
+              </label>
+              <label>
+                环境变量（每行一个 名称=值）
+                <textarea className="mono" rows={2} value={form.env} onChange={update("env")} placeholder="API_KEY=xxx" />
+              </label>
+            </>
+          ) : (
+            <>
+              <label>
+                地址
+                <input required type="url" value={form.url} onChange={update("url")} placeholder="https://example.com/mcp" />
+              </label>
+              <label>
+                请求头（每行一个 名称: 值）
+                <textarea className="mono" rows={2} value={form.headers} onChange={update("headers")} placeholder="Authorization: Bearer xxx" />
+              </label>
+              {form.type === "sse" && <p className="mcp-hint">按 JSON 里的配置使用 SSE 传输</p>}
+            </>
+          )}
+          {error && <div className="settings-error">{error}</div>}
+          <div className="dialog-actions">
+            <button type="button" onClick={close}>
+              取消
+            </button>
+            <button type="submit" className="primary" disabled={saving || taken}>
+              {saving ? "保存中…" : "保存"}
+            </button>
+          </div>
+        </form>
       )}
-    </>
+    </div>
   );
 }
 

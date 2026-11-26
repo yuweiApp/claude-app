@@ -34,13 +34,40 @@ function toConfig(input: McpServerInput): McpConfig {
   return { type: input.type, url: input.url!, headers: input.headers };
 }
 
-/** 添加，或用同样的名字覆盖；不传 connector 时保留原来记的（在设置页里改了请求头之类的，仍算那个连接器） */
+/** 添加，或用同样的名字覆盖（设置页手动添加的重名由接口先拒绝）；不传 connector 时保留原来记的 */
 export function saveMcpServer(input: McpServerInput, connector?: ConnectorRef): void {
   const servers = readMcpServers();
   const previous = servers[input.name];
   const ref = connector ?? previous?.connector;
   servers[input.name] = { enabled: previous?.enabled ?? true, config: toConfig(input), ...(ref ? { connector: ref } : {}) };
   write(servers);
+}
+
+/** 设置页编辑时填进表单的配置；不是设置页添加的返回 undefined */
+export function readMcpServerInput(name: string): McpServerInput | undefined {
+  const config = readMcpServers()[name]?.config;
+  if (!config) return undefined;
+  if (config.type === "http" || config.type === "sse") return { name, type: config.type, url: config.url, ...(config.headers ? { headers: config.headers } : {}) };
+  return { name, type: "stdio", command: config.command, args: config.args ?? [], ...(config.env ? { env: config.env } : {}) };
+}
+
+/**
+ * 编辑设置页添加的服务器：换成新配置，启停状态和连接器市场的来源跟着走；input.name 和原来不同就是改名，旧名字删掉。
+ * taken 是别处（用户范围）已经占用的名字。原来的不存在返回 "missing"，新名字已被占用返回 "conflict"
+ */
+export function updateMcpServer(name: string, input: McpServerInput, taken: (name: string) => boolean): "ok" | "missing" | "conflict" {
+  const servers = readMcpServers();
+  const previous = servers[name];
+  if (!previous) return "missing";
+  if (input.name !== name && (servers[input.name] || taken(input.name))) return "conflict";
+  // 改名时保持原来的顺序（设置页按这个顺序列出）
+  const next = Object.fromEntries(
+    Object.entries(servers).map(([key, server]) =>
+      key === name ? [input.name, { enabled: previous.enabled, config: toConfig(input), ...(previous.connector ? { connector: previous.connector } : {}) }] : [key, server],
+    ),
+  );
+  write(next);
+  return "ok";
 }
 
 export function setMcpServerEnabled(name: string, enabled: boolean): boolean {

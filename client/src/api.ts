@@ -335,6 +335,10 @@ export const api = {
   uninstallPlugin: (id: string) => request("POST", "/plugin-market/uninstall", { id }),
   updatePlugin: (id: string) => request<{ message: string }>("POST", "/plugin-market/update", { id }).then((r) => r.message),
   saveMcpServer: (name: string, input: Omit<McpServerInput, "name">) => request("PUT", `/mcp-servers/${encodeURIComponent(name)}`, input),
+  /** 设置页添加的服务器的完整配置（编辑时填表单） */
+  mcpServerConfig: (name: string) => request<McpServerInput>("GET", `/mcp-servers/${encodeURIComponent(name)}/config`),
+  /** 编辑设置页添加的服务器，input.name 和 name 不同就是改名 */
+  updateMcpServer: (name: string, input: McpServerInput) => request("PUT", `/mcp-servers/${encodeURIComponent(name)}/config`, input),
   setMcpServerEnabled: (name: string, enabled: boolean) => request("PATCH", `/mcp-servers/${encodeURIComponent(name)}`, { enabled }),
   deleteMcpServer: (name: string) => request("DELETE", `/mcp-servers/${encodeURIComponent(name)}`),
   /**

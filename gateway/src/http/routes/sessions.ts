@@ -12,14 +12,15 @@ import type { EventHub } from "../../events/event-hub.js";
 import { streamSession } from "../sse.js";
 import { clearCapabilitiesCache, listCapabilities } from "../../agent/capabilities.js";
 import { importPlugin, importSkill, readSkill, removePlugin, removeSkill, setAgentEnabled, setSkillEnabled } from "../../agent/extensions.js";
-import { removeMcpServer, saveMcpServer, setMcpServerEnabled } from "../../agent/mcp-config.js";
+import { readMcpServerInput, readMcpServers, removeMcpServer, saveMcpServer, setMcpServerEnabled, updateMcpServer } from "../../agent/mcp-config.js";
+import { readUserMcpServerInput, readUserMcpServers, updateUserMcpServer } from "../../agent/mcp-user-config.js";
 import { addConnector, listConnectors } from "../../agent/connectors.js";
 import { cancelMcpAuth, clearMcpAuth, getMcpAuth, startMcpAuth, submitMcpAuthCallback } from "../../agent/mcp-auth.js";
 import { installMarketPlugin, queryMarketPlugins, uninstallMarketPlugin, updateMarketPlugin } from "../../agent/plugin-market.js";
 import { config, EFFORT_LEVELS, PERMISSION_MODES } from "../../config.js";
 import { isRemote } from "../../ssh/location.js";
 import type { ShareStore } from "../../share/store.js";
-import { NotFoundError, BadRequestError } from "../../errors.js";
+import { NotFoundError, BadRequestError, ConflictError } from "../../errors.js";
 
 
 const attachmentsSchema = { type: "array", items: { type: "string" }, maxItems: 20 };
@@ -150,13 +151,40 @@ export function sessionRoutes(app: FastifyInstance, sessions: SessionManager, hu
     return { message: await updateMarketPlugin(req.body.id) };
   });
 
-  /** 添加 MCP 服务器，同名时覆盖。对新会话和子进程重启后的会话生效 */
+  /** 添加 MCP 服务器，已有同名的（设置页添加的、用户范围的）时 409。对新会话和子进程重启后的会话生效 */
   app.put<{ Params: { name: string }; Body: Omit<McpServerInput, "name"> }>("/mcp-servers/:name", async (req) => {
     const { name } = req.params;
-    const { type, command, url } = req.body;
-    if (!/^[\w-]+$/.test(name)) throw new BadRequestError("名称只能用字母、数字、下划线和连字符");
-    if (type === "stdio" ? !command?.trim() : !/^https?:\/\//.test(url ?? "")) throw new BadRequestError(type === "stdio" ? "请填写命令" : "请填写 http 或 https 地址");
+    validateMcpServer({ ...req.body, name });
+    if (readMcpServers()[name] || readUserMcpServers()[name]) throw new ConflictError(`已经有名为「${name}」的 MCP 服务器`);
     saveMcpServer({ ...req.body, name });
+    clearCapabilitiesCache();
+    return { ok: true };
+  });
+
+  /** 可编辑的 MCP 服务器的配置（编辑时填表单用）：设置页添加的，或者用户范围的（Claude Code 的 .claude.json，同名时设置页添加的优先） */
+  app.get<{ Params: { name: string } }>("/mcp-servers/:name/config", async (req): Promise<McpServerInput> => {
+    const { name } = req.params;
+    const input = readMcpServerInput(name) ?? (readMcpServers()[name] ? undefined : readUserMcpServerInput(name));
+    if (!input) throw new NotFoundError(NOT_EDITABLE);
+    return input;
+  });
+
+  /**
+   * 编辑 MCP 服务器：body 是完整的新配置，name 和路径里的不同就是改名，新名字已有服务器（设置页添加的、用户范围的）时 409。
+   * 设置页添加的改 gateway-mcp-servers.json；用户范围的交给 claude mcp remove / add-json -s user，会改到 Claude Code 自己的配置。
+   * 同添加，对新会话和子进程重启后的会话生效
+   */
+  app.put<{ Params: { name: string }; Body: McpServerInput }>("/mcp-servers/:name/config", async (req) => {
+    const { name } = req.params;
+    const input = { ...req.body, name: req.body?.name?.trim() ?? "" };
+    validateMcpServer(input);
+    const result = readMcpServers()[name]
+      ? updateMcpServer(name, input, (n) => n in readUserMcpServers())
+      : readUserMcpServerInput(name)
+        ? await updateUserMcpServer(name, input, (n) => n in readMcpServers())
+        : "missing";
+    if (result === "missing") throw new NotFoundError(NOT_EDITABLE);
+    if (result === "conflict") throw new ConflictError(`已经有名为「${input.name}」的 MCP 服务器`);
     clearCapabilitiesCache();
     return { ok: true };
   });
@@ -544,4 +572,12 @@ function activeOr404(sessions: SessionManager, id: string) {
   const session = sessions.get(id);
   if (!session) throw new NotFoundError("会话不在运行");
   return session;
+}
+
+const NOT_EDITABLE = "MCP 服务器不存在，或者不能在设置页编辑（只能编辑设置页添加的和用户范围的 stdio、http、sse 服务器）";
+
+/** 添加、编辑 MCP 服务器时检查名称和必填项 */
+function validateMcpServer({ name, type, command, url }: McpServerInput): void {
+  if (!/^[\w-]+$/.test(name)) throw new BadRequestError("名称只能用字母、数字、下划线和连字符");
+  if (type === "stdio" ? !command?.trim() : !/^https?:\/\//.test(url ?? "")) throw new BadRequestError(type === "stdio" ? "请填写命令" : "请填写 http 或 https 地址");
 }

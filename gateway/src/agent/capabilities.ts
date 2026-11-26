@@ -6,6 +6,7 @@ import { agentEnv } from "../config.js";
 import type { Capabilities, McpServerInfo } from "../shared/types.js";
 import { agentFiles, disabledAgents, userAgentsDir, disabledSkills, importedPluginNames, importedPlugins, importedSkills, pluginManifest } from "./extensions.js";
 import { enabledMcpServers, readMcpServers, type McpConfig } from "./mcp-config.js";
+import { readUserMcpServerInput } from "./mcp-user-config.js";
 import { noInput } from "./models.js";
 
 const CACHE_MS = 60_000;
@@ -71,6 +72,7 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
         name,
         enabled,
         managed: true,
+        editable: true,
         type: config.type ?? "stdio",
         target: target(config),
         status: enabled ? (server?.status ?? "pending") : "disabled",
@@ -85,6 +87,8 @@ export async function listCapabilities(cwd: string): Promise<Capabilities> {
         name: server.name,
         enabled: server.status !== "disabled",
         managed: false,
+        // 用户范围的（Claude Code 的 .claude.json）交给 claude mcp 命令行改，见 mcp-user-config.ts
+        editable: server.source === "user" && readUserMcpServerInput(server.name) !== undefined,
         ...(server.config && server.config.type !== "sdk" && server.config.type !== "claudeai-proxy"
           ? { type: server.config.type ?? "stdio", target: target(server.config) }
           : {}),

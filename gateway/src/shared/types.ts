@@ -338,6 +338,8 @@ export interface McpServerInfo {
   enabled: boolean;
   /** 设置页添加的，可以编辑、删除、启停；其余是插件或配置文件带来的，只显示 */
   managed: boolean;
+  /** 能在设置页编辑（GET / PUT /mcp-servers/:name/config）：设置页添加的，和用户范围（source 为 user）的 stdio、http、sse 服务器 */
+  editable: boolean;
   type?: string;
   /** http / sse 的地址，或 stdio 的命令行 */
   target?: string;

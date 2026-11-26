@@ -21,7 +21,7 @@ const CLI_TIMEOUT_MS = 5 * 60_000;
 const LIST_TTL_MS = 10 * 60_000;
 
 /** SDK 自带的 claude 可执行文件：和 SDK 一样按平台包名找，Linux 先 glibc 再 musl */
-function claudeExecutable(): string {
+export function claudeExecutable(): string {
   const require = createRequire(import.meta.url);
   const { platform, arch } = process;
   const base = `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`;

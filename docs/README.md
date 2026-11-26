@@ -84,7 +84,10 @@ gateway 为每个"正在用"的会话持有一个 `AgentSession`：
 - 子代理（**先隐藏**：`SettingsPage.tsx` 的 `SHOW_AGENTS` 为 false，导航里没有「子代理」，插件列表和详情里也不列插件带的子代理；网关的列表、启停接口和停用名单照常生效）：设置页「子代理」列出会话里模型能用 Agent 工具调起的子代理，分「个人」「内置」两个标签，卡片上显示它用的模型（`inherit` 显示成「同主会话」），点开看定义文件，菜单里启用、停用。网关不另外定义子代理（不传 `options.agents`）：Claude Code 按 `settingSources` 自己加载用户的 `$CLAUDE_CONFIG_DIR/agents/`、项目的 `.claude/agents/` 和插件 `agents/` 下的 `.md`，要加就放文件。不做新建、编辑的表单（字段多且还在加，工具列表不发消息拿不到，第三方接口下 opus / sonnet / haiku 都映射到默认模型）：「个人」标签下写明用户的子代理文件夹（能力列表的 `agentsDir`，列表时没有就建上）和文件的写法，附一个可复制的示例；桌面版右上角「打开文件夹」用系统的文件管理器打开它（`shell.openPath`，网关在别的机器上时提示没有这个文件夹）。
   - 列表用临时 query 的 `supportedAgents()`，只有名字、描述和模型，不带来源和路径。定义文件由网关按名字自己找（`agentFiles`），对的是 Claude Code 的命名（实测 2.1.322）：用户和项目的名字是文件开头的 `name`（没有时取文件名），子文件夹不算进名字；插件里的是 `插件名:子文件夹:名字`；同名时项目的优先。找不到文件、名字里也没有插件名的算内置的（Claude Code 自带的 Explore、Plan、general-purpose 等），内置插件带的也算内置。
   - 停用：名字存在 `$CLAUDE_CONFIG_DIR/gateway-disabled-agents.json`，本地会话的 `disallowedTools` 里加上 `Agent(名字)`。`supportedAgents()` 照样列出停用的，但模型看不到、也调用不了（实测：让模型列出 Agent 工具的 subagent_type，停用的不在里面，带冒号的插件代理也一样）。在拉起 claude 进程时确定，已经活跃的会话要等进程重启才更新。远程会话不管（远端用它自己的配置），同技能白名单。
-- MCP 服务器：设置页添加的存在 `$CLAUDE_CONFIG_DIR/gateway-mcp-servers.json`（权限 600，请求头和环境变量可能有令牌），启用的通过 `options.mcpServers` 传给会话，对新会话和子进程重启后的会话生效。插件或配置文件带来的服务器只显示，不能在设置页改。
+- MCP 服务器：设置页添加的存在 `$CLAUDE_CONFIG_DIR/gateway-mcp-servers.json`（权限 600，请求头和环境变量可能有令牌），启用的通过 `options.mcpServers` 传给会话，对新会话和子进程重启后的会话生效。插件或配置文件带来的服务器只显示，不能在设置页改，只有用户范围的（`source` 为 `user`，Claude Code 存在 `$CLAUDE_CONFIG_DIR/.claude.json` 的 `mcpServers`）可以编辑。
+  - 编辑（`McpServerInfo.editable`）：表单和手动添加共用，可以改名称、类型、命令和参数、环境变量、地址、请求头。设置页添加的直接改 `gateway-mcp-servers.json`，启停状态和连接器市场的来源跟着走，改名时位置不变；用户范围的网关只读 `.claude.json`，写交给 SDK 自带的命令行（`gateway/src/agent/mcp-user-config.ts`）：同名先 `claude mcp remove -s user` 再 `claude mcp add-json -s user`（配置作为参数给：它从标准输入读的写法在 Claude Code 会话里拉起时会被拒绝），加失败时把原来的加回去；改名先加新的再删旧的。类型没变时保留原配置里表单没有的项（`oauth`、`timeout` 等）。`ws` 等表单没有的类型不能编辑。改的是 Claude Code 自己的配置，终端里直接用 claude 也会变；`mcp remove` 不清保存的登录令牌，但令牌按名称和配置记，改名、改地址后要重新登录。
+  - 重名：手动添加、编辑（改名）时，名称和设置页添加的、用户范围的已有服务器相同，网关返回 409；网页另外对照列表里所有服务器（含插件、项目带来的）先拦下。连接器市场添加自己避开重名（加 `-2`），不受影响。
+  - 和添加、删除、启停一样，编辑只对新会话和子进程重启后的会话生效，不调 `setMcpServers`（它会替换会话里网关自带的进程内服务器）；设置页的状态和工具数用新配置另起临时 query 重新查。
 - 连接器（`gateway/src/agent/connectors.ts`、`client/src/components/ConnectorDirectory.tsx`）：设置页原来的「MCP」改叫「连接器」，分「已添加」和「连接器市场」两个标签。连接器市场布局同插件市场：顶部是总数、「来源」「分类」两个下拉框，卡片网格，底部页码（每页个数同插件市场按可见区域算），搜索词停 300ms 再查。两个来源，都只列有远程地址（streamable-http 优先，其次 SSE）的服务器：
   - **Claude 目录**（默认）：claude.ai 上的连接器目录（`config.yml` 的 `connectors.directory`，默认 `https://api.anthropic.com/api/directory/servers`）。Claude Code 查目录也用这个接口，公开的，不用登录。目录共 1200 多项，去掉桌面版扩展（`type: local`，.dxt，要在本机装）和没有地址的，远程的 1070 个左右（2026-11-21）。网关一页 500 条一次取完，缓存 1 小时；搜索（标题、作者、描述、分类，标题以搜索词开头的、标题里有的排前面）、分类、分页都在网关里做，接口只返回 `offset` 开始的一页和总数。默认按目录的 `rank` 排（和 claude.ai 一样热门的在前）。
     - 卡片的信息行是作者、审核情况（`verified_tier`：Anthropic、合作伙伴）、工具数、不用登录的（`auth_posture: no_auth`）、地址的主机名，后面链到 claude.ai 上的目录页；底部是分类（按分类筛时是筛的那个，否则是第一个）。
@@ -356,7 +359,9 @@ Claude Code 只说 Anthropic Messages API（`POST /v1/messages`）。接 DeepSee
 | GET | `/agents/:name?cwd=` | 子代理的定义文件（能力列表里有 `path` 的）；内置的没有文件，返回 404 |
 | PATCH | `/agents/:name` | 启用、停用子代理：`{ enabled }` |
 | DELETE | `/skills/:name`、`/plugins/:name` | 删除导入的技能、插件和它们的文件 |
-| PUT | `/mcp-servers/:name` | 添加 MCP 服务器，同名覆盖（stdio：`command`、`args`、`env`；http / sse：`url`、`headers`） |
+| PUT | `/mcp-servers/:name` | 添加 MCP 服务器，已有同名的（设置页添加的、用户范围的）时 409（stdio：`command`、`args`、`env`；http / sse：`url`、`headers`） |
+| GET | `/mcp-servers/:name/config` | 可编辑的服务器的完整配置（`McpServerInput`），编辑时填表单 |
+| PUT | `/mcp-servers/:name/config` | 编辑，body 是完整的 `McpServerInput`，`name` 和路径里的不同就是改名，新名字被占用时 409 |
 | PATCH | `/mcp-servers/:name` | 启用、停用 `{ enabled }` |
 | DELETE | `/mcp-servers/:name` | 删除 |
 | POST | `/mcp-servers/:name/auth` | 开始 OAuth 登录，返回 `{ state, authUrl }`；已经连上的返回 `done` |
