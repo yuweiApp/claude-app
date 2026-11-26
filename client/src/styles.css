@@ -588,7 +588,11 @@ main {
 .settings-form input, .settings-form select, .settings-form textarea { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 14px; outline: none; resize: vertical; }
 .settings-form input:focus, .settings-form select:focus, .settings-form textarea:focus { border-color: var(--accent); }
 /* 添加 MCP 服务器：类型是两个胶囊按钮，右边「从 JSON 导入」；参数、环境变量、JSON 用等宽字体 */
-.mcp-dialog { width: 560px; gap: 14px; padding: 20px 22px; }
+/* 宽高固定：切换类型、切到 JSON 页时对话框不变大小、不挪位置；按钮贴底，内容放不下时在框里滚动，JSON 页的输入框占满剩下的高度 */
+.mcp-dialog { width: 560px; height: min(600px, calc(100vh - 32px)); overflow-y: auto; gap: 14px; padding: 20px 22px; }
+.mcp-dialog > .dialog-actions { margin-top: auto; }
+.mcp-dialog > label.mcp-json { flex: 1; min-height: 160px; }
+.mcp-dialog > label.mcp-json textarea { flex: 1; resize: none; }
 .settings-form input.mono, .settings-form textarea.mono { font-family: var(--font-mono); font-size: 13px; line-height: 1.55; }
 .mcp-type-row { display: flex; align-items: center; gap: 8px; }
 .mcp-type { display: flex; gap: 4px; }

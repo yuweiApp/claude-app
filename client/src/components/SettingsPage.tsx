@@ -1011,6 +1011,19 @@ const JSON_PLACEHOLDER = `{
   }
 }`;
 
+/** 表单转成 mcpServers 写法的 JSON（打开 JSON 页时显示当前配置）；没填命令、地址时返回空串 */
+function formToJson(form: ServerForm): string {
+  const stdio = form.type === "stdio";
+  if (!(stdio ? form.command.trim() : form.url.trim())) return "";
+  const env = parsePairs(form.env, "=");
+  const headers = parsePairs(form.headers, ":");
+  const args = form.args.split("\n").map((a) => a.trim()).filter(Boolean);
+  const cfg = stdio
+    ? { command: form.command.trim(), ...(args.length ? { args } : {}), ...(env ? { env } : {}) }
+    : { type: form.type, url: form.url.trim(), ...(headers ? { headers } : {}) };
+  return JSON.stringify({ mcpServers: { [form.name.trim() || "server"]: cfg } }, null, 2);
+}
+
 /**
  * 解析 MCP 服务器文档里常见的 JSON 配置，填进表单：{ "mcpServers": { 名称: 配置 } }、{ 名称: 配置 } 或者单个配置（没有名称）。
  * 有多个服务器时取第一个，note 里说明
@@ -1127,11 +1140,13 @@ function ServerDialog({
       {importing ? (
         <div className="dialog settings-form mcp-dialog" role="dialog" aria-label={`从 JSON 导入：${title}`}>
           <h3>{title}</h3>
-          <label>
-            粘贴 JSON 配置
-            <textarea autoFocus className="mono" rows={10} value={json} placeholder={JSON_PLACEHOLDER} onChange={(e) => setJson(e.target.value)} />
+          <label className="mcp-json">
+            JSON 配置
+            <textarea autoFocus className="mono" rows={8} value={json} placeholder={JSON_PLACEHOLDER} onChange={(e) => setJson(e.target.value)} />
           </label>
-          <p className="mcp-hint">支持 MCP 服务器文档里常见的 mcpServers 写法，解析后填进表单。</p>
+          <p className="mcp-hint">
+            {editing ? "这是当前表单里的配置，可以直接改，或换成粘贴的配置。" : "粘贴 MCP 服务器文档里常见的 mcpServers 写法。"}解析后填进表单，点保存才生效。
+          </p>
           {error && <div className="settings-error">{error}</div>}
           <div className="dialog-actions">
             <button
@@ -1182,11 +1197,13 @@ function ServerDialog({
               type="button"
               className="mcp-import"
               onClick={() => {
+                // 显示表单当前的配置（编辑时就是这个服务器的配置，包括还没保存的改动）；表单是空的时留空、显示示例
+                setJson(formToJson(form));
                 setImporting(true);
                 setError(null);
               }}
             >
-              从 JSON 导入
+              {editing ? "编辑 JSON" : "从 JSON 导入"}
             </button>
           </div>
           {note && <p className="mcp-hint">{note}</p>}
@@ -1220,7 +1237,7 @@ function ServerDialog({
           )}
           {error && <div className="settings-error">{error}</div>}
           <div className="dialog-actions">
-            <button type="button" onClick={close}>
+            <button type="button" onClick={onClose}>
               取消
             </button>
             <button type="submit" className="primary" disabled={saving || taken}>
