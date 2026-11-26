@@ -1,7 +1,7 @@
 import type { CanUseTool, EffortLevel, HookCallbackMatcher, HookEvent, Options, PermissionMode, SessionCronSummary } from "@anthropic-ai/claude-agent-sdk";
 import { agentEnv, config } from "../config.js";
 import { attachmentsDir } from "./attachments.js";
-import { disabledAgents, importedPlugins } from "./extensions.js";
+import { HIDDEN_BUILTIN_SKILLS, disabledAgents, importedPlugins } from "./extensions.js";
 import { enabledMcpServers } from "./mcp-config.js";
 import { TERMINAL_AUTO_TOOLS, TERMINAL_SERVER, terminalServer } from "../terminal/tool.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -75,7 +75,8 @@ export function buildOptions(launch: SessionLaunch): Options {
     settingSources: ["user", "project", "local"],
     // WebFetch 抓网页前先问 api.anthropic.com 这个域名能不能抓，不支持的地区（如中国）一律 403，所有网址都报
     // "Unable to verify if domain … is safe to fetch"，网页本身其实能连上。跳过这一步
-    settings: { skipWebFetchPreflight: true },
+    // skillOverrides：本应用里用不上的内置技能不加载，见 extensions.ts
+    settings: { skipWebFetchPreflight: true, skillOverrides: HIDDEN_BUILTIN_SKILLS },
     includePartialMessages: true,
     abortController: launch.abortController,
     stderr: launch.stderr,
@@ -95,6 +96,7 @@ export function buildOptions(launch: SessionLaunch): Options {
     const forwards = host.activeForwards().map((f) => `- 「${hostName}」的 ${hostPort(f.bindHost, f.bindPort)} → 用户电脑的 ${hostPort(f.host, f.port)}`);
     const append = [
       config.appendSystemPrompt,
+      host.env ? configDirFact(nativePath(host.env.windows, host.env.configDir)) : "",
       forwards.length ? `SSH 反向转发：在「${hostName}」上连下面这些地址，连到的是用户电脑（运行 claude-app 的那台）上的服务。\n${forwards.join("\n")}` : "",
     ]
       .filter(Boolean)
@@ -132,8 +134,16 @@ export function buildOptions(launch: SessionLaunch): Options {
     },
     plugins: importedPlugins(),
     ...(launch.skills ? { skills: launch.skills } : {}),
-    systemPrompt: { type: "preset", preset: "claude_code", ...(config.appendSystemPrompt ? { append: config.appendSystemPrompt } : {}) },
+    systemPrompt: { type: "preset", preset: "claude_code", append: [config.appendSystemPrompt, configDirFact(config.claudeConfigDir)].filter(Boolean).join("\n\n") },
   };
+}
+
+/**
+ * 配置目录换成了网关自己的（CLAUDE_CONFIG_DIR），模型只知道 Claude Code 默认的 ~/.claude，
+ * 会把技能建在 ~/.claude/skills 下，加载不到。远程会话是远端的配置目录（ssh/deploy.ts 的 configDir）
+ */
+function configDirFact(dir: string): string {
+  return `Claude Code 的用户级配置目录是 ${dir}（环境变量 CLAUDE_CONFIG_DIR）：用户级的技能（skills/）、子代理（agents/）、settings.json 在这下面；~/.claude 不是这个会话的配置目录，那里的技能、子代理、设置不会被加载。`;
 }
 
 /**

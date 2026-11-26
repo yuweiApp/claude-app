@@ -97,6 +97,13 @@ function setListed(file: string, name: string, listed: boolean): void {
   writeJson(file, [...names]);
 }
 
+/**
+ * 本应用里用不上的 Claude Code 内置技能：所有会话和设置页的列表里都没有（settings 的 skillOverrides，off 是模型和 /名字 都看不到）。
+ * keybindings-help 改的是 Claude Code 终端界面的快捷键（~/.claude/keybindings.json），网页和桌面版不读；
+ * plugin-authoring 做的 mod（面板、状态栏、提示条等）由 Claude Code 自己的界面渲染，网页和桌面版不显示
+ */
+export const HIDDEN_BUILTIN_SKILLS = { "keybindings-help": "off", "plugin-authoring": "off" } as const;
+
 export const disabledSkills = () => readNames(disabledSkillsFile());
 export const setSkillEnabled = (name: string, enabled: boolean) => setListed(disabledSkillsFile(), name, !enabled);
 

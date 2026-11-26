@@ -4,7 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { query, type McpServerStatus, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { agentEnv } from "../config.js";
 import type { Capabilities, McpServerInfo } from "../shared/types.js";
-import { agentFiles, disabledAgents, userAgentsDir, disabledSkills, importedPluginNames, importedPlugins, importedSkills, pluginManifest } from "./extensions.js";
+import { HIDDEN_BUILTIN_SKILLS, agentFiles, disabledAgents, userAgentsDir, disabledSkills, importedPluginNames, importedPlugins, importedSkills, pluginManifest } from "./extensions.js";
 import { enabledMcpServers, readMcpServers, type McpConfig } from "./mcp-config.js";
 import { readUserMcpServerInput } from "./mcp-user-config.js";
 import { noInput } from "./models.js";
@@ -45,7 +45,16 @@ const target = (config: McpConfig) => ("url" in config ? config.url : [config.co
 export function inspectQuery(cwd: string): Query {
   return query({
     prompt: noInput(),
-    options: { cwd, env: agentEnv(), persistSession: false, settingSources: ["user", "project", "local"], mcpServers: enabledMcpServers(), plugins: importedPlugins() },
+    options: {
+      cwd,
+      env: agentEnv(),
+      persistSession: false,
+      settingSources: ["user", "project", "local"],
+      // 和会话一样不加载用不上的内置技能，设置页的列表里也就没有
+      settings: { skillOverrides: HIDDEN_BUILTIN_SKILLS },
+      mcpServers: enabledMcpServers(),
+      plugins: importedPlugins(),
+    },
   });
 }
 
