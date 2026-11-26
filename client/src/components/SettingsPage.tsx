@@ -673,7 +673,10 @@ function ItemMenu({ name, enabled, onToggle, onRemove }: { name: string; enabled
                 onToggle();
               }}
             >
-              <span className="menu-item-name">{enabled ? "停用" : "启用"}</span>
+              <span className="menu-item-name menu-item-icon">
+                {enabled ? <DisableIcon /> : <EnableIcon />}
+                {enabled ? "停用" : "启用"}
+              </span>
             </button>
             {onRemove && (
               <>
@@ -1280,6 +1283,26 @@ function TrashIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.7 7v3.8M9.3 7v3.8" />
+    </svg>
+  );
+}
+
+/** 菜单里的「停用」：圆圈加斜线 */
+function DisableIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M4.1 4.1l7.8 7.8" />
+    </svg>
+  );
+}
+
+/** 菜单里的「启用」：圆圈加对勾 */
+function EnableIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M5.6 8.2l1.7 1.7 3.2-3.5" />
     </svg>
   );
 }
