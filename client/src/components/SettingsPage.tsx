@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkCjkFriendly from "remark-cjk-friendly";
@@ -560,7 +561,8 @@ function ImportButton({ kind, onImported, onError }: { kind: "skills" | "plugins
 function ConfirmDelete({ kind, name, onClose, onDeleted, onError }: { kind: "skills" | "plugins"; name: string; onClose: () => void; onDeleted: () => void; onError: (message: string) => void }) {
   const label = KIND_LABEL[kind];
   const verb = kind === "skills" ? "移除" : "删除";
-  return (
+  // 挂到 body 上：卡片悬停时有 transform，留在卡片里的话 fixed 的遮罩会按卡片定位（见 ItemMenu）
+  return createPortal(
     <ConfirmDialog
       title={`${verb}${label}`}
       message={`将${verb}导入的${label}「${name}」和它的文件，不能恢复。`}
@@ -570,7 +572,8 @@ function ConfirmDelete({ kind, name, onClose, onDeleted, onError }: { kind: "ski
         onClose();
         api.deleteExtension(kind, name).then(onDeleted, (e: Error) => onError(e.message));
       }}
-    />
+    />,
+    document.body,
   );
 }
 
@@ -658,38 +661,41 @@ function ItemMenu({ name, enabled, onToggle, onRemove }: { name: string; enabled
       >
         <KebabIcon />
       </button>
-      {at && (
-        <div ref={menuRef} className="menu context-menu" role="menu" style={{ right: at.right, left: "auto", top: at.top }}>
-          <button
-            role="menuitem"
-            className="menu-item"
-            onClick={() => {
-              setAt(null);
-              onToggle();
-            }}
-          >
-            <span className="menu-item-name">{enabled ? "停用" : "启用"}</span>
-          </button>
-          {onRemove && (
-            <>
-              <div className="menu-divider" />
-              <button
-                role="menuitem"
-                className="menu-item danger"
-                onClick={() => {
-                  setAt(null);
-                  onRemove();
-                }}
-              >
-                <span className="menu-item-name menu-item-icon">
-                  <TrashIcon />
-                  移除
-                </span>
-              </button>
-            </>
-          )}
-        </div>
-      )}
+      {/* 挂到 body 上：卡片悬停时上浮用的是 transform，祖先有 transform 时 position: fixed 改按它定位，菜单会画到别处 */}
+      {at &&
+        createPortal(
+          <div ref={menuRef} className="menu context-menu" role="menu" style={{ right: at.right, left: "auto", top: at.top }}>
+            <button
+              role="menuitem"
+              className="menu-item"
+              onClick={() => {
+                setAt(null);
+                onToggle();
+              }}
+            >
+              <span className="menu-item-name">{enabled ? "停用" : "启用"}</span>
+            </button>
+            {onRemove && (
+              <>
+                <div className="menu-divider" />
+                <button
+                  role="menuitem"
+                  className="menu-item danger"
+                  onClick={() => {
+                    setAt(null);
+                    onRemove();
+                  }}
+                >
+                  <span className="menu-item-name menu-item-icon">
+                    <TrashIcon />
+                    移除
+                  </span>
+                </button>
+              </>
+            )}
+          </div>,
+          document.body,
+        )}
     </>
   );
 }
