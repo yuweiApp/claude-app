@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -15,7 +15,7 @@ type ContentBlock = Exclude<UserContent, string>[number];
 /** 附件存在工作目录里，Claude Code 读工作目录内的文件不用确认 */
 export const attachmentsDir = path.join(config.workspaceDir, ".attachments");
 
-const ID_RE = /^[0-9a-f-]{36}$/;
+const ID_RE = /^[0-9a-f]{6}$/;
 
 /** 模型直接能看的图片格式（Anthropic 单张图片上限 5 MB） */
 const IMAGE_TYPES: Record<string, "image/png" | "image/jpeg" | "image/gif" | "image/webp"> = {
@@ -62,13 +62,29 @@ async function ensureDir(dir: string): Promise<void> {
   }
 }
 
+/**
+ * 新建一个附件目录，id 是 6 位十六进制随机串（模型读附件时要原样抄路径，UUID 太长）。
+ * 附件在磁盘上一直留着、网关重启后还在，不能用从头数的序号；随机串撞上已有的目录时重新生成
+ */
+async function newAttachmentDir(): Promise<{ id: string; dir: string }> {
+  await ensureDir(attachmentsDir);
+  for (;;) {
+    const id = randomBytes(3).toString("hex");
+    const dir = path.join(attachmentsDir, id);
+    try {
+      await mkdir(dir);
+      return { id, dir };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+  }
+}
+
 /** 保存一个上传文件；stream 被截断（超过大小上限）时删掉并报错 */
 export async function saveUpload(filename: string, stream: Readable & { truncated?: boolean }): Promise<Attachment> {
-  const id = randomUUID();
-  const dir = path.join(attachmentsDir, id);
+  const { id, dir } = await newAttachmentDir();
   const name = safeName(filename);
   const file = path.join(dir, name);
-  await ensureDir(dir);
   try {
     await pipeline(stream, createWriteStream(file));
     if (stream.truncated) throw new BadRequestError(`文件超过 ${config.maxUploadMb} MB：${name}`);
@@ -81,10 +97,8 @@ export async function saveUpload(filename: string, stream: Readable & { truncate
 
 /** 网关自己生成的文字存成附件（如引用会话导出的记录） */
 export async function saveTextAttachment(filename: string, text: string): Promise<Attachment> {
-  const id = randomUUID();
-  const dir = path.join(attachmentsDir, id);
+  const { id, dir } = await newAttachmentDir();
   const file = path.join(dir, safeName(filename));
-  await ensureDir(dir);
   await writeFile(file, text);
   return { id, name: path.basename(file), path: file, size: (await stat(file)).size };
 }
