@@ -280,10 +280,28 @@ export class SessionManager {
       return forked.sessionId;
     });
     this.titles.set(forkedId, title);
+    await this.copyTasksToFork(sessionId, forkedId).catch((err: Error) => this.log.warn({ err, sessionId, forkedId }, "分叉时没复制到后台任务"));
     const active = this.active.get(sessionId);
     const settings = active ? { model: active.model, effort: active.effort } : this.lastSettings.get(sessionId);
     if (settings) this.lastSettings.set(forkedId, settings);
     return forkedId;
+  }
+
+  /**
+   * 后台任务按会话存（taskList），分叉只复制对话记录：新会话里看得到转到后台的那些卡片，后台任务面板却是空的。
+   * 把复制过去的记录里那些调用启动的、已经结束的任务也带过去（TaskList.finishedFor）；调用的 id 分叉时不变，只换消息的 uuid
+   */
+  private async copyTasksToFork(sourceId: string, forkedId: string): Promise<void> {
+    const toolUseIds = new Set<string>();
+    for (const m of await sessionHistory(forkedId)) {
+      const content = (m.message as { content?: unknown } | null)?.content;
+      if (m.type !== "assistant" || !Array.isArray(content)) continue;
+      for (const block of content as Array<{ type?: unknown; id?: unknown }>) {
+        if (block?.type === "tool_use" && typeof block.id === "string") toolUseIds.add(block.id);
+      }
+    }
+    const records = this.taskList(sourceId).finishedFor(toolUseIds);
+    if (records.length) this.taskList(forkedId).adopt(records);
   }
 
   /**

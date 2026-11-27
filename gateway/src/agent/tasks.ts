@@ -4,7 +4,7 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { BackgroundTask, TaskOutput } from "../shared/types.js";
 import { readJson, writeJson } from "../json-file.js";
 
-interface TaskRecord extends BackgroundTask {
+export interface TaskRecord extends BackgroundTask {
   /** 任务输出文件（后台 Bash 的 tool_result 或完成通知里给出） */
   outputFile?: string;
   /** 前台任务（比如没放后台的子代理）也会发 task_started，只有放到后台的才列出来 */
@@ -108,6 +108,27 @@ export class TaskList {
     const task = this.tasks.get(taskId);
     if (!task?.outputFile || !readable(task.type)) return undefined;
     return { file: task.outputFile, agent: task.type === "local_agent" };
+  }
+
+  /**
+   * 分叉时带到新会话的任务（SessionManager.fork）：转到过后台、已经结束、由 toolUseIds 里的调用启动的（分叉复制过去的记录里有它的卡片）。
+   * 还在跑的不带：它属于源会话的子进程，新会话收不到它结束的消息，会一直显示「运行中」
+   */
+  finishedFor(toolUseIds: ReadonlySet<string>): TaskRecord[] {
+    return [...this.tasks.values()]
+      .filter((t) => t.backgrounded && t.status !== "running" && t.toolUseId !== undefined && toolUseIds.has(t.toolUseId))
+      .map((t) => structuredClone(t));
+  }
+
+  /** 加进分叉带过来的任务（finishedFor），已有同名的不覆盖 */
+  adopt(records: TaskRecord[]): boolean {
+    let changed = false;
+    for (const task of records) {
+      if (this.tasks.has(task.taskId)) continue;
+      this.tasks.set(task.taskId, task);
+      changed = true;
+    }
+    return this.changed(changed);
   }
 
   /** 清掉已经结束的任务（界面上的「清除」） */
