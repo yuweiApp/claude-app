@@ -1,3 +1,6 @@
+import { createRequire } from "node:module";
+import path from "node:path";
+import vm from "node:vm";
 import type { BrowserContext, Page } from "playwright-core";
 import { CodeRepl, errorText, show, transform } from "../code-repl.js";
 import type { ToolOutput } from "../tool-result.js";
@@ -304,14 +307,20 @@ export class BrowserRepl extends CodeRepl implements Repl {
   }
 
   /**
-   * 这次调用抛的错是 Playwright 的超时（只看这次的错误，不看 console 输出和之前的后台错误）：截 page 此刻的画面。
-   * 截的是 page，不一定是代码里出错的那个标签页，说明里写清是哪个
+   * 这次调用抛的错是 Playwright 的超时（只看这次的错误，不看 console 输出和之前的后台错误）：截超时的那个标签页此刻的画面。
+   * 认得出是哪个标签页（见 tagFailures）就截它，认不出截 page；说明里写清截的是哪个
    */
   private async timeoutScreenshot(error: unknown, page: Page | undefined): Promise<{ image: { data: string; mimeType: string }; note: string } | null> {
-    if (!page || page.isClosed() || !PLAYWRIGHT_TIMEOUT.test(errorText(error))) return null;
-    const shot = await page.screenshot({ type: "jpeg", quality: 75, scale: "css", timeout: AUTO_SCREENSHOT_MS }).catch(() => null);
+    if (!PLAYWRIGHT_TIMEOUT.test(errorText(error))) return null;
+    const failed = error && typeof error === "object" ? await failedOn.get(error) : undefined;
+    const target = failed ?? page;
+    if (!target || target.isClosed()) return null;
+    const shot = await target.screenshot({ type: "jpeg", quality: 75, scale: "css", timeout: AUTO_SCREENSHOT_MS }).catch(() => null);
     if (!shot) return null;
-    return { image: { data: shot.toString("base64"), mimeType: "image/jpeg" }, note: `（出错后附上了 page（${shortUrl(page.url())}）此刻的截图。）` };
+    const url = shortUrl(target.url());
+    const index = target.context().pages().indexOf(target);
+    const which = !failed ? ` page（${url}）` : target === page ? `超时的标签页，即 page（${url}）` : `超时的标签页（${index >= 0 ? `context.pages()[${index}]，` : ""}${url}）`;
+    return { image: { data: shot.toString("base64"), mimeType: "image/jpeg" }, note: `（出错后附上了${which}此刻的截图。）` };
   }
 }
 
@@ -383,6 +392,61 @@ function trackPage(page: Page): void {
     agentClosed.add(this);
     return close.apply(this, args);
   };
+  tagFailures(proto);
+}
+
+/**
+ * 出错的 Playwright 调用是在哪个标签页上：模型常把别的标签页存进自己的变量（const aws = context.pages()[1]），
+ * 超时后截全局 page 截到的是另一个标签页（timeoutScreenshot）。Playwright 的错误里没有标签页，这里记下错误和标签页
+ * （ElementHandle 的要再问一次它在哪个 frame，所以可能是 Promise）
+ */
+const failedOn = new WeakMap<object, Page | Promise<Page | undefined>>();
+const TAGGED = Symbol.for("claude-app.failedOn");
+
+/**
+ * 在 Playwright 客户端所有对象的基类（ChannelOwner）的 _wrapApiCall 上包一层：Page、Frame、ElementHandle、Locator（转给 Frame）、
+ * Keyboard、Mouse（转给 Page）的每个调用都经过它，this 是发出调用的对象，调用失败时由它找出标签页记下（最里层先记，外层不覆盖）。
+ * 包的这层要用 vm 编译、文件名放在 playwright-core 目录里：Playwright 按调用栈里哪些帧在它自己的目录下，
+ * 认出用户调的是哪个 API（报错开头的 locator.isDisabled: 这类名字），夹进一个网关的帧，名字就成了 frame._wrapApiCall。
+ * 直接给 Page、Frame 的公开方法包一层也不行：page.click 在内部调 frame.click，报错会变成 frame.click:。
+ * _wrapApiCall 是 Playwright 的内部方法，以后改了名就不包，超时只截 page
+ */
+function tagFailures(pageProto: object): void {
+  let owner: object | null = pageProto;
+  while (owner && !Object.prototype.hasOwnProperty.call(owner, "_wrapApiCall")) owner = Object.getPrototypeOf(owner) as object | null;
+  const target = owner as { _wrapApiCall?: unknown } | null;
+  // 标记用自己的、只看自身属性：这是 Page、BrowserContext 共同的基类，用 TRACKED 的话它们的原型会继承到，trackAgent 就以为包过了
+  if (!target || Object.prototype.hasOwnProperty.call(target, TAGGED) || typeof target._wrapApiCall !== "function") return;
+  Object.defineProperty(target, TAGGED, { value: true });
+  const coreDir = path.dirname(createRequire(import.meta.url).resolve("playwright-core/package.json"));
+  const wrap = vm.runInThisContext(
+    `(function (original, onFailure) {
+      return function _wrapApiCall(...args) {
+        const result = original.apply(this, args);
+        return result instanceof Promise ? result.catch((err) => { onFailure(this, err); throw err; }) : result;
+      };
+    })`,
+    { filename: path.join(coreDir, "claude-app-failed-on.js") },
+  ) as (original: unknown, onFailure: (self: unknown, err: unknown) => void) => unknown;
+  target._wrapApiCall = wrap(target._wrapApiCall, (self, err) => {
+    if (!err || typeof err !== "object" || failedOn.has(err)) return;
+    try {
+      const page = pageOfOwner(self);
+      if (page) failedOn.set(err, page);
+    } catch {
+      // 取不到标签页就不记
+    }
+  });
+}
+
+/** 发出调用的对象在哪个标签页：Page 自己、Frame 的 page()、ElementHandle 问 ownerFrame()；别的（BrowserContext 等）没有 */
+function pageOfOwner(self: unknown): Page | Promise<Page | undefined> | undefined {
+  const o = self as Partial<{ ownerFrame(): Promise<{ page(): Page } | null>; page(): Page; mainFrame(): unknown }> | null;
+  if (!o || typeof o !== "object") return undefined;
+  if (typeof o.ownerFrame === "function") return o.ownerFrame().then((f) => f?.page(), () => undefined);
+  if (typeof o.page === "function") return o.page();
+  if (typeof o.mainFrame === "function") return o as Page;
+  return undefined;
 }
 
 /** 内置浏览器桌面版发来的一条变化，写成给模型看的一句；AI 自己开、关的返回 null（它知道） */
