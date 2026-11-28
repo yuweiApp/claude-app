@@ -282,12 +282,23 @@ export function reduce(view: SessionView, action: Action): SessionView {
         if (m.type === "user" && m.mcp_meta) ingestToolRaw(next, (m.message as { content?: unknown } | null)?.content, m.mcp_meta);
       }
     }
-    for (const item of view.items) {
+    for (let idx = 0; idx < view.items.length; idx++) {
+      const item = view.items[idx]!;
       if (item.kind === "model") {
         // 实时那条切换历史里已经推出来了（最近一次切换就是换到它），不重复
         const derived = next.items.findLast((i) => i.kind === "model");
         next.shownModel = item.to;
         if (derived?.kind === "model" && derived.to === item.to) continue;
+        // 实时里排在某条已入历史的项（如当前轮的 user 消息）前面，或当前轮尚未有回复时，保持插在该位置/当前轮之前
+        const after = view.items.slice(idx + 1).find((later) => next.seen.has(later.uuid));
+        if (after) {
+          insertBeforeItem(next, after.uuid, item);
+          continue;
+        }
+        if (!next.turnEnded && !turnHasReply(next)) {
+          insertBeforeTurn(next, item);
+          continue;
+        }
       }
       pushItem(next, null, item);
     }
@@ -629,10 +640,14 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
       }
     }
     const messageId = (raw as { id?: unknown }).id;
-    // 主线程换了模型：在这一轮开头（用户消息）前面补一条；<synthetic> 是 Claude Code 自己造的消息，不算
+    // 主线程换了模型：这一轮还没回复时补在开头（用户消息）前面，中途换的插在当前这条新模型回复前面；<synthetic> 是 Claude Code 自己造的消息，不算
     const model = (raw as { model?: unknown }).model;
     if (!parent && typeof model === "string" && !model.startsWith("<")) {
-      if (view.shownModel && model !== view.shownModel) insertBeforeTurn(view, { kind: "model", uuid: `model:${uuid}`, from: view.shownModel, to: model });
+      if (view.shownModel && model !== view.shownModel) {
+        const item: Item = { kind: "model", uuid: `model:${uuid}`, from: view.shownModel, to: model };
+        if (turnHasReply(view)) pushItem(view, null, item);
+        else insertBeforeTurn(view, item);
+      }
       view.shownModel = model;
     }
     // 历史里没有 result：按 stop_reason 判断这一轮是不是结束了（后台任务通知是开新一轮还是并进当前这一轮要用到）
@@ -1036,6 +1051,13 @@ function insertBeforeTurn(view: SessionView, item: Item): void {
   view.seen = new Set(view.seen).add(item.uuid);
   const start = view.items.findLastIndex((i) => i.kind === "user" || i.kind === "task" || i.kind === "agent");
   view.items = start < 0 ? [...view.items, item] : [...view.items.slice(0, start), item, ...view.items.slice(start)];
+}
+
+function insertBeforeItem(view: SessionView, targetUuid: string, item: Item): void {
+  if (view.seen.has(item.uuid)) return;
+  view.seen = new Set(view.seen).add(item.uuid);
+  const idx = view.items.findIndex((i) => i.uuid === targetUuid);
+  view.items = idx < 0 ? [...view.items, item] : [...view.items.slice(0, idx), item, ...view.items.slice(idx)];
 }
 
 /** 主线程一轮的开头：用户消息、后台任务通知、其他 agent 发来的消息、空闲时手动压缩、设定或取消目标 */

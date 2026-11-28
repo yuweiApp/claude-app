@@ -524,14 +524,18 @@ function TurnView({
   const lastIdx = units.findLastIndex((u) => u.kind !== "item");
   const finalIdx = !live && units[lastIdx]?.kind === "text" ? lastIdx : -1;
   const final = finalIdx >= 0 ? units[finalIdx]! : null;
-  // 网关报的错、目标达成这些不折叠；目标检查没通过的那几行算过程
+  // 网关报的错、目标达成、以及这一轮结束后才出现的模型切换不折叠；目标检查没通过的那几行、以及这一轮进行中/中途切换的模型提示按顺序留在过程里
   // 部件（show_widget）不折叠，按顺序显示在过程下面；调用出错的（参数是空的、被中断）还是过程里的一步
   // MCP Apps 的界面出错时照样显示（界面收到 tool-cancelled，出错原因写在界面下面）
   const shownWidget = (u: Unit) => u.kind === "widget" && (!!u.app || !view.toolResults[u.block.id]?.isError);
-  const inProcess = (u: Unit) => !shownWidget(u) && (u.kind !== "item" || (u.item.kind === "goal" && u.item.event === "check"));
-  const errors = units.filter((u) => u.kind === "item" && !inProcess(u));
+  const inProcess = (u: Unit, i: number) =>
+    !shownWidget(u) &&
+    (u.kind !== "item" ||
+      (u.item.kind === "goal" && u.item.event === "check") ||
+      (u.item.kind === "model" && (live || i < lastIdx)));
+  const errors = units.filter((u, i) => u.kind === "item" && !inProcess(u, i));
   const widgets = units.filter(shownWidget);
-  const process = units.filter((u, i) => i !== finalIdx && inProcess(u));
+  const process = units.filter((u, i) => i !== finalIdx && inProcess(u, i));
   const revealInProcess = !!reveal && process.some((u) => u.kind === "text" && u.uuid === reveal.uuid);
   useLayoutEffect(() => {
     if (!revealInProcess) return;
