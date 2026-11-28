@@ -262,11 +262,27 @@ export function emptyView(): SessionView {
 export type Action =
   | { type: "event"; event: GatewayEvent }
   | { type: "history"; messages: HistoryMessage[] }
+  /** 模型菜单里的选择：先按用户操作时刻记下，网关确认后由 state 事件复用，失败时撤回 */
+  | { type: "model_change"; uuid: string; from: string; to: string }
+  | { type: "model_change_failed"; uuid: string; from: string; to: string; fromShownModel?: string }
   /** 打开会话时用接口拉到的后台任务（事件缓冲里的 tasks 事件可能已经被挤掉） */
   | { type: "tasks"; tasks: BackgroundTask[] };
 
 export function reduce(view: SessionView, action: Action): SessionView {
   if (action.type === "tasks") return view.backgroundTasksLive ? view : { ...view, backgroundTasks: action.tasks };
+  if (action.type === "model_change") {
+    const next = { ...view, items: [...view.items] };
+    recordModelSwitch(next, { kind: "model", uuid: action.uuid, from: action.from, to: action.to });
+    next.model = action.to;
+    return next;
+  }
+  if (action.type === "model_change_failed") {
+    const next = { ...view, items: view.items.filter((item) => item.uuid !== action.uuid), seen: new Set(view.seen) };
+    next.seen.delete(action.uuid);
+    if (next.model === action.to) next.model = action.from;
+    if (next.shownModel === action.to) next.shownModel = action.fromShownModel;
+    return next;
+  }
   if (action.type === "history") {
     // 历史放在前面，已经从事件流收到的（按 uuid）不重复
     const next = { ...emptyView(), state: view.state, model: view.model, effort: view.effort, permissionMode: view.permissionMode, noticePending: view.noticePending, historyLoaded: true };
@@ -278,7 +294,7 @@ export function reduce(view: SessionView, action: Action): SessionView {
         if ((m.message as { type?: unknown } | null)?.type === "goal_status") ingestGoalStatus(next, m.uuid, m.message, at);
       }
       else {
-        ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id, at, m.origin?.runId);
+        ingestMessage(next, m.type, m.uuid, m.message, m.parent_tool_use_id, at, m.origin?.runId, m.requestedModel);
         if (m.type === "user" && m.mcp_meta) ingestToolRaw(next, (m.message as { content?: unknown } | null)?.content, m.mcp_meta);
       }
     }
@@ -355,6 +371,11 @@ export function reduce(view: SessionView, action: Action): SessionView {
       break;
     case "state":
       next.state = event.state;
+      // 换模型的 state 先于 SDK 的本地命令消息到达。这里就记下切换，位置按切换发生的时刻；
+      // 否则这一轮结束前的新模型回复会把提示延后，或者整轮结束后只能由 Messages 临时补到最下面。
+      if (view.model && event.model && event.model !== view.model) {
+        recordModelSwitch(next, { kind: "model", uuid: `model-switch:${crypto.randomUUID()}`, from: view.model, to: event.model });
+      }
       next.model = event.model;
       next.effort = event.effort;
       next.permissionMode = event.permissionMode;
@@ -480,7 +501,19 @@ function ingestSdk(view: SessionView, message: Extract<GatewayEvent, { type: "sd
       if (!message.parent_tool_use_id) view.streaming = { text: "" };
       view.retry = null;
       if (!message.parent_tool_use_id && message.message.model === "<synthetic>" && ingestGoalOutput(view, message.uuid, message.message.content)) return;
-      ingestMessage(view, "assistant", message.uuid, message.message, message.parent_tool_use_id, Date.now());
+      {
+        const requestedModel = (message as { requestedModel?: unknown; requested_model?: unknown }).requestedModel ?? (message as { requested_model?: unknown }).requested_model;
+        ingestMessage(
+          view,
+          "assistant",
+          message.uuid,
+          message.message,
+          message.parent_tool_use_id,
+          Date.now(),
+          undefined,
+          typeof requestedModel === "string" ? requestedModel : undefined,
+        );
+      }
       return;
     case "user": {
       if (!message.uuid) return;
@@ -626,7 +659,7 @@ function previewUser(uuid: string, content: unknown): UserItem | undefined {
 }
 
 /** 把一条 user / assistant 消息（SDK 实时消息和 jsonl 历史格式相同）归并进视图 */
-function ingestMessage(view: SessionView, type: string, uuid: string, raw: unknown, parent: string | null, at?: number, runId?: string): void {
+function ingestMessage(view: SessionView, type: string, uuid: string, raw: unknown, parent: string | null, at?: number, runId?: string, requestedModel?: string): void {
   if (view.seen.has(uuid)) return;
   const content = (raw as { content?: unknown } | null)?.content;
 
@@ -641,7 +674,8 @@ function ingestMessage(view: SessionView, type: string, uuid: string, raw: unkno
     }
     const messageId = (raw as { id?: unknown }).id;
     // 主线程换了模型：这一轮还没回复时补在开头（用户消息）前面，中途换的插在当前这条新模型回复前面；<synthetic> 是 Claude Code 自己造的消息，不算
-    const model = (raw as { model?: unknown }).model;
+    // requestedModel 是用户实际选择；message.model 可能被第三方代理换成另一个上游模型，不能用来判断切换。
+    const model = requestedModel ?? (raw as { model?: unknown }).model;
     if (!parent && typeof model === "string" && !model.startsWith("<")) {
       if (view.shownModel && model !== view.shownModel) {
         const item: Item = { kind: "model", uuid: `model:${uuid}`, from: view.shownModel, to: model };
@@ -1044,6 +1078,13 @@ function resultText(content: unknown): string {
 function turnHasReply(view: SessionView): boolean {
   const start = view.items.findLastIndex((i) => i.kind === "user" || i.kind === "task" || i.kind === "agent");
   return start < 0 || view.items.slice(start + 1).some((i) => i.kind === "assistant");
+}
+
+function recordModelSwitch(view: SessionView, item: Extract<Item, { kind: "model" }>): void {
+  if (view.seen.has(item.uuid)) return;
+  if (turnHasReply(view)) pushItem(view, null, item);
+  else insertBeforeTurn(view, item);
+  view.shownModel = item.to;
 }
 
 function insertBeforeTurn(view: SessionView, item: Item): void {

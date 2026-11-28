@@ -84,6 +84,8 @@ export interface HistoryMessage {
   parent_tool_use_id: string | null;
   /** ISO 时间，历史里没有 result 时用它算一轮的用时 */
   timestamp?: string;
+  /** 用户发起这次模型请求时选择的模型；message.model 可能是第三方代理返回的上游模型 */
+  requestedModel?: string;
   /** 压缩上下文后 Claude Code 写的摘要（SDK 的类型定义里没有，运行时带着） */
   isCompactSummary?: boolean;
   /** 不是用户写的消息的来源（SDK 的类型定义里没有，运行时带着）。后台任务的通知带 runId：任务这一次运行的 id，同实时通知的 run_id */

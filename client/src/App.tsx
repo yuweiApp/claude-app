@@ -532,10 +532,19 @@ export function Chat({
   const switchSeq = useRef(0);
   const switchModel = (id: string, change: { model?: string; effort?: EffortLevel }) => {
     const seq = ++switchSeq.current;
+    const from = resolveModel(models, view.model) ?? view.shownModel ?? config.model;
+    const to = change.model !== undefined ? (resolveModel(models, change.model) ?? change.model) : undefined;
+    const pending = to && from && to !== from ? `model-switch:${crypto.randomUUID()}` : undefined;
+    if (pending && to && from) dispatch({ type: "model_change", uuid: pending, from, to });
     setSwitching((prev) => ({ ...prev, ...change }));
     api
       .setModel(id, change)
-      .catch((e: Error) => onError(`切换${change.model !== undefined ? "模型" : "推理强度"}失败：${e.message}`))
+      .catch((e: Error) => {
+        if (pending && to && from) {
+          dispatch({ type: "model_change_failed", uuid: pending, from, to, fromShownModel: view.shownModel });
+        }
+        onError(`切换${change.model !== undefined ? "模型" : "推理强度"}失败：${e.message}`);
+      })
       // 连着点了几次时，等最后一次返回再清
       .finally(() => seq === switchSeq.current && setSwitching(null));
   };

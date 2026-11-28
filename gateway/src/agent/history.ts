@@ -28,6 +28,8 @@ async function readHistory(sessionId: string, file: string): Promise<SessionMess
   const goals: GoalStatusEntry[] = [];
   /** MCP 工具结果的原始 structuredContent、_meta（会话文件里那一行的 mcpMeta），按消息 uuid */
   const mcpMetas = new Map<string, unknown>();
+  /** 用户这次请求选择的模型（会话文件里 assistant 行的 requestedModel）；getSessionMessages 会丢掉这个字段 */
+  const requestedModels = new Map<string, string>();
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     try {
@@ -37,6 +39,8 @@ async function readHistory(sessionId: string, file: string): Promise<SessionMess
       if (goal && !goal.status.sentinel) goals.push(goal);
       const mcpMeta = (entry as { mcpMeta?: unknown }).mcpMeta;
       if (mcpAppsEnabled && mcpMeta && typeof mcpMeta === "object" && typeof entry.uuid === "string") mcpMetas.set(entry.uuid, mcpMeta);
+      const requestedModel = (entry as { requestedModel?: unknown; requested_model?: unknown }).requestedModel ?? (entry as { requested_model?: unknown }).requested_model;
+      if (entry.type === "assistant" && typeof entry.uuid === "string" && typeof requestedModel === "string") requestedModels.set(entry.uuid, requestedModel);
       entries.push(entry);
     } catch {
       // 写到一半的行（会话正在运行）跳过
@@ -51,7 +55,12 @@ async function readHistory(sessionId: string, file: string): Promise<SessionMess
   const seen = new Set<string>();
   const messages = segments.flat().filter((m) => !seen.has(m.uuid) && seen.add(m.uuid));
   // MCP Apps 的界面要工具结果的 structuredContent、_meta：getSessionMessages 不返回会话文件里的 mcpMeta，补成 mcp_meta（只在开了 mcpApps 时）
-  const withMeta = mcpMetas.size ? messages.map((m) => (mcpMetas.has(m.uuid) ? { ...m, mcp_meta: mcpMetas.get(m.uuid) } : m)) : messages;
+  // requestedModel 同理：代理可能把实际请求映射到另一个上游模型，message.model 不能代表用户选择的模型。
+  const withMeta = messages.map((m) => {
+    const meta = mcpAppsEnabled && mcpMetas.has(m.uuid) ? { mcp_meta: mcpMetas.get(m.uuid) } : {};
+    const requestedModel = requestedModels.get(m.uuid);
+    return Object.keys(meta).length || requestedModel ? { ...m, ...meta, ...(requestedModel ? { requestedModel } : {}) } : m;
+  });
   return withGoalStatus(sessionId, withMeta, goals);
 }
 
