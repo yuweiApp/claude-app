@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent, type ReactNode } from "react";
 import { api } from "../api";
 import { desktop, type BrowserTabInfo } from "../desktop";
+import { isRemote, machinePath } from "../remote";
 import { BrowserTab, BrowserToolbar, GlobeIcon, SiteIcon } from "./BrowserTab";
 import { RemoteBrowserTab } from "./RemoteBrowserTab";
 import { RemoteBrowserContext } from "../state/remoteBrowser";
@@ -86,6 +87,23 @@ export function withFolderTab(s: PanelState, from: string, root?: string): Panel
   const tabs = [...s.tabs];
   tabs.splice(index < 0 ? tabs.length : index + 1, 0, tab);
   return { tabs, active: tab.id };
+}
+
+const HTML_FILE = /\.html?$/i;
+
+/** 把本机绝对路径或远程文件转成内置浏览器可打开的 URL（本机走 file://，远程走网关预览地址） */
+async function htmlBrowserUrl(cwdOrUri: string, relPath: string): Promise<string> {
+  if (isRemote(cwdOrUri)) {
+    const pageUrl = await api.pageUrl(cwdOrUri, relPath);
+    return new URL(pageUrl, window.location.origin).href;
+  }
+  const base = machinePath(cwdOrUri).replace(/[\\/]+$/, "");
+  const joined = `${base}/${relPath.replace(/^\/+/, "")}`.replaceAll("\\", "/");
+  const encoded = joined
+    .split("/")
+    .map((seg, idx) => (idx === 0 && /^[a-z]:$/i.test(seg) ? seg : encodeURIComponent(seg)))
+    .join("/");
+  return encoded.startsWith("/") ? `file://${encoded}` : `file:///${encoded}`;
 }
 
 /**
@@ -414,7 +432,43 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
   /** 新标签页里选了工具：这个标签页变成那个工具 */
   const replaceTab = (id: string, tab: PanelTab) =>
     onChange((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? tab : t)), active: tab.id }));
-  const openFile = (from: string, path: string, pin: boolean, root?: string) => onChange((s) => withFileOpen(s, from, path, pin, root));
+  const openFile = (from: string, path: string, pin: boolean, root?: string, sourceOnly = false) => {
+    if (!sourceOnly && browserApi && HTML_FILE.test(path)) {
+      void openHtmlInBrowser(from, path, root);
+      return;
+    }
+    onChange((s) => withFileOpen(s, from, path, pin, root));
+  };
+  /** 点击 .html 文件时直接用内置浏览器打开；已开着同网址标签页就切过去，否则在旁边新开 */
+  const openHtmlInBrowser = async (from: string, path: string, root?: string) => {
+    if (!browserApi) return;
+    let url: string;
+    try {
+      url = await htmlBrowserUrl(root ?? cwd, path);
+    } catch (err) {
+      window.alert(`打开网页失败：${(err as Error).message}`);
+      return;
+    }
+    const existingEntry = [...(browserTabs?.entries() ?? [])].find(([, info]) => info.url === url || info.pendingUrl === url);
+    if (existingEntry) {
+      const [browserId] = existingEntry;
+      onChange((s) => {
+        const hit = s.tabs.find((t) => t.kind === "browser" && t.browserId === browserId);
+        return hit ? { ...s, active: hit.id } : s;
+      });
+      return;
+    }
+    let info;
+    try {
+      info = await browserApi.create(sessionId, url);
+    } catch (err) {
+      window.alert(`打开网页失败：${(err as Error).message}\n\n如果刚更新过代码，请重启桌面版。`);
+      return;
+    }
+    if (!info) return;
+    setBrowserTabs((all) => new Map(all ?? []).set(info.id, info));
+    onChange((s) => withBrowserTab(s, from, info));
+  };
   /** 同一个根文件夹（root 是 undefined 时是工作目录）下的文件标签 */
   const sameRoot = (t: PanelTab, root: string | undefined) => t.kind === "files" && t.root === root;
   /** 目录树里重命名、拖动了（文件夹的路径以 / 结尾）：开着的文件标签跟着换路径，没保存的修改也跟过去 */
@@ -586,6 +640,7 @@ export function SidePanel({ cwd, sessionId, state, onChange, onClose }: Props) {
                 reveal={tab.reveal}
                 active={tab.id === activeId}
                 onSelectFile={(path, pinned) => openFile(tab.id, path, pinned, tab.root)}
+                onOpenSource={browserApi ? (path) => openFile(tab.id, path, true, tab.root, true) : undefined}
                 onEdited={() => pin(tab.id)}
                 onRenamed={(from, to) => fileRenamed(tab.root, from, to)}
                 onDeleted={(path) => fileDeleted(tab.root, path)}

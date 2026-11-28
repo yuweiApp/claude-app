@@ -31,6 +31,7 @@ export function FileBrowser({
   reveal = 0,
   active,
   onSelectFile,
+  onOpenSource,
   onEdited,
   onRenamed,
   onDeleted,
@@ -47,6 +48,8 @@ export function FileBrowser({
   active: boolean;
   /** 在目录树里选了文件；pin 是双击（固定打开），否则是预览打开 */
   onSelectFile: (path: string, pin: boolean) => void;
+  /** HTML 文件默认在内置浏览器打开时，右键「查看源代码」走这个回调以源码方式打开 */
+  onOpenSource?: (path: string) => void;
   /** 改了内容：预览打开的标签要固定下来 */
   onEdited: () => void;
   /** 目录树里重命名、拖动了文件或文件夹（文件夹的路径以 / 结尾）：开着的标签跟着换路径 */
@@ -66,7 +69,9 @@ export function FileBrowser({
       <FoldersIcon />
     </button>
   );
-  const tree = treeOpen ? <FileTree cwd={cwd} activePath={path} autoFocus={path === null} onSelect={onSelectFile} onRenamed={onRenamed} onDeleted={onDeleted} /> : null;
+  const tree = treeOpen ? (
+    <FileTree cwd={cwd} activePath={path} autoFocus={path === null} onSelect={onSelectFile} onOpenSource={onOpenSource} onRenamed={onRenamed} onDeleted={onDeleted} />
+  ) : null;
 
   if (path === null) {
     return (
@@ -103,6 +108,7 @@ export function FileBrowser({
       tree={tree}
       onEdited={onEdited}
       onOpenFile={(p) => onSelectFile(p, true)}
+      defaultSourceForHtml={Boolean(onOpenSource)}
     />
   );
 }
@@ -220,6 +226,7 @@ function FileTree({
   activePath,
   autoFocus,
   onSelect,
+  onOpenSource,
   onRenamed,
   onDeleted,
 }: {
@@ -227,6 +234,7 @@ function FileTree({
   activePath: string | null;
   autoFocus: boolean;
   onSelect: (path: string, pin: boolean) => void;
+  onOpenSource?: (path: string) => void;
   onRenamed: (from: string, to: string) => void;
   onDeleted: (path: string) => void;
 }) {
@@ -620,6 +628,9 @@ function FileTree({
     if (many) return [[{ label: `删除 ${many.length} 项`, danger: true, onClick: () => setConfirmDelete(many) }]];
     const dir = entry ? (entry.dir ? entry.path : null) : "";
     const groups: { label: string; danger?: boolean; onClick: () => void }[][] = [];
+    if (entry && !entry.dir && HTML.test(entry.path) && onOpenSource) {
+      groups.push([{ label: "查看源代码", onClick: () => onOpenSource(entry.path) }]);
+    }
     if (dir !== null)
       groups.push([
         { label: "新建文件", onClick: () => startNew(dir, false) },
@@ -1242,6 +1253,7 @@ function FileViewer({
   tree,
   onEdited,
   onOpenFile,
+  defaultSourceForHtml = false,
 }: {
   cwd: string;
   sessionId: string | null;
@@ -1254,6 +1266,8 @@ function FileViewer({
   onEdited: () => void;
   /** Markdown 里点了指向项目里文件的链接 */
   onOpenFile: (path: string) => void;
+  /** HTML 默认走内置浏览器时，以文件方式打开（右键「查看源代码」）默认显示源代码，可随时切换预览 */
+  defaultSourceForHtml?: boolean;
 }) {
   const [content, setContent] = useState<FileContent | { error: string } | null>(null);
   const markdown = MARKDOWN.test(path);
@@ -1264,8 +1278,8 @@ function FileViewer({
   const officeRef = useRef<OfficePreviewHandle>(null);
   /** 放弃修改、重新加载时加一，文档重新读、重新渲染 */
   const [officeReload, setOfficeReload] = useState(0);
-  // Markdown 默认显示渲染效果，开关切到源代码；要定位到行时显示源代码（行号对的是源代码）
-  const [rendered, setRendered] = useState(line === null);
+  // Markdown / HTML 预览与源代码切换：带行号或右键「查看源代码」打开 HTML 时默认显示源代码
+  const [rendered, setRendered] = useState(line === null && !(html && defaultSourceForHtml));
   // Ctrl/⌘+F：每按一次加一，文本编辑器打开查找栏（Markdown 渲染模式先切到源代码，行和查找都对着源代码）
   const [findRequest, setFindRequest] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -1426,7 +1440,7 @@ function FileViewer({
     );
   else if (content.kind === "binary") body = <div className="panel-empty">二进制文件，无法预览（{formatBytes(content.size)}）</div>;
   else if (content.kind === "too-large") body = <div className="panel-empty">文件太大，无法预览（{formatBytes(content.size)}）</div>;
-  else if (html)
+  else if (html && rendered)
     body = (
       <HtmlPreview
         cwd={cwd}
@@ -1487,7 +1501,7 @@ function FileViewer({
           )}
         </div>
         <div className="viewer-head-actions">
-          {markdown && ok?.kind === "text" && (
+          {(markdown || html) && ok?.kind === "text" && (
             <label className="md-source-switch">
               {rendered ? "预览" : "源代码"}
               <button
@@ -1501,7 +1515,7 @@ function FileViewer({
               </button>
             </label>
           )}
-          {((html && ok?.kind === "text") || annotatable) && (
+          {((html && rendered && ok?.kind === "text") || annotatable) && (
             <button
               className={`icon-btn viewer-head-icon${annotating ? " on" : ""}`}
               title={
